@@ -3543,7 +3543,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         assert !tableWriter.getTableToken().isMatView() : "FORMAT PARQUET should be rejected on mat views at SQL level";
 
         final TableRecordMetadata metadata = tableWriter.getMetadata();
-        final int partitionRowCount = (int) (srcOooHi - srcOooLo + 1);
+        final long partitionRowCount = srcOooHi - srcOooLo + 1;
         final FilesFacade ff = tableWriter.getFilesFacade();
         final CairoConfiguration configuration = tableWriter.getConfiguration();
         final long partitionNameTxn = txn - 1;

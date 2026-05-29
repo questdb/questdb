@@ -189,10 +189,6 @@ public class O3ParquetMergeContext implements Closeable {
         return partitionDecoder;
     }
 
-    public OwnedMemoryPartitionDescriptor getPartitionDescriptor() {
-        return partitionDescriptor;
-    }
-
     public PartitionUpdater getPartitionUpdater() {
         return partitionUpdater;
     }

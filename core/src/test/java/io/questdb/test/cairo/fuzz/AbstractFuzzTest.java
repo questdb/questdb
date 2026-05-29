@@ -65,6 +65,12 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return 1 + rnd.nextInt(2);
     }
 
+    public static int getRndParquetRowGroupSize(Rnd rnd) {
+        // 50..10000 rows: small enough that fuzz partitions routinely span
+        // multiple row groups, exercising the per-row-group write/read paths.
+        return 50 + rnd.nextInt(9951);
+    }
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
@@ -393,6 +399,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, getMaxWalSize(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, getMaxWalFdCache(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1 + rnd.nextInt(200));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndParquetRowGroupSize(rnd));
 
         int txnCount = Math.max(10, fuzzer.getTransactionCount());
         long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);

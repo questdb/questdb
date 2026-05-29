@@ -24,8 +24,12 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.ParquetMetaFileReader;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.LPSZ;
@@ -373,6 +377,48 @@ public class TableFormatTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFreshParquetMultiRowGroupSingleCommit() throws Exception {
+        // A single WAL commit that creates a fresh FORMAT PARQUET partition
+        // larger than the configured row-group size drives writeFreshParquetFromO3
+        // through write_chunk, which splits the partition into
+        // ceil(rowCount / rowGroupSize) row groups. With a 100-row group size and
+        // 200 rows in one partition, the file must carry exactly 2 row groups and
+        // all 200 rows must round-trip. This guards against the strided timestamp
+        // encoder ignoring per-row-group bounds and re-emitting the whole column
+        // in every row group.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            // 200 rows at 1-second spacing stay within a single day partition and
+            // land in one WAL commit.
+            execute("INSERT INTO tango " +
+                    "SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 1_000_000L), x " +
+                    "FROM long_sequence(200)");
+            drainWalQueue();
+
+            assertSql("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n",
+                    "SELECT name, isParquet FROM table_partitions('tango')");
+
+            assertEquals(2, getParquetRowGroupCount("tango"));
+
+            // Read actual row data, not metadata. count() and min/max(ts) are
+            // satisfied by row-group num_rows and parquet column statistics, so
+            // they pass even when the timestamp column is re-emitted in full for
+            // every row group. Pairing each v with its timestamp forces a real
+            // per-row read: v=101 is the first row of the second row group, so a
+            // strided encoder ignoring row-group bounds would pair it with the
+            // first timestamp (00:00:00) instead of 00:01:40.
+            assertSql("v\tts\n" +
+                            "1\t2024-01-01T00:00:00.000000Z\n" +
+                            "100\t2024-01-01T00:01:39.000000Z\n" +
+                            "101\t2024-01-01T00:01:40.000000Z\n" +
+                            "200\t2024-01-01T00:03:19.000000Z\n",
+                    "SELECT v, ts FROM tango WHERE v IN (1, 100, 101, 200) ORDER BY v");
+        });
+    }
+
+    @Test
     public void testFreshParquetTimestampDeltaBinaryPackedEncoding() throws Exception {
         assertParquetTimestampRoundTrip("delta_binary_packed");
     }
@@ -642,5 +688,21 @@ public class TableFormatTest extends AbstractCairoTest {
         try (TableMetadata metadata = engine.getTableMetadata(token)) {
             assertEquals(expected, metadata.getTableFormat());
         }
+    }
+
+    private int getParquetRowGroupCount(String tableName) {
+        try (TableReader reader = getReader(tableName)) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                    continue;
+                }
+                reader.openPartition(i);
+                ParquetMetaFileReader meta = reader
+                        .getAndInitParquetPartitionDecoder(i)
+                        .metadata();
+                return meta.getRowGroupCount();
+            }
+        }
+        return -1;
     }
 }

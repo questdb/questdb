@@ -460,6 +460,33 @@ impl Column {
         })
     }
 
+    /// Narrow a single-partition strided merge-index timestamp column to the
+    /// row-group window `[first, last)` selected by `write_chunk`.
+    ///
+    /// The strided timestamp encoder iterates its entire `primary_data`, so
+    /// when a partition is split across multiple row groups each row group must
+    /// receive only its own slice of the merge index; otherwise every row group
+    /// re-emits the whole timestamp column. The strided layout is always
+    /// single-partition with no column top, so the window is a plain sub-slice.
+    pub fn strided_row_group_slice(&self, first: usize, last: usize) -> ParquetResult<Column> {
+        debug_assert!(self.strided_timestamp_16);
+        const ENTRY_BYTES: usize = std::mem::size_of::<[i64; 2]>();
+        let row_count = self.primary_data.len() / ENTRY_BYTES;
+        if first > last || last > row_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "strided timestamp row-group bounds [{}, {}) out of range for {} rows",
+                first,
+                last,
+                row_count
+            ));
+        }
+        let mut sliced = *self;
+        sliced.primary_data = &self.primary_data[first * ENTRY_BYTES..last * ENTRY_BYTES];
+        sliced.row_count = last - first;
+        Ok(sliced)
+    }
+
     /// Returns the timestamp values backing this column. Cheap O(1) — just a
     /// reinterpret of `primary_data`. Callers gate on `data_type` being a
     /// timestamp-shaped i64 column.
@@ -816,6 +843,54 @@ mod tests {
     fn test_encoding_zero_explicit() {
         // explicit flag set but encoding is 0 -> use default
         assert_eq!(ParquetEncodingConfig::new(0, 0, -1).encoding(), None);
+    }
+
+    #[test]
+    fn strided_row_group_slice_narrows_to_window() {
+        // 10 merge-index entries (ts, rowId). Slicing must preserve the ts of
+        // exactly the requested window and update row_count, so write_chunk's
+        // per-row-group window is honored instead of re-emitting the column.
+        let pairs: Vec<[i64; 2]> = (0..10i64).map(|i| [1_000 + i, i]).collect();
+        let column_type = ColumnType::new(ColumnTypeTag::Timestamp, 0).code()
+            | COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT;
+        let col = Column::from_raw_data(
+            0,
+            "ts",
+            column_type,
+            0,
+            pairs.len(),
+            pairs.as_ptr() as *const u8,
+            std::mem::size_of_val(pairs.as_slice()),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            true,
+            true,
+            0,
+        )
+        .expect("ts column");
+
+        let second_group = col.strided_row_group_slice(3, 7).expect("slice");
+        assert_eq!(second_group.row_count, 4);
+        match second_group.timestamp_values() {
+            TimestampValues::Strided16(s) => {
+                assert_eq!(s.len(), 4);
+                assert_eq!(s[0][0], 1_003);
+                assert_eq!(s[3][0], 1_006);
+            }
+            TimestampValues::Contiguous(_) => panic!("expected strided layout"),
+        }
+
+        // Full range keeps every row.
+        assert_eq!(
+            col.strided_row_group_slice(0, 10).expect("full").row_count,
+            10
+        );
+
+        // Out-of-range or inverted bounds are rejected, never a panic under JNI.
+        assert!(col.strided_row_group_slice(5, 11).is_err());
+        assert!(col.strided_row_group_slice(7, 3).is_err());
     }
 
     #[test]
