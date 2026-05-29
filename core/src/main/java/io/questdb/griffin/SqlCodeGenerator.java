@@ -9790,16 +9790,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ObjList<RecordComparator> windowComparators = new ObjList<>(groupedWindow.size());
             final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
             final ObjList<IntList> keys = new ObjList<>();
-            boolean allGroupsEncodedEligible = configuration.isSqlOrderBySortEnabled();
+            final boolean isSortEnabled = configuration.isSqlOrderBySortEnabled();
+            boolean isAllGroupsEncodedEligible = isSortEnabled;
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
-                final boolean encodedEligible = configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(chainMetadata, e.key);
-                final RecordComparator comparator = encodedEligible
+                final boolean isEncodedEligible = isSortEnabled && SortKeyEncoder.isSupported(chainMetadata, e.key);
+                final RecordComparator comparator = isEncodedEligible
                         ? null
                         : recordComparatorCompiler.newInstance(chainMetadata, e.key);
                 windowComparators.add(comparator);
                 functionGroups.add(e.value);
                 keys.add(e.key);
-                allGroupsEncodedEligible &= encodedEligible;
+                isAllGroupsEncodedEligible &= isEncodedEligible;
             }
 
             // LIGHT path is restricted to queries where every ordered group can use the encoded
@@ -9807,7 +9808,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // compare, which can regress 10-100x on cold/partitioned bases.
             if (configuration.isSqlWindowCachedLightEnabled()
                     && base.recordCursorSupportsRandomAccess()
-                    && allGroupsEncodedEligible) {
+                    && isAllGroupsEncodedEligible) {
                 final IntList sourceMap = new IntList();
                 final ArrayColumnTypes narrowChainTypes = new ArrayColumnTypes();
                 int narrowIdx = 0;

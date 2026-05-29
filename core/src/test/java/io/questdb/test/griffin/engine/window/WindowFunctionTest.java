@@ -494,6 +494,38 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedWindowLightAcceptsAllEligibleSortKeyTypes() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            execute("create table tab (" +
+                    "ts TIMESTAMP, " +
+                    "vBool BOOLEAN, vByte BYTE, vShort SHORT, vInt INT, " +
+                    "vLong LONG, vFloat FLOAT, vDouble DOUBLE, vChar CHAR, " +
+                    "vIPv4 IPv4, vDate DATE, " +
+                    "vGeoB GEOHASH(5b), vGeoS GEOHASH(10b), vGeoI GEOHASH(20b), vGeoL GEOHASH(40b), " +
+                    "vDec8 DECIMAL(2,0), vDec16 DECIMAL(4,0), vDec32 DECIMAL(8,0), " +
+                    "vDec64 DECIMAL(16,0), vDec128 DECIMAL(30,0), vDec256 DECIMAL(60,0)" +
+                    ") timestamp(ts)");
+            final String[] orderCols = {
+                    "vBool", "vByte", "vShort", "vInt", "vLong", "vFloat", "vDouble",
+                    "vChar", "vIPv4", "vDate",
+                    "vGeoB", "vGeoS", "vGeoI", "vGeoL",
+                    "vDec8", "vDec16", "vDec32", "vDec64", "vDec128", "vDec256"
+            };
+            for (String col : orderCols) {
+                assertPlanNoLeakCheck(
+                        "SELECT row_number() OVER (ORDER BY " + col + ") FROM tab",
+                        "CachedWindowLight\n" +
+                                "  orderedFunctions: [[" + col + "] => [row_number()]]\n" +
+                                "    PageFrame\n" +
+                                "        Row forward scan\n" +
+                                "        Frame forward scan on: tab\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testCachedWindowLightCumeDistTwoPassUnderLightFactory() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
         assertMemoryLeak(() -> {
@@ -659,6 +691,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedWindowLightLeadZeroOffsetReturnsTypedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts TIMESTAMP, d DATE) timestamp(ts)");
+            execute("insert into tab values ('2024-01-01T00:00:00.000000Z', '2024-01-02T00:00:00.000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            lead_ts_type\tlead_d_type
+                            TIMESTAMP\tDATE
+                            """,
+                    "SELECT typeOf(lead(ts, 0) OVER ()) lead_ts_type, typeOf(lead(d, 0) OVER ()) lead_d_type FROM tab",
+                    null,
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            lag_ts_type\tlag_d_type
+                            TIMESTAMP\tDATE
+                            """,
+                    "SELECT typeOf(lag(ts, 0) OVER ()) lag_ts_type, typeOf(lag(d, 0) OVER ()) lag_d_type FROM tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testCachedWindowLightNoRandomAccessBaseFallsBackToNonLight() throws Exception {
         // UNION ALL produces a base cursor that does not support random access, so the
         // dispatch gate must skip the LIGHT factory even with an encoded-eligible sort key.
@@ -697,6 +757,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     null,
                     false,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightParallelEncodedSortPreservesOrder() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, 16);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, (65 - x) from long_sequence(64)");
+            assertQueryNoLeakCheck(
+                    """
+                            v\trow_number
+                            1\t1
+                            2\t2
+                            3\t3
+                            4\t4
+                            5\t5
+                            62\t62
+                            63\t63
+                            64\t64
+                            """,
+                    "SELECT v, row_number FROM (SELECT v, row_number() OVER (ORDER BY v) FROM tab) " +
+                            "WHERE v <= 5 OR v >= 62 ORDER BY v",
+                    null,
+                    true,
+                   false
             );
         });
     }
@@ -745,6 +833,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedWindowLightReuseSymbolRebuildsRankMaps() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts TIMESTAMP, s SYMBOL) timestamp(ts)");
+            execute("insert into tab values " +
+                    "(1, 'B'), (2, 'A'), (3, 'C'), (4, 'A'), (5, 'B'), (6, 'C')");
+            final String expected = """
+                    ts\ts\trow_number
+                    1970-01-01T00:00:00.000002Z\tA\t1
+                    1970-01-01T00:00:00.000004Z\tA\t2
+                    1970-01-01T00:00:00.000001Z\tB\t3
+                    1970-01-01T00:00:00.000005Z\tB\t4
+                    1970-01-01T00:00:00.000003Z\tC\t5
+                    1970-01-01T00:00:00.000006Z\tC\t6
+                    """;
+            final String query = "SELECT ts, s, row_number() OVER (ORDER BY s) FROM tab ORDER BY s, ts";
+            assertQueryNoLeakCheck(expected, query, null, true, true);
+            assertQueryNoLeakCheck(expected, query, null, true, true);
+        });
+    }
+
+    @Test
     public void testCachedWindowLightVarcharOrderByFallsBackToNonLight() throws Exception {
         // VARCHAR sort keys cannot fit the encoded sort buffer, so the LIGHT dispatch gate
         // refuses them and the query falls through to the non-light factory regardless of
@@ -761,6 +871,44 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: tab
                             """
+            );
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightWindowLightRecordReadsExoticColumnTypes() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            execute("create table tab (" +
+                    "ts TIMESTAMP, vSort LONG, " +
+                    "vGeoB GEOHASH(5b), vGeoS GEOHASH(10b), vGeoI GEOHASH(20b), vGeoL GEOHASH(40b), " +
+                    "vL256 LONG256, vUuid UUID, vBin BINARY, vArr DOUBLE[]" +
+                    ") timestamp(ts)");
+            execute("insert into tab values (" +
+                    "1, 10, " +
+                    "'u', 'u3', 'u3qd', 'u3qd1mhg7', " +
+                    "'0x01'::long256, '00000000-0000-0000-0000-000000000001', " +
+                    "rnd_bin(2, 2, 0), ARRAY[1.0, 2.0]" +
+                    ")");
+            assertPlanNoLeakCheck(
+                    "SELECT row_number() OVER (ORDER BY vSort), vGeoB, vGeoS, vGeoI, vGeoL, " +
+                            "vL256, vUuid, vBin, vArr FROM tab",
+                    """
+                            CachedWindowLight
+                              orderedFunctions: [[vSort] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    "cnt\n1\n",
+                    "SELECT count() cnt FROM (" +
+                            "SELECT row_number() OVER (ORDER BY vSort), vGeoB, vGeoS, vGeoI, vGeoL, " +
+                            "vL256, vUuid, vBin, vArr FROM tab)",
+                    null,
+                    false,
+                    true
             );
         });
     }

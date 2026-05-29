@@ -32,7 +32,6 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 
 final class LightWindowSPI implements WindowSPI {
-    private static final String ASSERT_NARROW_ONLY = "getAddress requires a narrow-chain column";
     private final DirectLongList baseRowIds;
     private final WindowLightRecord lookupRecord;
     private final RecordArray narrowChain;
@@ -51,7 +50,7 @@ final class LightWindowSPI implements WindowSPI {
     @Override
     public long getAddress(long rowIndex, int chainColIdx) {
         int encoded = sourceMap.getQuick(chainColIdx);
-        assert encoded < 0 : ASSERT_NARROW_ONLY;
+        assert encoded < 0;
         return narrowChain.getAddressAtRowIndex(rowIndex, -encoded - 1);
     }
 

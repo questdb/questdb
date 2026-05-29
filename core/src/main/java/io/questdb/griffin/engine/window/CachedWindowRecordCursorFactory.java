@@ -80,12 +80,14 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             @NotNull GenericRecordMetadata chainMetadata
     ) {
         super(metadata);
+        RecordArray recordChain = null;
+        ObjList<WindowSortBuffer> sortBuffers = null;
         try {
             this.base = base;
             this.orderedGroupCount = comparators.size();
             assert orderedGroupCount == orderedFunctions.size();
             this.orderedFunctions = orderedFunctions;
-            RecordArray recordChain = new RecordArray(
+            recordChain = new RecordArray(
                     chainTypes,
                     recordSink,
                     configuration.getSqlWindowStorePageSize(),
@@ -95,26 +97,22 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             this.chainMetadata = chainMetadata;
             this.allFunctions = new ObjList<>();
 
-            ObjList<WindowSortBuffer> sortBuffers = new ObjList<>(orderedGroupCount);
-            try {
-                for (int i = 0; i < orderedGroupCount; i++) {
-                    final IntList groupKeys = sortKeys.getQuick(i);
-                    if (comparators.getQuiet(i) == null) {
-                        sortBuffers.add(new EncodedWindowSortBuffer(configuration, chainMetadata, groupKeys));
-                    } else {
-                        sortBuffers.add(new TreeWindowSortBuffer(
-                                configuration,
-                                comparators.getQuick(i),
-                                SortKeyEncoder.createRankMaps(chainMetadata, groupKeys)
-                        ));
-                    }
+            sortBuffers = new ObjList<>(orderedGroupCount);
+            for (int i = 0; i < orderedGroupCount; i++) {
+                final IntList groupKeys = sortKeys.getQuick(i);
+                if (comparators.getQuiet(i) == null) {
+                    sortBuffers.add(new EncodedWindowSortBuffer(configuration, chainMetadata, groupKeys));
+                } else {
+                    sortBuffers.add(new TreeWindowSortBuffer(
+                            configuration,
+                            comparators.getQuick(i),
+                            SortKeyEncoder.createRankMaps(chainMetadata, groupKeys)
+                    ));
                 }
-                this.cursor = new CachedWindowRecordCursor(columnIndexes, recordChain, sortBuffers);
-            } catch (Throwable t) {
-                Misc.freeObjList(sortBuffers);
-                Misc.free(recordChain);
-                throw t;
             }
+            this.cursor = new CachedWindowRecordCursor(columnIndexes, recordChain, sortBuffers);
+            recordChain = null;
+            sortBuffers = null;
 
             ObjList<ObjList<WindowFunction>> orderedTmp = null;
             for (int i = 0, n = orderedFunctions.size(); i < n; i++) {
@@ -175,6 +173,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
             this.unorderedFunctions = unorderedFunctions;
         } catch (Throwable th) {
+            Misc.free(recordChain);
+            Misc.freeObjList(sortBuffers);
             close();
             throw th;
         }
@@ -510,8 +510,9 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 reopen(allFunctions);
             }
             Function.init(allFunctions, this, executionContext, null);
+            final long expectedRows = baseCursor.size();
             for (int i = 0; i < orderedGroupCount; i++) {
-                sortBuffers.getQuick(i).of(this);
+                sortBuffers.getQuick(i).of(this, expectedRows);
             }
         }
 

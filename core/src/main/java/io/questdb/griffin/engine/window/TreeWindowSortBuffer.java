@@ -94,7 +94,7 @@ final class TreeWindowSortBuffer implements WindowSortBuffer {
     }
 
     @Override
-    public void of(RecordCursor cursor) {
+    public void of(RecordCursor cursor, long expectedRows) {
         this.sourceCursor = cursor;
         this.chainRightRecord = cursor.getRecordB();
         SortKeyEncoder.buildRankMaps(cursor, rankMaps, comparator);

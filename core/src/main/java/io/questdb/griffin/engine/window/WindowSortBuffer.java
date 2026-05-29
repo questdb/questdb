@@ -37,7 +37,7 @@ interface WindowSortBuffer extends QuietCloseable, Reopenable {
 
     long next();
 
-    void of(RecordCursor cursor);
+    void of(RecordCursor cursor, long expectedRows);
 
     void put(Record record, long rowId);
 

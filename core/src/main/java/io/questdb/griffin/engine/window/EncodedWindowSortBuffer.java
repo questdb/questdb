@@ -121,7 +121,7 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
     }
 
     @Override
-    public void of(RecordCursor cursor) {
+    public void of(RecordCursor cursor, long expectedRows) {
         keyType = encoder.init(cursor);
         assert keyType != SortKeyType.UNSUPPORTED;
         entrySize = keyType.entrySize();
@@ -130,6 +130,12 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
         maxEntries = maxEntryMemBytes / entrySize;
         count = 0;
         entryMem.clear();
+        if (expectedRows > 0) {
+            long requestedLongs = Math.min(expectedRows, maxEntries) * longsPerEntry;
+            if (requestedLongs > entryMem.getCapacity()) {
+                entryMem.setCapacity(requestedLongs);
+            }
+        }
         startAddr = entryMem.getAddress() + rowIdOffset;
         currentAddr = startAddr;
         endAddr = startAddr;
@@ -137,6 +143,7 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
 
     @Override
     public void put(Record record, long rowId) {
+        assert maxEntries > 0 : "put() called before of()";
         if (count >= maxEntries) {
             throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes)
                     .put(" memory exceeded in window encoded sort");
