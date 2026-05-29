@@ -32,6 +32,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -219,8 +220,9 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
      */
     static final class StreamingLagOverPartitionFunction extends LagOverPartitionFunction {
         private final CairoConfiguration configuration;
-        private final long defaultDateValue;
         private final ColumnTypes keyTypes;
+        // Resolved in init() after super.init() runs defaultValue.init(); see LagLongFunctionFactory.
+        private long defaultDateValue;
 
         public StreamingLagOverPartitionFunction(
                 CairoConfiguration configuration,
@@ -234,7 +236,7 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
             super(null, partitionByRecord, partitionBySink, null, arg, false, defaultValue, offset);
             this.configuration = configuration;
             this.keyTypes = keyTypes;
-            this.defaultDateValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getDate(null);
+            this.defaultDateValue = Numbers.LONG_NULL;
         }
 
         @Override
@@ -252,6 +254,12 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
                 );
             }
             super.computeNext(record);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            this.defaultDateValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getDate(null);
         }
 
         @Override
@@ -287,7 +295,10 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
             memory.putLong(startOffset + firstIdx * Long.BYTES, l);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lagValue);
 
-            firstIdx = (firstIdx + 1) % offset;
+            firstIdx++;
+            if (firstIdx == offset) {
+                firstIdx = 0;
+            }
             count++;
 
             Unsafe.getUnsafe().putLong(partitionStateAddr, startOffset);

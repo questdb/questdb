@@ -35,6 +35,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -45,7 +46,6 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -191,14 +191,15 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
      */
     static final class StreamingLeadFunction extends LeadFunction {
         private final CairoConfiguration configuration;
-        private final long defaultLongValue;
+        // Resolved in init() after super.init() runs defaultValue.init(); the planner restricts
+        // streaming dispatch to constants today, but resolving post-init keeps the contract robust
+        // if the constant filter is ever widened.
+        private long defaultLongValue;
 
         StreamingLeadFunction(CairoConfiguration configuration, Function arg, Function defaultValueFunc, long offset) {
             super(arg, defaultValueFunc, offset, null, false);
             this.configuration = configuration;
-            // Pre-resolve defaultValue at construction so streamingFlushDefault doesn't need a record.
-            // defaultValueFunc, when non-null, was validated as constant by the dispatch site.
-            this.defaultLongValue = defaultValueFunc == null ? Numbers.LONG_NULL : defaultValueFunc.getLong(null);
+            this.defaultLongValue = Numbers.LONG_NULL;
         }
 
         @Override
@@ -209,6 +210,12 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int getPassCount() {
             return ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            this.defaultLongValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getLong(null);
         }
 
         @Override
@@ -243,8 +250,9 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
      */
     static final class StreamingLeadOverPartitionFunction extends LeadOverPartitionFunction {
         private final CairoConfiguration configuration;
-        private final long defaultLongValue;
         private final ColumnTypes keyTypes;
+        // Resolved in init() after super.init() runs defaultValue.init(); see StreamingLeadFunction.
+        private long defaultLongValue;
 
         StreamingLeadOverPartitionFunction(
                 CairoConfiguration configuration,
@@ -258,7 +266,7 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
             super(null, partitionByRecord, partitionBySink, null, arg, false, defaultValue, offset);
             this.configuration = configuration;
             this.keyTypes = keyTypes;
-            this.defaultLongValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getLong(null);
+            this.defaultLongValue = Numbers.LONG_NULL;
         }
 
         @Override
@@ -269,6 +277,12 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int getPassCount() {
             return ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            this.defaultLongValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getLong(null);
         }
 
         @Override

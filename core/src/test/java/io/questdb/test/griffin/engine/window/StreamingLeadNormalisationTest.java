@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -42,7 +43,7 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
     }
 
-    @org.junit.Before
+    @Before
     public void reapplyStreamingLeadFlag() {
         // The standard test tearDown (Cairo.tearDown -> overrides.reset()) wipes property overrides
         // after every test, so the flag set in @BeforeClass survives only the first test. Re-apply

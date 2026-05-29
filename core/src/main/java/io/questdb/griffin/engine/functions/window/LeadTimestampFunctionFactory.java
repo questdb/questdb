@@ -34,6 +34,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -44,7 +45,6 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -147,12 +147,13 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
 
     static final class StreamingLeadFunction extends LeadFunction {
         private final CairoConfiguration configuration;
-        private final long defaultTimestampValue;
+        // Resolved in init() after super.init() runs defaultValue.init(); see LeadLongFunctionFactory.
+        private long defaultTimestampValue;
 
         StreamingLeadFunction(CairoConfiguration configuration, Function arg, Function defaultValueFunc, long offset) {
             super(arg, defaultValueFunc, offset, null, false);
             this.configuration = configuration;
-            this.defaultTimestampValue = resolveTimestampDefault(arg, defaultValueFunc);
+            this.defaultTimestampValue = Numbers.LONG_NULL;
         }
 
         @Override
@@ -163,6 +164,12 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
         @Override
         public int getPassCount() {
             return ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            this.defaultTimestampValue = resolveTimestampDefault(arg, defaultValue);
         }
 
         @Override
@@ -190,8 +197,9 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
 
     static final class StreamingLeadOverPartitionFunction extends LeadOverPartitionFunction {
         private final CairoConfiguration configuration;
-        private final long defaultTimestampValue;
         private final ColumnTypes keyTypes;
+        // Resolved in init() after super.init() runs defaultValue.init(); see LeadLongFunctionFactory.
+        private long defaultTimestampValue;
 
         StreamingLeadOverPartitionFunction(
                 CairoConfiguration configuration,
@@ -205,7 +213,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
             super(null, partitionByRecord, partitionBySink, null, arg, false, defaultValue, offset);
             this.configuration = configuration;
             this.keyTypes = keyTypes;
-            this.defaultTimestampValue = resolveTimestampDefault(arg, defaultValue);
+            this.defaultTimestampValue = Numbers.LONG_NULL;
         }
 
         @Override
@@ -216,6 +224,12 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
         @Override
         public int getPassCount() {
             return ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            this.defaultTimestampValue = resolveTimestampDefault(arg, defaultValue);
         }
 
         @Override

@@ -96,20 +96,20 @@ import java.util.Arrays;
  */
 public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorFactory {
 
+    private static final int FUNC_VALUE_BYTES = 8;       // each window function's value is 8 bytes
     // Base layout for the cursor's per-partition state: 5 LONGs. Streaming LAG variants extend
     // this layout with 3 LONGs each via {@link #buildPartitionValueTypes(int)} so they can store
     // (startOffset, firstIdx, count) inline in the cursor's MapValue and skip a second hash probe.
-    public static final ArrayColumnTypes PARTITION_VALUE_TYPES;
-    public static final int PARTITION_VALUE_BASE_LONGS = 5;
-    public static final int PARTITION_VALUE_LONGS_PER_LAG = 3;
-    private static final int FUNC_VALUE_BYTES = 8;       // each window function's value is 8 bytes
+    private static final int PARTITION_VALUE_BASE_LONGS = 5;
+    private static final int PARTITION_VALUE_LONGS_PER_LAG = 3;
+    private static final ArrayColumnTypes PARTITION_VALUE_TYPES;
     // Upfront partition slices to pre-allocate when a partitioned cursor first opens. Trades a small
     // amount of overcommit (most queries materialise under this many partitions) for elimination of
     // doubling reallocs in the typical case. Capped by maxPartitions inside of() so a deliberately
     // low cap is honoured.
     private static final long PENDING_MEM_PREALLOC_PARTITIONS = 256L;
-    private static final int ROWID_OFFSET = 0;
     private static final int ROWID_BYTES = 8;
+    private static final int ROWID_OFFSET = 0;
     private final RecordCursorFactory base;
     // For each output column index: the slot byte offset of that column's window value, or -1 if
     // the column is not a window function.
@@ -472,18 +472,23 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
             // Take ownership of baseCursor immediately so that close() handles cleanup if any
             // initialization step below throws. The caller (factory.getCursor) does not free
-            // baseCursor on its own.
+            // baseCursor on its own. Free any previous baseCursor first, in case of() is invoked
+            // twice without an intervening close().
+            this.baseCursor = Misc.free(this.baseCursor);
             this.baseCursor = baseCursor;
+            // Set isOpen ahead of any throw-prone calls below so close() runs the full cleanup
+            // path on failure. A previously-closed cursor enters of() with isOpen=false; without
+            // this assignment, close()'s early-exit would leak the newly assigned baseCursor.
+            if (!isOpen) {
+                isOpen = true;
+                reopenFunctions();
+            }
             // baseCursor.getRecordB() typically returns a cached B record; calling it on every
             // of() is cheap. The reference is reused across toTop() because toTop() resets ringHead
             // but does not re-call of(), so the B record we hold remains valid against the same
             // baseCursor.
             this.baseRecordForEmit = baseCursor.getRecordB();
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            if (!isOpen) {
-                isOpen = true;
-                reopenFunctions();
-            }
             if (pendingMem == null) {
                 // Page size = one partition's slice. In non-partitioned mode there is exactly one
                 // page; in partitioned mode each new partition extends pendingMem by one page via
@@ -498,6 +503,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     final long prealloc = Math.min(PENDING_MEM_PREALLOC_PARTITIONS, maxPartitions) * pageBytes;
                     pendingMem.jumpTo(prealloc);
                     pendingMem.jumpTo(0);
+                    // Refresh pendingBaseAddr defensively. allocatePartitionSlice refreshes it on
+                    // first partition touch today, but any caller (e.g. Function.init below) that
+                    // routed through getAddress() before then would dereference 0.
+                    pendingBaseAddr = pendingMem.getPageAddress(0);
                 }
             }
             if (partitionMap != null) {
@@ -526,6 +535,11 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         public void reopen() {
             if (!isOpen) {
                 isOpen = true;
+                // Restore per-function state that resetFunctions() tore down in close().
+                // The subsequent of() short-circuits its own reopenFunctions() now that isOpen=true,
+                // so reopen() must take responsibility here. Without this, reopen()-then-of() would
+                // leave streaming/cached window functions in their post-close state.
+                reopenFunctions();
             }
             if (partitionMap != null) {
                 partitionMap.clear();
@@ -703,11 +717,16 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     ringCount = 0L;
                     pendingFilled = 0L;
                 } else {
-                    slotsOff = mapValue.getLong(0);
-                    ringHead = mapValue.getLong(1);
-                    ringTail = mapValue.getLong(2);
-                    ringCount = mapValue.getLong(3);
-                    pendingFilled = mapValue.getLong(4);
+                    // Read the partition's state tuple through direct Unsafe to skip 5 interface
+                    // dispatches and 5 column-offset array indirections per existing-partition row.
+                    // The flyweight invariant is the same one the write-back at step 4 relies on:
+                    // nothing between here and the end of processBaseRow mutates partitionMap.
+                    final long addr = mapValue.getAddress(0);
+                    slotsOff = Unsafe.getUnsafe().getLong(addr);
+                    ringHead = Unsafe.getUnsafe().getLong(addr + Long.BYTES);
+                    ringTail = Unsafe.getUnsafe().getLong(addr + 2L * Long.BYTES);
+                    ringCount = Unsafe.getUnsafe().getLong(addr + 3L * Long.BYTES);
+                    pendingFilled = Unsafe.getUnsafe().getLong(addr + 4L * Long.BYTES);
                 }
             }
 
@@ -777,12 +796,18 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             // cursor has already resolved the partition; passing each LAG its co-located per-
             // partition state address (3 LONGs at offset PARTITION_VALUE_BASE_LONGS + lagIdx*3)
             // lets the LAG skip a redundant hash probe per row. In non-partitioned mode the
-            // address is 0 and streamingPass1's default falls back to plain pass1.
-            for (int i = 0, n = lagFunctionsArr.length; i < n; i++) {
-                long lagStateAddr = mapValueAddr == 0
-                        ? 0L
-                        : mapValueAddr + (long) (PARTITION_VALUE_BASE_LONGS + i * PARTITION_VALUE_LONGS_PER_LAG) * Long.BYTES;
-                lagFunctionsArr[i].streamingPass1(baseRow, newSlot, this, lagStateAddr);
+            // address is 0 and streamingPass1's default falls back to plain pass1. The branch on
+            // mapValueAddr is loop-invariant so the two arms are split out to avoid a compare per
+            // LAG per row.
+            if (mapValueAddr == 0L) {
+                for (int i = 0, n = lagFunctionsArr.length; i < n; i++) {
+                    lagFunctionsArr[i].streamingPass1(baseRow, newSlot, this, 0L);
+                }
+            } else {
+                for (int i = 0, n = lagFunctionsArr.length; i < n; i++) {
+                    long lagStateAddr = mapValueAddr + (long) (PARTITION_VALUE_BASE_LONGS + i * PARTITION_VALUE_LONGS_PER_LAG) * Long.BYTES;
+                    lagFunctionsArr[i].streamingPass1(baseRow, newSlot, this, lagStateAddr);
+                }
             }
             ringTail++;
             if (ringTail == ringCapacity) {

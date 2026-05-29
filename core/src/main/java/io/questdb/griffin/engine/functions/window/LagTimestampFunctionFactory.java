@@ -33,6 +33,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -257,8 +258,9 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
      */
     static final class StreamingLagOverPartitionFunction extends LagOverPartitionFunction {
         private final CairoConfiguration configuration;
-        private final long defaultTimestampValue;
         private final ColumnTypes keyTypes;
+        // Resolved in init() after super.init() runs defaultValue.init(); see LagLongFunctionFactory.
+        private long defaultTimestampValue;
 
         public StreamingLagOverPartitionFunction(
                 CairoConfiguration configuration,
@@ -272,13 +274,7 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
             super(null, partitionByRecord, partitionBySink, null, arg, false, defaultValue, offset);
             this.configuration = configuration;
             this.keyTypes = keyTypes;
-            if (defaultValue == null) {
-                this.defaultTimestampValue = Numbers.LONG_NULL;
-            } else {
-                final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
-                final int defaultType = ColumnType.getTimestampType(defaultValue.getType());
-                this.defaultTimestampValue = driver.from(defaultValue.getTimestamp(null), defaultType);
-            }
+            this.defaultTimestampValue = Numbers.LONG_NULL;
         }
 
         @Override
@@ -296,6 +292,18 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
                 );
             }
             super.computeNext(record);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            if (defaultValue == null) {
+                this.defaultTimestampValue = Numbers.LONG_NULL;
+            } else {
+                final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
+                final int defaultType = ColumnType.getTimestampType(defaultValue.getType());
+                this.defaultTimestampValue = driver.from(defaultValue.getTimestamp(null), defaultType);
+            }
         }
 
         @Override
@@ -331,7 +339,10 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
             memory.putLong(startOffset + firstIdx * Long.BYTES, l);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lagValue);
 
-            firstIdx = (firstIdx + 1) % offset;
+            firstIdx++;
+            if (firstIdx == offset) {
+                firstIdx = 0;
+            }
             count++;
 
             Unsafe.getUnsafe().putLong(partitionStateAddr, startOffset);

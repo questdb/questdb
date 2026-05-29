@@ -332,6 +332,123 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
     }
 
     @Test
+    public void testReopenAfterCloseRestoresFunctionState() throws Exception {
+        // Cursor lifecycle: close() -> Reopenable.reopen() -> of() should produce identical output
+        // to a fresh cursor. Without reopen() restoring window function state, the second of()
+        // would silently route through fields left in their post-close state.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (10, 0), (20, 1000), (30, 2000)");
+
+            try (RecordCursorFactory factory = newDeferredFactory(1)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Record rec = cursor.getRecord();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(10L, rec.getLong(0));
+                    Assert.assertEquals(20L, rec.getLong(1));
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertFalse(cursor.hasNext());
+
+                    cursor.close();
+                    ((io.questdb.cairo.Reopenable) cursor).reopen();
+                }
+                // Subsequent getCursor() exercises the reopen->of() path through factory caching.
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Record rec = cursor.getRecord();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(10L, rec.getLong(0));
+                    Assert.assertEquals(20L, rec.getLong(1));
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(20L, rec.getLong(0));
+                    Assert.assertEquals(30L, rec.getLong(1));
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(30L, rec.getLong(0));
+                    Assert.assertEquals(Numbers.LONG_NULL, rec.getLong(1));
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRejectsBaseWithoutRandomAccess() throws Exception {
+        // The cursor's last-line-of-defence constructor guard rejects bases that cannot recordAt.
+        // Without this test the only enforcement lives in SqlCodeGenerator's dispatch and any
+        // future direct caller would skip the guard.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (1, 0)");
+
+            final RecordCursorFactory base;
+            try (io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler()) {
+                base = compiler.compile("select x from t", sqlExecutionContext).getRecordCursorFactory();
+            }
+            RecordCursorFactory noRandomBase = new NoRandomAccessFactoryWrapper(base);
+
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("lead_x", ColumnType.LONG));
+
+            ObjList<Function> functions = new ObjList<>();
+            functions.add(LongColumn.newInstance(0));
+            TestStreamingLeadLongFunction lead = new TestStreamingLeadLongFunction(LongColumn.newInstance(0), 1);
+            lead.setColumnIndex(1);
+            functions.add(lead);
+
+            try {
+                new DeferredEmitWindowRecordCursorFactory(noRandomBase, metadata, functions, null, null, null, 1_048_576);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("supports random access"));
+            } finally {
+                Misc.free(noRandomBase);
+                Misc.freeObjList(functions);
+            }
+        });
+    }
+
+    @Test
+    public void testRejectsInconsistentPartitionTrio() throws Exception {
+        // The constructor's partition-trio invariant (all-null or all-non-null) catches dispatch
+        // bugs in SqlCodeGenerator where the cursor is constructed with a partial trio.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (1, 0)");
+
+            final RecordCursorFactory base;
+            try (io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler()) {
+                base = compiler.compile("select x from t", sqlExecutionContext).getRecordCursorFactory();
+            }
+
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("lead_x", ColumnType.LONG));
+
+            ObjList<Function> functions = new ObjList<>();
+            functions.add(LongColumn.newInstance(0));
+            TestStreamingLeadLongFunction lead = new TestStreamingLeadLongFunction(LongColumn.newInstance(0), 1);
+            lead.setColumnIndex(1);
+            functions.add(lead);
+
+            try {
+                // Pass a non-null partitionByRecord while leaving partitionBySink and partitionMap null.
+                new DeferredEmitWindowRecordCursorFactory(
+                        base, metadata, functions,
+                        new io.questdb.cairo.sql.VirtualRecord(new ObjList<>()),
+                        null, null, 1_048_576
+                );
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must all be null or all non-null"));
+            } finally {
+                Misc.free(base);
+                Misc.freeObjList(functions);
+            }
+        });
+    }
+
+    @Test
     public void testToTopReexecutesIdentically() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
@@ -398,6 +515,40 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
             Misc.free(base);
             Misc.freeObjList(functions);
             throw t;
+        }
+    }
+
+    /**
+     * Wraps a base factory but reports recordCursorSupportsRandomAccess()==false so the cursor
+     * constructor's random-access guard fires.
+     */
+    private static final class NoRandomAccessFactoryWrapper extends io.questdb.cairo.AbstractRecordCursorFactory {
+        private final RecordCursorFactory delegate;
+
+        NoRandomAccessFactoryWrapper(RecordCursorFactory delegate) {
+            super(delegate.getMetadata());
+            this.delegate = delegate;
+        }
+
+        @Override
+        public RecordCursor getCursor(io.questdb.griffin.SqlExecutionContext executionContext) throws SqlException {
+            return delegate.getCursor(executionContext);
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("NoRandomAccessFactoryWrapper");
+            sink.child(delegate);
+        }
+
+        @Override
+        protected void _close() {
+            Misc.free(delegate);
         }
     }
 

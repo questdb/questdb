@@ -9291,7 +9291,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // cached is already optimal (orders match natural scan direction, so cached just materialises
             // into a RecordArray and walks linearly). Normalisation fires precisely when there's a sort
             // tree to eliminate.
-            boolean normalisationFiredAnywhere = false;
+            boolean hasNormalisationFiredAnywhere = false;
 
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
@@ -9347,7 +9347,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // against pool-recycled AST reuse across re-compilations).
                     ExpressionNode astForParse = ast;
                     int effectiveOrderByDirection = osz > 0 ? ac.getOrderByDirection().getQuick(0) : ORDER_ASC;
-                    boolean leadLagNormalised = false;
+                    boolean isLeadLagNormalised = false;
                     if (configuration.getSqlWindowStreamingLeadEnabled()
                             && osz == 1
                             && timestampIdx != -1
@@ -9355,9 +9355,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             && !ac.isIgnoreNulls()) {
                         int dir = ac.getOrderByDirection().getQuick(0);
                         int baseDir = base.getScanDirection();
-                        boolean mismatch = (dir == ORDER_ASC && baseDir == RecordCursorFactory.SCAN_DIRECTION_BACKWARD)
+                        boolean isMismatch = (dir == ORDER_ASC && baseDir == RecordCursorFactory.SCAN_DIRECTION_BACKWARD)
                                 || (dir == ORDER_DESC && baseDir == RecordCursorFactory.SCAN_DIRECTION_FORWARD);
-                        if (mismatch) {
+                        if (isMismatch) {
                             CharSequence newToken = null;
                             if (Chars.equalsIgnoreCase("lag", ast.token)) {
                                 newToken = "lead";
@@ -9368,8 +9368,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 astForParse = ExpressionNode.deepClone(expressionNodePool, ast);
                                 astForParse.token = newToken;
                                 effectiveOrderByDirection = dir == ORDER_ASC ? ORDER_DESC : ORDER_ASC;
-                                leadLagNormalised = true;
-                                normalisationFiredAnywhere = true;
+                                isLeadLagNormalised = true;
+                                hasNormalisationFiredAnywhere = true;
                             }
                         }
                     }
@@ -9378,7 +9378,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         dismissOrder = true;
                         for (int j = 0; j < osz; j++) {
                             ExpressionNode node = ac.getOrderBy().getQuick(j);
-                            int direction = j == 0 && leadLagNormalised
+                            int direction = j == 0 && isLeadLagNormalised
                                     ? effectiveOrderByDirection
                                     : ac.getOrderByDirection().getQuick(j);
                             if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
@@ -9390,7 +9390,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     if (!dismissOrder && osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
                         ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
-                        int orderByDirection = leadLagNormalised
+                        int orderByDirection = isLeadLagNormalised
                                 ? effectiveOrderByDirection
                                 : ac.getOrderByDirection().getQuick(0);
 
@@ -9408,7 +9408,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // requires dismissOrder=true to skip comparator-driven sorting. If we ever land
                     // here with normalisation set and dismissOrder still false, the function would
                     // run with a stale direction on the cached path.
-                    assert !leadLagNormalised || dismissOrder
+                    assert !isLeadLagNormalised || dismissOrder
                             : "Phase 4 normalisation requires dismissOrder; otherwise the swapped function would receive the original (now mismatched) OVER ORDER BY direction";
 
                     executionContext.configureWindowContext(
@@ -9529,7 +9529,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // pending-bit mask fits in one long. All window function values must be 8-byte
                 // fixed-width types (Long/Double/Date/Timestamp/Int/Float/Decimal<=64).
                 final int ringCap = maxLookahead + 1;
-                boolean allWindowsFit8Bytes = true;
+                boolean allWindowsAreFit8Bytes = true;
                 if (lookaheadFunctionCount >= 1) {
                     for (int i = 0, n = functions.size(); i < n; i++) {
                         Function f = functions.getQuick(i);
@@ -9547,7 +9547,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     || tag == ColumnType.DOUBLE
                                     || tag == ColumnType.DATE
                                     || tag == ColumnType.TIMESTAMP)) {
-                                allWindowsFit8Bytes = false;
+                                allWindowsAreFit8Bytes = false;
                                 break;
                             }
                         }
@@ -9564,46 +9564,46 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 //   (map lookup, slot allocation, recordAt) is pure tax.
                 // Worth tightening into a real cost model later (e.g. a min-rowcount guard for the
                 // pure-LEAD branch on tiny tables); for now the shape check is the entire gate.
-                boolean streamingDispatchEligible = normalisationFiredAnywhere
+                boolean isStreamingDispatchEligible = hasNormalisationFiredAnywhere
                         || lookaheadFunctionCount == windowFunctionCount;
                 // The cursor maintains a single per-partition map keyed by ONE window expression's
                 // PARTITION BY clause. All window functions in the query must agree on partition
                 // semantics, otherwise their slots share the wrong partition state and produce
                 // wrong values. Compare every window column's PARTITION BY against the first
                 // column's; bail to cached on any divergence.
-                boolean allWindowsSharePartitionBy = true;
+                boolean allWindowsShareSamePartitionBy = true;
                 if (lookaheadFunctionCount >= 1) {
                     ObjList<ExpressionNode> sharedPartitionBy = null;
-                    boolean sharedInitialised = false;
-                    for (int i = 0, n = columns.size(); i < n && allWindowsSharePartitionBy; i++) {
+                    boolean isSharedInitialised = false;
+                    for (int i = 0, n = columns.size(); i < n && allWindowsShareSamePartitionBy; i++) {
                         QueryColumn qc = columns.getQuick(i);
                         if (!qc.isWindowExpression()) {
                             continue;
                         }
                         ObjList<ExpressionNode> pb = ((WindowExpression) qc).getPartitionBy();
-                        if (!sharedInitialised) {
+                        if (!isSharedInitialised) {
                             sharedPartitionBy = pb;
-                            sharedInitialised = true;
+                            isSharedInitialised = true;
                             continue;
                         }
                         if (sharedPartitionBy.size() != pb.size()) {
-                            allWindowsSharePartitionBy = false;
+                            allWindowsShareSamePartitionBy = false;
                             break;
                         }
                         for (int j = 0, m = pb.size(); j < m; j++) {
                             if (!ExpressionNode.compareNodesExact(sharedPartitionBy.getQuick(j), pb.getQuick(j))) {
-                                allWindowsSharePartitionBy = false;
+                                allWindowsShareSamePartitionBy = false;
                                 break;
                             }
                         }
                     }
                 }
                 if (lookaheadFunctionCount >= 1
-                        && allWindowsFit8Bytes
+                        && allWindowsAreFit8Bytes
                         && (long) ringCap * lookaheadFunctionCount <= 64
                         && base.recordCursorSupportsRandomAccess()
-                        && streamingDispatchEligible
-                        && allWindowsSharePartitionBy) {
+                        && isStreamingDispatchEligible
+                        && allWindowsShareSamePartitionBy) {
                     // The lookahead window function has already parsed its PARTITION BY clause in the
                     // first pass above. Reuse those Function instances directly for the cursor's
                     // partition record instead of parsing the same expressions a second time. The
@@ -9620,7 +9620,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (psz > 0) {
                             final Function lookaheadFunc = functions.getQuick(lookaheadColumnIndex);
                             if (!(lookaheadFunc instanceof BasePartitionedWindowFunction sharedSrc)) {
-                                throw SqlException.$(0, "expected partitioned window function for streaming dispatch");
+                                throw SqlException.$(leadCol.getAst().position, "expected partitioned window function for streaming dispatch");
                             }
                             final VirtualRecord sharedPartitionRecord = sharedSrc.getPartitionByRecord();
                             cursorPartitionByRecord = new VirtualRecord(sharedPartitionRecord.getFunctions());

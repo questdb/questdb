@@ -33,6 +33,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -43,7 +44,6 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -136,12 +136,13 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
 
     static final class StreamingLeadFunction extends LeadFunction {
         private final CairoConfiguration configuration;
-        private final double defaultDoubleValue;
+        // Resolved in init() after super.init() runs defaultValue.init(); see LeadLongFunctionFactory.
+        private double defaultDoubleValue;
 
         StreamingLeadFunction(CairoConfiguration configuration, Function arg, Function defaultValueFunc, long offset) {
             super(arg, defaultValueFunc, offset, null, false);
             this.configuration = configuration;
-            this.defaultDoubleValue = defaultValueFunc == null ? Double.NaN : defaultValueFunc.getDouble(null);
+            this.defaultDoubleValue = Double.NaN;
         }
 
         @Override
@@ -152,6 +153,12 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int getPassCount() {
             return ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            this.defaultDoubleValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(null);
         }
 
         @Override
@@ -179,8 +186,9 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
 
     static final class StreamingLeadOverPartitionFunction extends LeadOverPartitionFunction {
         private final CairoConfiguration configuration;
-        private final double defaultDoubleValue;
         private final ColumnTypes keyTypes;
+        // Resolved in init() after super.init() runs defaultValue.init(); see LeadLongFunctionFactory.
+        private double defaultDoubleValue;
 
         StreamingLeadOverPartitionFunction(
                 CairoConfiguration configuration,
@@ -194,7 +202,7 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             super(null, partitionByRecord, partitionBySink, null, arg, false, defaultValue, offset);
             this.configuration = configuration;
             this.keyTypes = keyTypes;
-            this.defaultDoubleValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(null);
+            this.defaultDoubleValue = Double.NaN;
         }
 
         @Override
@@ -205,6 +213,12 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int getPassCount() {
             return ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            this.defaultDoubleValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(null);
         }
 
         @Override

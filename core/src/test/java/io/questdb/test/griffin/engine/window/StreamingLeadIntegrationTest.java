@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -37,7 +38,7 @@ import org.junit.Test;
  */
 public class StreamingLeadIntegrationTest extends AbstractCairoTest {
 
-    @org.junit.Before
+    @Before
     public void reapplyStreamingLeadFlag() {
         // The standard test tearDown (Cairo.tearDown -> overrides.reset()) wipes property overrides
         // after every test, so the flag set in @BeforeClass survives only the first test. Re-apply
@@ -408,6 +409,70 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.003000Z\t
                             """,
                     "select ts, lead(ts, 1) over () as lts from t",
+                    "ts", false, true
+            );
+        });
+    }
+
+    @Test
+    public void testLeadDateWithTypedDefaultStreamsAndFlushes() throws Exception {
+        // Exercises StreamingLeadFunction.streamingFlushDefault on the DATE path with a non-NULL,
+        // non-LONG-typed default. The last row has no lookahead value, so the flush phase emits
+        // the resolved default — proving the constructor's defaultValue.getDate(null) round-trips
+        // correctly to the slot's 8-byte storage.
+        assertMemoryLeak(() -> {
+            execute("create table t (d date, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (cast(100 as date), 0), (cast(200 as date), 1000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            d\tld
+                            1970-01-01T00:00:00.100Z\t1970-01-01T00:00:00.200Z
+                            1970-01-01T00:00:00.200Z\t1970-01-01T00:00:01.000Z
+                            """,
+                    "select d, lead(d, 1, cast(1000 as date)) over () as ld from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testLeadDoubleWithTypedDefaultStreamsAndFlushes() throws Exception {
+        // Exercises StreamingLeadFunction.streamingFlushDefault on the DOUBLE path with a non-NaN
+        // default. Proves the constructor's defaultValue.getDouble(null) value reaches the flushed
+        // row without going through the cached fallback.
+        assertMemoryLeak(() -> {
+            execute("create table t (d double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (1.5, 0), (2.5, 1000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            d\tld
+                            1.5\t2.5
+                            2.5\t3.14
+                            """,
+                    "select d, lead(d, 1, 3.14) over () as ld from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testLeadTimestampWithTypedDefaultStreamsAndFlushes() throws Exception {
+        // Exercises StreamingLeadFunction.streamingFlushDefault on the TIMESTAMP path with a non-NULL
+        // default. The default goes through TimestampDriver.from to handle DATE<->TIMESTAMP unit
+        // conversion; this test pins that conversion path under streaming dispatch.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (1000), (2000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tlts
+                            1970-01-01T00:00:00.001000Z\t1970-01-01T00:00:00.002000Z
+                            1970-01-01T00:00:00.002000Z\t2026-01-01T00:00:00.000000Z
+                            """,
+                    "select ts, lead(ts, 1, '2026-01-01T00:00:00.000000Z'::timestamp) over () as lts from t",
                     "ts", false, true
             );
         });

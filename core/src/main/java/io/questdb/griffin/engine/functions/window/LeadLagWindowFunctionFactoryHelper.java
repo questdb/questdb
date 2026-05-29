@@ -62,7 +62,7 @@ public class LeadLagWindowFunctionFactoryHelper {
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext,
                                 DefaultValueExtraChecker defaultValueExtraChecker,
-                                LagConstructor LagConstructor,
+                                LagConstructor lagConstructor,
                                 LagCurrentRowConstructor lagCurrentRowConstructor,
                                 LagOverPartitionConstructor lagOverPartitionConstructor) throws SqlException {
         final WindowContext windowContext = sqlExecutionContext.getWindowContext();
@@ -137,7 +137,7 @@ public class LeadLagWindowFunctionFactoryHelper {
                     configuration.getSqlWindowStoreMaxPages(),
                     MemoryTag.NATIVE_CIRCULAR_BUFFER
             );
-            return LagConstructor.newFunction(args.get(0), defaultValue, offset, mem, windowContext.isIgnoreNulls());
+            return lagConstructor.newFunction(args.get(0), defaultValue, offset, mem, windowContext.isIgnoreNulls());
         } catch (Throwable th) {
             Misc.free(mem);
             throw th;
@@ -382,14 +382,14 @@ public class LeadLagWindowFunctionFactoryHelper {
             }
         }
 
-        abstract protected boolean computeNext0(long count,
+        protected abstract boolean computeNext0(long count,
                                                 long offset,
                                                 long startOffset,
                                                 long firstIdx,
                                                 Record record);
     }
 
-    static abstract class BaseLeadFunction extends BaseWindowFunction implements Reopenable {
+    abstract static class BaseLeadFunction extends BaseWindowFunction implements Reopenable {
         // Non-final to allow streaming-LEAD subclasses to lazy-allocate the cached-fallback ring
         // buffer on first pass1 invocation. close() and reset() use Misc.free so a null buffer
         // (streaming path never reaches pass1) does not NPE.

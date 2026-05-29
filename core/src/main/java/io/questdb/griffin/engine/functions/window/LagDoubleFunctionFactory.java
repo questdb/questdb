@@ -32,6 +32,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -220,8 +221,9 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
      */
     static final class StreamingLagOverPartitionFunction extends LagOverPartitionFunction {
         private final CairoConfiguration configuration;
-        private final double defaultDoubleValue;
         private final ColumnTypes keyTypes;
+        // Resolved in init() after super.init() runs defaultValue.init(); see LagLongFunctionFactory.
+        private double defaultDoubleValue;
 
         public StreamingLagOverPartitionFunction(
                 CairoConfiguration configuration,
@@ -235,7 +237,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             super(null, partitionByRecord, partitionBySink, null, arg, false, defaultValue, offset);
             this.configuration = configuration;
             this.keyTypes = keyTypes;
-            this.defaultDoubleValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(null);
+            this.defaultDoubleValue = Double.NaN;
         }
 
         @Override
@@ -253,6 +255,12 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 );
             }
             super.computeNext(record);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            this.defaultDoubleValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(null);
         }
 
         @Override
@@ -288,7 +296,10 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             memory.putDouble(startOffset + firstIdx * Double.BYTES, d);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
 
-            firstIdx = (firstIdx + 1) % offset;
+            firstIdx++;
+            if (firstIdx == offset) {
+                firstIdx = 0;
+            }
             count++;
 
             Unsafe.getUnsafe().putLong(partitionStateAddr, startOffset);
