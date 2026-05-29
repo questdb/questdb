@@ -288,6 +288,83 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddPostingCoveringIndexAllNullFixedAndVarSizeNativeWal() throws Exception {
+        // Native counterpart to ...SkipsScratchForAllNullParquetWal /
+        // ...AllNullRowGroupsParquetWal. A fixed-size (qty INT) and a var-size
+        // (tag VARCHAR) covered column are added AFTER two native partitions are
+        // fully populated, so column_top == partition_size on both and qty.d /
+        // tag.d / tag.i are 0-byte files there. A third native partition carries
+        // real qty/tag values. ALTER ADD INDEX builds the covering index for all
+        // three partitions: the native build path (PostingIndexWriter.mapColumnFile)
+        // must skip the empty covered files for the two back-filled partitions
+        // and let the indexer synthesise nulls via the rowId < colTop fast path,
+        // while materialising the third. The covering scan must match the
+        // no_covering fallback row-for-row. The pre-existing native all-null
+        // tests cover only a VARCHAR column; this pins the fixed-size case too.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_allnull_native (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_allnull_native
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE
+                    FROM long_sequence(100)
+                    UNION ALL
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-02T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+
+            // Added after 2024-01-01 and 2024-01-02 are full: column_top equals
+            // partition_size on both, so qty.d / tag.d / tag.i are 0-byte files.
+            execute("ALTER TABLE t_allnull_native ADD COLUMN qty INT");
+            execute("ALTER TABLE t_allnull_native ADD COLUMN tag VARCHAR");
+            drainWalQueue();
+
+            // A later native partition where qty/tag carry real values, so the
+            // index build exercises both the all-null skip and a populated seal.
+            execute("""
+                    INSERT INTO t_allnull_native
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-03T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE, x::INT, 'V' || (x % 4)
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+            // No CONVERT -- every partition stays native.
+            execute("ALTER TABLE t_allnull_native ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty, tag)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_allnull_native'"
+            );
+            // 25 sym='A0' rows per partition (75 total). qty/tag null on the two
+            // back-filled partitions (50 rows) and populated on the third (25).
+            assertSql(
+                    "rows\tnull_qty\tnull_tag\tv0_tag\n75\t50\t50\t25\n",
+                    "SELECT count(*) rows, " +
+                            "sum(CASE WHEN qty IS NULL THEN 1 ELSE 0 END) null_qty, " +
+                            "sum(CASE WHEN tag IS NULL THEN 1 ELSE 0 END) null_tag, " +
+                            "sum(CASE WHEN tag = 'V0' THEN 1 ELSE 0 END) v0_tag " +
+                            "FROM t_allnull_native WHERE sym = 'A0'"
+            );
+            assertSqlCursors(
+                    "SELECT ts, sym, price, qty, tag FROM t_allnull_native WHERE sym = 'A0' ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, sym, price, qty, tag FROM t_allnull_native WHERE sym = 'A0' ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
     public void testAddPostingCoveringIndexAllNullRowGroupsParquetWal() throws Exception {
         // A fixed-size (qty INT) and a var-size (tag VARCHAR) covered column are
         // both added MID-PARTITION: 50 rows exist before ADD COLUMN, 50 after,
@@ -558,6 +635,59 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddPostingCoveringIndexIncludesFixedSizeColumnAddedToFullyPopulatedNativeWal() throws Exception {
+        // Fixed-size sibling of ...IncludesColumnAddedToFullyPopulatedNativeWal.
+        // qty INT is added AFTER the native partition is fully populated, so
+        // column_top == partition_row_count and qty.d is a 0-byte file; every
+        // row reads qty as null. The native covering build
+        // (PostingIndexWriter.mapColumnFile) must skip the empty fixed-size file
+        // and let the indexer synthesise nulls via the rowId < colTop fast path,
+        // matching the Parquet provider variant. The existing native test covers
+        // only a VARCHAR column, which always took the empty-file skip; this
+        // pins the fixed-size case.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_added_fixed_n (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_added_fixed_n
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_added_fixed_n ADD COLUMN qty INT");
+            drainWalQueue();
+            // No CONVERT -- native partition. column_top for qty == 100; all rows
+            // read qty as null.
+            execute("ALTER TABLE t_added_fixed_n ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_added_fixed_n'"
+            );
+            // 25 sym='A0' rows, sum(price)=1300, all-null qty -- identical shape
+            // to the VARCHAR sibling test above.
+            assertSql(
+                    "rows\tsum_price\tnull_qty\n25\t1300.0\t25\n",
+                    "SELECT count(*) rows, sum(price) sum_price, " +
+                            "sum(CASE WHEN qty IS NULL THEN 1 ELSE 0 END) null_qty " +
+                            "FROM t_added_fixed_n WHERE sym = 'A0'"
+            );
+            assertSqlCursors(
+                    "SELECT ts, sym, price, qty FROM t_added_fixed_n WHERE sym = 'A0' ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, sym, price, qty FROM t_added_fixed_n WHERE sym = 'A0' ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
     public void testAddPostingCoveringIndexNewColumnAfterAllParquetThenNativeAppendWal() throws Exception {
         // Two parquet historic partitions + a native last partition where the
         // new column has actual data, exercising column_top on both sides at
@@ -798,6 +928,65 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertSqlCursors(
                     "SELECT ts, sym2, price FROM t_repro_sym2 WHERE sym2 = 'B0' ORDER BY ts",
                     "SELECT /*+ no_covering */ ts, sym2, price FROM t_repro_sym2 WHERE sym2 = 'B0' ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexParquetVarSizeScratchMmapExtendsWal() throws Exception {
+        // Forces the parquet single-pass build to extend (mremap) the var-size
+        // covered-column DATA scratch mmap mid-decode. prepareCoveredColumnMmaps
+        // pre-sizes that scratch to the data-append page size (2 MB in tests) and
+        // grows it on demand as accumulateCoveredColumnsFromRowGroup appends each
+        // row group's decoded data via putBlockOfBytes. A STRING covered column
+        // whose decoded data exceeds 2 MB across several row groups triggers an
+        // extend that may relocate the mapping base; configureCoveringFromMmaps
+        // must then read the post-extend addressOf(0), not a stale base, when it
+        // wires the seal. Every other parquet var-size test stays within a few KB
+        // (single page, no extend) and the large var-size tests are native (a
+        // different memory class), so this is the only coverage of the extend.
+        //
+        // 8000 rows x 200-char STRING is ~3.2 MB of .d data; a 2000-row parquet
+        // row group is ~0.8 MB, so the running total crosses 2 MB on the third
+        // group and the remaining groups append past the extend.
+        node1.setProperty(io.questdb.PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2000);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_vs_extend (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        s STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_vs_extend
+                    SELECT
+                        dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        rnd_str(200, 200, 0)
+                    FROM long_sequence(8000)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_vs_extend CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t_vs_extend ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (s)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_vs_extend'"
+            );
+            // The covering scan reads s from the sidecar built off the extended
+            // scratch mmap; it must match the no_covering fallback for every row.
+            // WHERE sym = 'A0' selects the covering factory (a bare ORDER BY ts
+            // would not). 2000 of the 8000 rows have sym = 'A0'.
+            assertSql(
+                    "count\n2000\n",
+                    "SELECT count() FROM t_vs_extend WHERE sym = 'A0'"
+            );
+            assertSqlCursors(
+                    "SELECT ts, sym, s FROM t_vs_extend WHERE sym = 'A0' ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, sym, s FROM t_vs_extend WHERE sym = 'A0' ORDER BY ts"
             );
         });
     }
