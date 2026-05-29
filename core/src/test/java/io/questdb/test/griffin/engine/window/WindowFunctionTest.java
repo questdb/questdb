@@ -7679,6 +7679,36 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagOverDescDuplicateTimestampRegression() throws Exception {
+        // The LAG<->LEAD swap rewrite (rewriteLagLeadForBaseScan) turns
+        // LAG(v, n) OVER (ORDER BY ts DESC) into LEAD(v, n) OVER (ORDER BY ts ASC)
+        // and dismisses the sort, relying on the identity "previous in DESC order ==
+        // next in base order". That identity only holds when the designated timestamp
+        // is unique. With duplicate timestamps the engine breaks ties in ascending
+        // rowId order in both sort directions, so a genuine ts DESC sort keeps tie
+        // groups ascending - it is not the mirror image of base order. The expected
+        // column below is the genuine ts DESC ordering [30, 20, 21, 22, 10] with
+        // ascending-rowId tie-break, which is what an unrewritten DESC sort (and
+        // master) produces.
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, v long) timestamp(ts)");
+            execute("insert into tab values (1, 10), (2, 20), (2, 21), (2, 22), (3, 30)");
+            assertQueryNoLeakCheck(
+                    "v\tlg\n" +
+                            "10\t22\n" +
+                            "20\t30\n" +
+                            "21\t20\n" +
+                            "22\t21\n" +
+                            "30\tnull\n",
+                    "SELECT v, LAG(v, 1) OVER (ORDER BY ts DESC) lg FROM tab",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testLeadException() throws Exception {
         executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
         assertExceptionNoLeakCheck(
