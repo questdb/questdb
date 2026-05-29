@@ -4410,6 +4410,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         JoinRecordMetadata innerMetadata = null;
         ObjList<GroupByFunction> groupByFunctions = null;
         ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
+        ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
 
         try {
             // Check slave factory supports TimeFrameCursor for parallel cursor creation
@@ -4505,8 +4506,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 filterUsedColumnIndexes.add(masterTimestampColumnIndex);
                 filterFactory.halfClose();
             }
-
-            ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
 
             if (supportsParallelism) {
                 // HORIZON JOIN tasks are "heavy", hence smaller frame sizes
@@ -4880,6 +4879,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (perWorkerGroupByFunctions != null) {
                 for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                     Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
+                }
+            }
+            if (perWorkerKeyFunctions != null) {
+                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                    Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
                 }
             }
             Misc.free(compiledFilter);
