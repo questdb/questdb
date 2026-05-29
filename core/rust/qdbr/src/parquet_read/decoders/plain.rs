@@ -387,6 +387,7 @@ mod tests {
             aux_ptr: ptr::null_mut(),
             aux_vec: AcVec::new_in(allocator.clone()),
             page_buffers: Vec::new(),
+            column_top: 0,
         }
     }
 

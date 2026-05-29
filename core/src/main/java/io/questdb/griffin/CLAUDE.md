@@ -318,37 +318,39 @@ Both paths **must produce identical results** for the same conversion. This mean
 **BYTE/SHORT/BOOLEAN have no null sentinel.** Converting a nullable type (INT, LONG, etc.)
 to BYTE/SHORT loses null information — nulls become 0. This is a known semantic gap.
 
-## Parquet Schema Repetition for BYTE/SHORT/CHAR
+## Parquet Schema Repetition for BOOLEAN/BYTE/SHORT/CHAR
 
 `core/rust/qdbr/src/parquet_write/schema.rs` decides the parquet `Repetition` per column.
 On master, BOOLEAN, BYTE, SHORT and CHAR were all written as `Required` — none of them have
 an in-band null sentinel, and the file-level schema was kept stable across O3 merges.
 
-This branch narrows `is_notnull_type` to BOOLEAN only. BYTE, SHORT and CHAR are now written
-as `Optional`. The data values themselves still cannot be null (their `Nullable::is_null()`
-returns `false` unconditionally), so only column-top rows take the null branch — those rows
-are marked with definition level 0.
+Now every non-designated column is written `Optional`; only the designated timestamp stays
+`Required` (it is never null). BOOLEAN, BYTE, SHORT and CHAR data values still cannot be null
+(their `Nullable::is_null()` returns `false` unconditionally), so only column-top rows take
+the null branch — those rows are marked with definition level 0.
 
-**Why**: column type conversion. When `ALTER COLUMN TYPE` converts SHORT→INT lazily on a
-parquet partition, the column-top region for the source SHORT column must materialise as
-INT_NULL on read. With `Required` repetition there is no way to distinguish column-top
-rows from real zeros at the parquet layer; the lazy decoder would produce `0` in INT space
-instead of `Integer.MIN_VALUE`, diverging from the native ALTER path which sees NULL via
-the `.top` file. Making the schema `Optional` lets def-level=0 carry the column-top NULL
-signal through to the decoder.
+**Why**: column type conversion. When `ALTER COLUMN TYPE` converts SHORT→INT (or BOOLEAN→INT)
+lazily on a parquet partition, the column-top region for the source column must materialise as
+INT_NULL on read. With `Required` repetition there is no way to distinguish column-top rows
+from real zeros/`false` at the parquet layer; the lazy decoder would produce `0` in INT space
+instead of `Integer.MIN_VALUE`, diverging from the native ALTER path which sees NULL via the
+`.top` file. Making the schema `Optional` lets def-level=0 carry the column-top NULL signal
+through to the decoder.
 
-**Test impact**: parquet schema assertions for BYTE/SHORT/CHAR columns must use
+**Test impact**: parquet schema assertions for BOOLEAN/BYTE/SHORT/CHAR columns must use
 `assertSchemaNullable` (maxDefinitionLevel=1), and Java-side reader values for column-top
-rows of these types are 0 while the parquet reader returns `null` — comparisons must use
-`assertPrimitiveValue(..., 0)` rather than strict `assertEquals`. BOOLEAN remains `Required`
-(bit-packed pages don't carry def levels), so column-top rows of BOOLEAN columns serialize
-as `false`, matching the reader's default.
+rows of these types are 0/`false` while the parquet reader returns `null` — comparisons must
+use `assertPrimitiveValue(..., 0)` / `assertPrimitiveValue(..., false)` rather than strict
+`assertEquals`.
 
 **Caveat**: `parquet_write/encoders/{plain,delta_binary_packed,rle_dictionary}` notnull
 encoder paths assert `Repetition::Required` and panic if handed an Optional column. The
 BYTE/SHORT/CHAR arms of `encode_int32_dispatch` are therefore routed to the
-`encode_int_nullable` variants for every encoding (Plain, DeltaBinaryPacked,
-RleDictionary). Schema and encoder dispatch must stay in sync.
+`encode_int_nullable` variants for every encoding (Plain, DeltaBinaryPacked, RleDictionary),
+and `encode_boolean_dispatch` routes to `encode_boolean_nullable` (which emits def levels and
+bit-packs only the non-null values). Each dispatch still falls back to the `Required`/notnull
+encoder when a legacy file's preserved schema says `Required`. Schema and encoder dispatch
+must stay in sync.
 
 ## Key Files
 

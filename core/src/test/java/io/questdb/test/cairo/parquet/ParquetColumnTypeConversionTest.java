@@ -2562,11 +2562,26 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     private void assertConversionWithEncoding(String sourceType, String targetType, String values, String encoding) throws Exception {
         try {
-            execute("CREATE TABLE nt (val " + sourceType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE pt (val " + sourceType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Create the table without 'val' and seed one row before adding the column, so
+            // 'val' carries a column-top region in the 2024-01-01 partition. The seed row
+            // sorts before every value row (which start at 00:00:01), so the parquet file
+            // stores it as a def-level=0 (NULL) entry. This makes every conversion test also
+            // assert that column-top rows materialise as the target type's NULL -- both on the
+            // lazy parquet read and after CONVERT PARTITION TO NATIVE -- exactly as the native
+            // ALTER path does. The remaining value rows still cover the non-column-top path.
+            execute("CREATE TABLE nt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            execute("INSERT INTO nt VALUES " + values);
-            execute("INSERT INTO pt VALUES " + values);
+            execute("INSERT INTO nt(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO pt(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE nt ADD COLUMN val " + sourceType);
+            execute("ALTER TABLE pt ADD COLUMN val " + sourceType);
+            drainWalQueue();
+
+            execute("INSERT INTO nt(val, ts) VALUES " + values);
+            execute("INSERT INTO pt(val, ts) VALUES " + values);
             drainWalQueue();
 
             if (encoding != null) {

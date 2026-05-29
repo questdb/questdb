@@ -107,6 +107,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     // / getLong256B / getStrB-like helper is called.
     protected int columnCount;
     protected int columnOffset;
+    // Per-column leading column-top count for the current parquet frame (reference into the
+    // frame's buffers, like pageAddresses); null for native frames. A lazy fixed->var
+    // conversion returns NULL for rows below this count, since the decoded source value of a
+    // column-top row is an in-band 0 indistinguishable from a real 0.
+    protected DirectLongList columnTops;
     protected byte frameFormat = -1;
     protected int frameIndex = -1;
     // True when any column in the current frame needs lazy fixed->var conversion.
@@ -149,6 +154,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.auxPageSizes = other.auxPageSizes;
         this.columnOffset = other.columnOffset;
         this.columnCount = other.columnCount;
+        this.columnTops = other.columnTops;
         this.stableStrings = other.stableStrings;
         this.hasTypeCasts = other.hasTypeCasts;
         // Deep-copy the per-column conversion state. Sharing the reference would race
@@ -171,6 +177,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         auxPageAddresses = null;
         pageSizes = null;
         auxPageSizes = null;
+        columnTops = null;
         // Reset the type-cast gate and its backing data symmetrically: in steady state
         // the gate is what protects readers from a stale sourceColumnTypes, but clearing
         // both keeps the cleared-state invariant honest and avoids relying on every
@@ -780,6 +787,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.auxPageSizes = frameMemory.getAuxPageSizes();
         this.columnOffset = frameMemory.getColumnOffset();
         this.columnCount = frameMemory.getColumnCount();
+        this.columnTops = frameMemory.getColumnTops();
         if (this.hasTypeCasts) {
             // Copy source column types from PageFrameMemory.
             if (this.sourceColumnTypes == null) {
@@ -854,10 +862,24 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
      * args for decimal columns, and the row stride; subsequent rows pay only a flat
      * array load instead of repeating the type dispatch.
      */
+    private static boolean isNoNullSentinelFixedType(int columnType) {
+        final int tag = ColumnType.tagOf(columnType);
+        return tag == ColumnType.BOOLEAN || tag == ColumnType.BYTE
+                || tag == ColumnType.SHORT || tag == ColumnType.CHAR;
+    }
+
     private CharSequence convertFixedToStr(int srcType, int columnIndex, StringSink sink) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address == 0) {
             return null; // column top
+        }
+        // Only no-sentinel sources (BOOLEAN/BYTE/SHORT/CHAR) need the explicit column-top
+        // count: their column-top rows decode to an in-band 0/false the converter cannot tell
+        // from a real value. Sentinel sources store the column top as their null sentinel (and
+        // may also have scattered nulls), so the converter already returns null for them.
+        if (columnTops != null && isNoNullSentinelFixedType(srcType)
+                && rowIndex < columnTops.get(columnOffset + columnIndex)) {
+            return null;
         }
         sink.clear();
         ColumnTypeConverter.Fixed2VarConverter converter =
@@ -883,6 +905,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address == 0) {
             return null; // column top
+        }
+        // See convertFixedToStr: only no-sentinel sources need the explicit column-top count.
+        if (columnTops != null && isNoNullSentinelFixedType(srcType)
+                && rowIndex < columnTops.get(columnOffset + columnIndex)) {
+            return null;
         }
         sink.clear();
         ColumnTypeConverter.Fixed2VarConverter converter =
@@ -1456,12 +1483,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             int columnOffset,
             int columnCount,
             boolean hasTypeCasts,
-            IntList sourceColumnTypes
+            IntList sourceColumnTypes,
+            DirectLongList columnTops
     ) {
         this.frameIndex = frameIndex;
         this.frameFormat = frameFormat;
         this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
         this.hasTypeCasts = hasTypeCasts;
+        this.columnTops = columnTops;
         // The pool passes its own IntList by reference and mutates it in place on every
         // openParquet() call. Snapshot the contents so a later navigateTo() on Record B
         // does not overwrite this record's view of the per-column conversion state.

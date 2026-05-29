@@ -70,6 +70,16 @@ public interface PageFrameMemory {
     int getColumnOffset();
 
     /**
+     * Returns the per-column leading column-top count for this frame, or {@code null} when
+     * the frame has none (e.g. native frames). Used by {@link PageFrameMemoryRecord} to
+     * surface NULL for column-top rows during a lazy fixed-&gt;var conversion, where the
+     * decoded source value is an in-band 0 indistinguishable from a real 0.
+     */
+    default DirectLongList getColumnTops() {
+        return null;
+    }
+
+    /**
      * Returns frame format: {@link PartitionFormat#NATIVE} or {@link PartitionFormat#PARQUET}.
      */
     byte getFrameFormat();

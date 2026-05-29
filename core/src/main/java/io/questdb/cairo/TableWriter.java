@@ -10450,10 +10450,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     dataBuf = Unsafe.malloc(dataBufCap, MemoryTag.NATIVE_DEFAULT);
                                 }
                                 try {
+                                    final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(columnIndex);
                                     if (ColumnType.isVarchar(tableColumnType)) {
-                                        O3PartitionJob.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf, dataBufCap, utf8Sink);
+                                        O3PartitionJob.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
                                     } else {
-                                        O3PartitionJob.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf, dataBufCap, utf16Sink);
+                                        O3PartitionJob.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
                                     }
 
                                     // Compute actual bytes from the aux vector *before* shifting,

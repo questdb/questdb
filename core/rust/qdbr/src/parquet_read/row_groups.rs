@@ -108,6 +108,7 @@ pub(crate) fn decompress_varchar_slice_data<'a>(
 pub(super) fn post_convert(
     from_type: ColumnType,
     to_type: ColumnType,
+    leading_nulls: usize,
     bufs: &mut ColumnChunkBuffers,
 ) -> ParquetResult<()> {
     let src_tag = from_type.tag();
@@ -119,20 +120,27 @@ pub(super) fn post_convert(
         (ColumnTypeTag::Boolean, ColumnTypeTag::Short) => {
             expand_bool::<i16>(&mut bufs.data_vec)?;
         }
+        // Boolean has no in-band null sentinel, so its only nulls are the column-top prefix.
+        // Byte/Short targets also lack a sentinel (column top stays 0, matching native), but
+        // sentinel-bearing targets must stamp the target NULL over the column-top rows.
         (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
             expand_bool::<i32>(&mut bufs.data_vec)?;
+            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::INT);
         }
         (
             ColumnTypeTag::Boolean,
             ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
         ) => {
             expand_bool::<i64>(&mut bufs.data_vec)?;
+            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::LONG);
         }
         (ColumnTypeTag::Boolean, ColumnTypeTag::Float) => {
             expand_bool::<f32>(&mut bufs.data_vec)?;
+            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, f32::NAN);
         }
         (ColumnTypeTag::Boolean, ColumnTypeTag::Double) => {
             expand_bool::<f64>(&mut bufs.data_vec)?;
+            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, f64::NAN);
         }
         // Fixed → Boolean: contract decoded source-sized values to 1-byte booleans.
         // Null sentinels (i32::MIN, i64::MIN, NaN) map to 0 (false), not 1.
@@ -180,19 +188,36 @@ pub(super) fn post_convert(
             }
         }
         // Fixed integer → Decimal: widen to target size and scale by 10^(target_scale).
+        // Byte/Short have no in-band null sentinel, so their column-top prefix is nulled via
+        // `leading_nulls`; Int/Long carry i32::MIN/i64::MIN in-band (and may have scattered
+        // nulls), handled by `is_int_null` inside convert_fixed_to_decimal, so pass 0 for them.
         (
             ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long,
             dst,
         ) if is_decimal_tag(dst) => {
-            convert_fixed_to_decimal(&mut bufs.data_vec, src_tag, dst, to_type.decimal_scale())?;
+            let dec_leading_nulls = match src_tag {
+                ColumnTypeTag::Byte | ColumnTypeTag::Short => leading_nulls,
+                _ => 0,
+            };
+            convert_fixed_to_decimal(
+                &mut bufs.data_vec,
+                src_tag,
+                dst,
+                dec_leading_nulls,
+                to_type.decimal_scale(),
+            )?;
         }
         // Int32 → Int64 widening (Byte/Short/Int → Long/Date/Timestamp).
-        // Byte and Short have no null sentinel; Int uses i32::MIN → i64::MIN.
+        // Int uses i32::MIN → i64::MIN via the value check below. Byte and Short
+        // have no in-band null sentinel, so their only nulls are the column-top
+        // prefix (def-level=0 on the OPTIONAL schema); `leading_nulls` rows are
+        // stamped with the target sentinel to match the native ALTER path.
         (
             ColumnTypeTag::Byte,
             ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
         ) => {
             convert_numeric_in_place::<i8, i64>(&mut bufs.data_vec, |_| false, 0i64, |v| v as i64)?;
+            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::LONG);
         }
         (
             ColumnTypeTag::Short,
@@ -204,6 +229,7 @@ pub(super) fn post_convert(
                 0i64,
                 |v| v as i64,
             )?;
+            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::LONG);
         }
         (
             ColumnTypeTag::Int,
@@ -259,6 +285,7 @@ pub(super) fn post_convert(
                 0.0f32,
                 |v| v as f32,
             )?;
+            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, f32::NAN);
         }
         (ColumnTypeTag::Short, ColumnTypeTag::Float) => {
             convert_numeric_in_place::<i16, f32>(
@@ -267,6 +294,7 @@ pub(super) fn post_convert(
                 0.0f32,
                 |v| v as f32,
             )?;
+            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, f32::NAN);
         }
         (ColumnTypeTag::Int, ColumnTypeTag::Float) => {
             convert_numeric_in_place::<i32, f32>(
@@ -295,6 +323,7 @@ pub(super) fn post_convert(
                 0.0f64,
                 |v| v as f64,
             )?;
+            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, f64::NAN);
         }
         (ColumnTypeTag::Short, ColumnTypeTag::Double) => {
             convert_numeric_in_place::<i16, f64>(
@@ -303,6 +332,7 @@ pub(super) fn post_convert(
                 0.0f64,
                 |v| v as f64,
             )?;
+            stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, f64::NAN);
         }
         (ColumnTypeTag::Int, ColumnTypeTag::Double) => {
             convert_numeric_in_place::<i32, f64>(
@@ -549,6 +579,26 @@ where
         }
     }
     Ok(())
+}
+
+/// Overwrite the first `count` elements of `data` (interpreted as `[D]`) with `null_value`.
+///
+/// Used for conversions whose source type has no in-band null sentinel (BYTE, SHORT, CHAR):
+/// their only nulls are the contiguous column-top prefix, encoded as def-level=0 rows. The
+/// decoder materialises those as an in-band 0 indistinguishable from a real 0, so the count
+/// of leading nulls (`count`, derived from the column top) is needed to stamp the target
+/// sentinel and keep the lazy parquet read in step with the native ALTER path.
+fn stamp_leading_nulls<D: Copy>(data: &mut AcVec<u8>, count: usize, null_value: D) {
+    if count == 0 {
+        return;
+    }
+    let elem = size_of::<D>();
+    let count = count.min(data.len() / elem);
+    let ptr = data.as_mut_ptr();
+    for i in 0..count {
+        // SAFETY: i < count <= data.len()/size_of::<D>(), so the write stays in bounds.
+        unsafe { (ptr.add(i * elem) as *mut D).write_unaligned(null_value) };
+    }
 }
 
 /// Returns true for decimal type tags.
@@ -838,6 +888,7 @@ fn convert_fixed_to_decimal(
     data: &mut AcVec<u8>,
     src_tag: ColumnTypeTag,
     dst_tag: ColumnTypeTag,
+    leading_nulls: usize,
     dst_scale: u8,
 ) -> ParquetResult<()> {
     let src_size = fixed_tag_size(src_tag);
@@ -873,7 +924,7 @@ fn convert_fixed_to_decimal(
             if dst_size >= src_size {
                 for i in (0..count).rev() {
                     let val = unsafe { read_le_i64_at(ptr, i, src_size) };
-                    let scaled = if is_int_null(val, src_tag) {
+                    let scaled = if i < leading_nulls || is_int_null(val, src_tag) {
                         null_sentinel
                     } else {
                         scale_or_null_i64(val, factor, dst_size, null_sentinel)
@@ -883,7 +934,7 @@ fn convert_fixed_to_decimal(
             } else {
                 for i in 0..count {
                     let val = unsafe { read_le_i64_at(ptr, i, src_size) };
-                    let scaled = if is_int_null(val, src_tag) {
+                    let scaled = if i < leading_nulls || is_int_null(val, src_tag) {
                         null_sentinel
                     } else {
                         scale_or_null_i64(val, factor, dst_size, null_sentinel)
@@ -909,7 +960,7 @@ fn convert_fixed_to_decimal(
                 // (e.g. i64::MAX * 10^38 overflows). Use checked_mul and emit
                 // the Decimal128 NULL pair on overflow, mirroring the i64 path
                 // in scale_or_null_i64.
-                let scaled = if is_int_null(val, src_tag) {
+                let scaled = if i < leading_nulls || is_int_null(val, src_tag) {
                     None
                 } else {
                     (val as i128).checked_mul(factor)
@@ -935,7 +986,7 @@ fn convert_fixed_to_decimal(
                 // large scale + large |val| (e.g. i64::MAX * 10^76 overflows).
                 // checked_mul_i256_pow10 returns None on overflow; emit the
                 // Decimal256 NULL on overflow, mirroring the Decimal128 path.
-                let scaled = if is_int_null(val, src_tag) {
+                let scaled = if i < leading_nulls || is_int_null(val, src_tag) {
                     None
                 } else {
                     let sign = if val < 0 { u64::MAX } else { 0 };
@@ -1369,8 +1420,23 @@ impl ParquetDecoder {
                 }
             }
 
+            // Number of this chunk's rows that fall in the column-top prefix. For a source
+            // type with no in-band null sentinel (BYTE/SHORT/CHAR), these are its only nulls,
+            // and post_convert stamps the target sentinel over them.
+            let leading_nulls = column_top
+                .saturating_sub(accumulated_size + row_group_lo as usize)
+                .min((row_group_hi - row_group_lo) as usize);
+            // Surface the count to Java (read via chunkColumnTopOffset) for lazy fixed->var
+            // conversions, where the source has no in-band null and Java must emit NULL here.
+            column_chunk_bufs.column_top = leading_nulls;
+
             // Post-decode conversions that cannot be handled by the decode dispatch.
-            post_convert(original_column_type, to_column_type, column_chunk_bufs)?;
+            post_convert(
+                original_column_type,
+                to_column_type,
+                leading_nulls,
+                column_chunk_bufs,
+            )?;
 
             // Timestamp nano additional scaling after post_convert.
             // post_convert handles μs↔ms (×/÷1000) for Timestamp↔Date.
@@ -1537,8 +1603,11 @@ impl ParquetDecoder {
                 }
             }
 
+            // Filtered/late-materialisation decode compacts matched rows, so the column-top
+            // prefix is not simply the first N rows of the buffer. Column-top null handling
+            // for the filtered path is a follow-up; pass 0 to preserve current behaviour.
             // Post-decode conversions that cannot be handled by the decode dispatch.
-            post_convert(original_column_type, to_column_type, column_chunk_bufs)?;
+            post_convert(original_column_type, to_column_type, 0, column_chunk_bufs)?;
 
             // Timestamp nano additional scaling after post_convert.
             // post_convert handles μs↔ms (×/÷1000) for Timestamp↔Date.
@@ -3540,8 +3609,9 @@ mod multi_dict_tests {
                 aux_ptr: std::ptr::null_mut(),
                 aux_vec: AcVec::new_in(allocator.clone()),
                 page_buffers: Vec::new(),
+                column_top: 0,
             };
-            let err = post_convert(src.into_type(), dst.into_type(), &mut bufs).unwrap_err();
+            let err = post_convert(src.into_type(), dst.into_type(), 0, &mut bufs).unwrap_err();
             let msg = err.to_string();
             assert!(
                 msg.contains("post_convert: unsupported conversion"),
@@ -3583,8 +3653,9 @@ mod multi_dict_tests {
                 aux_ptr: std::ptr::null_mut(),
                 aux_vec: AcVec::new_in(allocator.clone()),
                 page_buffers: Vec::new(),
+                column_top: 0,
             };
-            post_convert(src.into_type(), dst.into_type(), &mut bufs)
+            post_convert(src.into_type(), dst.into_type(), 0, &mut bufs)
                 .unwrap_or_else(|e| panic!("expected no-op for {src:?} -> {dst:?}, got {e}"));
         }
     }

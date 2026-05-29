@@ -123,6 +123,13 @@ pub struct ColumnChunkBuffers {
     pub aux_vec: AcVec<u8>,
 
     pub page_buffers: Vec<Vec<u8>>,
+
+    /// Number of leading column-top rows in the decoded chunk. For a source type with no
+    /// in-band null sentinel (BYTE/SHORT/CHAR) these are its only nulls, so Java consults
+    /// this count to surface NULL for column-top rows during a lazy fixed->var conversion
+    /// (the in-band decoded value is 0, indistinguishable from a real 0). Read from Java via
+    /// the `chunkColumnTopOffset` field offset. 0 when there is no column top.
+    pub column_top: usize,
 }
 
 #[cfg(test)]

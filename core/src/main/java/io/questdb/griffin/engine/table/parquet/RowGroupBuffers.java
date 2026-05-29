@@ -45,6 +45,7 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     private static final long CHUNKS_PTR_OFFSET;
     private static final long CHUNK_AUX_PTR_OFFSET;
     private static final long CHUNK_AUX_SIZE_OFFSET;
+    private static final long CHUNK_COLUMN_TOP_OFFSET;
     private static final long CHUNK_DATA_PTR_OFFSET;
     private static final long CHUNK_DATA_SIZE_OFFSET;
     private static final long CHUNK_STRUCT_SIZE;
@@ -83,6 +84,18 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         return Unsafe.getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_AUX_SIZE_OFFSET);
     }
 
+    /**
+     * Number of leading column-top rows in the decoded chunk for the given column. For a
+     * source type with no in-band null sentinel (BYTE/SHORT/CHAR) these are its only nulls,
+     * so a lazy fixed-&gt;var conversion must surface NULL for rows below this count rather
+     * than format the in-band 0. Returns 0 when the column has no column top in this chunk.
+     */
+    public long getChunkColumnTop(int columnIndex) {
+        final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
+        assert chunksPtr != 0;
+        return Unsafe.getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_COLUMN_TOP_OFFSET);
+    }
+
     public long getChunkDataPtr(int columnIndex) {
         final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
         assert chunksPtr != 0;
@@ -110,6 +123,8 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
 
     private static native long chunkAuxSizeOffset();
 
+    private static native long chunkColumnTopOffset();
+
     private static native long chunkDataPtrOffset();
 
     private static native long chunkDataSizeOffset();
@@ -131,5 +146,6 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         CHUNK_DATA_SIZE_OFFSET = chunkDataSizeOffset();
         CHUNK_AUX_PTR_OFFSET = chunkAuxPtrOffset();
         CHUNK_AUX_SIZE_OFFSET = chunkAuxSizeOffset();
+        CHUNK_COLUMN_TOP_OFFSET = chunkColumnTopOffset();
     }
 }

@@ -54,6 +54,7 @@ impl ColumnChunkBuffers {
             aux_ptr: ptr::null_mut(),
             aux_size: 0,
             page_buffers: Vec::new(),
+            column_top: 0,
         }
     }
 
@@ -79,6 +80,7 @@ impl ColumnChunkBuffers {
         self.aux_ptr = ptr::null_mut();
 
         self.page_buffers.clear();
+        self.column_top = 0;
     }
 }
 

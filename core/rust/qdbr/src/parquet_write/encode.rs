@@ -179,14 +179,31 @@ fn encode_boolean_dispatch(
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
     match (encoding, column_tag) {
-        (Encoding::Plain, ColumnTypeTag::Boolean) => plain::encode_boolean(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
+        // BOOLEAN is written Optional (column-top rows as def-level=0) on the current schema,
+        // but legacy files (and update mode preserving their schema) carry Required pages.
+        // Route by the schema's repetition so the page layout matches the footer; the notnull
+        // encoder writes bit-packed values with no def levels, the nullable one adds def levels.
+        (Encoding::Plain, ColumnTypeTag::Boolean) => {
+            if pt.field_info.repetition == Repetition::Required {
+                plain::encode_boolean(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            } else {
+                plain::encode_boolean_nullable(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            }
+        }
         _ => unsupported(encoding, column_tag, "Boolean"),
     }
 }

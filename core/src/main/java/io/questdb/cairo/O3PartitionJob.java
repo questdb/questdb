@@ -2396,6 +2396,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             nullBufs.setQuick(bi4, auxBuf);
                             nullBufs.setQuick(bi4 + 1, auxSize);
 
+                            final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(decodeIdx);
                             if (ColumnType.isVarchar(columnType)) {
                                 long dataSize = estimateVarcharDataSize(srcType, rowGroupSize);
                                 long dataBuf = dataSize > 0 ? Unsafe.malloc(dataSize, MemoryTag.NATIVE_O3) : 0;
@@ -2403,7 +2404,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     nullBufs.setQuick(bi4 + 2, dataBuf);
                                     nullBufs.setQuick(bi4 + 3, dataSize);
                                 }
-                                convertFixedColumnToVarchar(srcType, columnDataPtr, rowGroupSize, auxBuf, dataBuf, dataSize, ctx.getUtf8Sink());
+                                convertFixedColumnToVarchar(srcType, columnDataPtr, rowGroupSize, convColumnTop, auxBuf, dataBuf, dataSize, ctx.getUtf8Sink());
                                 columnAuxPtr = auxBuf;
                                 columnDataPtr = dataBuf;
                             } else {
@@ -2412,7 +2413,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 long dataBuf = Unsafe.malloc(dataSize, MemoryTag.NATIVE_O3);
                                 nullBufs.setQuick(bi4 + 2, dataBuf);
                                 nullBufs.setQuick(bi4 + 3, dataSize);
-                                convertFixedColumnToString(srcType, columnDataPtr, rowGroupSize, auxBuf, dataBuf, dataSize, ctx.getUtf16Sink());
+                                convertFixedColumnToString(srcType, columnDataPtr, rowGroupSize, convColumnTop, auxBuf, dataBuf, dataSize, ctx.getUtf16Sink());
                                 columnAuxPtr = auxBuf;
                                 columnDataPtr = dataBuf;
                             }
@@ -3490,6 +3491,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             long auxBuf = Unsafe.malloc(auxSize, MemoryTag.NATIVE_O3);
                             tmpBufs.setQuick(ai * 4, auxBuf);
                             tmpBufs.setQuick(ai * 4 + 1, auxSize);
+                            final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(decodeIdx);
 
                             if (ColumnType.isVarchar(columnType)) {
                                 long dataSize = estimateVarcharDataSize(srcType, rowGroupSize);
@@ -3498,7 +3500,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     tmpBufs.setQuick(ai * 4 + 2, dataBuf);
                                     tmpBufs.setQuick(ai * 4 + 3, dataSize);
                                 }
-                                convertFixedColumnToVarchar(srcType, columnDataPtr, rowGroupSize, auxBuf, dataBuf, dataSize, utf8Sink);
+                                convertFixedColumnToVarchar(srcType, columnDataPtr, rowGroupSize, convColumnTop, auxBuf, dataBuf, dataSize, utf8Sink);
                                 columnAuxPtr = auxBuf;
                                 columnAuxSize = auxSize;
                                 columnDataPtr = dataBuf;
@@ -3508,7 +3510,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 long dataBuf = Unsafe.malloc(dataSize, MemoryTag.NATIVE_O3);
                                 tmpBufs.setQuick(ai * 4 + 2, dataBuf);
                                 tmpBufs.setQuick(ai * 4 + 3, dataSize);
-                                convertFixedColumnToString(srcType, columnDataPtr, rowGroupSize, auxBuf, dataBuf, dataSize, utf16Sink);
+                                convertFixedColumnToString(srcType, columnDataPtr, rowGroupSize, convColumnTop, auxBuf, dataBuf, dataSize, utf16Sink);
                                 columnAuxPtr = auxBuf;
                                 columnAuxSize = auxSize;
                                 columnDataPtr = dataBuf;
@@ -3951,10 +3953,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
+    private static boolean isNoNullSentinelFixedType(int columnType) {
+        final int tag = ColumnType.tagOf(columnType);
+        return tag == ColumnType.BOOLEAN || tag == ColumnType.BYTE
+                || tag == ColumnType.SHORT || tag == ColumnType.CHAR;
+    }
+
     static void convertFixedColumnToString(
             int srcType,
             long srcDataPtr,
             int rowCount,
+            int columnTop,
             long auxAddr,
             long dataAddr,
             long dataSize,
@@ -3972,10 +3981,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long elemSize = ColumnType.sizeOf(srcType);
         final int arg1 = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalPrecision(srcType) : 0;
         final int arg2 = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalScale(srcType) : 0;
+        // Only no-sentinel sources (BOOLEAN/BYTE/SHORT/CHAR) need the explicit column-top
+        // count; sentinel sources store the column top as their null sentinel, which the
+        // converter already maps to NULL (and `columnTop` from the _pm path would otherwise
+        // also count scattered real nulls).
+        final int leadingNulls = isNoNullSentinelFixedType(srcType) ? columnTop : 0;
 
         for (int i = 0; i < rowCount; i++) {
             sink.clear();
-            boolean hasValue = converter.convert(srcDataPtr + i * elemSize, sink, arg1, arg2);
+            boolean hasValue = i >= leadingNulls && converter.convert(srcDataPtr + i * elemSize, sink, arg1, arg2);
 
             if (!hasValue) {
                 // Null: write -1 as length prefix.
@@ -3999,6 +4013,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int srcType,
             long srcDataPtr,
             int rowCount,
+            int columnTop,
             long auxAddr,
             long dataAddr,
             long dataSize,
@@ -4013,10 +4028,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long elemSize = ColumnType.sizeOf(srcType);
         final int arg1 = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalPrecision(srcType) : 0;
         final int arg2 = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalScale(srcType) : 0;
+        // See convertFixedColumnToString: only no-sentinel sources need the explicit count.
+        final int leadingNulls = isNoNullSentinelFixedType(srcType) ? columnTop : 0;
 
         for (int i = 0; i < rowCount; i++) {
             sink.clear();
-            boolean hasValue = converter.convert(srcDataPtr + i * elemSize, sink, arg1, arg2);
+            boolean hasValue = i >= leadingNulls && converter.convert(srcDataPtr + i * elemSize, sink, arg1, arg2);
             boolean isNull = !hasValue;
             long auxEntryAddr = auxAddr + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
 

@@ -219,7 +219,24 @@ pub fn decode_row_group(
             Err(err) => return Err(err),
         }
 
-        post_convert(original_column_type, to_column_type, column_chunk_bufs)?;
+        // For a source type with no in-band null sentinel (BYTE/SHORT/CHAR), the only nulls
+        // are the contiguous column-top prefix, so the column-chunk null count equals its
+        // length. post_convert stamps the target sentinel over those rows. Falls back to 0
+        // when stats are absent (e.g. external parquet files, which carry no column top).
+        let leading_nulls = if stat_flags.has_null_count() {
+            usize::try_from(chunk.null_count).unwrap_or(0)
+        } else {
+            0
+        };
+        // Surface the count to Java (read via chunkColumnTopOffset) for lazy fixed->var
+        // conversions, where the source has no in-band null and Java must emit NULL here.
+        column_chunk_bufs.column_top = leading_nulls;
+        post_convert(
+            original_column_type,
+            to_column_type,
+            leading_nulls,
+            column_chunk_bufs,
+        )?;
         apply_timestamp_nano_scaling(original_column_type, to_column_type, column_chunk_bufs);
     }
 
@@ -340,7 +357,10 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
             Err(err) => return Err(err),
         }
 
-        post_convert(original_column_type, to_column_type, column_chunk_bufs)?;
+        // Filtered/late-materialisation decode compacts matched rows, so the column-top
+        // prefix is not the first N rows of the buffer. Column-top null handling for the
+        // filtered path is a follow-up; pass 0 to preserve current behaviour.
+        post_convert(original_column_type, to_column_type, 0, column_chunk_bufs)?;
         apply_timestamp_nano_scaling(original_column_type, to_column_type, column_chunk_bufs);
     }
 
