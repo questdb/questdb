@@ -535,6 +535,39 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTwapRejectsSampleByOverLatestByLightSubQuery() throws Exception {
+        // A LATEST ON ... over a derived sub-query compiles to LatestByLightRecordCursorFactory,
+        // which emits one row per partition key in map order -- NOT in designated-timestamp order --
+        // yet keeps the designated timestamp in its metadata. The factory reports a non-forward scan
+        // direction, so SAMPLE BY/twap must reject it instead of silently averaging out-of-order rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (i INT, sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a VALUES
+                    (1, 'A', 10.0, '2024-01-01T00:00:00.000000Z'),
+                    (1, 'B', 20.0, '2024-01-01T00:00:10.000000Z'),
+                    (1, 'B', 40.0, '2024-01-01T00:00:50.000000Z'),
+                    (1, 'A', 30.0, '2024-01-01T00:01:40.000000Z')
+                    """);
+            final String latestByLight = "FROM (SELECT ts, sym, price, i AS i1 FROM a) WHERE i1 > 0 LATEST ON ts PARTITION BY sym ";
+            // No-FILL rewrites to a keyed group-by; twap validation rejects it.
+            assertExceptionNoLeakCheck(
+                    "SELECT twap(price, ts) " + latestByLight + "SAMPLE BY 1d",
+                    7,
+                    "twap() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+            // FILL stays on the serial SAMPLE BY path; the base-order guard rejects first.
+            assertExceptionNoLeakCheck(
+                    "SELECT twap(price, ts) " + latestByLight + "SAMPLE BY 1d FILL(null)",
+                    0,
+                    "base query does not provide ASC order over designated TIMESTAMP column",
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testTwapSingleRow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");

@@ -97,6 +97,16 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public int getScanDirection() {
+        // The cursor iterates the latest-by map keyed by the partition-by columns, emitting one row
+        // per key in map order, NOT in designated-timestamp order (the orderedByTimestampAsc flag only
+        // optimizes map building over an ascending input; it does not sort the output). Report OTHER so
+        // callers that require ascending designated-timestamp order -- SAMPLE BY, twap()/sparkline(),
+        // AsOf/Lt joins, ORDER BY-timestamp elision -- do not mistake this output for timestamp-sorted.
+        return SCAN_DIRECTION_OTHER;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }
