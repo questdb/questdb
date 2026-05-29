@@ -82,15 +82,26 @@ public class CovarSampleGroupByFunctionFactory implements FunctionFactory {
         // Chan et al. [CGL82; CGL83]
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
+            long srcCount = srcValue.getLong(valueIndex + 3);
+            if (srcCount == 0) {
+                return;
+            }
+            long destCount = destValue.getLong(valueIndex + 3);
+            if (destCount == 0) {
+                destValue.putDouble(valueIndex, srcValue.getDouble(valueIndex));
+                destValue.putDouble(valueIndex + 1, srcValue.getDouble(valueIndex + 1));
+                destValue.putDouble(valueIndex + 2, srcValue.getDouble(valueIndex + 2));
+                destValue.putLong(valueIndex + 3, srcCount);
+                return;
+            }
+
             double srcMeanY = srcValue.getDouble(valueIndex);
             double srcMeanX = srcValue.getDouble(valueIndex + 1);
             double srcSumXY = srcValue.getDouble(valueIndex + 2);
-            long srcCount = srcValue.getLong(valueIndex + 3);
 
             double destMeanY = destValue.getDouble(valueIndex);
             double destMeanX = destValue.getDouble(valueIndex + 1);
             double destSumXY = destValue.getDouble(valueIndex + 2);
-            long destCount = destValue.getLong(valueIndex + 3);
 
             long mergedCount = srcCount + destCount;
             double deltaY = destMeanY - srcMeanY;
