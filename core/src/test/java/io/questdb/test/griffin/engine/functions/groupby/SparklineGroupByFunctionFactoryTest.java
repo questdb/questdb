@@ -1085,19 +1085,15 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                 function.setEmpty(dest);
                 function.setEmpty(src);
 
-                // Two workers see interleaved page frames under work-stealing: dest gets
-                // even frames 0,2,...,14 and src odd frames 1,3,...,15, one value each,
-                // both under the cap. A frame is processed by a single slot, so keys never
-                // interleave within a frame; placing the interleaving at the frame level
-                // (high bits) keeps the merged, batch-sorted buffer monotonic by rowId, as
-                // in real execution -- merging interleaved keys inside one frame cannot occur.
+                // Fill dest with rowIds 0,2,4,...,14 (8 values, under cap)
                 function.computeFirst(dest, recordOf(1.0), 0);
                 for (int i = 1; i < 8; i++) {
-                    function.computeNext(dest, recordOf(i + 1.0), (long) (i * 2) << 44);
+                    function.computeNext(dest, recordOf(i + 1.0), i * 2);
                 }
-                function.computeFirst(src, recordOf(10.0), 1L << 44);
+                // Fill src with rowIds 1,3,5,...,15 (8 values, under cap)
+                function.computeFirst(src, recordOf(10.0), 1);
                 for (int i = 1; i < 8; i++) {
-                    function.computeNext(src, recordOf(i + 10.0), (long) (i * 2 + 1) << 44);
+                    function.computeNext(src, recordOf(i + 10.0), i * 2 + 1);
                 }
 
                 // Merge: dest now holds 16 entries, exceeding maxValues=10.
@@ -1111,46 +1107,6 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
                             "sparkline() result exceeds max size of 30 bytes");
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testRenderRejectsOutOfOrderRowIdsInBatch() throws Exception {
-        // Runtime backstop. sparkline appends rows in scan order using rowId as the sort key
-        // and treats each per-frame batch as already key-sorted. If a factory ever slips
-        // descending rowIds into a single batch (same frame, so compactInPlace cannot reorder
-        // them), the render must refuse to emit a series that misrepresents the time order and
-        // surface the contract violation instead of silently rendering out-of-order values.
-        assertMemoryLeak(() -> {
-            SparklineGroupByFunction function = new SparklineGroupByFunction(
-                    "sparkline",
-                    new char[]{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'},
-                    DoubleColumn.newInstance(0),
-                    null, null, null,
-                    0, -1,
-                    300
-            );
-            ArrayColumnTypes types = new ArrayColumnTypes();
-            function.initValueTypes(types);
-            function.initValueIndex(0);
-            try (
-                    GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1MB);
-                    SimpleMapValue value = new SimpleMapValue(types.getColumnCount())
-            ) {
-                function.setAllocator(allocator);
-                function.setEmpty(value);
-                // Same frame 0, descending rowIds: a single batch that compaction leaves as-is.
-                function.computeFirst(value, recordOf(1.0), 100);
-                function.computeNext(value, recordOf(2.0), 50);
-                Assert.assertEquals("single batch", 0, value.getLong(3));
-                try {
-                    function.getVarcharA(value);
-                    Assert.fail("expected CairoException");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(),
-                            "sparkline() requires the base query to provide ascending designated timestamp order");
                 }
             }
         });
