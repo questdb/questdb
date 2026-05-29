@@ -2653,11 +2653,12 @@ public class SqlOptimiser implements Mutable {
 
         CharSequence translatedColumnName = translatingModel.getColumnNameToAliasMap().get(columnAst.token);
         if (translatedColumnName == null && baseModel != null && baseModel.getJoinModels().size() == 1) {
-            // Single base model: addColumnToTranslatingModel stripped the prefix on an
-            // earlier qualified emit, so retry under the stripped key to reuse it rather
-            // than synthesising a new alias that breaks outer-model lookups.
+            // Single base model: an earlier qualified emit stripped the prefix, so retry under
+            // the stripped key to reuse it. Restrict to a bare projection (output name == column
+            // name) where reuse is identity-preserving; a distinct alias ("x AS y", or a lateral
+            // correlation marker __qdb_outer_ref__N_col) must stay its own column.
             final int dot = Chars.indexOfLastUnquoted(columnAst.token, '.');
-            if (dot != -1) {
+            if (dot != -1 && Chars.equalsIgnoreCase(columnName, columnAst.token, dot + 1, columnAst.token.length())) {
                 translatedColumnName = translatingModel.getColumnNameToAliasMap()
                         .get(columnAst.token, dot + 1, columnAst.token.length());
             }
