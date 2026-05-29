@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -104,7 +105,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @Nullable ObjList<TableReader> leakedReaders,
             @Nullable QueryTrace queryTrace
     ) {
-        if (!executionContext.shouldLogSql() || sqlText == null) {
+        final int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
+        // Validation only compiles the SQL to check it; suppress the normal query-progress
+        // line so the validation endpoint does not pollute the log. Still report reader leaks,
+        // as those indicate a real bug regardless of validation mode.
+        if ((!executionContext.shouldLogSql() && leakedReadersCount == 0) || sqlText == null) {
             return;
         }
 
@@ -116,7 +121,6 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         CharSequence principal = executionContext.getSecurityContext().getPrincipal();
         LogRecord log = null;
         try {
-            final int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
             if (leakedReadersCount > 0) {
                 log = LOG.errorW();
                 executionContext.getCairoEngine().getMetrics().healthMetrics()
@@ -145,7 +149,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         // When queryTrace is not null, queryTrace.queryText is already set and equal to sqlText,
         // as well as already converted to an immutable String, as needed to queue it up for handling
         // at a later time. For this reason, do not assign queryTrace.queryText = sqlText here.
-        if (queryTrace != null && engine.getConfiguration().isQueryTracingEnabled()) {
+        if (queryTrace != null && executionContext.shouldLogSql() && engine.getConfiguration().isQueryTracingEnabled()) {
             queryTrace.executionNanos = durationNanos;
             queryTrace.isJit = isJit;
             queryTrace.timestamp = config.getMicrosecondClock().getTicks();
@@ -173,9 +177,20 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @Nullable ObjList<TableReader> leakedReaders
     ) {
         int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
+        // Validation only compiles the SQL to check it; a validation failure is reported to the
+        // client, so do not log it as a server-side query error or inflate the error metrics.
+        // Still report reader leaks, as those indicate a real bug regardless of validation mode.
+        if (executionContext.isValidationOnly() && leakedReadersCount == 0) {
+            return;
+        }
         LogRecord log = null;
         try {
-            executionContext.getCairoEngine().getMetrics().healthMetrics().incrementQueryErrorCounter();
+            // A validation failure is reported to the client, not as a server-side query error,
+            // so do not inflate the query-error metric for it. A reader leak is still counted
+            // below regardless of validation mode, as it indicates a real bug.
+            if (!executionContext.isValidationOnly()) {
+                executionContext.getCairoEngine().getMetrics().healthMetrics().incrementQueryErrorCounter();
+            }
             // Extract all the variables before the call to call LOG.errorW() to avoid exception
             // causing log sequence leaks.
             long durationNanos =
@@ -509,8 +524,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         // Qodana false positive
         @SuppressWarnings("unused")
         @Override
-        public void setStreamingMode(boolean enabled) {
-            baseCursor.setStreamingMode(enabled);
+        public void setScanProfile(ReaderScanProfile profile) {
+            baseCursor.setScanProfile(profile);
         }
 
         @Override

@@ -105,9 +105,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryCMR> parquetPartitions;
     private int partitionCount;
     private long rowCount;
-    // When streaming mode is enabled, partitions are opened with MADV_DONTNEED hint
-    // to release page cache after reading. Used by Parquet export to avoid page cache exhaustion.
-    private boolean streamingMode = false;
+    // Per-checkout scan profile -- controls kernel page-cache hints and
+    // post-checkout partition retention. Reset to DEFAULT by goPassive() on
+    // every pool return so cross-checkout leaks are impossible.
+    private ReaderScanProfile scanProfile = ReaderScanProfile.DEFAULT;
     private TableToken tableToken;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private long txColumnVersion;
@@ -269,7 +270,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public void closeExcessPartitions() {
         // close all but N latest partitions
-        int keepOpen = streamingMode ? 0 : maxOpenPartitions;
+        int keepOpen = scanProfile == ReaderScanProfile.SEQUENTIAL_EVICT ? 0 : maxOpenPartitions;
         if (PartitionBy.isPartitioned(partitionBy) && openPartitionCount > keepOpen) {
             final int originallyOpen = openPartitionCount;
             int openCount = 0;
@@ -371,6 +372,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
         IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
         if (indexReader != null) {
+            // Single choke point for refreshing the scoreboard pin on cached
+            // readers. TableReader.txn advances through several paths
+            // (goActive / reload / ...); setting it here covers all of them.
+            indexReader.setPinnedTableTxn(txn);
             if (
                     !indexReader.isOpen()
                             || indexReader.getColumnTxn() != columnNameTxn
@@ -652,7 +657,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         closeExcessPartitions();
         hasActiveColumns = false;
         resetAllColumnsOpenFlag();
-        streamingMode = false;
+        scanProfile = ReaderScanProfile.DEFAULT;
     }
 
     public boolean hasParquetPartitions() {
@@ -746,15 +751,15 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Enables or disables streaming mode for this reader.
-     * When streaming mode is enabled, partitions are opened with MADV_DONTNEED hint
-     * to release page cache after reading. This is useful for large sequential scans
-     * like Parquet export to avoid page cache exhaustion under memory pressure.
+     * Sets the scan profile for the current checkout. See {@link ReaderScanProfile}
+     * for the meaning of each value. Reset to {@link ReaderScanProfile#DEFAULT}
+     * by {@link #goPassive()} on every pool return, so the profile is always
+     * a per-checkout decision.
      *
-     * @param enabled true to enable streaming mode, false to disable
+     * @param profile the profile to adopt for the current checkout (non-null)
      */
-    public void setStreamingMode(boolean enabled) {
-        this.streamingMode = enabled;
+    public void setScanProfile(ReaderScanProfile profile) {
+        this.scanProfile = profile;
     }
 
     public long size() {
@@ -921,7 +926,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void closePartitionColumn(int base, int columnIndex) {
         int index = getPrimaryColumnIndex(base, columnIndex);
-        if (streamingMode) {
+        if (scanProfile != ReaderScanProfile.DEFAULT) {
             MemoryCMR mem = columns.get(index);
             if (mem != null) {
                 ff.madvise(mem.addressOf(0), mem.size(), Files.POSIX_MADV_DONTNEED);
@@ -1055,7 +1060,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         getColumnTop(columnBase, columnIndex),
                         metadata,
                         columnVersionReader,
-                        partitionTimestamp
+                        partitionTimestamp,
+                        txn
                 );
                 if (direction == IndexReader.DIR_BACKWARD) {
                     indexes.setQuick(globalIndex, reader);
@@ -1344,9 +1350,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             long columnSize,
             boolean keepFdOpen
     ) {
-        // When streaming mode is enabled, use MADV_DONTNEED to hint the kernel
-        // to release page cache after reading, avoiding memory pressure during large scans
-        final int madviseOpts = streamingMode ? Files.POSIX_MADV_SEQUENTIAL : -1;
+        // Sequential scan profiles hint the kernel to read ahead and to
+        // release page cache after reading, avoiding memory pressure during
+        // large scans. closePartitionColumn() applies the matching DONTNEED
+        // hint at unmap time.
+        final int madviseOpts = scanProfile != ReaderScanProfile.DEFAULT ? Files.POSIX_MADV_SEQUENTIAL : -1;
         MemoryCMRDetachedImpl memory;
         if (mem != null && mem != NullMemoryCMR.INSTANCE) {
             memory = (MemoryCMRDetachedImpl) mem;

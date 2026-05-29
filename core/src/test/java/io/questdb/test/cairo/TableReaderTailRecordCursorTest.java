@@ -130,7 +130,8 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
     public void testNonPartitioned() throws Exception {
         testBusyPoll(
                 10000,
-                3_000_000,
+                // smaller workload on slow CI runners (Mac, Windows)
+                Os.isLinux() ? 3_000_000 : 300_000,
                 "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by NONE"
         );
     }

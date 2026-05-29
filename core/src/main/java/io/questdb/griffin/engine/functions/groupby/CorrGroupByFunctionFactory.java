@@ -157,19 +157,32 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
         // Chan et al. [CGL82; CGL83]
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
+            long srcCount = srcValue.getLong(valueIndex + 5);
+            if (srcCount == 0) {
+                return;
+            }
+            long destCount = destValue.getLong(valueIndex + 5);
+            if (destCount == 0) {
+                destValue.putDouble(valueIndex, srcValue.getDouble(valueIndex));
+                destValue.putDouble(valueIndex + 1, srcValue.getDouble(valueIndex + 1));
+                destValue.putDouble(valueIndex + 2, srcValue.getDouble(valueIndex + 2));
+                destValue.putDouble(valueIndex + 3, srcValue.getDouble(valueIndex + 3));
+                destValue.putDouble(valueIndex + 4, srcValue.getDouble(valueIndex + 4));
+                destValue.putLong(valueIndex + 5, srcCount);
+                return;
+            }
+
             double srcMeanY = srcValue.getDouble(valueIndex);
             double srcSumY = srcValue.getDouble(valueIndex + 1);
             double srcMeanX = srcValue.getDouble(valueIndex + 2);
             double srcSumX = srcValue.getDouble(valueIndex + 3);
             double srcSumXY = srcValue.getDouble(valueIndex + 4);
-            long srcCount = srcValue.getLong(valueIndex + 5);
 
             double destMeanY = destValue.getDouble(valueIndex);
             double destSumY = destValue.getDouble(valueIndex + 1);
             double destMeanX = destValue.getDouble(valueIndex + 2);
             double destSumX = destValue.getDouble(valueIndex + 3);
             double destSumXY = destValue.getDouble(valueIndex + 4);
-            long destCount = destValue.getLong(valueIndex + 5);
 
             long mergedCount = srcCount + destCount;
             double deltaY = destMeanY - srcMeanY;
@@ -195,12 +208,6 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void setDouble(MapValue mapValue, double value) {
-            mapValue.putDouble(valueIndex + 4, value);
-            mapValue.putLong(valueIndex + 5, 1L);
-        }
-
-        @Override
         public void setNull(MapValue mapValue) {
             mapValue.putDouble(valueIndex, Double.NaN);
             mapValue.putDouble(valueIndex + 1, Double.NaN);
@@ -212,7 +219,7 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean supportsParallelism() {
-            return true;
+            return BinaryFunction.super.supportsParallelism();
         }
 
         // mean_x, sum_x, mean_y, sum_y, sum_xy

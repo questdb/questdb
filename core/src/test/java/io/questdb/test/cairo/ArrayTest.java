@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -2805,7 +2806,16 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testShardedMapCursorArrayAccess() throws Exception {
-
+        // Smaller dataset on slow CI runners (Mac, Windows). Lower the parallel GROUP BY sharding
+        // threshold there so the query still takes the sharded map path this test exercises; the
+        // first five 1-minute groups are unchanged, so the asserted result is identical.
+        final int rowCount;
+        if (Os.isLinux()) {
+            rowCount = 3_000_000;
+        } else {
+            rowCount = 300_000;
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100);
+        }
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE AAPL_orderbook (
@@ -2820,8 +2830,7 @@ public class ArrayTest extends AbstractCairoTest {
                       [26.0,400.0,7.0,15.0,10.0,5.0,2.0,0.0,0.0,0.0],
                       [1.0,1.0,1.0, 1.0,1.0,1.0,1.0,0.0,0.0,0.0]
                      ] as asks
-                    \tFROM long_sequence(3_000_000)
-                    ;""");
+                    \tFROM long_sequence(""" + rowCount + ");");
 
             drainWalQueue();
 

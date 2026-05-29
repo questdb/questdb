@@ -538,6 +538,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRefreshMaxClusters() {
+        return getDelegate().getMatViewRefreshMaxClusters();
+    }
+
+    @Override
     public long getMatViewRefreshOomRetryTimeout() {
         return getDelegate().getMatViewRefreshOomRetryTimeout();
     }
@@ -835,6 +840,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getQueryRegistryPoolSize() {
         return getDelegate().getQueryRegistryPoolSize();
+    }
+
+    @Override
+    public int getQwpEgressForcedZstdLevel() {
+        return getDelegate().getQwpEgressForcedZstdLevel();
     }
 
     @Override

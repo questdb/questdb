@@ -346,9 +346,26 @@ public final class TableUtils {
     public static long checkMemSize(MemoryMR metaMem, long minSize) {
         final long memSize = metaMem.size();
         if (memSize < minSize) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
+            throw CairoException.fileTooSmall(memSize, minSize);
         }
         return memSize;
+    }
+
+    public static boolean checkStoragePolicyTtl(
+            TxReader txReader,
+            TimestampDriver timestampDriver,
+            long partitionTimestamp,
+            long maxTimestamp,
+            int ttl
+    ) {
+        assert ttl != 0 : "ttl cannot be 0, invalid value";
+        // Storage policies measure age from the partition's own floor (its start), not its
+        // ceiling like table TTL does. This shifts every threshold forward by one partition
+        // width relative to table TTL. For an interval up to one partition width, that means a
+        // partition becomes eligible as soon as the next (active) partition begins; for larger
+        // intervals it simply becomes eligible one partition width sooner than table TTL would.
+        final long partitionFloor = txReader.getPartitionFloor(partitionTimestamp);
+        return isOlderThanTtl(timestampDriver, partitionFloor, maxTimestamp, ttl);
     }
 
     public static boolean checkTtl(
@@ -359,11 +376,11 @@ public final class TableUtils {
             int ttl
     ) {
         assert ttl != 0 : "ttl cannot be 0, invalid value";
+        // Table TTL measures age from the partition ceiling (the start of the next logical
+        // partition), so a partition expires only once even its newest possible record is
+        // older than the TTL.
         final long partitionCeiling = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
-        // TTL < 0 means it's in months
-        return ttl > 0
-                ? maxTimestamp - partitionCeiling >= timestampDriver.fromHours(ttl)
-                : timestampDriver.monthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
+        return isOlderThanTtl(timestampDriver, partitionCeiling, maxTimestamp, ttl);
     }
 
     public static short checksumForMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
@@ -837,7 +854,7 @@ public final class TableUtils {
 
     public static int getInt(MemoryR metaMem, long memSize, long offset) {
         if (memSize < offset + Integer.BYTES) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
+            throw CairoException.fileTooSmall(memSize, offset + Integer.BYTES);
         }
         return metaMem.getInt(offset);
     }
@@ -2473,11 +2490,7 @@ public final class TableUtils {
     public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
         if (expectedVersion != metaVersion) {
-            throw validationException()
-                    .put("metadata version does not match runtime version [path=").put(metaPath)
-                    .put(", expectedVersion=").put(expectedVersion)
-                    .put(", actualVersion=").put(metaVersion)
-                    .put(']');
+            throw CairoException.metadataVersionMismatch(metaPath, expectedVersion, metaVersion);
         }
     }
 
@@ -2610,7 +2623,7 @@ public final class TableUtils {
         }
         final long storageLength = Vm.getStorageLength(strLength);
         if (offset + storageLength > memSize) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
+            throw CairoException.fileTooSmall(memSize, offset + storageLength);
         }
         return metaMem.getStrA(offset);
     }
@@ -2624,6 +2637,13 @@ public final class TableUtils {
         );
         short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
         return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= minorVersion;
+    }
+
+    private static boolean isOlderThanTtl(TimestampDriver timestampDriver, long partitionBoundary, long maxTimestamp, int ttl) {
+        // TTL < 0 means it's in months
+        return ttl > 0
+                ? maxTimestamp - partitionBoundary >= timestampDriver.fromHours(ttl)
+                : timestampDriver.monthsBetween(partitionBoundary, maxTimestamp) >= -ttl;
     }
 
     // Utility method for debugging. This method is not used in production.

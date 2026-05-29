@@ -91,6 +91,29 @@ offending character, not the start of the expression.
 
 ## Git & PR Conventions
 
+- **PRs are squash-merged. Commit history on a PR branch is throwaway** — only
+  the squashed commit message that lands on `master` is preserved. Do not
+  spend effort tidying the branch's history: no soft resets to "commit all at
+  once", no rewording prior commits, no force pushes to clean up. Adding a
+  fix-up commit on top is always fine. The squash flow folds the lot at merge
+  time anyway.
+- **Do not create worktrees or `pr-*` checkout branches when reviewing or
+  iterating on a PR.** All work belongs on `vi_api`. Even when a PR exists on a
+  separate branch (e.g. `pr-7128`), the canonical state to review and modify is
+  whatever is currently merged into `vi_api` — follow-up fixes routinely land
+  there directly, so `pr-*` branches lag and reviewing them in isolation gives
+  a misleading picture. If a `gh pr` command needs to fetch a PR's diff, fetch
+  the diff only (`gh pr diff`); do not check the branch out.
+
+## Investigating failures
+
+- **Never dismiss a failure as "pre-existing", "flaky", "unrelated", or "a
+  known issue" without actually proving it.** That label is a hypothesis,
+  not a conclusion. Treat any red test, red CI job, or surprising log line
+  as a live bug to investigate until the evidence — git log, reproduction
+  on master, a real timing constraint, an upstream report — forces a
+  different conclusion. Only after that proof can the issue be set aside,
+  and the proof itself should be reported back so it can be verified.
 - **`java-questdb-client/` is a separate git repo** (a git submodule). Always
   `cd` into it and commit there independently. Never commit it from the parent
   repo as a submodule pointer update without also committing inside it first.
