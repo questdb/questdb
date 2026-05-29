@@ -281,6 +281,37 @@ public class ParquetTest extends AbstractCairoTest {
         });
     }
 
+    // Regression for a parquet read crash when the query projects ZERO columns.
+    //
+    // PageFrameMemoryPool.ParquetBuffers.decode() always calls remapColumns() to
+    // size and zero the per-column page-address lists. When the projection has no
+    // columns, addressCache.getColumnCount() is 0, so remapColumns() would size the
+    // lists to 0 and trip DirectLongList.setCapacity()'s assert capacity > 0 (or,
+    // with assertions off, call setCapacity(0)). remapColumns() must instead leave
+    // the already-cleared lists empty for a zero-column read.
+    //
+    // count(*) with a constant GROUP BY forces the non-keyed group-by reduce path,
+    // which navigates every page frame -- decoding the parquet frame -- while
+    // projecting zero columns. The older partition is parquet; the active
+    // '2024-06-02' stays native (the active partition cannot be converted).
+    @Test
+    public void testCountStarOverParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, ts timestamp) timestamp(ts) partition by day;");
+            execute("insert into x(a, ts) values " +
+                    "(1, '2024-06-01T00:00:00.000000Z'), (2, '2024-06-02T00:00:00.000000Z');");
+            execute("alter table x convert partition to parquet where ts in '2024-06-01';");
+
+            assertSql(
+                    """
+                            count
+                            2
+                            """,
+                    "select count(*) from x group by 1+2"
+            );
+        });
+    }
+
     @Test
     public void testDecimalAllSizes() throws Exception {
         assertMemoryLeak(() -> {

@@ -626,6 +626,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // address pair into their respective query slots.
         private void remapColumns() {
             final int columnCount = addressCache.getColumnCount();
+            if (columnCount == 0) {
+                // The query reads no columns (e.g. count(*)). clearAddresses() already
+                // left the lists empty, which is the correct state; there is nothing to
+                // remap. Sizing them to 0 would trip DirectLongList.setCapacity()'s
+                // assert capacity > 0.
+                return;
+            }
             ensureCapacityAndZero(pageAddresses, columnCount);
             ensureCapacityAndZero(pageSizes, columnCount);
             ensureCapacityAndZero(auxPageAddresses, columnCount);
