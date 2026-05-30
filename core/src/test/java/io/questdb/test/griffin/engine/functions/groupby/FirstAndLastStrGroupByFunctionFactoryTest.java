@@ -233,8 +233,15 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                     2023-12-18T18:00:00.000000Z\tB\t\tnull\tcold_1\t3.0\t\tnull\tcold_2\t4.0
                     """;
 
-            assertSql(expected, query + " order by ts, device");
-            assertSql(expected, query + " sample by 1h fill(prev) order by ts, device");
+            assertQuery(query + " order by ts, device")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
+            assertQuery(query + " sample by 1h fill(prev) order by ts, device")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -271,8 +278,15 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                     2023-12-18T18:00:00.000000Z\tB\tcold_1\t3.0\tcold_1\t3.0\tcold_3\t5.0\tcold_3\t5.0
                     """;
 
-            assertSql(expected, query + " order by ts, device");
-            assertSql(expected, query + " sample by 1h fill(prev) order by ts, device");
+            assertQuery(query + " order by ts, device")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
+            assertQuery(query + " sample by 1h fill(prev) order by ts, device")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 

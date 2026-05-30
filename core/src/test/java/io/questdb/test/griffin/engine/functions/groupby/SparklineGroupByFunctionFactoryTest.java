@@ -61,13 +61,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("CREATE TABLE t (val DOUBLE, grp SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO t VALUES (NULL, 'a', '2024-01-01T00:00:00.000000Z')");
             execute("INSERT INTO t VALUES (NULL, 'a', '2024-01-01T01:00:00.000000Z')");
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
-                            
-                            """,
-                    "SELECT sparkline(val) FROM t"
-            );
+
+                            """);
         });
     }
 
@@ -86,13 +87,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (6.0, '2024-01-01T06:00:00.000000Z'),
                     (7.0, '2024-01-01T07:00:00.000000Z')
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁▂▃▄▅▆▇█
-                            """,
-                    "SELECT sparkline(val) FROM t"
-            );
+                            """);
         });
     }
 
@@ -108,13 +110,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (200.0, '2024-01-01T03:00:00.000000Z')
                     """);
             // With max=100, the 200 value should clamp to top char
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val, 0.0, 100.0, 4) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁▄██
-                            """,
-                    "SELECT sparkline(val, 0.0, 100.0, 4) FROM t"
-            );
+                            """);
         });
     }
 
@@ -130,13 +133,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (100.0, '2024-01-01T03:00:00.000000Z')
                     """);
             // With min=0, the -50 value should clamp to bottom char
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val, 0.0, 100.0, 4) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁▁▄█
-                            """,
-                    "SELECT sparkline(val, 0.0, 100.0, 4) FROM t"
-            );
+                            """);
         });
     }
 
@@ -186,13 +190,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (5.0, '2024-01-01T02:00:00.000000Z')
                     """);
             // All same value -> min==max -> all top chars
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ███
-                            """,
-                    "SELECT sparkline(val) FROM t"
-            );
+                            """);
         });
     }
 
@@ -200,13 +205,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
-                            
-                            """,
-                    "SELECT sparkline(val) FROM t"
-            );
+
+                            """);
         });
     }
 
@@ -224,13 +230,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     """);
             // NULLs are skipped; remaining values 0.0, 7.0, 3.5
             // min=0, max=7, so: 0->index 0, 7->index 7, 3.5->index 3
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁█▄
-                            """,
-                    "SELECT sparkline(val) FROM t"
-            );
+                            """);
         });
     }
 
@@ -249,13 +256,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (3.5,  '2024-01-01T03:00:00.000000Z'),
                     (7.0,  '2024-01-01T04:00:00.000000Z')
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁▄█
-                            """,
-                    "SELECT sparkline(val) FROM t"
-            );
+                            """);
         });
     }
 
@@ -284,15 +292,15 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
             // UTF-8 bytewise: ▁=E2 96 81, ▄=E2 96 84, █=E2 96 88.
             // First-byte differs at index 2: ▁▄█ (0x81) < █▄▁ = ███ (0x88).
             // █▄▁ vs ███ diverge at index 5: 0x84 < 0x88 => █▄▁ < ███.
-            assertSql(
-                    """
+            assertQuery("SELECT grp, sparkline(val) spark FROM t ORDER BY spark")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tspark
                             up\t▁▄█
                             down\t█▄▁
                             flat\t███
-                            """,
-                    "SELECT grp, sparkline(val) spark FROM t ORDER BY spark"
-            );
+                            """);
         });
     }
 
@@ -315,15 +323,15 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     """);
             // Three groups: up=▁█, blank=<null>, down=█▁.
             // QuestDB's ORDER BY default sorts NULL first ascending.
-            assertSql(
-                    """
+            assertQuery("SELECT grp, sparkline(val) spark FROM t ORDER BY spark")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tspark
                             blank\t
                             up\t▁█
                             down\t█▁
-                            """,
-                    "SELECT grp, sparkline(val) spark FROM t ORDER BY spark"
-            );
+                            """);
         });
     }
 
@@ -340,14 +348,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (3.5, 'down', '2024-01-01T01:00:00.000000Z'),
                     (0.0, 'down', '2024-01-01T02:00:00.000000Z')
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT grp, sparkline(val) FROM t ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tsparkline
                             down\t█▄▁
                             up\t▁▄█
-                            """,
-                    "SELECT grp, sparkline(val) FROM t ORDER BY grp"
-            );
+                            """);
         });
     }
 
@@ -365,13 +373,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     """);
             // min=-10, max=10, range=20
             // -10->0, -5->1, 0->3, 5->5, 10->7
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁▂▄▆█
-                            """,
-                    "SELECT sparkline(val) FROM t"
-            );
+                            """);
         });
     }
 
@@ -386,14 +395,15 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (3.5, '2024-01-01T01:00:00.000000Z'),
                     (3.5, '2024-01-01T01:30:00.000000Z')
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT ts, sparkline(val) FROM t SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tsparkline
                             2024-01-01T00:00:00.000000Z\t▁█
                             2024-01-01T01:00:00.000000Z\t██
-                            """,
-                    "SELECT ts, sparkline(val) FROM t SAMPLE BY 1h"
-            );
+                            """);
         });
     }
 
@@ -403,13 +413,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO t VALUES (42.0, '2024-01-01T00:00:00.000000Z')");
             // Single value -> min==max -> top char
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             █
-                            """,
-                    "SELECT sparkline(val) FROM t"
-            );
+                            """);
         });
     }
 
@@ -425,13 +436,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (7.0, '2024-01-01T03:00:00.000000Z')
                     """);
             // 4 values sub-sampled to width=2: bucket1=avg(0,0)=0, bucket2=avg(7,7)=7
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val, NULL, NULL, 2) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁█
-                            """,
-                    "SELECT sparkline(val, NULL, NULL, 2) FROM t"
-            );
+                            """);
         });
     }
 
@@ -446,13 +458,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (75.0, '2024-01-01T02:00:00.000000Z')
                     """);
             // With min=0, max=100: 25->index 1, 50->index 3, 75->index 5
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val, 0.0, 100.0, 3) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▂▄▆
-                            """,
-                    "SELECT sparkline(val, 0.0, 100.0, 3) FROM t"
-            );
+                            """);
         });
     }
 
@@ -474,13 +487,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
             // 5/12*7 = 2.91 -> idx 2 -> ▃
             // 8/12*7 = 4.66 -> idx 4 -> ▅
             // 12/12*7 = 7 -> idx 7 -> █
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val, 0.0, NULL, 3) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▃▅█
-                            """,
-                    "SELECT sparkline(val, 0.0, NULL, 3) FROM t"
-            );
+                            """);
         });
     }
 
@@ -499,13 +513,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
             // (2-2)/8*7 = 0 -> ▁
             // (6-2)/8*7 = 3.5 -> idx 3 -> ▄
             // (10-2)/8*7 = 7 -> █
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val, NULL, 10.0, 3) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁▄█
-                            """,
-                    "SELECT sparkline(val, NULL, 10.0, 3) FROM t"
-            );
+                            """);
         });
     }
 
@@ -520,13 +535,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (7.0, '2024-01-01T02:00:00.000000Z')
                     """);
             // NULL min -> auto (0.0), NULL max -> auto (7.0)
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val, NULL, NULL, 3) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁▄█
-                            """,
-                    "SELECT sparkline(val, NULL, NULL, 3) FROM t"
-            );
+                            """);
         });
     }
 
@@ -588,13 +604,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (3, '2024-01-01T01:00:00.000000Z'),
                     (7, '2024-01-01T02:00:00.000000Z')
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁▄█
-                            """,
-                    "SELECT sparkline(val) FROM t"
-            );
+                            """);
         });
     }
 
@@ -608,13 +625,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (50, '2024-01-01T01:00:00.000000Z'),
                     (100, '2024-01-01T02:00:00.000000Z')
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁▄█
-                            """,
-                    "SELECT sparkline(val) FROM t"
-            );
+                            """);
         });
     }
 
@@ -628,13 +646,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (50::SHORT, '2024-01-01T01:00:00.000000Z'),
                     (100::SHORT, '2024-01-01T02:00:00.000000Z')
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁▄█
-                            """,
-                    "SELECT sparkline(val) FROM t"
-            );
+                            """);
         });
     }
 
@@ -707,13 +726,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     """);
             // 10 values must fit exactly.
             // Values 0..9 with min=0,max=9,range=9: idx = round_down(v/9*7).
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁▁▂▃▄▄▅▆▇█
-                            """,
-                    "SELECT sparkline(val) FROM t"
-            );
+                            """);
             // Adding the 11th must throw.
             execute("INSERT INTO t VALUES (10.0, '2024-01-01T10:00:00.000000Z')");
             assertException(
@@ -963,15 +983,16 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (3.5, '2024-01-01T02:30:00.000000Z')
                     """);
             // Hour 01:00 has no data, FILL(NULL) should produce NULL for that bucket
-            assertSql(
-                    """
+            assertQuery("SELECT ts, sparkline(val) FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tsparkline
                             2024-01-01T00:00:00.000000Z\t▁█
                             2024-01-01T01:00:00.000000Z\t
                             2024-01-01T02:00:00.000000Z\t██
-                            """,
-                    "SELECT ts, sparkline(val) FROM t SAMPLE BY 1h FILL(NULL)"
-            );
+                            """);
         });
     }
 
@@ -987,15 +1008,16 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (3.5, '2024-01-01T02:30:00.000000Z')
                     """);
             // Hour 01:00 has no data, FILL(PREV) should repeat hour 00's sparkline
-            assertSql(
-                    """
+            assertQuery("SELECT ts, sparkline(val) FROM t SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tsparkline
                             2024-01-01T00:00:00.000000Z\t▁█
                             2024-01-01T01:00:00.000000Z\t▁█
                             2024-01-01T02:00:00.000000Z\t██
-                            """,
-                    "SELECT ts, sparkline(val) FROM t SAMPLE BY 1h FILL(PREV)"
-            );
+                            """);
         });
     }
 
@@ -1018,13 +1040,14 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (10.0, '2024-01-01T04:00:00.000000Z')
                     """);
             // Both Inf literals drop out; remaining values 0,5,10 render as 3 chars.
-            assertSql(
-                    """
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sparkline
                             ▁▄█
-                            """,
-                    "SELECT sparkline(val) FROM t"
-            );
+                            """);
         });
     }
 

@@ -119,7 +119,11 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
 
             execute("insert into x values(cast(null as STRING), '2021-05-21')");
             execute("insert into x values(cast(null as STRING), '1970-01-01')");
-            assertSql(expected, "select max(s) from x");
+            assertQuery("select max(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 

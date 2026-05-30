@@ -43,7 +43,10 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 false,
                 true
         );
-        assertSql(expected, "select string_agg(distinct null, ',') from x");
+        assertQuery("select string_agg(distinct null, ',') from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -60,7 +63,10 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 false,
                 true
         );
-        assertSql(expected, "select string_agg(distinct 'aaa', ',') from x");
+        assertQuery("select string_agg(distinct 'aaa', ',') from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -89,7 +95,9 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 true,
                 true
         );
-        assertSql(expected, "select a, string_agg(distinct s, ',') from x group by a order by a");
+        assertQuery("select a, string_agg(distinct s, ',') from x group by a order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -115,7 +123,9 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 true,
                 true
         );
-        assertSql(expected, "select a, string_agg(distinct s, ',') from x group by a order by a");
+        assertQuery("select a, string_agg(distinct s, ',') from x group by a order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -139,7 +149,10 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 false,
                 true
         );
-        assertSql(expected, "select max(length(agg)) from (select a, string_agg(distinct s, ',') agg from x)");
+        assertQuery("select max(length(agg)) from (select a, string_agg(distinct s, ',') agg from x)")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -164,7 +177,9 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 true,
                 true
         );
-        assertSql(expected, "select a, string_agg(distinct s, ',') from x");
+        assertQuery("select a, string_agg(distinct s, ',') from x")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -181,7 +196,10 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 false,
                 true
         );
-        assertSql(expected, "select string_agg(distinct s, ',') from x");
+        assertQuery("select string_agg(distinct s, ',') from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test

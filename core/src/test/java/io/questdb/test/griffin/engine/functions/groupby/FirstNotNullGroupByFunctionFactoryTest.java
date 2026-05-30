@@ -139,10 +139,7 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                 " '2.0.0.0'" +
                 ")");
 
-        assertSql(
-                "a0\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\n" +
-                        "a\t2023-10-23T00:00:00.000Z\t2.2\t3.3\t4\t5\ta_symbol\t2023-10-23T12:34:59.000000Z\t" + firstUuid + "\ta_string\tu\tuu\tuuuuu\tuuuuuuu\t1.0.0.0\n",
-                "select first_not_null(a0) a0," +
+        assertQuery("select first_not_null(a0) a0," +
                         "     first_not_null(a1) a1," +
                         "     first_not_null(a2) a2," +
                         "     first_not_null(a3) a3," +
@@ -157,8 +154,11 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "     first_not_null(a12) a12, " +
                         "     first_not_null(a13) a13, " +
                         "     first_not_null(a14) a14 " +
-                        "from tab"
-        );
+                        "from tab")
+                .noRandomAccess()
+                .expectSize()
+                .returns("a0\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\n" +
+                        "a\t2023-10-23T00:00:00.000Z\t2.2\t3.3\t4\t5\ta_symbol\t2023-10-23T12:34:59.000000Z\t" + firstUuid + "\ta_string\tu\tuu\tuuuuu\tuuuuuuu\t1.0.0.0\n");
     }
 
     @Test

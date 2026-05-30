@@ -61,20 +61,21 @@ import org.junit.Test;
 public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testArgMaxAllNull() throws SqlException {
+    public void testArgMaxAllNull() throws Exception {
         execute("create table tab (value double, key timestamp)");
 
         execute("insert into tab values (null, null)");
         execute("insert into tab values (null, null)");
         execute("insert into tab values (null, null)");
 
-        assertSql(
-                """
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         arg_max
                         null
-                        """,
-                "select arg_max(value, key) from tab"
-        );
+                        """);
     }
 
     @Test
@@ -241,7 +242,7 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
     }
 
     @Test
-    public void testArgMaxSimple() throws SqlException {
+    public void testArgMaxSimple() throws Exception {
         execute("create table tab (value double, key timestamp)");
 
         execute("insert into tab values (10.0, '2023-01-01T00:00:00.000000Z')");
@@ -249,17 +250,18 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
         execute("insert into tab values (30.0, '2023-01-02T00:00:00.000000Z')");
 
         // key='2023-01-03' is max, so value should be 20.0
-        assertSql(
-                """
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         arg_max
                         20.0
-                        """,
-                "select arg_max(value, key) from tab"
-        );
+                        """);
     }
 
     @Test
-    public void testArgMaxWithGroupBy() throws SqlException {
+    public void testArgMaxWithGroupBy() throws Exception {
         execute("create table tab (sym symbol, value double, key timestamp)");
 
         execute("insert into tab values ('A', 10.0, '2023-01-01T00:00:00.000000Z')");
@@ -268,18 +270,18 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
         execute("insert into tab values ('B', 100.0, '2023-01-05T00:00:00.000000Z')");
         execute("insert into tab values ('B', 200.0, '2023-01-04T00:00:00.000000Z')");
 
-        assertSql(
-                """
+        assertQuery("select sym, arg_max(value, key) from tab order by sym")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         sym\targ_max
                         A\t20.0
                         B\t100.0
-                        """,
-                "select sym, arg_max(value, key) from tab order by sym"
-        );
+                        """);
     }
 
     @Test
-    public void testArgMaxWithNullKey() throws SqlException {
+    public void testArgMaxWithNullKey() throws Exception {
         execute("create table tab (value double, key timestamp)");
 
         execute("insert into tab values (10.0, null)");
@@ -287,17 +289,18 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
         execute("insert into tab values (30.0, '2023-01-02T00:00:00.000000Z')");
 
         // key='2023-01-03' is max (null is ignored), so value should be 20.0
-        assertSql(
-                """
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         arg_max
                         20.0
-                        """,
-                "select arg_max(value, key) from tab"
-        );
+                        """);
     }
 
     @Test
-    public void testArgMaxWithNullValue() throws SqlException {
+    public void testArgMaxWithNullValue() throws Exception {
         execute("create table tab (value double, key timestamp)");
 
         execute("insert into tab values (null, '2023-01-05T00:00:00.000000Z')");
@@ -305,12 +308,13 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
         execute("insert into tab values (30.0, '2023-01-02T00:00:00.000000Z')");
 
         // key='2023-01-05' is max, but value is null
-        assertSql(
-                """
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         arg_max
                         null
-                        """,
-                "select arg_max(value, key) from tab"
-        );
+                        """);
     }
 }

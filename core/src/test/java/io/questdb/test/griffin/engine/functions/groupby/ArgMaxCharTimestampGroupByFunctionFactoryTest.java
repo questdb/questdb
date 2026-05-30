@@ -36,26 +36,38 @@ import org.junit.Test;
 public class ArgMaxCharTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testArgMaxAllNull() throws SqlException {
+    public void testArgMaxAllNull() throws Exception {
         execute("create table tab (value char, key timestamp)");
         execute("insert into tab values (null, null)");
         execute("insert into tab values (null, null)");
-        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\n\n");
     }
 
     @Test
-    public void testArgMaxEmptyTable() throws SqlException {
+    public void testArgMaxEmptyTable() throws Exception {
         execute("create table tab (value char, key timestamp)");
-        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\n\n");
     }
 
     @Test
-    public void testArgMaxMixedNullValueAndNullKey() throws SqlException {
+    public void testArgMaxMixedNullValueAndNullKey() throws Exception {
         execute("create table tab (value char, key timestamp)");
         execute("insert into tab values (null, '2023-01-05T00:00:00.000000Z')");
         execute("insert into tab values ('X', null)");
         execute("insert into tab values ('Y', '2023-01-03T00:00:00.000000Z')");
-        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\n\n");
     }
 
     @Test
@@ -103,47 +115,66 @@ public class ArgMaxCharTimestampGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
-    public void testArgMaxSimple() throws SqlException {
+    public void testArgMaxSimple() throws Exception {
         execute("create table tab (value char, key timestamp)");
         execute("insert into tab values ('X', '2023-01-01T00:00:00.000000Z')");
         execute("insert into tab values ('Y', '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('Z', '2023-01-02T00:00:00.000000Z')");
-        assertSql("arg_max\nY\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\nY\n");
     }
 
     @Test
-    public void testArgMaxTieBreaking() throws SqlException {
+    public void testArgMaxTieBreaking() throws Exception {
         execute("create table tab (value char, key timestamp)");
         execute("insert into tab values ('X', '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('Y', '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('Z', '2023-01-01T00:00:00.000000Z')");
-        assertSql("arg_max\nX\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\nX\n");
     }
 
     @Test
-    public void testArgMaxWithGroupBy() throws SqlException {
+    public void testArgMaxWithGroupBy() throws Exception {
         execute("create table tab (sym symbol, value char, key timestamp)");
         execute("insert into tab values ('A', 'X', '2023-01-01T00:00:00.000000Z')");
         execute("insert into tab values ('A', 'Y', '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('B', 'P', '2023-01-05T00:00:00.000000Z')");
         execute("insert into tab values ('B', 'Q', '2023-01-04T00:00:00.000000Z')");
-        assertSql("sym\targ_max\nA\tY\nB\tP\n", "select sym, arg_max(value, key) from tab order by sym");
+        assertQuery("select sym, arg_max(value, key) from tab order by sym")
+                .noLeakCheck()
+                .expectSize()
+                .returns("sym\targ_max\nA\tY\nB\tP\n");
     }
 
     @Test
-    public void testArgMaxWithNullKey() throws SqlException {
+    public void testArgMaxWithNullKey() throws Exception {
         execute("create table tab (value char, key timestamp)");
         execute("insert into tab values ('X', null)");
         execute("insert into tab values ('Y', '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('Z', '2023-01-02T00:00:00.000000Z')");
-        assertSql("arg_max\nY\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\nY\n");
     }
 
     @Test
-    public void testArgMaxWithNullValue() throws SqlException {
+    public void testArgMaxWithNullValue() throws Exception {
         execute("create table tab (value char, key timestamp)");
         execute("insert into tab values (null, '2023-01-05T00:00:00.000000Z')");
         execute("insert into tab values ('Y', '2023-01-03T00:00:00.000000Z')");
-        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\n\n");
     }
 }

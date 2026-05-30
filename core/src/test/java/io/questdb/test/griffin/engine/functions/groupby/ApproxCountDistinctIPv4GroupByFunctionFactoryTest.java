@@ -123,7 +123,10 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
             );
             // addition shouldn't affect the number of distinct values,
             // so the result should stay the same
-            assertSql(expected, "select a, approx_count_distinct(s) from x order by a");
+            assertQuery("select a, approx_count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -292,8 +295,16 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
 
             execute("insert into x values(cast(null as IPV4), '2021-05-21')");
             execute("insert into x values(cast(null as IPV4), '1970-01-01')");
-            assertSql(expectedExact, "select count_distinct(s) from x");
-            assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedExact);
+            assertQuery("select approx_count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedEstimated);
         });
     }
 
@@ -330,8 +341,16 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
 
             execute("insert into x values(cast(null as IPV4), '2021-05-21')");
             execute("insert into x values(cast(null as IPV4), '1970-01-01')");
-            assertSql(expectedExact, "select count_distinct(s) from x");
-            assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedExact);
+            assertQuery("select approx_count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedEstimated);
         });
     }
 

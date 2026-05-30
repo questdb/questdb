@@ -46,7 +46,9 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertSql(expected, "select a, count(distinct cast('foobar' as SYMBOL)) from x order by a");
+        assertQuery("select a, count(distinct cast('foobar' as SYMBOL)) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -68,7 +70,9 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertSql(expected, "select a, count(distinct s) from x order by a");
+        assertQuery("select a, count(distinct s) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -85,7 +89,10 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 false,
                 true
         );
-        assertSql(expected, "select count(distinct s) from x");
+        assertQuery("select count(distinct s) from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -102,7 +109,10 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 false,
                 true
         );
-        assertSql(expected, "select count(distinct s) from x");
+        assertQuery("select count(distinct s) from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -121,7 +131,9 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertSql(expected, "select a, count(distinct cast(null as SYMBOL)) from x order by a");
+        assertQuery("select a, count(distinct cast(null as SYMBOL)) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -147,7 +159,10 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertSql(expected, "select ts, count(distinct s) from x sample by 1s fill(linear)");
+        assertQuery("select ts, count(distinct s) from x sample by 1s fill(linear)")
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -204,7 +219,10 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "ts",
                 false
         );
-        assertSql(expected, "select ts, count(distinct s) from x sample by 1s fill(99)");
+        assertQuery("select ts, count(distinct s) from x sample by 1s fill(99)")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -271,6 +289,9 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "ts",
                 false
         );
-        assertSql(expected, "select a, count(distinct s), ts from x sample by 1s align to first observation");
+        assertQuery("select a, count(distinct s), ts from x sample by 1s align to first observation")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
     }
 }

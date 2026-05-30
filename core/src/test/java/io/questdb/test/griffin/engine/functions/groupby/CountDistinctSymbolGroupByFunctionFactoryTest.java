@@ -45,7 +45,9 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                 true,
                 true
         );
-        assertSql(expected, "select a, count(distinct 'a'::symbol) from x order by a");
+        assertQuery("select a, count(distinct 'a'::symbol) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -69,11 +71,20 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                     true,
                     true
             );
-            assertSql(expected, "select a, count(distinct concat(s, 'foobar')::symbol) from x order by a");
+            assertQuery("select a, count(distinct concat(s, 'foobar')::symbol) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             // concatenation shouldn't affect the number of distinct values,
             // so the result should stay the same
-            assertSql(expected, "select a, count_distinct(s) from x order by a");
-            assertSql(expected, "select a, count(distinct s) from x order by a");
+            assertQuery("select a, count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select a, count(distinct s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -97,7 +108,9 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                 true,
                 true
         );
-        assertSql(expected, "select a, count(distinct s) from x order by a");
+        assertQuery("select a, count(distinct s) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -114,7 +127,10 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                 false,
                 true
         );
-        assertSql(expected, "select count(distinct s) from x");
+        assertQuery("select count(distinct s) from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -131,7 +147,10 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                 false,
                 true
         );
-        assertSql(expected, "select count(distinct s1), count(distinct s2) from x");
+        assertQuery("select count(distinct s1), count(distinct s2) from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -149,12 +168,24 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                     false,
                     true
             );
-            assertSql(expected, "select count(distinct s) from x");
+            assertQuery("select count(distinct s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute("insert into x values(cast(null as SYMBOL), '2021-05-21')");
             execute("insert into x values(cast(null as SYMBOL), '1970-01-01')");
-            assertSql(expected, "select count_distinct(s) from x");
-            assertSql(expected, "select count(distinct s) from x");
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select count(distinct s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -174,7 +205,9 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                 true,
                 true
         );
-        assertSql(expected, "select s, count(distinct cast(null as SYMBOL)) from x order by s");
+        assertQuery("select s, count(distinct cast(null as SYMBOL)) from x order by s")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test

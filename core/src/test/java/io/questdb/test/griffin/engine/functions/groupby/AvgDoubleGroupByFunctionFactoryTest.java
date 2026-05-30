@@ -33,11 +33,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAll() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
-                        max	avg	weighted_avg	sum	stddev_samp	weighted_stddev
-                        10	5.5	7.0	55	3.0276503540974917	2.6220221204253784
-                        """, """
+        assertMemoryLeak(() -> assertQuery("""
                         SELECT
                             max(x),
                             avg(x),
@@ -46,8 +42,14 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                             stddev_samp(x),
                             weighted_stddev(x, x)
                         FROM long_sequence(10)
-                        """
-        ));
+                        """)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        max	avg	weighted_avg	sum	stddev_samp	weighted_stddev
+                        10	5.5	7.0	55	3.0276503540974917	2.6220221204253784
+                        """));
     }
 
     @Test
@@ -86,12 +88,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                             ELSE 0.0
                         END val FROM long_sequence(100)
                     )""");
-            assertSql(
-                    """
-                            sum	avg	weighted_avg	max	min	ksum	nsum	stddev_samp	weighted_stddev
-                            44.0	1.0	1.0	1.0	1.0	44.0	44.0	0.0	0.0
-                            """,
-                    """
+            assertQuery("""
                             SELECT
                                 sum(1/val),
                                 avg(1/val),
@@ -103,8 +100,14 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                                 stddev_samp(1/val),
                                 weighted_stddev(1/val, val)
                             FROM test2
-                            """
-            );
+                            """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum	avg	weighted_avg	max	min	ksum	nsum	stddev_samp	weighted_stddev
+                            44.0	1.0	1.0	1.0	1.0	44.0	44.0	0.0	0.0
+                            """);
         });
     }
 
@@ -140,17 +143,19 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testWeightedAvg() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql(
-                    """
-                            weighted_avg	sum_over_sum
-                            7.0	7.0
-                            """, """
+            assertQuery("""
                             SELECT
                                 weighted_avg(x, x),
                                 sum(x * x) / sum(x)::double sum_over_sum
                             FROM long_sequence(10)
-                            """
-            );
+                            """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            weighted_avg	sum_over_sum
+                            7.0	7.0
+                            """);
             assertSql(
                     """
                             weighted_avg
@@ -191,61 +196,67 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
             double avg0 = Double.parseDouble(hour0Avg.trim().split("\n")[1]);
             double avg2 = Double.parseDouble(hour2Avg.trim().split("\n")[1]);
 
-            assertSql(
-                    "ts\tround\n" +
+            assertQuery("SELECT ts, round(weighted_avg(value, weight), 8) FROM test_fill SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\tround\n" +
                             "1970-01-01T00:00:00.000000Z\t" + avg0 + "\n" +
                             "1970-01-01T01:00:00.000000Z\t" + avg0 + "\n" +
-                            "1970-01-01T02:00:00.000000Z\t" + avg2 + "\n",
-                    "SELECT ts, round(weighted_avg(value, weight), 8) FROM test_fill SAMPLE BY 1h FILL(PREV)"
-            );
-            assertSql(
-                    "ts\tround\n" +
+                            "1970-01-01T02:00:00.000000Z\t" + avg2 + "\n");
+            assertQuery("SELECT ts, round(weighted_avg(value, weight), 8) FROM test_fill SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\tround\n" +
                             "1970-01-01T00:00:00.000000Z\t" + avg0 + "\n" +
                             "1970-01-01T01:00:00.000000Z\tnull\n" +
-                            "1970-01-01T02:00:00.000000Z\t" + avg2 + "\n",
-                    "SELECT ts, round(weighted_avg(value, weight), 8) FROM test_fill SAMPLE BY 1h FILL(NULL)"
-            );
+                            "1970-01-01T02:00:00.000000Z\t" + avg2 + "\n");
         });
     }
 
     @Test
     public void testWeightedAvgZeroAndNegativeWeight() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql(
-                    """
+            assertQuery("SELECT weighted_avg(x, 0) FROM long_sequence(10)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             weighted_avg
                             null
-                            """,
-                    "SELECT weighted_avg(x, 0) FROM long_sequence(10)"
-            );
-            assertSql(
-                    """
-                            weighted_avg
-                            7.0
-                            """,
-                    """
+                            """);
+            assertQuery("""
                             SELECT weighted_avg(
                                 x,
                                 CASE WHEN x = 7 THEN 1 ELSE 0 END
                             ) FROM long_sequence(10)
-                            """
-            );
+                            """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            weighted_avg
+                            7.0
+                            """);
             // Weights sum to zero
-            assertSql(
-                    """
+            assertQuery("SELECT weighted_avg(x, x - 6) FROM long_sequence(11)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             weighted_avg
                             null
-                            """,
-                    "SELECT weighted_avg(x, x - 6) FROM long_sequence(11)"
-            );
+                            """);
             // Weights all negative
-            assertSql(
-                    """
+            assertQuery("SELECT weighted_avg(x, x - 12) FROM long_sequence(11)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             weighted_avg
                             4.333333333333333
-                            """,
-                    "SELECT weighted_avg(x, x - 12) FROM long_sequence(11)"
-            );
+                            """);
         });
     }
 
@@ -260,13 +271,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         rnd_double()
                     FROM long_sequence(1000)
                     """);
-            assertSql("""
-                    sym	function	formula
-                    A	1.1832	1.1832
-                    D	1.1332	1.1332
-                    B	1.1528	1.1528
-                    C	1.2291	1.2291
-                    """, """
+            assertQuery("""
                     SELECT
                         sym,
                         round(weighted_stddev_rel(value, weight), 4) AS function,
@@ -278,14 +283,17 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                           / (sum(weight) - sum(weight * weight) / sum(weight))
                         ), 4) AS formula
                     FROM tango
-                    """);
-            assertSql("""
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                     sym	function	formula
-                    A	1.1845	1.1845
-                    D	1.1346	1.1346
-                    B	1.1544	1.1544
-                    C	1.2309	1.2309
-                    """, """
+                    A	1.1832	1.1832
+                    D	1.1332	1.1332
+                    B	1.1528	1.1528
+                    C	1.2291	1.2291
+                    """);
+            assertQuery("""
                     SELECT
                         sym,
                         round(weighted_stddev_freq(value, weight), 4) AS function,
@@ -297,6 +305,15 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                           / (sum(weight) - 1)
                         ), 4) AS formula
                     FROM tango
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                    sym	function	formula
+                    A	1.1845	1.1845
+                    D	1.1346	1.1346
+                    B	1.1544	1.1544
+                    C	1.2309	1.2309
                     """);
         });
     }
@@ -304,18 +321,22 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testWeightedStddevEqualSamples() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql(
-                    """
+            assertQuery("SELECT weighted_stddev_freq(1, 1) FROM long_sequence(10)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             weighted_stddev_freq
                             0.0
-                            """, "SELECT weighted_stddev_freq(1, 1) FROM long_sequence(10)"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT weighted_stddev_rel(1, 1) FROM long_sequence(10)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             weighted_stddev_rel
                             0.0
-                            """, "SELECT weighted_stddev_rel(1, 1) FROM long_sequence(10)"
-            );
+                            """);
         });
     }
 

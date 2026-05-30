@@ -295,29 +295,31 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                 w.commit();
             }
 
-            assertSql(
-                    """
+            assertQuery("select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to first observation")
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             k\ts\thaversine_dist_deg\tsum
                             1970-01-01T00:30:00.000000Z\tAAA\t157.01233135733582\t1000.0
                             1970-01-01T01:30:00.000000Z\tAAA\t228.55327569899347\t2000.0
                             1970-01-01T02:30:00.000000Z\tAAA\t85.73439427824682\t1500.0
                             1970-01-01T03:30:00.000000Z\tAAA\t157.22760372823447\t1000.0
                             1970-01-01T04:30:00.000000Z\tAAA\t0.0\t1000.0
-                            """,
-                    "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to first observation"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to calendar")
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             k\ts\thaversine_dist_deg\tsum
                             1970-01-01T00:00:00.000000Z\tAAA\t78.50616567866791\t1000.0
                             1970-01-01T01:00:00.000000Z\tAAA\t264.19224423853797\t2000.0
                             1970-01-01T02:00:00.000000Z\tAAA\t85.73439427824682\t1500.0
                             1970-01-01T03:00:00.000000Z\tAAA\t121.48099900324064\t1000.0
                             1970-01-01T04:00:00.000000Z\tAAA\t78.61380186411724\t1000.0
-                            """,
-                    "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to calendar"
-            );
+                            """);
         });
     }
 

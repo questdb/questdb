@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -36,11 +35,15 @@ import org.junit.Test;
 public class ArgMinUuidTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testArgMinAllNull() throws SqlException {
+    public void testArgMinAllNull() throws Exception {
         execute("create table tab (value uuid, key timestamp)");
         execute("insert into tab values (null, null)");
         execute("insert into tab values (null, null)");
-        assertSql("arg_min\n\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\n\n");
     }
 
     @Test
@@ -88,38 +91,53 @@ public class ArgMinUuidTimestampGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
-    public void testArgMinSimple() throws SqlException {
+    public void testArgMinSimple() throws Exception {
         execute("create table tab (value uuid, key timestamp)");
         execute("insert into tab values ('11111111-1111-1111-1111-111111111111', '2023-01-01T00:00:00.000000Z')");
         execute("insert into tab values ('22222222-2222-2222-2222-222222222222', '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('33333333-3333-3333-3333-333333333333', '2023-01-02T00:00:00.000000Z')");
-        assertSql("arg_min\n11111111-1111-1111-1111-111111111111\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\n11111111-1111-1111-1111-111111111111\n");
     }
 
     @Test
-    public void testArgMinWithGroupBy() throws SqlException {
+    public void testArgMinWithGroupBy() throws Exception {
         execute("create table tab (sym symbol, value uuid, key timestamp)");
         execute("insert into tab values ('A', '11111111-1111-1111-1111-111111111111', '2023-01-01T00:00:00.000000Z')");
         execute("insert into tab values ('A', '22222222-2222-2222-2222-222222222222', '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('B', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '2023-01-05T00:00:00.000000Z')");
         execute("insert into tab values ('B', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '2023-01-04T00:00:00.000000Z')");
-        assertSql("sym\targ_min\nA\t11111111-1111-1111-1111-111111111111\nB\tbbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\n", "select sym, arg_min(value, key) from tab order by sym");
+        assertQuery("select sym, arg_min(value, key) from tab order by sym")
+                .noLeakCheck()
+                .expectSize()
+                .returns("sym\targ_min\nA\t11111111-1111-1111-1111-111111111111\nB\tbbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\n");
     }
 
     @Test
-    public void testArgMinWithNullKey() throws SqlException {
+    public void testArgMinWithNullKey() throws Exception {
         execute("create table tab (value uuid, key timestamp)");
         execute("insert into tab values ('11111111-1111-1111-1111-111111111111', null)");
         execute("insert into tab values ('22222222-2222-2222-2222-222222222222', '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('33333333-3333-3333-3333-333333333333', '2023-01-02T00:00:00.000000Z')");
-        assertSql("arg_min\n33333333-3333-3333-3333-333333333333\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\n33333333-3333-3333-3333-333333333333\n");
     }
 
     @Test
-    public void testArgMinWithNullValue() throws SqlException {
+    public void testArgMinWithNullValue() throws Exception {
         execute("create table tab (value uuid, key timestamp)");
         execute("insert into tab values (null, '2023-01-01T00:00:00.000000Z')");
         execute("insert into tab values ('22222222-2222-2222-2222-222222222222', '2023-01-03T00:00:00.000000Z')");
-        assertSql("arg_min\n\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\n\n");
     }
 }

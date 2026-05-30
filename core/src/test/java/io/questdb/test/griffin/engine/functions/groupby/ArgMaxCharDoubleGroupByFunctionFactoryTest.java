@@ -36,26 +36,38 @@ import org.junit.Test;
 public class ArgMaxCharDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testArgMaxAllNull() throws SqlException {
+    public void testArgMaxAllNull() throws Exception {
         execute("create table tab (value char, key double)");
         execute("insert into tab values (null, null)");
         execute("insert into tab values (null, null)");
-        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\n\n");
     }
 
     @Test
-    public void testArgMaxEmptyTable() throws SqlException {
+    public void testArgMaxEmptyTable() throws Exception {
         execute("create table tab (value char, key double)");
-        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\n\n");
     }
 
     @Test
-    public void testArgMaxMixedNullValueAndNullKey() throws SqlException {
+    public void testArgMaxMixedNullValueAndNullKey() throws Exception {
         execute("create table tab (value char, key double)");
         execute("insert into tab values (null, 5.0)");
         execute("insert into tab values ('X', null)");
         execute("insert into tab values ('Y', 3.0)");
-        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\n\n");
     }
 
     @Test
@@ -103,47 +115,66 @@ public class ArgMaxCharDoubleGroupByFunctionFactoryTest extends AbstractCairoTes
     }
 
     @Test
-    public void testArgMaxSimple() throws SqlException {
+    public void testArgMaxSimple() throws Exception {
         execute("create table tab (value char, key double)");
         execute("insert into tab values ('X', 1.0)");
         execute("insert into tab values ('Y', 3.0)");
         execute("insert into tab values ('Z', 2.0)");
-        assertSql("arg_max\nY\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\nY\n");
     }
 
     @Test
-    public void testArgMaxTieBreaking() throws SqlException {
+    public void testArgMaxTieBreaking() throws Exception {
         execute("create table tab (value char, key double)");
         execute("insert into tab values ('X', 3.0)");
         execute("insert into tab values ('Y', 3.0)");
         execute("insert into tab values ('Z', 1.0)");
-        assertSql("arg_max\nX\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\nX\n");
     }
 
     @Test
-    public void testArgMaxWithGroupBy() throws SqlException {
+    public void testArgMaxWithGroupBy() throws Exception {
         execute("create table tab (sym symbol, value char, key double)");
         execute("insert into tab values ('A', 'X', 1.0)");
         execute("insert into tab values ('A', 'Y', 3.0)");
         execute("insert into tab values ('B', 'P', 5.0)");
         execute("insert into tab values ('B', 'Q', 4.0)");
-        assertSql("sym\targ_max\nA\tY\nB\tP\n", "select sym, arg_max(value, key) from tab order by sym");
+        assertQuery("select sym, arg_max(value, key) from tab order by sym")
+                .noLeakCheck()
+                .expectSize()
+                .returns("sym\targ_max\nA\tY\nB\tP\n");
     }
 
     @Test
-    public void testArgMaxWithNullKey() throws SqlException {
+    public void testArgMaxWithNullKey() throws Exception {
         execute("create table tab (value char, key double)");
         execute("insert into tab values ('X', null)");
         execute("insert into tab values ('Y', 3.0)");
         execute("insert into tab values ('Z', 2.0)");
-        assertSql("arg_max\nY\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\nY\n");
     }
 
     @Test
-    public void testArgMaxWithNullValue() throws SqlException {
+    public void testArgMaxWithNullValue() throws Exception {
         execute("create table tab (value char, key double)");
         execute("insert into tab values (null, 5.0)");
         execute("insert into tab values ('Y', 3.0)");
-        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\n\n");
     }
 }

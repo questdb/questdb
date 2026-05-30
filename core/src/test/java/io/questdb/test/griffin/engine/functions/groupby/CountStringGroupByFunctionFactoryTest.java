@@ -46,7 +46,9 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertSql(expected, "select a, count(distinct '42') from x order by a");
+        assertQuery("select a, count(distinct '42') from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -66,11 +68,20 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                     true,
                     true
             );
-            assertSql(expected, "select a, count(distinct concat(s, s)) from x order by a");
+            assertQuery("select a, count(distinct concat(s, s)) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             // self-concatenation shouldn't affect the number of distinct values,
             // so the result should stay the same
-            assertSql(expected, "select a, count_distinct(s) from x order by a");
-            assertSql(expected, "select a, count(distinct s) from x order by a");
+            assertQuery("select a, count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select a, count(distinct s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -93,7 +104,9 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertSql(expected, "select a, count(distinct s) from x order by a");
+        assertQuery("select a, count(distinct s) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -110,7 +123,10 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 false,
                 true
         );
-        assertSql(expected, "select count(distinct s) from x");
+        assertQuery("select count(distinct s) from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -127,7 +143,10 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 false,
                 true
         );
-        assertSql(expected, "select count(distinct s) from x");
+        assertQuery("select count(distinct s) from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -146,7 +165,9 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertSql(expected, "select a, count(distinct cast(null as STRING)) from x order by a");
+        assertQuery("select a, count(distinct cast(null as STRING)) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -172,7 +193,10 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertSql(expected, "select ts, count(distinct s) from x sample by 1s fill(linear)");
+        assertQuery("select ts, count(distinct s) from x sample by 1s fill(linear)")
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -233,7 +257,10 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "ts",
                 false
         );
-        assertSql(expected, "select ts, count(distinct s) from x sample by 1s fill(99)");
+        assertQuery("select ts, count(distinct s) from x sample by 1s fill(99)")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -300,6 +327,9 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "ts",
                 false
         );
-        assertSql(expected, "select a, count(distinct s), ts from x sample by 1s ALIGN TO FIRST OBSERVATION");
+        assertQuery("select a, count(distinct s), ts from x sample by 1s ALIGN TO FIRST OBSERVATION")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
     }
 }

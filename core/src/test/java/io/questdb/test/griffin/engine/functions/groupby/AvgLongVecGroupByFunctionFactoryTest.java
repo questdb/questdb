@@ -100,8 +100,14 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                     """;
 
 
-            assertSql(expected, "select sym, avg(cast(x as double)) from test order by sym");
-            assertSql(expected, "select sym, avg(x) from test where x > 0 order by sym");
+            assertQuery("select sym, avg(cast(x as double)) from test order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select sym, avg(x) from test where x > 0 order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             final String diffExpected = """
                     sym\tcolumn
@@ -112,8 +118,10 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
             // Here 6000 is a hack.
             // Difference between avg(double) and avg(long) depends on column values range and rows count.
-            assertSql(diffExpected, "with a as (select sym, avg(x) from test), b as (select sym, avg(x) from test where x > 0) " +
-                    "select a.sym, b.avg-a.avg < 6000 from a join b on(sym) order by sym");
+            assertQuery("with a as (select sym, avg(x) from test), b as (select sym, avg(x) from test where x > 0) " +
+                    "select a.sym, b.avg-a.avg < 6000 from a join b on(sym) order by sym")
+                    .noLeakCheck()
+                    .returns(diffExpected);
         });
     }
 

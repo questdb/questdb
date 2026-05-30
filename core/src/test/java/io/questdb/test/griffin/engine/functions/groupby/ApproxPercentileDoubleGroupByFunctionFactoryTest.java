@@ -35,10 +35,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testApprox0thPercentileDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n1.0\n",
-                    "select approx_percentile(x, 0) from test"
-            );
+            assertQuery("select approx_percentile(x, 0) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n1.0\n");
         });
     }
 
@@ -46,10 +47,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testApprox100thPercentileDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n103.9375\n",
-                    "select approx_percentile(x, 1.0) from test"
-            );
+            assertQuery("select approx_percentile(x, 1.0) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n103.9375\n");
         });
     }
 
@@ -57,10 +59,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testApprox50thPercentileDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n51.9375\n",
-                    "select approx_percentile(x, 0.5) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n51.9375\n");
         });
     }
 
@@ -68,10 +71,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testApprox50thPercentileDoubleValuesWith5() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n51.9375\n",
-                    "select approx_percentile(x, 0.5) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n51.9375\n");
         });
     }
 
@@ -79,10 +83,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testApprox50thPercentileFloatValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as float) x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n51.9375\n",
-                    "select approx_percentile(x, 0.5) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n51.9375\n");
         });
     }
 
@@ -91,10 +96,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testApprox50thPercentileWithPrecision1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) x from long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n511.9375\n",
-                    "select approx_percentile(x, 0.5, 1) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5, 1) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n511.9375\n");
         });
     }
 
@@ -102,10 +108,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testApprox50thPercentileWithPrecision2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) x from long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n501.9921875\n",
-                    "select approx_percentile(x, 0.5, 2) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5, 2) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n501.9921875\n");
         });
     }
 
@@ -113,10 +120,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testApprox50thPercentileWithPrecision3() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) x from long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n500.2490234375\n",
-                    "select approx_percentile(x, 0.5, 3) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5, 3) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n500.2490234375\n");
         });
     }
 
@@ -124,10 +132,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testApprox50thPercentileWithPrecision4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) x from long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n500.01556396484375\n",
-                    "select approx_percentile(x, 0.5, 4) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5, 4) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n500.01556396484375\n");
         });
     }
 
@@ -135,10 +144,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testApprox50thPercentileWithPrecision5() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) x from long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n500.00194549560547\n",
-                    "select approx_percentile(x, 0.5, 5) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5, 5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n500.00194549560547\n");
         });
     }
 
@@ -147,13 +157,14 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
             execute("insert into test values (null), (null), (null)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile
                             null
-                            """,
-                    "select approx_percentile(x, 0.5) from test"
-            );
+                            """);
         });
     }
 
@@ -161,10 +172,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testApproxPercentileAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select 5.0 x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n5.0\n",
-                    "select approx_percentile(x, 0.5) from test"
-            );
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n5.0\n");
         });
     }
 
@@ -172,13 +184,14 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testApproxPercentileEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (x double)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile
                             null
-                            """,
-                    "select approx_percentile(x, 0.5) from test"
-            );
+                            """);
         });
     }
 
@@ -187,13 +200,14 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
             execute("insert into test values (null), (null), (null)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5, 5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile
                             null
-                            """,
-                    "select approx_percentile(x, 0.5, 5) from test"
-            );
+                            """);
         });
     }
 
@@ -201,13 +215,14 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testApproxPercentilePackedEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (x double)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5, 5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile
                             null
-                            """,
-                    "select approx_percentile(x, 0.5, 5) from test"
-            );
+                            """);
         });
     }
 
@@ -216,10 +231,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
         bindVariableService.setDouble(0, 0.5);
         assertMemoryLeak(() -> {
             execute("create table test as (select 5.0 x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n5.0\n",
-                    "select approx_percentile(x, $1, 5) from test"
-            );
+            assertQuery("select approx_percentile(x, $1, 5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n5.0\n");
         });
     }
 
@@ -228,13 +244,14 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
         assertMemoryLeak(() -> {
             execute("create table test (x double)");
             execute("insert into test values (1.0), (null), (null), (null)");
-            assertSql(
-                    """
+            assertQuery("select approx_percentile(x, 0.5) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_percentile
                             1.0
-                            """,
-                    "select approx_percentile(x, 0.5) from test"
-            );
+                            """);
         });
     }
 
@@ -243,10 +260,11 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
         bindVariableService.setDouble(0, 0.5);
         assertMemoryLeak(() -> {
             execute("create table test as (select 5.0 x from long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n5.0\n",
-                    "select approx_percentile(x, $1) from test"
-            );
+            assertQuery("select approx_percentile(x, $1) from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("approx_percentile\n5.0\n");
         });
     }
 
@@ -328,13 +346,14 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
             execute("create table test (x double)");
             execute("insert into test values (1.0), (-1.0)");
             try {
-                assertSql(
-                        """
+                assertQuery("select approx_percentile(x, 0.5) from test")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
                                 approx_percentile
                                 1.0
-                                """,
-                        "select approx_percentile(x, 0.5) from test"
-                );
+                                """);
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -347,13 +366,14 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
             execute("create table test (x double)");
             execute("insert into test values (1.0), (-1.0)");
             try {
-                assertSql(
-                        """
+                assertQuery("select approx_percentile(x, 0.5, 5) from test")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
                                 approx_percentile
                                 1.0
-                                """,
-                        "select approx_percentile(x, 0.5, 5) from test"
-                );
+                                """);
                 Assert.fail();
             } catch (CairoException ignore) {
             }

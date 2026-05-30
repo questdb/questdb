@@ -45,7 +45,9 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTe
                 true,
                 true
         );
-        assertSql(expected, "select a, count(distinct 42L) from x order by a");
+        assertQuery("select a, count(distinct 42L) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -62,7 +64,10 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTe
                 false,
                 true
         );
-        assertSql(expected, "select count(distinct l) from x");
+        assertQuery("select count(distinct l) from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -82,12 +87,21 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTe
                     true,
                     true
             );
-            assertSql(expected, "select a, count(distinct s * 42) from x order by a");
+            assertQuery("select a, count(distinct s * 42) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             // multiplication shouldn't affect the number of distinct values,
             // so the result should stay the same
-            assertSql(expected, "select a, count_distinct(s) from x order by a");
-            assertSql(expected, "select a, count(distinct s) from x order by a");
+            assertQuery("select a, count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select a, count(distinct s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -110,7 +124,9 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTe
                 true,
                 true
         );
-        assertSql(expected, "select a, count(distinct s) from x order by a");
+        assertQuery("select a, count(distinct s) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -127,7 +143,10 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTe
                 false,
                 true
         );
-        assertSql(expected, "select count(distinct s) from x");
+        assertQuery("select count(distinct s) from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -145,12 +164,24 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTe
                     false,
                     true
             );
-            assertSql(expected, "select count(distinct s) from x");
+            assertQuery("select count(distinct s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute("insert into x values(cast(null as LONG), '2021-05-21')");
             execute("insert into x values(cast(null as LONG), '1970-01-01')");
-            assertSql(expected, "select count_distinct(s) from x");
-            assertSql(expected, "select count(distinct s) from x");
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select count(distinct s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -170,7 +201,9 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTe
                 true,
                 true
         );
-        assertSql(expected, "select a, count(distinct cast(null as LONG)) from x order by a");
+        assertQuery("select a, count(distinct cast(null as LONG)) from x order by a")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -196,7 +229,10 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTe
                 true,
                 true
         );
-        assertSql(expected, "select ts, count(distinct s) from x sample by 1s fill(linear)");
+        assertQuery("select ts, count(distinct s) from x sample by 1s fill(linear)")
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -239,7 +275,10 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTe
                 "ts",
                 false
         );
-        assertSql(expected, "select ts, count(distinct s) from x sample by 1s fill(99)");
+        assertQuery("select ts, count(distinct s) from x sample by 1s fill(99)")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -266,6 +305,9 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTe
                 "ts",
                 false
         );
-        assertSql(expected, "select a, count(distinct s), ts from x sample by 5s align to first observation");
+        assertQuery("select a, count(distinct s), ts from x sample by 5s align to first observation")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
     }
 }

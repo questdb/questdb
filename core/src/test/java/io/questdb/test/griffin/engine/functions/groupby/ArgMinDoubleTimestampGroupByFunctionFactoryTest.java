@@ -36,11 +36,15 @@ import org.junit.Test;
 public class ArgMinDoubleTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testArgMinAllNull() throws SqlException {
+    public void testArgMinAllNull() throws Exception {
         execute("create table tab (value double, key timestamp)");
         execute("insert into tab values (null, null)");
         execute("insert into tab values (null, null)");
-        assertSql("arg_min\nnull\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\nnull\n");
     }
 
     @Test
@@ -88,38 +92,53 @@ public class ArgMinDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
     }
 
     @Test
-    public void testArgMinSimple() throws SqlException {
+    public void testArgMinSimple() throws Exception {
         execute("create table tab (value double, key timestamp)");
         execute("insert into tab values (10.5, '2023-01-01T00:00:00.000000Z')");
         execute("insert into tab values (20.5, '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values (30.5, '2023-01-02T00:00:00.000000Z')");
-        assertSql("arg_min\n10.5\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\n10.5\n");
     }
 
     @Test
-    public void testArgMinWithGroupBy() throws SqlException {
+    public void testArgMinWithGroupBy() throws Exception {
         execute("create table tab (sym symbol, value double, key timestamp)");
         execute("insert into tab values ('A', 10.5, '2023-01-01T00:00:00.000000Z')");
         execute("insert into tab values ('A', 20.5, '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('B', 100.5, '2023-01-05T00:00:00.000000Z')");
         execute("insert into tab values ('B', 200.5, '2023-01-04T00:00:00.000000Z')");
-        assertSql("sym\targ_min\nA\t10.5\nB\t200.5\n", "select sym, arg_min(value, key) from tab order by sym");
+        assertQuery("select sym, arg_min(value, key) from tab order by sym")
+                .noLeakCheck()
+                .expectSize()
+                .returns("sym\targ_min\nA\t10.5\nB\t200.5\n");
     }
 
     @Test
-    public void testArgMinWithNullKey() throws SqlException {
+    public void testArgMinWithNullKey() throws Exception {
         execute("create table tab (value double, key timestamp)");
         execute("insert into tab values (10.5, null)");
         execute("insert into tab values (20.5, '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values (30.5, '2023-01-02T00:00:00.000000Z')");
-        assertSql("arg_min\n30.5\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\n30.5\n");
     }
 
     @Test
-    public void testArgMinWithNullValue() throws SqlException {
+    public void testArgMinWithNullValue() throws Exception {
         execute("create table tab (value double, key timestamp)");
         execute("insert into tab values (null, '2023-01-01T00:00:00.000000Z')");
         execute("insert into tab values (20.5, '2023-01-03T00:00:00.000000Z')");
-        assertSql("arg_min\nnull\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\nnull\n");
     }
 }

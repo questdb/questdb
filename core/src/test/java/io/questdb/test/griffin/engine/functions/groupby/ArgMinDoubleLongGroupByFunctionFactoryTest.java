@@ -36,11 +36,15 @@ import org.junit.Test;
 public class ArgMinDoubleLongGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testArgMinAllNull() throws SqlException {
+    public void testArgMinAllNull() throws Exception {
         execute("create table tab (value double, key long)");
         execute("insert into tab values (null, null)");
         execute("insert into tab values (null, null)");
-        assertSql("arg_min\nnull\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\nnull\n");
     }
 
     @Test
@@ -88,38 +92,53 @@ public class ArgMinDoubleLongGroupByFunctionFactoryTest extends AbstractCairoTes
     }
 
     @Test
-    public void testArgMinSimple() throws SqlException {
+    public void testArgMinSimple() throws Exception {
         execute("create table tab (value double, key long)");
         execute("insert into tab values (10.5, 1)");
         execute("insert into tab values (20.5, 3)");
         execute("insert into tab values (30.5, 2)");
-        assertSql("arg_min\n10.5\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\n10.5\n");
     }
 
     @Test
-    public void testArgMinWithGroupBy() throws SqlException {
+    public void testArgMinWithGroupBy() throws Exception {
         execute("create table tab (sym symbol, value double, key long)");
         execute("insert into tab values ('A', 10.5, 1)");
         execute("insert into tab values ('A', 20.5, 3)");
         execute("insert into tab values ('B', 100.5, 5)");
         execute("insert into tab values ('B', 200.5, 4)");
-        assertSql("sym\targ_min\nA\t10.5\nB\t200.5\n", "select sym, arg_min(value, key) from tab order by sym");
+        assertQuery("select sym, arg_min(value, key) from tab order by sym")
+                .noLeakCheck()
+                .expectSize()
+                .returns("sym\targ_min\nA\t10.5\nB\t200.5\n");
     }
 
     @Test
-    public void testArgMinWithNullKey() throws SqlException {
+    public void testArgMinWithNullKey() throws Exception {
         execute("create table tab (value double, key long)");
         execute("insert into tab values (10.5, null)");
         execute("insert into tab values (20.5, 3)");
         execute("insert into tab values (30.5, 2)");
-        assertSql("arg_min\n30.5\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\n30.5\n");
     }
 
     @Test
-    public void testArgMinWithNullValue() throws SqlException {
+    public void testArgMinWithNullValue() throws Exception {
         execute("create table tab (value double, key long)");
         execute("insert into tab values (null, 1)");
         execute("insert into tab values (20.5, 3)");
-        assertSql("arg_min\nnull\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\nnull\n");
     }
 }

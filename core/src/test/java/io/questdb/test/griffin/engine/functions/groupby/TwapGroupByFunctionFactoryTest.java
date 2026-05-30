@@ -41,10 +41,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (null, '2024-01-01T00:00:10.000000Z'),
                     (null, '2024-01-01T00:00:20.000000Z')
                     """);
-            assertSql(
-                    "twap\nnull\n",
-                    "SELECT twap(price, ts) FROM tbl"
-            );
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\nnull\n");
         });
     }
 
@@ -59,10 +60,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T00:00:00.000000Z')
                     """);
             // all same timestamp => simple average: (10 + 20 + 30) / 3 = 20.0
-            assertSql(
-                    "twap\n20.0\n",
-                    "SELECT twap(price, ts) FROM tbl"
-            );
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\n20.0\n");
         });
     }
 
@@ -79,10 +81,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             // weighted_sum = 10 * 10_000_000 + 20 * 20_000_000 = 500_000_000
             // total_duration = 30_000_000
             // twap = 500_000_000 / 30_000_000 = 16.666666666666668
-            assertSql(
-                    "twap\n16.666666666666668\n",
-                    "SELECT twap(price, ts) FROM tbl"
-            );
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\n16.666666666666668\n");
         });
     }
 
@@ -90,10 +93,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testTwapNoRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            assertSql(
-                    "twap\nnull\n",
-                    "SELECT twap(price, ts) FROM tbl"
-            );
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\nnull\n");
         });
     }
 
@@ -112,10 +116,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             // weighted_sum = 20 * 20_000_000 = 400_000_000
             // total_duration = 20_000_000
             // twap = 400_000_000 / 20_000_000 = 20.0
-            assertSql(
-                    "twap\n20.0\n",
-                    "SELECT twap(price, ts) FROM tbl"
-            );
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\n20.0\n");
         });
     }
 
@@ -357,10 +362,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO tbl VALUES (42.5, '2024-01-01T00:00:00.000000Z')");
             // single row => total_duration = 0, fallback to price_sum / count = 42.5
-            assertSql(
-                    "twap\n42.5\n",
-                    "SELECT twap(price, ts) FROM tbl"
-            );
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\n42.5\n");
         });
     }
 
@@ -378,10 +384,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             // weighted_sum = 10.0 * 20_000_000 = 200_000_000
             // total_duration = 20_000_000
             // twap = 200_000_000 / 20_000_000 = 10.0
-            assertSql(
-                    "twap\n10.0\n",
-                    "SELECT twap(price, ts) FROM tbl"
-            );
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\n10.0\n");
         });
     }
 
@@ -399,14 +406,14 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     """);
             // Group A: weighted_sum = 10*10_000_000 + 20*20_000_000 = 500_000_000, dur = 30_000_000, twap = 16.666666666666668
             // Group B: weighted_sum = 100*20_000_000 = 2_000_000_000, dur = 20_000_000, twap = 100.0
-            assertSql(
-                    """
+            assertQuery("SELECT sym, twap(price, ts) FROM tbl ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\ttwap
                             A\t16.666666666666668
                             B\t100.0
-                            """,
-                    "SELECT sym, twap(price, ts) FROM tbl ORDER BY sym"
-            );
+                            """);
         });
     }
 
@@ -424,14 +431,15 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     """);
             // Bucket 1 (00:00:00 - 00:01:00): same as testTwapBasic = 16.666666666666668
             // Bucket 2 (00:01:00 - 00:02:00): weighted_sum = 100*20_000_000 = 2_000_000_000, dur = 20_000_000, twap = 100.0
-            assertSql(
-                    """
+            assertQuery("SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\ttwap
                             2024-01-01T00:00:00.000000Z\t16.666666666666668
                             2024-01-01T00:01:00.000000Z\t100.0
-                            """,
-                    "SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m"
-            );
+                            """);
         });
     }
 
@@ -450,15 +458,16 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             // Bucket 00:00 has data: twap = 16.666666666666668
             // Bucket 00:01 is empty: FILL(prev) => 16.666666666666668
             // Bucket 00:02 has data: twap = 100.0
-            assertSql(
-                    """
+            assertQuery("SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m FILL(prev)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\ttwap
                             2024-01-01T00:00:00.000000Z\t16.666666666666668
                             2024-01-01T00:01:00.000000Z\t16.666666666666668
                             2024-01-01T00:02:00.000000Z\t100.0
-                            """,
-                    "SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m FILL(prev)"
-            );
+                            """);
         });
     }
 }

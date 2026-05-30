@@ -118,8 +118,15 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
                 true
         );
 
-        assertSql(expected, "select string_agg(\"distinct\"::varchar, ',') from x");
-        assertSql(expected, "select string_agg(cast (\"distinct\" as string)::varchar, ',') from x");
+        assertQuery("select string_agg(\"distinct\"::varchar, ',') from x")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
+        assertQuery("select string_agg(cast (\"distinct\" as string)::varchar, ',') from x")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
