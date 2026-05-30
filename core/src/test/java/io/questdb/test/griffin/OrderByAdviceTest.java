@@ -42,16 +42,18 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         ")")
                 .timestamp("t")
                 .expectSize()
-                .returns("a\tt\n" +
-                        "1\t1970-01-01T00:00:00.000000Z\n" +
-                        "2\t1970-01-01T00:00:00.001000Z\n" +
-                        "3\t1970-01-01T00:00:00.002000Z\n" +
-                        "4\t1970-01-01T00:00:00.003000Z\n" +
-                        "5\t1970-01-01T00:00:00.004000Z\n" +
-                        "6\t1970-01-01T00:00:00.005000Z\n" +
-                        "7\t1970-01-01T00:00:00.006000Z\n" +
-                        "8\t1970-01-01T00:00:00.007000Z\n" +
-                        "9\t1970-01-01T00:00:00.008000Z\n");
+                .returns("""
+                        a\tt
+                        1\t1970-01-01T00:00:00.000000Z
+                        2\t1970-01-01T00:00:00.001000Z
+                        3\t1970-01-01T00:00:00.002000Z
+                        4\t1970-01-01T00:00:00.003000Z
+                        5\t1970-01-01T00:00:00.004000Z
+                        6\t1970-01-01T00:00:00.005000Z
+                        7\t1970-01-01T00:00:00.006000Z
+                        8\t1970-01-01T00:00:00.007000Z
+                        9\t1970-01-01T00:00:00.008000Z
+                        """);
     }
 
     @Test
@@ -99,71 +101,83 @@ public class OrderByAdviceTest extends AbstractCairoTest {
 
     @Test
     public void testExpressionSearchOrderByAlias() throws Exception {
-        final String expected = "sym\tspread\n" +
-                "HBC\t-1912873112\n" +
-                "HBC\t-1707758909\n" +
-                "DXR\t-1021839040\n" +
-                "HBC\t-850582456\n" +
-                "ABB\t4171981\n" +
-                "ABB\t74196247\n" +
-                "ABB\t417348950\n" +
-                "ABB\t1191199593\n" +
-                "ABB\t1233285715\n" +
-                "DXR\t1275864035\n";
+        final String expected = """
+                sym\tspread
+                HBC\t-1912873112
+                HBC\t-1707758909
+                DXR\t-1021839040
+                HBC\t-850582456
+                ABB\t4171981
+                ABB\t74196247
+                ABB\t417348950
+                ABB\t1191199593
+                ABB\t1233285715
+                DXR\t1275864035
+                """;
 
         assertQuery("select sym, ask-bid spread from x where ts IN '1970-01-03' order by spread")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    bid int,\n" +
-                        "    ask int,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_int() bid, \n" +
-                        "        rnd_int() ask, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            bid int,
+                            ask int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_int() bid,\s
+                                rnd_int() ask,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
                 .returns("sym\tspread\n", expected);
     }
 
     @Test
     public void testFunctionSearchOrderByAlias() throws Exception {
-        final String expected = "sym\tmaxp\n" +
-                "DXR\t0.97613283653158\n" +
-                "ABB\t0.9809851788419132\n" +
-                "HBC\t0.9940353811420282\n";
+        final String expected = """
+                sym\tmaxp
+                DXR\t0.97613283653158
+                ABB\t0.9809851788419132
+                HBC\t0.9940353811420282
+                """;
 
         assertQuery("select sym , max(price) maxp from x where ts IN '1970-01-04' order by maxp")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
                 .expectSize()
                 .returns("sym\tmaxp\n", expected);
     }
 
     @Test
     public void testFunctionSearchOrderByAlias2() throws Exception {
-        final String expected = "sym\tmaxp\n" +
-                "DXR\t0.008134052047644613\n" +
-                "HBC\t0.008427132543617488\n" +
-                "ABB\t0.008444033230580739\n";
+        final String expected = """
+                sym\tmaxp
+                DXR\t0.008134052047644613
+                HBC\t0.008427132543617488
+                ABB\t0.008444033230580739
+                """;
 
         assertQuery("select sym, min(price) maxp from x where ts in '1970-01-04' order by maxp")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
                 .expectSize()
                 .returns("sym\tmaxp\n", expected);
     }
@@ -171,45 +185,53 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     @Test
     public void testNoKeyGroupBy() throws Exception {
         assertQuery("select sum(price) / count() from x where price > 0")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
                 .noRandomAccess()
                 .expectSize()
-                .returns("column\nnull\n", "column\n" +
-                        "0.48510032025339733\n");
+                .returns("column\nnull\n", """
+                        column
+                        0.48510032025339733
+                        """);
     }
 
     @Test
     public void testOrderBy2Columns() throws Exception {
-        final String expected = "k\tprice\tts\n" +
-                "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n" +
-                "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
-                "ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z\n" +
-                "ABB\t0.22452340856088226\t1970-01-03T00:30:00.000000Z\n" +
-                "ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z\n" +
-                "DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z\n" +
-                "DXR\t0.08486964232560668\t1970-01-03T00:06:00.000000Z\n" +
-                "HBC\t0.0367581207471136\t1970-01-03T00:54:00.000000Z\n" +
-                "HBC\t0.7905675319675964\t1970-01-03T00:24:00.000000Z\n" +
-                "HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z\n";
+        final String expected = """
+                k\tprice\tts
+                ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z
+                ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z
+                ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z
+                ABB\t0.22452340856088226\t1970-01-03T00:30:00.000000Z
+                ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z
+                DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z
+                DXR\t0.08486964232560668\t1970-01-03T00:06:00.000000Z
+                HBC\t0.0367581207471136\t1970-01-03T00:54:00.000000Z
+                HBC\t0.7905675319675964\t1970-01-03T00:24:00.000000Z
+                HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z
+                """;
 
         assertQuery("select sym k, price, ts from x order by k, ts desc")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
                 .expectSize()
                 .returns("k\tprice\tts\n", expected);
     }
@@ -289,11 +311,13 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         ")")
                 .mutateWith("insert into pos  values ( 1,##00001), ( 2,##00010), ( 3, ##00011 ), ( 16, ##10000 )")
                 .expectSize()
-                .returns("id\tgeo\n", "id\tgeo\n" +
-                        "16\th\n" +
-                        "3\t3\n" +
-                        "2\t2\n" +
-                        "1\t1\n");
+                .returns("id\tgeo\n", """
+                        id\tgeo
+                        16\th
+                        3\t3
+                        2\t2
+                        1\t1
+                        """);
     }
 
     @Test
@@ -305,11 +329,13 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         ")")
                 .mutateWith("insert into pos  values ( 1,##00000000000000000001), ( 2,##00000000000000000010), ( 3, ##00000000000000000011 ), ( 16, ##00000000000000010000 )")
                 .expectSize()
-                .returns("id\tgeo\n", "id\tgeo\n" +
-                        "16\t000h\n" +
-                        "3\t0003\n" +
-                        "2\t0002\n" +
-                        "1\t0001\n");
+                .returns("id\tgeo\n", """
+                        id\tgeo
+                        16\t000h
+                        3\t0003
+                        2\t0002
+                        1\t0001
+                        """);
     }
 
     @Test
@@ -321,11 +347,13 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         ")")
                 .mutateWith("insert into pos  values ( 1,##00000000000000001), ( 2,##00000000000000010), ( 3, ##00000000000000011 ), ( 16, ##00000000000010000 )")
                 .expectSize()
-                .returns("id\tgeo\n", "id\tgeo\n" +
-                        "16\t00000000000010000\n" +
-                        "3\t00000000000000011\n" +
-                        "2\t00000000000000010\n" +
-                        "1\t00000000000000001\n");
+                .returns("id\tgeo\n", """
+                        id\tgeo
+                        16\t00000000000010000
+                        3\t00000000000000011
+                        2\t00000000000000010
+                        1\t00000000000000001
+                        """);
     }
 
     @Test
@@ -338,11 +366,13 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 .mutateWith("insert into pos  values ( 1,##00000000000000000000000000000000001), ( 2,##00000000000000000000000000000000010), " +
                         "( 3, ##00000000000000000000000000000000011 ), ( 16, ##00000000000000000000000000000010000 )")
                 .expectSize()
-                .returns("id\tgeo\n", "id\tgeo\n" +
-                        "16\t000000h\n" +
-                        "3\t0000003\n" +
-                        "2\t0000002\n" +
-                        "1\t0000001\n");
+                .returns("id\tgeo\n", """
+                        id\tgeo
+                        16\t000000h
+                        3\t0000003
+                        2\t0000002
+                        1\t0000001
+                        """);
     }
 
     @Test
@@ -354,35 +384,41 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         ")")
                 .mutateWith("insert into pos  values ( 1,##0000000001), ( 2,##0000000010), ( 3, ##0000000011 ), ( 16, ##0000010000 )")
                 .expectSize()
-                .returns("id\tgeo\n", "id\tgeo\n" +
-                        "16\t0h\n" +
-                        "3\t03\n" +
-                        "2\t02\n" +
-                        "1\t01\n");
+                .returns("id\tgeo\n", """
+                        id\tgeo
+                        16\t0h
+                        3\t03
+                        2\t02
+                        1\t01
+                        """);
     }
 
     @Test
     public void testOrderByMultipleColumns() throws Exception {
-        final String expected = "sym\tprice\tts\n" +
-                "AA\t-847531048\t1970-01-03T00:24:00.000000Z\n" +
-                "AA\t315515118\t1970-01-03T00:00:00.000000Z\n" +
-                "AA\t339631474\t1970-01-03T00:54:00.000000Z\n" +
-                "AA\t1573662097\t1970-01-03T00:48:00.000000Z\n" +
-                "BB\t-2041844972\t1970-01-03T00:30:00.000000Z\n" +
-                "BB\t-1575378703\t1970-01-03T00:36:00.000000Z\n" +
-                "BB\t-727724771\t1970-01-03T00:06:00.000000Z\n" +
-                "BB\t1545253512\t1970-01-03T00:42:00.000000Z\n";
+        final String expected = """
+                sym\tprice\tts
+                AA\t-847531048\t1970-01-03T00:24:00.000000Z
+                AA\t315515118\t1970-01-03T00:00:00.000000Z
+                AA\t339631474\t1970-01-03T00:54:00.000000Z
+                AA\t1573662097\t1970-01-03T00:48:00.000000Z
+                BB\t-2041844972\t1970-01-03T00:30:00.000000Z
+                BB\t-1575378703\t1970-01-03T00:36:00.000000Z
+                BB\t-727724771\t1970-01-03T00:06:00.000000Z
+                BB\t1545253512\t1970-01-03T00:42:00.000000Z
+                """;
 
         assertQuery("select * from tab where sym in ('AA', 'BB') order by sym, price")
-                .ddl("create table tab (\n" +
-                        "    sym symbol index,\n" +
-                        "    price int,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
-                        "        rnd_int() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)")
+                .ddl("""
+                        create table tab (
+                            sym symbol index,
+                            price int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') sym,\s
+                                rnd_int() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
                 .returns("sym\tprice\tts\n", expected);
     }
 
@@ -409,16 +445,18 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         " from long_sequence(9)" +
                         ")")
                 .expectSize()
-                .returns("a1\ta2\n" +
-                        "1\t1\n" +
-                        "2\t2\n" +
-                        "3\t3\n" +
-                        "4\t4\n" +
-                        "5\t5\n" +
-                        "6\t6\n" +
-                        "7\t7\n" +
-                        "8\t8\n" +
-                        "9\t9\n");
+                .returns("""
+                        a1\ta2
+                        1\t1
+                        2\t2
+                        3\t3
+                        4\t4
+                        5\t5
+                        6\t6
+                        7\t7
+                        8\t8
+                        9\t9
+                        """);
     }
 
     @Test
@@ -496,16 +534,18 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         " from long_sequence(9)" +
                         ")")
                 .expectSize()
-                .returns("a\tb\n" +
-                        "9\t0\n" +
-                        "6\t0\n" +
-                        "3\t0\n" +
-                        "7\t1\n" +
-                        "4\t1\n" +
-                        "1\t1\n" +
-                        "8\t2\n" +
-                        "5\t2\n" +
-                        "2\t2\n");
+                .returns("""
+                        a\tb
+                        9\t0
+                        6\t0
+                        3\t0
+                        7\t1
+                        4\t1
+                        1\t1
+                        8\t2
+                        5\t2
+                        2\t2
+                        """);
     }
 
     @Test
@@ -518,10 +558,12 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         ")")
                 .mutateWith("insert into pos  values ( 1, #1, #001), ( 2, #1, #002), ( 4, #4, #004) ")
                 .expectSize()
-                .returns("id\tgeo1\tgeo3\n", "id\tgeo1\tgeo3\n" +
-                        "2\t1\t002\n" +
-                        "1\t1\t001\n" +
-                        "4\t4\t004\n");
+                .returns("id\tgeo1\tgeo3\n", """
+                        id\tgeo1\tgeo3
+                        2\t1\t002
+                        1\t1\t001
+                        4\t4\t004
+                        """);
     }
 
     @Test
@@ -535,66 +577,76 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 .mutateWith("insert into pos  values ( 1, ##0000001, ##000000000000001), " +
                         "( 2, ##1000000, ##100000000000000), ( 3, ##0000001, ##100000000000000) ")
                 .expectSize()
-                .returns("id\tgeo1\tgeo3\n", "id\tgeo1\tgeo3\n" +
-                        "3\t0000001\th00\n" +
-                        "1\t0000001\t001\n" +
-                        "2\t1000000\th00\n");
+                .returns("id\tgeo1\tgeo3\n", """
+                        id\tgeo1\tgeo3
+                        3\t0000001\th00
+                        1\t0000001\t001
+                        2\t1000000\th00
+                        """);
     }
 
     @Test
     public void testSelectWithInClauseAndOrderByTimestampDesc() throws Exception {
-        final String expected = "sym\tbid\task\tts\n" +
-                "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n" +
-                "AA\t-1849627000\t-1432278050\t1970-01-03T00:48:00.000000Z\n" +
-                "AA\t-1532328444\t-1458132197\t1970-01-03T00:42:00.000000Z\n" +
-                "AA\t339631474\t1530831067\t1970-01-03T00:36:00.000000Z\n" +
-                "AA\t1569490116\t1573662097\t1970-01-03T00:30:00.000000Z\n" +
-                "BB\t-1575378703\t806715481\t1970-01-03T00:24:00.000000Z\n" +
-                "BB\t-1191262516\t-2041844972\t1970-01-03T00:18:00.000000Z\n" +
-                "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n";
+        final String expected = """
+                sym\tbid\task\tts
+                BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z
+                AA\t-1849627000\t-1432278050\t1970-01-03T00:48:00.000000Z
+                AA\t-1532328444\t-1458132197\t1970-01-03T00:42:00.000000Z
+                AA\t339631474\t1530831067\t1970-01-03T00:36:00.000000Z
+                AA\t1569490116\t1573662097\t1970-01-03T00:30:00.000000Z
+                BB\t-1575378703\t806715481\t1970-01-03T00:24:00.000000Z
+                BB\t-1191262516\t-2041844972\t1970-01-03T00:18:00.000000Z
+                AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z
+                """;
 
         assertQuery("select * from x where sym in ('AA', 'BB' ) order by ts desc")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    bid int,\n" +
-                        "    ask int,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
-                        "        rnd_int() bid, \n" +
-                        "        rnd_int() ask, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            bid int,
+                            ask int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym,\s
+                                rnd_int() bid,\s
+                                rnd_int() ask,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
                 .timestampDesc("ts")
                 .returns("sym\tbid\task\tts\n", expected);
     }
 
     @Test
     public void testSelectWithOrderByTimestampDesc() throws Exception {
-        final String expected = "sym\tbid\task\tts\n" +
-                "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n" +
-                "AA\t-1849627000\t-1432278050\t1970-01-03T00:48:00.000000Z\n" +
-                "AA\t-1532328444\t-1458132197\t1970-01-03T00:42:00.000000Z\n" +
-                "AA\t339631474\t1530831067\t1970-01-03T00:36:00.000000Z\n" +
-                "AA\t1569490116\t1573662097\t1970-01-03T00:30:00.000000Z\n" +
-                "BB\t-1575378703\t806715481\t1970-01-03T00:24:00.000000Z\n" +
-                "BB\t-1191262516\t-2041844972\t1970-01-03T00:18:00.000000Z\n" +
-                "CC\t592859671\t1868723706\t1970-01-03T00:12:00.000000Z\n" +
-                "CC\t73575701\t-948263339\t1970-01-03T00:06:00.000000Z\n" +
-                "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n";
+        final String expected = """
+                sym\tbid\task\tts
+                BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z
+                AA\t-1849627000\t-1432278050\t1970-01-03T00:48:00.000000Z
+                AA\t-1532328444\t-1458132197\t1970-01-03T00:42:00.000000Z
+                AA\t339631474\t1530831067\t1970-01-03T00:36:00.000000Z
+                AA\t1569490116\t1573662097\t1970-01-03T00:30:00.000000Z
+                BB\t-1575378703\t806715481\t1970-01-03T00:24:00.000000Z
+                BB\t-1191262516\t-2041844972\t1970-01-03T00:18:00.000000Z
+                CC\t592859671\t1868723706\t1970-01-03T00:12:00.000000Z
+                CC\t73575701\t-948263339\t1970-01-03T00:06:00.000000Z
+                AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z
+                """;
 
         assertQuery("select * from x order by ts desc")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    bid int,\n" +
-                        "    ask int,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
-                        "        rnd_int() bid, \n" +
-                        "        rnd_int() ask, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            bid int,
+                            ask int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym,\s
+                                rnd_int() bid,\s
+                                rnd_int() ask,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
                 .timestamp("ts###desc")
                 .expectSize()
                 .returns("sym\tbid\task\tts\n", expected);
@@ -602,93 +654,101 @@ public class OrderByAdviceTest extends AbstractCairoTest {
 
     @Test
     public void testSingleSymbolSearchOrderByAliasAndTimestamp() throws Exception {
-        final String expected = "k\tprice\tts\n" +
-                "HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z\n" +
-                "HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z\n" +
-                "HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z\n" +
-                "HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z\n" +
-                "HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z\n" +
-                "HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z\n" +
-                "HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z\n" +
-                "HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z\n" +
-                "HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z\n" +
-                "HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z\n" +
-                "HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z\n" +
-                "HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z\n" +
-                "HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z\n" +
-                "HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z\n" +
-                "HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z\n" +
-                "HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z\n" +
-                "HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z\n" +
-                "HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z\n" +
-                "HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z\n" +
-                "HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z\n" +
-                "HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z\n" +
-                "HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z\n" +
-                "HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z\n" +
-                "HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z\n" +
-                "HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z\n" +
-                "HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z\n" +
-                "HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z\n" +
-                "HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z\n" +
-                "HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z\n";
+        final String expected = """
+                k\tprice\tts
+                HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z
+                HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z
+                HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z
+                HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z
+                HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z
+                HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z
+                HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z
+                HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z
+                HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z
+                HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z
+                HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z
+                HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z
+                HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z
+                HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z
+                HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z
+                HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z
+                HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z
+                HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z
+                HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z
+                HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z
+                HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z
+                HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z
+                HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z
+                HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z
+                HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z
+                HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z
+                HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z
+                HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z
+                HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z
+                """;
 
         assertQuery("select sym k, price, ts from x where sym = 'HBC' and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
                 .returns("k\tprice\tts\n", expected);
     }
 
     @Test
     public void testSingleSymbolSearchOrderByAliasAndTimestampDesc() throws Exception {
-        final String expected = "k\tprice\tts\n" +
-                "HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z\n" +
-                "HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z\n" +
-                "HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z\n" +
-                "HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z\n" +
-                "HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z\n" +
-                "HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z\n" +
-                "HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z\n" +
-                "HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z\n" +
-                "HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z\n" +
-                "HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z\n" +
-                "HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z\n" +
-                "HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z\n" +
-                "HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z\n" +
-                "HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z\n" +
-                "HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z\n" +
-                "HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z\n" +
-                "HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z\n" +
-                "HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z\n" +
-                "HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z\n" +
-                "HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z\n" +
-                "HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z\n" +
-                "HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z\n" +
-                "HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z\n" +
-                "HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z\n" +
-                "HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z\n" +
-                "HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z\n" +
-                "HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z\n" +
-                "HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z\n" +
-                "HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z\n";
+        final String expected = """
+                k\tprice\tts
+                HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z
+                HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z
+                HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z
+                HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z
+                HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z
+                HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z
+                HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z
+                HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z
+                HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z
+                HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z
+                HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z
+                HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z
+                HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z
+                HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z
+                HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z
+                HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z
+                HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z
+                HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z
+                HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z
+                HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z
+                HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z
+                HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z
+                HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z
+                HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z
+                HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z
+                HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z
+                HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z
+                HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z
+                HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z
+                """;
 
         assertQuery("select sym k, price, ts from x where sym = 'HBC' and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' and 2 > 1 order by k, ts desc")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
                 .returns("k\tprice\tts\n", expected);
     }
 
@@ -698,11 +758,12 @@ public class OrderByAdviceTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             assertQuery("select sym k, price, ts from x where 1 = 2 and sym = 'HBC' and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc")
                     .noLeakCheck()
-                    .ddl("create table x (\n" +
-                            "    sym symbol index,\n" +
-                            "    price double,\n" +
-                            "    ts timestamp\n" +
-                            ") timestamp(ts) partition by DAY")
+                    .ddl("""
+                            create table x (
+                                sym symbol index,
+                                price double,
+                                ts timestamp
+                            ) timestamp(ts) partition by DAY""")
                     .expectSize()
                     .returns("k\tprice\tts\n");
             Assert.assertTrue(TestMatchFunctionFactory.isClosed());
@@ -719,347 +780,365 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         " from long_sequence(9)" +
                         ")")
                 .expectSize()
-                .returns("a\tt\n" +
-                        "-1148479920\t1970-01-01T00:00:00.000000Z\n" +
-                        "-948263339\t1970-01-01T00:00:00.005000Z\n" +
-                        "-727724771\t1970-01-01T00:00:00.003000Z\n" +
-                        "73575701\t1970-01-01T00:00:00.004000Z\n" +
-                        "315515118\t1970-01-01T00:00:00.001000Z\n" +
-                        "592859671\t1970-01-01T00:00:00.007000Z\n" +
-                        "1326447242\t1970-01-01T00:00:00.006000Z\n" +
-                        "1548800833\t1970-01-01T00:00:00.002000Z\n" +
-                        "1868723706\t1970-01-01T00:00:00.008000Z\n");
+                .returns("""
+                        a\tt
+                        -1148479920\t1970-01-01T00:00:00.000000Z
+                        -948263339\t1970-01-01T00:00:00.005000Z
+                        -727724771\t1970-01-01T00:00:00.003000Z
+                        73575701\t1970-01-01T00:00:00.004000Z
+                        315515118\t1970-01-01T00:00:00.001000Z
+                        592859671\t1970-01-01T00:00:00.007000Z
+                        1326447242\t1970-01-01T00:00:00.006000Z
+                        1548800833\t1970-01-01T00:00:00.002000Z
+                        1868723706\t1970-01-01T00:00:00.008000Z
+                        """);
     }
 
     @Test
     public void testSymbolSearchOrderBy() throws Exception {
-        final String expected = "sym\tprice\tts\n" +
-                "ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z\n" +
-                "ABB\t0.3124458010612313\t1970-01-04T00:12:00.000000Z\n" +
-                "ABB\t0.5765797240495835\t1970-01-04T01:30:00.000000Z\n" +
-                "ABB\t0.4913342104187668\t1970-01-04T01:36:00.000000Z\n" +
-                "ABB\t0.8802810667279274\t1970-01-04T01:54:00.000000Z\n" +
-                "ABB\t0.6944149053754287\t1970-01-04T02:00:00.000000Z\n" +
-                "ABB\t0.0567238328086237\t1970-01-04T02:18:00.000000Z\n" +
-                "ABB\t0.9216728993460965\t1970-01-04T02:30:00.000000Z\n" +
-                "ABB\t0.3242526975448907\t1970-01-04T03:00:00.000000Z\n" +
-                "ABB\t0.42558021324800144\t1970-01-04T03:06:00.000000Z\n" +
-                "ABB\t0.9534844124580377\t1970-01-04T03:18:00.000000Z\n" +
-                "ABB\t0.1339704489137793\t1970-01-04T03:36:00.000000Z\n" +
-                "ABB\t0.4950615235019964\t1970-01-04T03:42:00.000000Z\n" +
-                "ABB\t0.3595576962747611\t1970-01-04T03:54:00.000000Z\n" +
-                "ABB\t0.21224614178286005\t1970-01-04T04:12:00.000000Z\n" +
-                "ABB\t0.5614062040523734\t1970-01-04T04:30:00.000000Z\n" +
-                "ABB\t0.16011053107067486\t1970-01-04T04:54:00.000000Z\n" +
-                "ABB\t0.28019218825051395\t1970-01-04T05:06:00.000000Z\n" +
-                "ABB\t0.9328540909719272\t1970-01-04T05:12:00.000000Z\n" +
-                "ABB\t0.13525597398079747\t1970-01-04T05:48:00.000000Z\n" +
-                "ABB\t0.10663485323987387\t1970-01-04T05:54:00.000000Z\n" +
-                "ABB\t0.647875746786617\t1970-01-04T06:42:00.000000Z\n" +
-                "ABB\t0.8203418140538824\t1970-01-04T07:06:00.000000Z\n" +
-                "ABB\t0.22122747948030208\t1970-01-04T07:12:00.000000Z\n" +
-                "ABB\t0.48731616038337855\t1970-01-04T07:18:00.000000Z\n" +
-                "ABB\t0.05579995341081423\t1970-01-04T07:24:00.000000Z\n" +
-                "ABB\t0.2544317267472076\t1970-01-04T07:30:00.000000Z\n" +
-                "ABB\t0.23673087740006105\t1970-01-04T07:36:00.000000Z\n" +
-                "ABB\t0.6713174919725877\t1970-01-04T07:48:00.000000Z\n" +
-                "ABB\t0.6383145056717429\t1970-01-04T08:00:00.000000Z\n" +
-                "ABB\t0.12715627282156716\t1970-01-04T08:18:00.000000Z\n" +
-                "ABB\t0.22156975706915538\t1970-01-04T08:48:00.000000Z\n" +
-                "ABB\t0.43117716480568924\t1970-01-04T08:54:00.000000Z\n" +
-                "ABB\t0.5519190966196398\t1970-01-04T09:00:00.000000Z\n" +
-                "ABB\t0.5884931033499815\t1970-01-04T09:36:00.000000Z\n" +
-                "ABB\t0.23387203820756874\t1970-01-04T10:12:00.000000Z\n" +
-                "ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z\n" +
-                "HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z\n" +
-                "HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z\n" +
-                "HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z\n" +
-                "HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z\n" +
-                "HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z\n" +
-                "HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z\n" +
-                "HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z\n" +
-                "HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z\n" +
-                "HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z\n" +
-                "HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z\n" +
-                "HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z\n" +
-                "HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z\n" +
-                "HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z\n" +
-                "HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z\n" +
-                "HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z\n" +
-                "HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z\n" +
-                "HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z\n" +
-                "HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z\n" +
-                "HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z\n" +
-                "HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z\n" +
-                "HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z\n" +
-                "HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z\n" +
-                "HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z\n" +
-                "HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z\n" +
-                "HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z\n" +
-                "HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z\n" +
-                "HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z\n" +
-                "HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z\n" +
-                "HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z\n";
+        final String expected = """
+                sym\tprice\tts
+                ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z
+                ABB\t0.3124458010612313\t1970-01-04T00:12:00.000000Z
+                ABB\t0.5765797240495835\t1970-01-04T01:30:00.000000Z
+                ABB\t0.4913342104187668\t1970-01-04T01:36:00.000000Z
+                ABB\t0.8802810667279274\t1970-01-04T01:54:00.000000Z
+                ABB\t0.6944149053754287\t1970-01-04T02:00:00.000000Z
+                ABB\t0.0567238328086237\t1970-01-04T02:18:00.000000Z
+                ABB\t0.9216728993460965\t1970-01-04T02:30:00.000000Z
+                ABB\t0.3242526975448907\t1970-01-04T03:00:00.000000Z
+                ABB\t0.42558021324800144\t1970-01-04T03:06:00.000000Z
+                ABB\t0.9534844124580377\t1970-01-04T03:18:00.000000Z
+                ABB\t0.1339704489137793\t1970-01-04T03:36:00.000000Z
+                ABB\t0.4950615235019964\t1970-01-04T03:42:00.000000Z
+                ABB\t0.3595576962747611\t1970-01-04T03:54:00.000000Z
+                ABB\t0.21224614178286005\t1970-01-04T04:12:00.000000Z
+                ABB\t0.5614062040523734\t1970-01-04T04:30:00.000000Z
+                ABB\t0.16011053107067486\t1970-01-04T04:54:00.000000Z
+                ABB\t0.28019218825051395\t1970-01-04T05:06:00.000000Z
+                ABB\t0.9328540909719272\t1970-01-04T05:12:00.000000Z
+                ABB\t0.13525597398079747\t1970-01-04T05:48:00.000000Z
+                ABB\t0.10663485323987387\t1970-01-04T05:54:00.000000Z
+                ABB\t0.647875746786617\t1970-01-04T06:42:00.000000Z
+                ABB\t0.8203418140538824\t1970-01-04T07:06:00.000000Z
+                ABB\t0.22122747948030208\t1970-01-04T07:12:00.000000Z
+                ABB\t0.48731616038337855\t1970-01-04T07:18:00.000000Z
+                ABB\t0.05579995341081423\t1970-01-04T07:24:00.000000Z
+                ABB\t0.2544317267472076\t1970-01-04T07:30:00.000000Z
+                ABB\t0.23673087740006105\t1970-01-04T07:36:00.000000Z
+                ABB\t0.6713174919725877\t1970-01-04T07:48:00.000000Z
+                ABB\t0.6383145056717429\t1970-01-04T08:00:00.000000Z
+                ABB\t0.12715627282156716\t1970-01-04T08:18:00.000000Z
+                ABB\t0.22156975706915538\t1970-01-04T08:48:00.000000Z
+                ABB\t0.43117716480568924\t1970-01-04T08:54:00.000000Z
+                ABB\t0.5519190966196398\t1970-01-04T09:00:00.000000Z
+                ABB\t0.5884931033499815\t1970-01-04T09:36:00.000000Z
+                ABB\t0.23387203820756874\t1970-01-04T10:12:00.000000Z
+                ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z
+                HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z
+                HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z
+                HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z
+                HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z
+                HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z
+                HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z
+                HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z
+                HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z
+                HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z
+                HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z
+                HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z
+                HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z
+                HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z
+                HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z
+                HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z
+                HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z
+                HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z
+                HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z
+                HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z
+                HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z
+                HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z
+                HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z
+                HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z
+                HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z
+                HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z
+                HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z
+                HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z
+                HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z
+                HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z
+                """;
 
         assertQuery("x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by sym")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
                 .returns("sym\tprice\tts\n", expected);
     }
 
     @Test
     public void testSymbolSearchOrderByAlias() throws Exception {
-        final String expected = "k\tprice\tts\n" +
-                "ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z\n" +
-                "ABB\t0.3124458010612313\t1970-01-04T00:12:00.000000Z\n" +
-                "ABB\t0.5765797240495835\t1970-01-04T01:30:00.000000Z\n" +
-                "ABB\t0.4913342104187668\t1970-01-04T01:36:00.000000Z\n" +
-                "ABB\t0.8802810667279274\t1970-01-04T01:54:00.000000Z\n" +
-                "ABB\t0.6944149053754287\t1970-01-04T02:00:00.000000Z\n" +
-                "ABB\t0.0567238328086237\t1970-01-04T02:18:00.000000Z\n" +
-                "ABB\t0.9216728993460965\t1970-01-04T02:30:00.000000Z\n" +
-                "ABB\t0.3242526975448907\t1970-01-04T03:00:00.000000Z\n" +
-                "ABB\t0.42558021324800144\t1970-01-04T03:06:00.000000Z\n" +
-                "ABB\t0.9534844124580377\t1970-01-04T03:18:00.000000Z\n" +
-                "ABB\t0.1339704489137793\t1970-01-04T03:36:00.000000Z\n" +
-                "ABB\t0.4950615235019964\t1970-01-04T03:42:00.000000Z\n" +
-                "ABB\t0.3595576962747611\t1970-01-04T03:54:00.000000Z\n" +
-                "ABB\t0.21224614178286005\t1970-01-04T04:12:00.000000Z\n" +
-                "ABB\t0.5614062040523734\t1970-01-04T04:30:00.000000Z\n" +
-                "ABB\t0.16011053107067486\t1970-01-04T04:54:00.000000Z\n" +
-                "ABB\t0.28019218825051395\t1970-01-04T05:06:00.000000Z\n" +
-                "ABB\t0.9328540909719272\t1970-01-04T05:12:00.000000Z\n" +
-                "ABB\t0.13525597398079747\t1970-01-04T05:48:00.000000Z\n" +
-                "ABB\t0.10663485323987387\t1970-01-04T05:54:00.000000Z\n" +
-                "ABB\t0.647875746786617\t1970-01-04T06:42:00.000000Z\n" +
-                "ABB\t0.8203418140538824\t1970-01-04T07:06:00.000000Z\n" +
-                "ABB\t0.22122747948030208\t1970-01-04T07:12:00.000000Z\n" +
-                "ABB\t0.48731616038337855\t1970-01-04T07:18:00.000000Z\n" +
-                "ABB\t0.05579995341081423\t1970-01-04T07:24:00.000000Z\n" +
-                "ABB\t0.2544317267472076\t1970-01-04T07:30:00.000000Z\n" +
-                "ABB\t0.23673087740006105\t1970-01-04T07:36:00.000000Z\n" +
-                "ABB\t0.6713174919725877\t1970-01-04T07:48:00.000000Z\n" +
-                "ABB\t0.6383145056717429\t1970-01-04T08:00:00.000000Z\n" +
-                "ABB\t0.12715627282156716\t1970-01-04T08:18:00.000000Z\n" +
-                "ABB\t0.22156975706915538\t1970-01-04T08:48:00.000000Z\n" +
-                "ABB\t0.43117716480568924\t1970-01-04T08:54:00.000000Z\n" +
-                "ABB\t0.5519190966196398\t1970-01-04T09:00:00.000000Z\n" +
-                "ABB\t0.5884931033499815\t1970-01-04T09:36:00.000000Z\n" +
-                "ABB\t0.23387203820756874\t1970-01-04T10:12:00.000000Z\n" +
-                "ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z\n" +
-                "HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z\n" +
-                "HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z\n" +
-                "HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z\n" +
-                "HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z\n" +
-                "HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z\n" +
-                "HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z\n" +
-                "HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z\n" +
-                "HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z\n" +
-                "HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z\n" +
-                "HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z\n" +
-                "HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z\n" +
-                "HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z\n" +
-                "HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z\n" +
-                "HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z\n" +
-                "HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z\n" +
-                "HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z\n" +
-                "HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z\n" +
-                "HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z\n" +
-                "HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z\n" +
-                "HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z\n" +
-                "HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z\n" +
-                "HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z\n" +
-                "HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z\n" +
-                "HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z\n" +
-                "HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z\n" +
-                "HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z\n" +
-                "HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z\n" +
-                "HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z\n" +
-                "HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z\n";
+        final String expected = """
+                k\tprice\tts
+                ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z
+                ABB\t0.3124458010612313\t1970-01-04T00:12:00.000000Z
+                ABB\t0.5765797240495835\t1970-01-04T01:30:00.000000Z
+                ABB\t0.4913342104187668\t1970-01-04T01:36:00.000000Z
+                ABB\t0.8802810667279274\t1970-01-04T01:54:00.000000Z
+                ABB\t0.6944149053754287\t1970-01-04T02:00:00.000000Z
+                ABB\t0.0567238328086237\t1970-01-04T02:18:00.000000Z
+                ABB\t0.9216728993460965\t1970-01-04T02:30:00.000000Z
+                ABB\t0.3242526975448907\t1970-01-04T03:00:00.000000Z
+                ABB\t0.42558021324800144\t1970-01-04T03:06:00.000000Z
+                ABB\t0.9534844124580377\t1970-01-04T03:18:00.000000Z
+                ABB\t0.1339704489137793\t1970-01-04T03:36:00.000000Z
+                ABB\t0.4950615235019964\t1970-01-04T03:42:00.000000Z
+                ABB\t0.3595576962747611\t1970-01-04T03:54:00.000000Z
+                ABB\t0.21224614178286005\t1970-01-04T04:12:00.000000Z
+                ABB\t0.5614062040523734\t1970-01-04T04:30:00.000000Z
+                ABB\t0.16011053107067486\t1970-01-04T04:54:00.000000Z
+                ABB\t0.28019218825051395\t1970-01-04T05:06:00.000000Z
+                ABB\t0.9328540909719272\t1970-01-04T05:12:00.000000Z
+                ABB\t0.13525597398079747\t1970-01-04T05:48:00.000000Z
+                ABB\t0.10663485323987387\t1970-01-04T05:54:00.000000Z
+                ABB\t0.647875746786617\t1970-01-04T06:42:00.000000Z
+                ABB\t0.8203418140538824\t1970-01-04T07:06:00.000000Z
+                ABB\t0.22122747948030208\t1970-01-04T07:12:00.000000Z
+                ABB\t0.48731616038337855\t1970-01-04T07:18:00.000000Z
+                ABB\t0.05579995341081423\t1970-01-04T07:24:00.000000Z
+                ABB\t0.2544317267472076\t1970-01-04T07:30:00.000000Z
+                ABB\t0.23673087740006105\t1970-01-04T07:36:00.000000Z
+                ABB\t0.6713174919725877\t1970-01-04T07:48:00.000000Z
+                ABB\t0.6383145056717429\t1970-01-04T08:00:00.000000Z
+                ABB\t0.12715627282156716\t1970-01-04T08:18:00.000000Z
+                ABB\t0.22156975706915538\t1970-01-04T08:48:00.000000Z
+                ABB\t0.43117716480568924\t1970-01-04T08:54:00.000000Z
+                ABB\t0.5519190966196398\t1970-01-04T09:00:00.000000Z
+                ABB\t0.5884931033499815\t1970-01-04T09:36:00.000000Z
+                ABB\t0.23387203820756874\t1970-01-04T10:12:00.000000Z
+                ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z
+                HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z
+                HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z
+                HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z
+                HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z
+                HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z
+                HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z
+                HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z
+                HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z
+                HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z
+                HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z
+                HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z
+                HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z
+                HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z
+                HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z
+                HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z
+                HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z
+                HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z
+                HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z
+                HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z
+                HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z
+                HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z
+                HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z
+                HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z
+                HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z
+                HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z
+                HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z
+                HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z
+                HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z
+                HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z
+                """;
 
         assertQuery("select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
                 .returns("k\tprice\tts\n", expected);
     }
 
     @Test
     public void testSymbolSearchOrderByAliasAndTimestamp() throws Exception {
-        final String expected = "k\tprice\tts\n" +
-                "ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z\n" +
-                "ABB\t0.3124458010612313\t1970-01-04T00:12:00.000000Z\n" +
-                "ABB\t0.5765797240495835\t1970-01-04T01:30:00.000000Z\n" +
-                "ABB\t0.4913342104187668\t1970-01-04T01:36:00.000000Z\n" +
-                "ABB\t0.8802810667279274\t1970-01-04T01:54:00.000000Z\n" +
-                "ABB\t0.6944149053754287\t1970-01-04T02:00:00.000000Z\n" +
-                "ABB\t0.0567238328086237\t1970-01-04T02:18:00.000000Z\n" +
-                "ABB\t0.9216728993460965\t1970-01-04T02:30:00.000000Z\n" +
-                "ABB\t0.3242526975448907\t1970-01-04T03:00:00.000000Z\n" +
-                "ABB\t0.42558021324800144\t1970-01-04T03:06:00.000000Z\n" +
-                "ABB\t0.9534844124580377\t1970-01-04T03:18:00.000000Z\n" +
-                "ABB\t0.1339704489137793\t1970-01-04T03:36:00.000000Z\n" +
-                "ABB\t0.4950615235019964\t1970-01-04T03:42:00.000000Z\n" +
-                "ABB\t0.3595576962747611\t1970-01-04T03:54:00.000000Z\n" +
-                "ABB\t0.21224614178286005\t1970-01-04T04:12:00.000000Z\n" +
-                "ABB\t0.5614062040523734\t1970-01-04T04:30:00.000000Z\n" +
-                "ABB\t0.16011053107067486\t1970-01-04T04:54:00.000000Z\n" +
-                "ABB\t0.28019218825051395\t1970-01-04T05:06:00.000000Z\n" +
-                "ABB\t0.9328540909719272\t1970-01-04T05:12:00.000000Z\n" +
-                "ABB\t0.13525597398079747\t1970-01-04T05:48:00.000000Z\n" +
-                "ABB\t0.10663485323987387\t1970-01-04T05:54:00.000000Z\n" +
-                "ABB\t0.647875746786617\t1970-01-04T06:42:00.000000Z\n" +
-                "ABB\t0.8203418140538824\t1970-01-04T07:06:00.000000Z\n" +
-                "ABB\t0.22122747948030208\t1970-01-04T07:12:00.000000Z\n" +
-                "ABB\t0.48731616038337855\t1970-01-04T07:18:00.000000Z\n" +
-                "ABB\t0.05579995341081423\t1970-01-04T07:24:00.000000Z\n" +
-                "ABB\t0.2544317267472076\t1970-01-04T07:30:00.000000Z\n" +
-                "ABB\t0.23673087740006105\t1970-01-04T07:36:00.000000Z\n" +
-                "ABB\t0.6713174919725877\t1970-01-04T07:48:00.000000Z\n" +
-                "ABB\t0.6383145056717429\t1970-01-04T08:00:00.000000Z\n" +
-                "ABB\t0.12715627282156716\t1970-01-04T08:18:00.000000Z\n" +
-                "ABB\t0.22156975706915538\t1970-01-04T08:48:00.000000Z\n" +
-                "ABB\t0.43117716480568924\t1970-01-04T08:54:00.000000Z\n" +
-                "ABB\t0.5519190966196398\t1970-01-04T09:00:00.000000Z\n" +
-                "ABB\t0.5884931033499815\t1970-01-04T09:36:00.000000Z\n" +
-                "ABB\t0.23387203820756874\t1970-01-04T10:12:00.000000Z\n" +
-                "ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z\n" +
-                "HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z\n" +
-                "HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z\n" +
-                "HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z\n" +
-                "HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z\n" +
-                "HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z\n" +
-                "HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z\n" +
-                "HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z\n" +
-                "HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z\n" +
-                "HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z\n" +
-                "HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z\n" +
-                "HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z\n" +
-                "HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z\n" +
-                "HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z\n" +
-                "HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z\n" +
-                "HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z\n" +
-                "HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z\n" +
-                "HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z\n" +
-                "HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z\n" +
-                "HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z\n" +
-                "HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z\n" +
-                "HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z\n" +
-                "HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z\n" +
-                "HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z\n" +
-                "HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z\n" +
-                "HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z\n" +
-                "HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z\n" +
-                "HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z\n" +
-                "HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z\n" +
-                "HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z\n";
+        final String expected = """
+                k\tprice\tts
+                ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z
+                ABB\t0.3124458010612313\t1970-01-04T00:12:00.000000Z
+                ABB\t0.5765797240495835\t1970-01-04T01:30:00.000000Z
+                ABB\t0.4913342104187668\t1970-01-04T01:36:00.000000Z
+                ABB\t0.8802810667279274\t1970-01-04T01:54:00.000000Z
+                ABB\t0.6944149053754287\t1970-01-04T02:00:00.000000Z
+                ABB\t0.0567238328086237\t1970-01-04T02:18:00.000000Z
+                ABB\t0.9216728993460965\t1970-01-04T02:30:00.000000Z
+                ABB\t0.3242526975448907\t1970-01-04T03:00:00.000000Z
+                ABB\t0.42558021324800144\t1970-01-04T03:06:00.000000Z
+                ABB\t0.9534844124580377\t1970-01-04T03:18:00.000000Z
+                ABB\t0.1339704489137793\t1970-01-04T03:36:00.000000Z
+                ABB\t0.4950615235019964\t1970-01-04T03:42:00.000000Z
+                ABB\t0.3595576962747611\t1970-01-04T03:54:00.000000Z
+                ABB\t0.21224614178286005\t1970-01-04T04:12:00.000000Z
+                ABB\t0.5614062040523734\t1970-01-04T04:30:00.000000Z
+                ABB\t0.16011053107067486\t1970-01-04T04:54:00.000000Z
+                ABB\t0.28019218825051395\t1970-01-04T05:06:00.000000Z
+                ABB\t0.9328540909719272\t1970-01-04T05:12:00.000000Z
+                ABB\t0.13525597398079747\t1970-01-04T05:48:00.000000Z
+                ABB\t0.10663485323987387\t1970-01-04T05:54:00.000000Z
+                ABB\t0.647875746786617\t1970-01-04T06:42:00.000000Z
+                ABB\t0.8203418140538824\t1970-01-04T07:06:00.000000Z
+                ABB\t0.22122747948030208\t1970-01-04T07:12:00.000000Z
+                ABB\t0.48731616038337855\t1970-01-04T07:18:00.000000Z
+                ABB\t0.05579995341081423\t1970-01-04T07:24:00.000000Z
+                ABB\t0.2544317267472076\t1970-01-04T07:30:00.000000Z
+                ABB\t0.23673087740006105\t1970-01-04T07:36:00.000000Z
+                ABB\t0.6713174919725877\t1970-01-04T07:48:00.000000Z
+                ABB\t0.6383145056717429\t1970-01-04T08:00:00.000000Z
+                ABB\t0.12715627282156716\t1970-01-04T08:18:00.000000Z
+                ABB\t0.22156975706915538\t1970-01-04T08:48:00.000000Z
+                ABB\t0.43117716480568924\t1970-01-04T08:54:00.000000Z
+                ABB\t0.5519190966196398\t1970-01-04T09:00:00.000000Z
+                ABB\t0.5884931033499815\t1970-01-04T09:36:00.000000Z
+                ABB\t0.23387203820756874\t1970-01-04T10:12:00.000000Z
+                ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z
+                HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z
+                HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z
+                HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z
+                HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z
+                HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z
+                HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z
+                HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z
+                HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z
+                HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z
+                HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z
+                HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z
+                HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z
+                HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z
+                HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z
+                HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z
+                HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z
+                HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z
+                HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z
+                HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z
+                HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z
+                HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z
+                HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z
+                HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z
+                HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z
+                HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z
+                HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z
+                HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z
+                HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z
+                HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z
+                """;
 
         assertQuery("select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
                 .returns("k\tprice\tts\n", expected);
     }
 
     @Test
     public void testSymbolSearchOrderByAliasAndTimestampDesc() throws Exception {
-        final String expected = "k\tprice\tts\n" +
-                "ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z\n" +
-                "ABB\t0.23387203820756874\t1970-01-04T10:12:00.000000Z\n" +
-                "ABB\t0.5884931033499815\t1970-01-04T09:36:00.000000Z\n" +
-                "ABB\t0.5519190966196398\t1970-01-04T09:00:00.000000Z\n" +
-                "ABB\t0.43117716480568924\t1970-01-04T08:54:00.000000Z\n" +
-                "ABB\t0.22156975706915538\t1970-01-04T08:48:00.000000Z\n" +
-                "ABB\t0.12715627282156716\t1970-01-04T08:18:00.000000Z\n" +
-                "ABB\t0.6383145056717429\t1970-01-04T08:00:00.000000Z\n" +
-                "ABB\t0.6713174919725877\t1970-01-04T07:48:00.000000Z\n" +
-                "ABB\t0.23673087740006105\t1970-01-04T07:36:00.000000Z\n" +
-                "ABB\t0.2544317267472076\t1970-01-04T07:30:00.000000Z\n" +
-                "ABB\t0.05579995341081423\t1970-01-04T07:24:00.000000Z\n" +
-                "ABB\t0.48731616038337855\t1970-01-04T07:18:00.000000Z\n" +
-                "ABB\t0.22122747948030208\t1970-01-04T07:12:00.000000Z\n" +
-                "ABB\t0.8203418140538824\t1970-01-04T07:06:00.000000Z\n" +
-                "ABB\t0.647875746786617\t1970-01-04T06:42:00.000000Z\n" +
-                "ABB\t0.10663485323987387\t1970-01-04T05:54:00.000000Z\n" +
-                "ABB\t0.13525597398079747\t1970-01-04T05:48:00.000000Z\n" +
-                "ABB\t0.9328540909719272\t1970-01-04T05:12:00.000000Z\n" +
-                "ABB\t0.28019218825051395\t1970-01-04T05:06:00.000000Z\n" +
-                "ABB\t0.16011053107067486\t1970-01-04T04:54:00.000000Z\n" +
-                "ABB\t0.5614062040523734\t1970-01-04T04:30:00.000000Z\n" +
-                "ABB\t0.21224614178286005\t1970-01-04T04:12:00.000000Z\n" +
-                "ABB\t0.3595576962747611\t1970-01-04T03:54:00.000000Z\n" +
-                "ABB\t0.4950615235019964\t1970-01-04T03:42:00.000000Z\n" +
-                "ABB\t0.1339704489137793\t1970-01-04T03:36:00.000000Z\n" +
-                "ABB\t0.9534844124580377\t1970-01-04T03:18:00.000000Z\n" +
-                "ABB\t0.42558021324800144\t1970-01-04T03:06:00.000000Z\n" +
-                "ABB\t0.3242526975448907\t1970-01-04T03:00:00.000000Z\n" +
-                "ABB\t0.9216728993460965\t1970-01-04T02:30:00.000000Z\n" +
-                "ABB\t0.0567238328086237\t1970-01-04T02:18:00.000000Z\n" +
-                "ABB\t0.6944149053754287\t1970-01-04T02:00:00.000000Z\n" +
-                "ABB\t0.8802810667279274\t1970-01-04T01:54:00.000000Z\n" +
-                "ABB\t0.4913342104187668\t1970-01-04T01:36:00.000000Z\n" +
-                "ABB\t0.5765797240495835\t1970-01-04T01:30:00.000000Z\n" +
-                "ABB\t0.3124458010612313\t1970-01-04T00:12:00.000000Z\n" +
-                "ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z\n" +
-                "HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z\n" +
-                "HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z\n" +
-                "HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z\n" +
-                "HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z\n" +
-                "HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z\n" +
-                "HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z\n" +
-                "HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z\n" +
-                "HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z\n" +
-                "HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z\n" +
-                "HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z\n" +
-                "HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z\n" +
-                "HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z\n" +
-                "HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z\n" +
-                "HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z\n" +
-                "HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z\n" +
-                "HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z\n" +
-                "HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z\n" +
-                "HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z\n" +
-                "HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z\n" +
-                "HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z\n" +
-                "HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z\n" +
-                "HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z\n" +
-                "HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z\n" +
-                "HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z\n" +
-                "HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z\n" +
-                "HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z\n" +
-                "HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z\n" +
-                "HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z\n" +
-                "HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z\n";
+        final String expected = """
+                k\tprice\tts
+                ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z
+                ABB\t0.23387203820756874\t1970-01-04T10:12:00.000000Z
+                ABB\t0.5884931033499815\t1970-01-04T09:36:00.000000Z
+                ABB\t0.5519190966196398\t1970-01-04T09:00:00.000000Z
+                ABB\t0.43117716480568924\t1970-01-04T08:54:00.000000Z
+                ABB\t0.22156975706915538\t1970-01-04T08:48:00.000000Z
+                ABB\t0.12715627282156716\t1970-01-04T08:18:00.000000Z
+                ABB\t0.6383145056717429\t1970-01-04T08:00:00.000000Z
+                ABB\t0.6713174919725877\t1970-01-04T07:48:00.000000Z
+                ABB\t0.23673087740006105\t1970-01-04T07:36:00.000000Z
+                ABB\t0.2544317267472076\t1970-01-04T07:30:00.000000Z
+                ABB\t0.05579995341081423\t1970-01-04T07:24:00.000000Z
+                ABB\t0.48731616038337855\t1970-01-04T07:18:00.000000Z
+                ABB\t0.22122747948030208\t1970-01-04T07:12:00.000000Z
+                ABB\t0.8203418140538824\t1970-01-04T07:06:00.000000Z
+                ABB\t0.647875746786617\t1970-01-04T06:42:00.000000Z
+                ABB\t0.10663485323987387\t1970-01-04T05:54:00.000000Z
+                ABB\t0.13525597398079747\t1970-01-04T05:48:00.000000Z
+                ABB\t0.9328540909719272\t1970-01-04T05:12:00.000000Z
+                ABB\t0.28019218825051395\t1970-01-04T05:06:00.000000Z
+                ABB\t0.16011053107067486\t1970-01-04T04:54:00.000000Z
+                ABB\t0.5614062040523734\t1970-01-04T04:30:00.000000Z
+                ABB\t0.21224614178286005\t1970-01-04T04:12:00.000000Z
+                ABB\t0.3595576962747611\t1970-01-04T03:54:00.000000Z
+                ABB\t0.4950615235019964\t1970-01-04T03:42:00.000000Z
+                ABB\t0.1339704489137793\t1970-01-04T03:36:00.000000Z
+                ABB\t0.9534844124580377\t1970-01-04T03:18:00.000000Z
+                ABB\t0.42558021324800144\t1970-01-04T03:06:00.000000Z
+                ABB\t0.3242526975448907\t1970-01-04T03:00:00.000000Z
+                ABB\t0.9216728993460965\t1970-01-04T02:30:00.000000Z
+                ABB\t0.0567238328086237\t1970-01-04T02:18:00.000000Z
+                ABB\t0.6944149053754287\t1970-01-04T02:00:00.000000Z
+                ABB\t0.8802810667279274\t1970-01-04T01:54:00.000000Z
+                ABB\t0.4913342104187668\t1970-01-04T01:36:00.000000Z
+                ABB\t0.5765797240495835\t1970-01-04T01:30:00.000000Z
+                ABB\t0.3124458010612313\t1970-01-04T00:12:00.000000Z
+                ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z
+                HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z
+                HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z
+                HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z
+                HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z
+                HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z
+                HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z
+                HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z
+                HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z
+                HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z
+                HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z
+                HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z
+                HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z
+                HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z
+                HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z
+                HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z
+                HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z
+                HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z
+                HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z
+                HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z
+                HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z
+                HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z
+                HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z
+                HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z
+                HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z
+                HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z
+                HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z
+                HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z
+                HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z
+                HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z
+                """;
 
         assertQuery("select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
                 .returns("k\tprice\tts\n", expected);
     }
 
@@ -1069,11 +1148,12 @@ public class OrderByAdviceTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             assertQuery("select sym k, price, ts from x where sym in ('HBC', 'ABB') and 1 = 3 and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc")
                     .noLeakCheck()
-                    .ddl("create table x (\n" +
-                            "    sym symbol index,\n" +
-                            "    price double,\n" +
-                            "    ts timestamp\n" +
-                            ") timestamp(ts) partition by DAY")
+                    .ddl("""
+                            create table x (
+                                sym symbol index,
+                                price double,
+                                ts timestamp
+                            ) timestamp(ts) partition by DAY""")
                     .expectSize()
                     .returns("k\tprice\tts\n");
             Assert.assertTrue(TestMatchFunctionFactory.isClosed());
@@ -1082,339 +1162,359 @@ public class OrderByAdviceTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolSearchOrderByIndex() throws Exception {
-        final String expected = "sym\tprice\tts\n" +
-                "ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z\n" +
-                "ABB\t0.3124458010612313\t1970-01-04T00:12:00.000000Z\n" +
-                "ABB\t0.5765797240495835\t1970-01-04T01:30:00.000000Z\n" +
-                "ABB\t0.4913342104187668\t1970-01-04T01:36:00.000000Z\n" +
-                "ABB\t0.8802810667279274\t1970-01-04T01:54:00.000000Z\n" +
-                "ABB\t0.6944149053754287\t1970-01-04T02:00:00.000000Z\n" +
-                "ABB\t0.0567238328086237\t1970-01-04T02:18:00.000000Z\n" +
-                "ABB\t0.9216728993460965\t1970-01-04T02:30:00.000000Z\n" +
-                "ABB\t0.3242526975448907\t1970-01-04T03:00:00.000000Z\n" +
-                "ABB\t0.42558021324800144\t1970-01-04T03:06:00.000000Z\n" +
-                "ABB\t0.9534844124580377\t1970-01-04T03:18:00.000000Z\n" +
-                "ABB\t0.1339704489137793\t1970-01-04T03:36:00.000000Z\n" +
-                "ABB\t0.4950615235019964\t1970-01-04T03:42:00.000000Z\n" +
-                "ABB\t0.3595576962747611\t1970-01-04T03:54:00.000000Z\n" +
-                "ABB\t0.21224614178286005\t1970-01-04T04:12:00.000000Z\n" +
-                "ABB\t0.5614062040523734\t1970-01-04T04:30:00.000000Z\n" +
-                "ABB\t0.16011053107067486\t1970-01-04T04:54:00.000000Z\n" +
-                "ABB\t0.28019218825051395\t1970-01-04T05:06:00.000000Z\n" +
-                "ABB\t0.9328540909719272\t1970-01-04T05:12:00.000000Z\n" +
-                "ABB\t0.13525597398079747\t1970-01-04T05:48:00.000000Z\n" +
-                "ABB\t0.10663485323987387\t1970-01-04T05:54:00.000000Z\n" +
-                "ABB\t0.647875746786617\t1970-01-04T06:42:00.000000Z\n" +
-                "ABB\t0.8203418140538824\t1970-01-04T07:06:00.000000Z\n" +
-                "ABB\t0.22122747948030208\t1970-01-04T07:12:00.000000Z\n" +
-                "ABB\t0.48731616038337855\t1970-01-04T07:18:00.000000Z\n" +
-                "ABB\t0.05579995341081423\t1970-01-04T07:24:00.000000Z\n" +
-                "ABB\t0.2544317267472076\t1970-01-04T07:30:00.000000Z\n" +
-                "ABB\t0.23673087740006105\t1970-01-04T07:36:00.000000Z\n" +
-                "ABB\t0.6713174919725877\t1970-01-04T07:48:00.000000Z\n" +
-                "ABB\t0.6383145056717429\t1970-01-04T08:00:00.000000Z\n" +
-                "ABB\t0.12715627282156716\t1970-01-04T08:18:00.000000Z\n" +
-                "ABB\t0.22156975706915538\t1970-01-04T08:48:00.000000Z\n" +
-                "ABB\t0.43117716480568924\t1970-01-04T08:54:00.000000Z\n" +
-                "ABB\t0.5519190966196398\t1970-01-04T09:00:00.000000Z\n" +
-                "ABB\t0.5884931033499815\t1970-01-04T09:36:00.000000Z\n" +
-                "ABB\t0.23387203820756874\t1970-01-04T10:12:00.000000Z\n" +
-                "ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z\n" +
-                "HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z\n" +
-                "HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z\n" +
-                "HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z\n" +
-                "HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z\n" +
-                "HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z\n" +
-                "HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z\n" +
-                "HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z\n" +
-                "HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z\n" +
-                "HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z\n" +
-                "HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z\n" +
-                "HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z\n" +
-                "HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z\n" +
-                "HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z\n" +
-                "HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z\n" +
-                "HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z\n" +
-                "HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z\n" +
-                "HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z\n" +
-                "HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z\n" +
-                "HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z\n" +
-                "HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z\n" +
-                "HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z\n" +
-                "HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z\n" +
-                "HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z\n" +
-                "HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z\n" +
-                "HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z\n" +
-                "HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z\n" +
-                "HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z\n" +
-                "HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z\n" +
-                "HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z\n";
+        final String expected = """
+                sym\tprice\tts
+                ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z
+                ABB\t0.3124458010612313\t1970-01-04T00:12:00.000000Z
+                ABB\t0.5765797240495835\t1970-01-04T01:30:00.000000Z
+                ABB\t0.4913342104187668\t1970-01-04T01:36:00.000000Z
+                ABB\t0.8802810667279274\t1970-01-04T01:54:00.000000Z
+                ABB\t0.6944149053754287\t1970-01-04T02:00:00.000000Z
+                ABB\t0.0567238328086237\t1970-01-04T02:18:00.000000Z
+                ABB\t0.9216728993460965\t1970-01-04T02:30:00.000000Z
+                ABB\t0.3242526975448907\t1970-01-04T03:00:00.000000Z
+                ABB\t0.42558021324800144\t1970-01-04T03:06:00.000000Z
+                ABB\t0.9534844124580377\t1970-01-04T03:18:00.000000Z
+                ABB\t0.1339704489137793\t1970-01-04T03:36:00.000000Z
+                ABB\t0.4950615235019964\t1970-01-04T03:42:00.000000Z
+                ABB\t0.3595576962747611\t1970-01-04T03:54:00.000000Z
+                ABB\t0.21224614178286005\t1970-01-04T04:12:00.000000Z
+                ABB\t0.5614062040523734\t1970-01-04T04:30:00.000000Z
+                ABB\t0.16011053107067486\t1970-01-04T04:54:00.000000Z
+                ABB\t0.28019218825051395\t1970-01-04T05:06:00.000000Z
+                ABB\t0.9328540909719272\t1970-01-04T05:12:00.000000Z
+                ABB\t0.13525597398079747\t1970-01-04T05:48:00.000000Z
+                ABB\t0.10663485323987387\t1970-01-04T05:54:00.000000Z
+                ABB\t0.647875746786617\t1970-01-04T06:42:00.000000Z
+                ABB\t0.8203418140538824\t1970-01-04T07:06:00.000000Z
+                ABB\t0.22122747948030208\t1970-01-04T07:12:00.000000Z
+                ABB\t0.48731616038337855\t1970-01-04T07:18:00.000000Z
+                ABB\t0.05579995341081423\t1970-01-04T07:24:00.000000Z
+                ABB\t0.2544317267472076\t1970-01-04T07:30:00.000000Z
+                ABB\t0.23673087740006105\t1970-01-04T07:36:00.000000Z
+                ABB\t0.6713174919725877\t1970-01-04T07:48:00.000000Z
+                ABB\t0.6383145056717429\t1970-01-04T08:00:00.000000Z
+                ABB\t0.12715627282156716\t1970-01-04T08:18:00.000000Z
+                ABB\t0.22156975706915538\t1970-01-04T08:48:00.000000Z
+                ABB\t0.43117716480568924\t1970-01-04T08:54:00.000000Z
+                ABB\t0.5519190966196398\t1970-01-04T09:00:00.000000Z
+                ABB\t0.5884931033499815\t1970-01-04T09:36:00.000000Z
+                ABB\t0.23387203820756874\t1970-01-04T10:12:00.000000Z
+                ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z
+                HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z
+                HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z
+                HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z
+                HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z
+                HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z
+                HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z
+                HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z
+                HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z
+                HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z
+                HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z
+                HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z
+                HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z
+                HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z
+                HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z
+                HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z
+                HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z
+                HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z
+                HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z
+                HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z
+                HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z
+                HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z
+                HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z
+                HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z
+                HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z
+                HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z
+                HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z
+                HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z
+                HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z
+                HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z
+                """;
 
         assertQuery("x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by 1")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
                 .returns("sym\tprice\tts\n", expected);
     }
 
     @Test
     public void testSymbolSearchOrderByIndexDesc() throws Exception {
-        final String expected = "sym\tprice\tts\n" +
-                "HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z\n" +
-                "HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z\n" +
-                "HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z\n" +
-                "HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z\n" +
-                "HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z\n" +
-                "HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z\n" +
-                "HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z\n" +
-                "HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z\n" +
-                "HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z\n" +
-                "HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z\n" +
-                "HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z\n" +
-                "HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z\n" +
-                "HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z\n" +
-                "HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z\n" +
-                "HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z\n" +
-                "HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z\n" +
-                "HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z\n" +
-                "HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z\n" +
-                "HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z\n" +
-                "HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z\n" +
-                "HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z\n" +
-                "HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z\n" +
-                "HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z\n" +
-                "HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z\n" +
-                "HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z\n" +
-                "HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z\n" +
-                "HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z\n" +
-                "HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z\n" +
-                "HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z\n" +
-                "ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z\n" +
-                "ABB\t0.3124458010612313\t1970-01-04T00:12:00.000000Z\n" +
-                "ABB\t0.5765797240495835\t1970-01-04T01:30:00.000000Z\n" +
-                "ABB\t0.4913342104187668\t1970-01-04T01:36:00.000000Z\n" +
-                "ABB\t0.8802810667279274\t1970-01-04T01:54:00.000000Z\n" +
-                "ABB\t0.6944149053754287\t1970-01-04T02:00:00.000000Z\n" +
-                "ABB\t0.0567238328086237\t1970-01-04T02:18:00.000000Z\n" +
-                "ABB\t0.9216728993460965\t1970-01-04T02:30:00.000000Z\n" +
-                "ABB\t0.3242526975448907\t1970-01-04T03:00:00.000000Z\n" +
-                "ABB\t0.42558021324800144\t1970-01-04T03:06:00.000000Z\n" +
-                "ABB\t0.9534844124580377\t1970-01-04T03:18:00.000000Z\n" +
-                "ABB\t0.1339704489137793\t1970-01-04T03:36:00.000000Z\n" +
-                "ABB\t0.4950615235019964\t1970-01-04T03:42:00.000000Z\n" +
-                "ABB\t0.3595576962747611\t1970-01-04T03:54:00.000000Z\n" +
-                "ABB\t0.21224614178286005\t1970-01-04T04:12:00.000000Z\n" +
-                "ABB\t0.5614062040523734\t1970-01-04T04:30:00.000000Z\n" +
-                "ABB\t0.16011053107067486\t1970-01-04T04:54:00.000000Z\n" +
-                "ABB\t0.28019218825051395\t1970-01-04T05:06:00.000000Z\n" +
-                "ABB\t0.9328540909719272\t1970-01-04T05:12:00.000000Z\n" +
-                "ABB\t0.13525597398079747\t1970-01-04T05:48:00.000000Z\n" +
-                "ABB\t0.10663485323987387\t1970-01-04T05:54:00.000000Z\n" +
-                "ABB\t0.647875746786617\t1970-01-04T06:42:00.000000Z\n" +
-                "ABB\t0.8203418140538824\t1970-01-04T07:06:00.000000Z\n" +
-                "ABB\t0.22122747948030208\t1970-01-04T07:12:00.000000Z\n" +
-                "ABB\t0.48731616038337855\t1970-01-04T07:18:00.000000Z\n" +
-                "ABB\t0.05579995341081423\t1970-01-04T07:24:00.000000Z\n" +
-                "ABB\t0.2544317267472076\t1970-01-04T07:30:00.000000Z\n" +
-                "ABB\t0.23673087740006105\t1970-01-04T07:36:00.000000Z\n" +
-                "ABB\t0.6713174919725877\t1970-01-04T07:48:00.000000Z\n" +
-                "ABB\t0.6383145056717429\t1970-01-04T08:00:00.000000Z\n" +
-                "ABB\t0.12715627282156716\t1970-01-04T08:18:00.000000Z\n" +
-                "ABB\t0.22156975706915538\t1970-01-04T08:48:00.000000Z\n" +
-                "ABB\t0.43117716480568924\t1970-01-04T08:54:00.000000Z\n" +
-                "ABB\t0.5519190966196398\t1970-01-04T09:00:00.000000Z\n" +
-                "ABB\t0.5884931033499815\t1970-01-04T09:36:00.000000Z\n" +
-                "ABB\t0.23387203820756874\t1970-01-04T10:12:00.000000Z\n" +
-                "ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z\n";
+        final String expected = """
+                sym\tprice\tts
+                HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z
+                HBC\t0.3397922134720558\t1970-01-04T00:24:00.000000Z
+                HBC\t0.365427022047211\t1970-01-04T00:36:00.000000Z
+                HBC\t0.8486538207666282\t1970-01-04T00:48:00.000000Z
+                HBC\t0.15121120303896474\t1970-01-04T00:54:00.000000Z
+                HBC\t0.9370193388878216\t1970-01-04T01:00:00.000000Z
+                HBC\t0.16064467510169633\t1970-01-04T01:18:00.000000Z
+                HBC\t0.0846754178136283\t1970-01-04T01:24:00.000000Z
+                HBC\t0.4039042639581232\t1970-01-04T01:42:00.000000Z
+                HBC\t0.2103287968720018\t1970-01-04T02:54:00.000000Z
+                HBC\t0.8148792629172324\t1970-01-04T03:24:00.000000Z
+                HBC\t0.25131981920574875\t1970-01-04T04:06:00.000000Z
+                HBC\t0.9694731343686098\t1970-01-04T04:18:00.000000Z
+                HBC\t0.5371478985442728\t1970-01-04T05:00:00.000000Z
+                HBC\t0.6852762111021103\t1970-01-04T05:18:00.000000Z
+                HBC\t0.08039440728458325\t1970-01-04T05:24:00.000000Z
+                HBC\t0.05890936334115593\t1970-01-04T05:36:00.000000Z
+                HBC\t0.9750738231283522\t1970-01-04T06:24:00.000000Z
+                HBC\t0.8277715252854949\t1970-01-04T06:30:00.000000Z
+                HBC\t0.4758209004780879\t1970-01-04T07:00:00.000000Z
+                HBC\t0.38392106356809774\t1970-01-04T07:42:00.000000Z
+                HBC\t0.2753819635358048\t1970-01-04T08:06:00.000000Z
+                HBC\t0.7553832117277283\t1970-01-04T08:12:00.000000Z
+                HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z
+                HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z
+                HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z
+                HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z
+                HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z
+                HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z
+                ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z
+                ABB\t0.3124458010612313\t1970-01-04T00:12:00.000000Z
+                ABB\t0.5765797240495835\t1970-01-04T01:30:00.000000Z
+                ABB\t0.4913342104187668\t1970-01-04T01:36:00.000000Z
+                ABB\t0.8802810667279274\t1970-01-04T01:54:00.000000Z
+                ABB\t0.6944149053754287\t1970-01-04T02:00:00.000000Z
+                ABB\t0.0567238328086237\t1970-01-04T02:18:00.000000Z
+                ABB\t0.9216728993460965\t1970-01-04T02:30:00.000000Z
+                ABB\t0.3242526975448907\t1970-01-04T03:00:00.000000Z
+                ABB\t0.42558021324800144\t1970-01-04T03:06:00.000000Z
+                ABB\t0.9534844124580377\t1970-01-04T03:18:00.000000Z
+                ABB\t0.1339704489137793\t1970-01-04T03:36:00.000000Z
+                ABB\t0.4950615235019964\t1970-01-04T03:42:00.000000Z
+                ABB\t0.3595576962747611\t1970-01-04T03:54:00.000000Z
+                ABB\t0.21224614178286005\t1970-01-04T04:12:00.000000Z
+                ABB\t0.5614062040523734\t1970-01-04T04:30:00.000000Z
+                ABB\t0.16011053107067486\t1970-01-04T04:54:00.000000Z
+                ABB\t0.28019218825051395\t1970-01-04T05:06:00.000000Z
+                ABB\t0.9328540909719272\t1970-01-04T05:12:00.000000Z
+                ABB\t0.13525597398079747\t1970-01-04T05:48:00.000000Z
+                ABB\t0.10663485323987387\t1970-01-04T05:54:00.000000Z
+                ABB\t0.647875746786617\t1970-01-04T06:42:00.000000Z
+                ABB\t0.8203418140538824\t1970-01-04T07:06:00.000000Z
+                ABB\t0.22122747948030208\t1970-01-04T07:12:00.000000Z
+                ABB\t0.48731616038337855\t1970-01-04T07:18:00.000000Z
+                ABB\t0.05579995341081423\t1970-01-04T07:24:00.000000Z
+                ABB\t0.2544317267472076\t1970-01-04T07:30:00.000000Z
+                ABB\t0.23673087740006105\t1970-01-04T07:36:00.000000Z
+                ABB\t0.6713174919725877\t1970-01-04T07:48:00.000000Z
+                ABB\t0.6383145056717429\t1970-01-04T08:00:00.000000Z
+                ABB\t0.12715627282156716\t1970-01-04T08:18:00.000000Z
+                ABB\t0.22156975706915538\t1970-01-04T08:48:00.000000Z
+                ABB\t0.43117716480568924\t1970-01-04T08:54:00.000000Z
+                ABB\t0.5519190966196398\t1970-01-04T09:00:00.000000Z
+                ABB\t0.5884931033499815\t1970-01-04T09:36:00.000000Z
+                ABB\t0.23387203820756874\t1970-01-04T10:12:00.000000Z
+                ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z
+                """;
 
         assertQuery("x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by 1 desc")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
                 .returns("sym\tprice\tts\n", expected);
     }
 
     @Test
     public void testTimestampLessThan() throws Exception {
-        final String expected = "k\tprice\tts\n" +
-                "ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z\n" +
-                "DXR\t0.08486964232560668\t1970-01-03T00:06:00.000000Z\n" +
-                "DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z\n" +
-                "HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z\n" +
-                "HBC\t0.7905675319675964\t1970-01-03T00:24:00.000000Z\n" +
-                "ABB\t0.22452340856088226\t1970-01-03T00:30:00.000000Z\n" +
-                "ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z\n" +
-                "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
-                "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n" +
-                "HBC\t0.0367581207471136\t1970-01-03T00:54:00.000000Z\n" +
-                "DXR\t0.6276954028373309\t1970-01-03T01:00:00.000000Z\n" +
-                "DXR\t0.6778564558839208\t1970-01-03T01:06:00.000000Z\n" +
-                "DXR\t0.8756771741121929\t1970-01-03T01:12:00.000000Z\n" +
-                "HBC\t0.8799634725391621\t1970-01-03T01:18:00.000000Z\n" +
-                "HBC\t0.5249321062686694\t1970-01-03T01:24:00.000000Z\n" +
-                "DXR\t0.7675673070796104\t1970-01-03T01:30:00.000000Z\n" +
-                "DXR\t0.21583224269349388\t1970-01-03T01:36:00.000000Z\n" +
-                "DXR\t0.15786635599554755\t1970-01-03T01:42:00.000000Z\n" +
-                "HBC\t0.1911234617573182\t1970-01-03T01:48:00.000000Z\n" +
-                "ABB\t0.5793466326862211\t1970-01-03T01:54:00.000000Z\n" +
-                "DXR\t0.9687423276940171\t1970-01-03T02:00:00.000000Z\n" +
-                "DXR\t0.6761934857077543\t1970-01-03T02:06:00.000000Z\n" +
-                "DXR\t0.4882051101858693\t1970-01-03T02:12:00.000000Z\n" +
-                "ABB\t0.42281342727402726\t1970-01-03T02:18:00.000000Z\n" +
-                "HBC\t0.810161274171258\t1970-01-03T02:24:00.000000Z\n" +
-                "DXR\t0.5298405941762054\t1970-01-03T02:30:00.000000Z\n" +
-                "HBC\t0.022965637512889825\t1970-01-03T02:36:00.000000Z\n" +
-                "ABB\t0.7763904674818695\t1970-01-03T02:42:00.000000Z\n" +
-                "DXR\t0.975019885372507\t1970-01-03T02:48:00.000000Z\n" +
-                "HBC\t0.0011075361080621349\t1970-01-03T02:54:00.000000Z\n" +
-                "DXR\t0.7643643144642823\t1970-01-03T03:00:00.000000Z\n" +
-                "DXR\t0.8001121139739173\t1970-01-03T03:06:00.000000Z\n" +
-                "HBC\t0.18769708157331322\t1970-01-03T03:12:00.000000Z\n" +
-                "ABB\t0.16381374773748514\t1970-01-03T03:18:00.000000Z\n" +
-                "ABB\t0.6590341607692226\t1970-01-03T03:24:00.000000Z\n" +
-                "DXR\t0.40455469747939254\t1970-01-03T03:30:00.000000Z\n" +
-                "ABB\t0.8837421918800907\t1970-01-03T03:36:00.000000Z\n" +
-                "HBC\t0.05384400312338511\t1970-01-03T03:42:00.000000Z\n" +
-                "ABB\t0.09750574414434399\t1970-01-03T03:48:00.000000Z\n" +
-                "DXR\t0.9644183832564398\t1970-01-03T03:54:00.000000Z\n" +
-                "DXR\t0.7588175403454873\t1970-01-03T04:00:00.000000Z\n" +
-                "DXR\t0.5778947915182423\t1970-01-03T04:06:00.000000Z\n" +
-                "HBC\t0.9269068519549879\t1970-01-03T04:12:00.000000Z\n" +
-                "DXR\t0.5449155021518948\t1970-01-03T04:18:00.000000Z\n" +
-                "DXR\t0.1202416087573498\t1970-01-03T04:24:00.000000Z\n" +
-                "DXR\t0.9640289041849747\t1970-01-03T04:30:00.000000Z\n" +
-                "ABB\t0.7133910271555843\t1970-01-03T04:36:00.000000Z\n" +
-                "HBC\t0.6551335839796312\t1970-01-03T04:42:00.000000Z\n" +
-                "DXR\t0.4971342426836798\t1970-01-03T04:48:00.000000Z\n" +
-                "DXR\t0.48558682958070665\t1970-01-03T04:54:00.000000Z\n" +
-                "HBC\t0.9047642416961028\t1970-01-03T05:00:00.000000Z\n" +
-                "HBC\t0.03167026265669903\t1970-01-03T05:06:00.000000Z\n" +
-                "DXR\t0.14830552335848957\t1970-01-03T05:12:00.000000Z\n" +
-                "DXR\t0.9441658975532605\t1970-01-03T05:18:00.000000Z\n" +
-                "HBC\t0.3456897991538844\t1970-01-03T05:24:00.000000Z\n" +
-                "DXR\t0.24008362859107102\t1970-01-03T05:30:00.000000Z\n" +
-                "DXR\t0.619291960382302\t1970-01-03T05:36:00.000000Z\n" +
-                "DXR\t0.17833722747266334\t1970-01-03T05:42:00.000000Z\n" +
-                "ABB\t0.2185865835029681\t1970-01-03T05:48:00.000000Z\n" +
-                "ABB\t0.3901731258748704\t1970-01-03T05:54:00.000000Z\n" +
-                "DXR\t0.7056586460237274\t1970-01-03T06:00:00.000000Z\n" +
-                "ABB\t0.8438459563914771\t1970-01-03T06:06:00.000000Z\n" +
-                "HBC\t0.13006100084163252\t1970-01-03T06:12:00.000000Z\n" +
-                "ABB\t0.3679848625908545\t1970-01-03T06:18:00.000000Z\n" +
-                "ABB\t0.06944480046327317\t1970-01-03T06:24:00.000000Z\n" +
-                "DXR\t0.4295631643526773\t1970-01-03T06:30:00.000000Z\n" +
-                "HBC\t0.5893398488053903\t1970-01-03T06:36:00.000000Z\n" +
-                "DXR\t0.5699444693578853\t1970-01-03T06:42:00.000000Z\n" +
-                "ABB\t0.9918093114862231\t1970-01-03T06:48:00.000000Z\n" +
-                "ABB\t0.32424562653969957\t1970-01-03T06:54:00.000000Z\n" +
-                "DXR\t0.8998921791869131\t1970-01-03T07:00:00.000000Z\n" +
-                "HBC\t0.7458169804091256\t1970-01-03T07:06:00.000000Z\n" +
-                "HBC\t0.33746104579374825\t1970-01-03T07:12:00.000000Z\n" +
-                "ABB\t0.18740488620384377\t1970-01-03T07:18:00.000000Z\n" +
-                "HBC\t0.10527282622013212\t1970-01-03T07:24:00.000000Z\n" +
-                "DXR\t0.8291193369353376\t1970-01-03T07:30:00.000000Z\n" +
-                "ABB\t0.32673950830571696\t1970-01-03T07:36:00.000000Z\n" +
-                "DXR\t0.5992548493051852\t1970-01-03T07:42:00.000000Z\n" +
-                "DXR\t0.6455967424250787\t1970-01-03T07:48:00.000000Z\n" +
-                "ABB\t0.6202777455654276\t1970-01-03T07:54:00.000000Z\n" +
-                "HBC\t0.029080850168636263\t1970-01-03T08:00:00.000000Z\n" +
-                "ABB\t0.10459352312331183\t1970-01-03T08:06:00.000000Z\n" +
-                "HBC\t0.5346019596733254\t1970-01-03T08:12:00.000000Z\n" +
-                "ABB\t0.9418719455092096\t1970-01-03T08:18:00.000000Z\n" +
-                "HBC\t0.6341292894843615\t1970-01-03T08:24:00.000000Z\n" +
-                "ABB\t0.7340656260730631\t1970-01-03T08:30:00.000000Z\n" +
-                "HBC\t0.5025890936351257\t1970-01-03T08:36:00.000000Z\n" +
-                "HBC\t0.8952510116133903\t1970-01-03T08:42:00.000000Z\n" +
-                "HBC\t0.48964139862697853\t1970-01-03T08:48:00.000000Z\n" +
-                "ABB\t0.7700798090070919\t1970-01-03T08:54:00.000000Z\n" +
-                "HBC\t0.4416432347777828\t1970-01-03T09:00:00.000000Z\n" +
-                "DXR\t0.05158459929273784\t1970-01-03T09:06:00.000000Z\n" +
-                "HBC\t0.2445295612285482\t1970-01-03T09:12:00.000000Z\n" +
-                "ABB\t0.5466900921405317\t1970-01-03T09:18:00.000000Z\n" +
-                "HBC\t0.5290006415737116\t1970-01-03T09:24:00.000000Z\n" +
-                "HBC\t0.7260468106076399\t1970-01-03T09:30:00.000000Z\n" +
-                "DXR\t0.7229359906306887\t1970-01-03T09:36:00.000000Z\n" +
-                "ABB\t0.4592067757817594\t1970-01-03T09:42:00.000000Z\n" +
-                "HBC\t0.5716129058692643\t1970-01-03T09:48:00.000000Z\n" +
-                "DXR\t0.05094182589333662\t1970-01-03T09:54:00.000000Z\n";
+        final String expected = """
+                k\tprice\tts
+                ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z
+                DXR\t0.08486964232560668\t1970-01-03T00:06:00.000000Z
+                DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z
+                HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z
+                HBC\t0.7905675319675964\t1970-01-03T00:24:00.000000Z
+                ABB\t0.22452340856088226\t1970-01-03T00:30:00.000000Z
+                ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z
+                ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z
+                ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z
+                HBC\t0.0367581207471136\t1970-01-03T00:54:00.000000Z
+                DXR\t0.6276954028373309\t1970-01-03T01:00:00.000000Z
+                DXR\t0.6778564558839208\t1970-01-03T01:06:00.000000Z
+                DXR\t0.8756771741121929\t1970-01-03T01:12:00.000000Z
+                HBC\t0.8799634725391621\t1970-01-03T01:18:00.000000Z
+                HBC\t0.5249321062686694\t1970-01-03T01:24:00.000000Z
+                DXR\t0.7675673070796104\t1970-01-03T01:30:00.000000Z
+                DXR\t0.21583224269349388\t1970-01-03T01:36:00.000000Z
+                DXR\t0.15786635599554755\t1970-01-03T01:42:00.000000Z
+                HBC\t0.1911234617573182\t1970-01-03T01:48:00.000000Z
+                ABB\t0.5793466326862211\t1970-01-03T01:54:00.000000Z
+                DXR\t0.9687423276940171\t1970-01-03T02:00:00.000000Z
+                DXR\t0.6761934857077543\t1970-01-03T02:06:00.000000Z
+                DXR\t0.4882051101858693\t1970-01-03T02:12:00.000000Z
+                ABB\t0.42281342727402726\t1970-01-03T02:18:00.000000Z
+                HBC\t0.810161274171258\t1970-01-03T02:24:00.000000Z
+                DXR\t0.5298405941762054\t1970-01-03T02:30:00.000000Z
+                HBC\t0.022965637512889825\t1970-01-03T02:36:00.000000Z
+                ABB\t0.7763904674818695\t1970-01-03T02:42:00.000000Z
+                DXR\t0.975019885372507\t1970-01-03T02:48:00.000000Z
+                HBC\t0.0011075361080621349\t1970-01-03T02:54:00.000000Z
+                DXR\t0.7643643144642823\t1970-01-03T03:00:00.000000Z
+                DXR\t0.8001121139739173\t1970-01-03T03:06:00.000000Z
+                HBC\t0.18769708157331322\t1970-01-03T03:12:00.000000Z
+                ABB\t0.16381374773748514\t1970-01-03T03:18:00.000000Z
+                ABB\t0.6590341607692226\t1970-01-03T03:24:00.000000Z
+                DXR\t0.40455469747939254\t1970-01-03T03:30:00.000000Z
+                ABB\t0.8837421918800907\t1970-01-03T03:36:00.000000Z
+                HBC\t0.05384400312338511\t1970-01-03T03:42:00.000000Z
+                ABB\t0.09750574414434399\t1970-01-03T03:48:00.000000Z
+                DXR\t0.9644183832564398\t1970-01-03T03:54:00.000000Z
+                DXR\t0.7588175403454873\t1970-01-03T04:00:00.000000Z
+                DXR\t0.5778947915182423\t1970-01-03T04:06:00.000000Z
+                HBC\t0.9269068519549879\t1970-01-03T04:12:00.000000Z
+                DXR\t0.5449155021518948\t1970-01-03T04:18:00.000000Z
+                DXR\t0.1202416087573498\t1970-01-03T04:24:00.000000Z
+                DXR\t0.9640289041849747\t1970-01-03T04:30:00.000000Z
+                ABB\t0.7133910271555843\t1970-01-03T04:36:00.000000Z
+                HBC\t0.6551335839796312\t1970-01-03T04:42:00.000000Z
+                DXR\t0.4971342426836798\t1970-01-03T04:48:00.000000Z
+                DXR\t0.48558682958070665\t1970-01-03T04:54:00.000000Z
+                HBC\t0.9047642416961028\t1970-01-03T05:00:00.000000Z
+                HBC\t0.03167026265669903\t1970-01-03T05:06:00.000000Z
+                DXR\t0.14830552335848957\t1970-01-03T05:12:00.000000Z
+                DXR\t0.9441658975532605\t1970-01-03T05:18:00.000000Z
+                HBC\t0.3456897991538844\t1970-01-03T05:24:00.000000Z
+                DXR\t0.24008362859107102\t1970-01-03T05:30:00.000000Z
+                DXR\t0.619291960382302\t1970-01-03T05:36:00.000000Z
+                DXR\t0.17833722747266334\t1970-01-03T05:42:00.000000Z
+                ABB\t0.2185865835029681\t1970-01-03T05:48:00.000000Z
+                ABB\t0.3901731258748704\t1970-01-03T05:54:00.000000Z
+                DXR\t0.7056586460237274\t1970-01-03T06:00:00.000000Z
+                ABB\t0.8438459563914771\t1970-01-03T06:06:00.000000Z
+                HBC\t0.13006100084163252\t1970-01-03T06:12:00.000000Z
+                ABB\t0.3679848625908545\t1970-01-03T06:18:00.000000Z
+                ABB\t0.06944480046327317\t1970-01-03T06:24:00.000000Z
+                DXR\t0.4295631643526773\t1970-01-03T06:30:00.000000Z
+                HBC\t0.5893398488053903\t1970-01-03T06:36:00.000000Z
+                DXR\t0.5699444693578853\t1970-01-03T06:42:00.000000Z
+                ABB\t0.9918093114862231\t1970-01-03T06:48:00.000000Z
+                ABB\t0.32424562653969957\t1970-01-03T06:54:00.000000Z
+                DXR\t0.8998921791869131\t1970-01-03T07:00:00.000000Z
+                HBC\t0.7458169804091256\t1970-01-03T07:06:00.000000Z
+                HBC\t0.33746104579374825\t1970-01-03T07:12:00.000000Z
+                ABB\t0.18740488620384377\t1970-01-03T07:18:00.000000Z
+                HBC\t0.10527282622013212\t1970-01-03T07:24:00.000000Z
+                DXR\t0.8291193369353376\t1970-01-03T07:30:00.000000Z
+                ABB\t0.32673950830571696\t1970-01-03T07:36:00.000000Z
+                DXR\t0.5992548493051852\t1970-01-03T07:42:00.000000Z
+                DXR\t0.6455967424250787\t1970-01-03T07:48:00.000000Z
+                ABB\t0.6202777455654276\t1970-01-03T07:54:00.000000Z
+                HBC\t0.029080850168636263\t1970-01-03T08:00:00.000000Z
+                ABB\t0.10459352312331183\t1970-01-03T08:06:00.000000Z
+                HBC\t0.5346019596733254\t1970-01-03T08:12:00.000000Z
+                ABB\t0.9418719455092096\t1970-01-03T08:18:00.000000Z
+                HBC\t0.6341292894843615\t1970-01-03T08:24:00.000000Z
+                ABB\t0.7340656260730631\t1970-01-03T08:30:00.000000Z
+                HBC\t0.5025890936351257\t1970-01-03T08:36:00.000000Z
+                HBC\t0.8952510116133903\t1970-01-03T08:42:00.000000Z
+                HBC\t0.48964139862697853\t1970-01-03T08:48:00.000000Z
+                ABB\t0.7700798090070919\t1970-01-03T08:54:00.000000Z
+                HBC\t0.4416432347777828\t1970-01-03T09:00:00.000000Z
+                DXR\t0.05158459929273784\t1970-01-03T09:06:00.000000Z
+                HBC\t0.2445295612285482\t1970-01-03T09:12:00.000000Z
+                ABB\t0.5466900921405317\t1970-01-03T09:18:00.000000Z
+                HBC\t0.5290006415737116\t1970-01-03T09:24:00.000000Z
+                HBC\t0.7260468106076399\t1970-01-03T09:30:00.000000Z
+                DXR\t0.7229359906306887\t1970-01-03T09:36:00.000000Z
+                ABB\t0.4592067757817594\t1970-01-03T09:42:00.000000Z
+                HBC\t0.5716129058692643\t1970-01-03T09:48:00.000000Z
+                DXR\t0.05094182589333662\t1970-01-03T09:54:00.000000Z
+                """;
 
         assertQuery("select sym k, price, ts from x where ts<'1970-01-04T10:30:00.000Z'")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(100)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(100)) timestamp (ts)""")
                 .timestamp("ts")
                 .returns("k\tprice\tts\n", expected);
     }
 
     @Test
     public void testVirtualColumnCancelsPropagationOfOrderByAdvice() throws Exception {
-        final String expected = "sym\tspread\n" +
-                "AA\t4171981\n" +
-                "AA\t74196247\n" +
-                "AA\t417348950\n" +
-                "AA\t1191199593\n" +
-                "AA\t1233285715\n" +
-                "BB\t-1912873112\n" +
-                "BB\t-1707758909\n" +
-                "BB\t-850582456\n";
+        final String expected = """
+                sym\tspread
+                AA\t4171981
+                AA\t74196247
+                AA\t417348950
+                AA\t1191199593
+                AA\t1233285715
+                BB\t-1912873112
+                BB\t-1707758909
+                BB\t-850582456
+                """;
 
         assertQuery("select sym, ask-bid spread from x where sym in ('AA', 'BB' ) order by sym, spread")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    bid int,\n" +
-                        "    ask int,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
-                        "        rnd_int() bid, \n" +
-                        "        rnd_int() ask, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            bid int,
+                            ask int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym,\s
+                                rnd_int() bid,\s
+                                rnd_int() ask,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
                 .returns("sym\tspread\n", expected);
     }
 
     @Test
     public void testVirtualColumnCancelsPropagationOfOrderByAdviceDesc() throws Exception {
-        final String expected = "sym\tspread\n" +
-                "AA\t1233285715\n" +
-                "AA\t1191199593\n" +
-                "AA\t417348950\n" +
-                "AA\t74196247\n" +
-                "AA\t4171981\n" +
-                "BB\t-850582456\n" +
-                "BB\t-1707758909\n" +
-                "BB\t-1912873112\n";
+        final String expected = """
+                sym\tspread
+                AA\t1233285715
+                AA\t1191199593
+                AA\t417348950
+                AA\t74196247
+                AA\t4171981
+                BB\t-850582456
+                BB\t-1707758909
+                BB\t-1912873112
+                """;
 
         assertQuery("select sym, ask-bid spread from x where sym in ('AA', 'BB' ) order by sym, spread desc")
-                .ddl("create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    bid int,\n" +
-                        "    ask int,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY")
-                .mutateWith("insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
-                        "        rnd_int() bid, \n" +
-                        "        rnd_int() ask, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            bid int,
+                            ask int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym,\s
+                                rnd_int() bid,\s
+                                rnd_int() ask,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
                 .returns("sym\tspread\n", expected);
     }
 }

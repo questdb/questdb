@@ -61,8 +61,10 @@ public class TruncateTest extends AbstractCairoTest {
 
             execute("insert into y values('2022-02-24', 1, 2)");
 
-            assertSql("timestamp\tx\tnew_x\n" +
-                    "2022-02-24T00:00:00.000000Z\t1\t2\n", "select * from y");
+            assertSql("""
+                    timestamp\tx\tnew_x
+                    2022-02-24T00:00:00.000000Z\t1\t2
+                    """, "select * from y");
         });
     }
 
@@ -81,13 +83,15 @@ public class TruncateTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        assertCursor("timestamp\tsymbol\n" +
-                                        "1970-01-01T00:00:00.000000Z\ta\n" +
-                                        "1970-01-01T00:16:40.000000Z\ta\n" +
-                                        "1970-01-01T00:33:20.000000Z\tb\n" +
-                                        "1970-01-01T00:50:00.000000Z\tb\n" +
-                                        "1970-01-01T01:06:40.000000Z\tb\n" +
-                                        "1970-01-01T01:23:20.000000Z\tb\n",
+                        assertCursor("""
+                                        timestamp\tsymbol
+                                        1970-01-01T00:00:00.000000Z\ta
+                                        1970-01-01T00:16:40.000000Z\ta
+                                        1970-01-01T00:33:20.000000Z\tb
+                                        1970-01-01T00:50:00.000000Z\tb
+                                        1970-01-01T01:06:40.000000Z\tb
+                                        1970-01-01T01:23:20.000000Z\tb
+                                        """,
                                 true, true, true, cursor, factory.getMetadata(), false);
                     }
 
@@ -122,8 +126,10 @@ public class TruncateTest extends AbstractCairoTest {
 
             execute("insert into y values(223)");
             assertSql(
-                    "timestamp\n" +
-                            "1970-01-01T00:00:00.000223Z\n",
+                    """
+                            timestamp
+                            1970-01-01T00:00:00.000223Z
+                            """,
                     "select * from y"
             );
         });
@@ -144,17 +150,19 @@ public class TruncateTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
                     TestUtils.assertEquals(
-                            "timestamp\tsymbol1\n" +
-                                    "1970-01-01T00:00:00.000000Z\ta\n" +
-                                    "1970-01-01T00:16:40.000000Z\ta\n" +
-                                    "1970-01-01T00:33:20.000000Z\tb\n" +
-                                    "1970-01-01T00:50:00.000000Z\t\n" +
-                                    "1970-01-01T01:06:40.000000Z\t\n" +
-                                    "1970-01-01T01:23:20.000000Z\t\n" +
-                                    "1970-01-01T01:40:00.000000Z\t\n" +
-                                    "1970-01-01T01:56:40.000000Z\tb\n" +
-                                    "1970-01-01T02:13:20.000000Z\ta\n" +
-                                    "1970-01-01T02:30:00.000000Z\tb\n",
+                            """
+                                    timestamp\tsymbol1
+                                    1970-01-01T00:00:00.000000Z\ta
+                                    1970-01-01T00:16:40.000000Z\ta
+                                    1970-01-01T00:33:20.000000Z\tb
+                                    1970-01-01T00:50:00.000000Z\t
+                                    1970-01-01T01:06:40.000000Z\t
+                                    1970-01-01T01:23:20.000000Z\t
+                                    1970-01-01T01:40:00.000000Z\t
+                                    1970-01-01T01:56:40.000000Z\tb
+                                    1970-01-01T02:13:20.000000Z\ta
+                                    1970-01-01T02:30:00.000000Z\tb
+                                    """,
                             sink
                     );
                 }
@@ -313,8 +321,10 @@ public class TruncateTest extends AbstractCairoTest {
                     assertQuery("select count() from x")
                             .noRandomAccess()
                             .expectSize()
-                            .returns("count\n" +
-                                    "10\n");
+                            .returns("""
+                                    count
+                                    10
+                                    """);
 
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x", sqlExecutionContext).getType());
@@ -323,8 +333,10 @@ public class TruncateTest extends AbstractCairoTest {
                     assertQuery("select count() from x")
                             .noRandomAccess()
                             .expectSize()
-                            .returns("count\n" +
-                                    "0\n");
+                            .returns("""
+                                    count
+                                    0
+                                    """);
                 }
         );
     }
@@ -338,8 +350,10 @@ public class TruncateTest extends AbstractCairoTest {
                     assertQuery("select count() from x")
                             .noRandomAccess()
                             .expectSize()
-                            .returns("count\n" +
-                                    "10\n");
+                            .returns("""
+                                    count
+                                    10
+                                    """);
 
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x keep symbol maps", sqlExecutionContext).getType());
@@ -348,8 +362,10 @@ public class TruncateTest extends AbstractCairoTest {
                     assertQuery("select count() from x")
                             .noRandomAccess()
                             .expectSize()
-                            .returns("count\n" +
-                                    "0\n");
+                            .returns("""
+                                    count
+                                    0
+                                    """);
                 }
         );
     }
@@ -402,8 +418,10 @@ public class TruncateTest extends AbstractCairoTest {
                     assertQuery("select count() from keep")
                             .noRandomAccess()
                             .expectSize()
-                            .returns("count\n" +
-                                    "3\n");
+                            .returns("""
+                                    count
+                                    3
+                                    """);
 
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE keep;", sqlExecutionContext).getType());
@@ -412,8 +430,10 @@ public class TruncateTest extends AbstractCairoTest {
                     assertQuery("select count() from keep")
                             .noRandomAccess()
                             .expectSize()
-                            .returns("count\n" +
-                                    "0\n");
+                            .returns("""
+                                    count
+                                    0
+                                    """);
                 }
         );
     }
@@ -427,8 +447,10 @@ public class TruncateTest extends AbstractCairoTest {
                     assertQuery("select count() from x")
                             .noRandomAccess()
                             .expectSize()
-                            .returns("count\n" +
-                                    "10\n");
+                            .returns("""
+                                    count
+                                    10
+                                    """);
 
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE x;", sqlExecutionContext).getType());
@@ -437,8 +459,10 @@ public class TruncateTest extends AbstractCairoTest {
                     assertQuery("select count() from x")
                             .noRandomAccess()
                             .expectSize()
-                            .returns("count\n" +
-                                    "0\n");
+                            .returns("""
+                                    count
+                                    0
+                                    """);
                 }
         );
     }
@@ -483,15 +507,19 @@ public class TruncateTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "10\n");
+                    .returns("""
+                            count
+                            10
+                            """);
 
             assertQuery("select count() from y")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "20\n");
+                    .returns("""
+                            count
+                            20
+                            """);
 
             CyclicBarrier useBarrier = new CyclicBarrier(2);
             CyclicBarrier releaseBarrier = new CyclicBarrier(2);
@@ -503,7 +531,7 @@ public class TruncateTest extends AbstractCairoTest {
                     useBarrier.await();
                     releaseBarrier.await();
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.err);
                 }
 
                 haltLatch.countDown();
@@ -523,15 +551,19 @@ public class TruncateTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "10\n");
+                    .returns("""
+                            count
+                            10
+                            """);
 
             assertQuery("select count() from y")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "20\n");
+                    .returns("""
+                            count
+                            20
+                            """);
 
             Assert.assertTrue(haltLatch.await(1, TimeUnit.SECONDS));
         });
@@ -546,14 +578,18 @@ public class TruncateTest extends AbstractCairoTest {
             assertQuery("select count() from x")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "10\n");
+                    .returns("""
+                            count
+                            10
+                            """);
 
             assertQuery("select count() from y")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "20\n");
+                    .returns("""
+                            count
+                            20
+                            """);
 
             try {
                 assertExceptionNoLeakCheck("truncate table x, y,z");
@@ -565,14 +601,18 @@ public class TruncateTest extends AbstractCairoTest {
             assertQuery("select count() from x")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "10\n");
+                    .returns("""
+                            count
+                            10
+                            """);
 
             assertQuery("select count() from y")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "20\n");
+                    .returns("""
+                            count
+                            20
+                            """);
         });
     }
 
@@ -584,8 +624,10 @@ public class TruncateTest extends AbstractCairoTest {
             assertQuery("select count() from x")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "10\n");
+                    .returns("""
+                            count
+                            10
+                            """);
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertEquals(TRUNCATE, compiler.compile("truncate table only x", sqlExecutionContext).getType());
@@ -594,8 +636,10 @@ public class TruncateTest extends AbstractCairoTest {
             assertQuery("select count() from x")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "0\n");
+                    .returns("""
+                            count
+                            0
+                            """);
         });
     }
 
@@ -607,8 +651,10 @@ public class TruncateTest extends AbstractCairoTest {
             assertQuery("select count() from x")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "10\n");
+                    .returns("""
+                            count
+                            10
+                            """);
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists x", sqlExecutionContext).getType());
@@ -617,8 +663,10 @@ public class TruncateTest extends AbstractCairoTest {
             assertQuery("select count() from x")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "0\n");
+                    .returns("""
+                            count
+                            0
+                            """);
         });
     }
 
@@ -683,8 +731,10 @@ public class TruncateTest extends AbstractCairoTest {
             assertQuery("select count() from x")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "10\n");
+                    .returns("""
+                            count
+                            10
+                            """);
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists x keep symbol maps", sqlExecutionContext).getType());
@@ -693,8 +743,10 @@ public class TruncateTest extends AbstractCairoTest {
             assertQuery("select count() from x")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "0\n");
+                    .returns("""
+                            count
+                            0
+                            """);
         });
     }
 
@@ -706,8 +758,10 @@ public class TruncateTest extends AbstractCairoTest {
             assertQuery("select count() from x")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "1000000\n");
+                    .returns("""
+                            count
+                            1000000
+                            """);
 
             try (RecordCursorFactory factory = select("select * from x")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -774,8 +828,10 @@ public class TruncateTest extends AbstractCairoTest {
                     assertQuery("select count() from testTruncateWithColumnTop")
                             .noRandomAccess()
                             .expectSize()
-                            .returns("count\n" +
-                                    "1100\n");
+                            .returns("""
+                                    count
+                                    1100
+                                    """);
 
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         Assert.assertEquals(TRUNCATE, compiler.compile("truncate table testTruncateWithColumnTop", sqlExecutionContext).getType());
@@ -791,9 +847,11 @@ public class TruncateTest extends AbstractCairoTest {
                                     " from long_sequence(1000)"
                     );
 
-                    assertSql("column_with_top\n" +
-                            "999\n" +
-                            "1000\n", "select column_with_top from testTruncateWithColumnTop limit -2");
+                    assertSql("""
+                            column_with_top
+                            999
+                            1000
+                            """, "select column_with_top from testTruncateWithColumnTop limit -2");
                 }
         );
     }
@@ -819,14 +877,18 @@ public class TruncateTest extends AbstractCairoTest {
             assertQuery("select count() from x")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "10\n");
+                    .returns("""
+                            count
+                            10
+                            """);
 
             assertQuery("select count() from y")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "20\n");
+                    .returns("""
+                            count
+                            20
+                            """);
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x, y", sqlExecutionContext).getType());
@@ -835,14 +897,18 @@ public class TruncateTest extends AbstractCairoTest {
             assertQuery("select count() from x")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "0\n");
+                    .returns("""
+                            count
+                            0
+                            """);
 
             assertQuery("select count() from y")
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n" +
-                            "0\n");
+                    .returns("""
+                            count
+                            0
+                            """);
         });
     }
 
@@ -862,8 +928,10 @@ public class TruncateTest extends AbstractCairoTest {
 
             execute("insert into y values('2022-02-24', 1)");
 
-            assertSql("timestamp\tx\n" +
-                    "2022-02-24T00:00:00.000000Z\t1\n", "select * from y");
+            assertSql("""
+                    timestamp\tx
+                    2022-02-24T00:00:00.000000Z\t1
+                    """, "select * from y");
         });
     }
 

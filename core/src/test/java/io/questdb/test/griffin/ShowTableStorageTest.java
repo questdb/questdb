@@ -41,20 +41,22 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             execute("create table trades_2(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
             execute(
-                    "INSERT INTO trades_1\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+                    """
+                            INSERT INTO trades_1
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);"""
             );
             execute(
-                    "INSERT INTO trades_2\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+                    """
+                            INSERT INTO trades_2
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);"""
             );
             drainWalQueue();
             engine.releaseAllWriters();
@@ -78,20 +80,22 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             execute("create table trades_2(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
             execute(
-                    "INSERT INTO trades_1\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+                    """
+                            INSERT INTO trades_1
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);"""
             );
             execute(
-                    "INSERT INTO trades_2\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+                    """
+                            INSERT INTO trades_2
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);"""
             );
             drainWalQueue();
             engine.releaseAllWriters();
@@ -113,12 +117,14 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
             execute(
-                    "INSERT INTO trades_1\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);\n"
+                    """
+                            INSERT INTO trades_1
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);
+                            """
             );
             drainWalQueue();
             engine.releaseAllWriters();
@@ -139,12 +145,13 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
             execute(
-                    "INSERT INTO trades_1\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+                    """
+                            INSERT INTO trades_1
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);"""
             );
             drainWalQueue();
             engine.releaseAllWriters();
@@ -164,12 +171,14 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
             execute(
-                    "INSERT INTO trades_1\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);\n"
+                    """
+                            INSERT INTO trades_1
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);
+                            """
             );
             drainWalQueue();
             engine.releaseAllWriters();

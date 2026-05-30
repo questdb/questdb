@@ -40,12 +40,14 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
                             ") TIMESTAMP(ts) PARTITION BY DAY;"
             );
             assertSql(
-                    "cust_id\tts\n" +
-                            "3\t1970-01-01T00:00:00.002000Z\n" +
-                            "3\t1970-01-01T00:00:00.003000Z\n" +
-                            "3\t1970-01-01T00:00:00.004000Z\n" +
-                            "3\t1970-01-01T00:00:00.005000Z\n" +
-                            "3\t1970-01-01T00:00:00.007000Z\n",
+                    """
+                            cust_id\tts
+                            3\t1970-01-01T00:00:00.002000Z
+                            3\t1970-01-01T00:00:00.003000Z
+                            3\t1970-01-01T00:00:00.004000Z
+                            3\t1970-01-01T00:00:00.005000Z
+                            3\t1970-01-01T00:00:00.007000Z
+                            """,
                     "select * from balances where cust_id = 3"
             );
         });
@@ -60,8 +62,10 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
                             ");"
             );
             assertSql(
-                    "cust_id\tts\n" +
-                            "abc\t2022-03-23T00:00:00.000000Z\n",
+                    """
+                            cust_id\tts
+                            abc\t2022-03-23T00:00:00.000000Z
+                            """,
                     "select * from balances where ts = '2022-03-23'::symbol"
             );
         });
@@ -73,8 +77,10 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
                 .ddl("CREATE TABLE balances as (" +
                         "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
                         ");")
-                .returns("cust_id\tts\n" +
-                        "abc\t2022-03-23T00:00:00.000000Z\n");
+                .returns("""
+                        cust_id\tts
+                        abc\t2022-03-23T00:00:00.000000Z
+                        """);
     }
 
     @Test
@@ -83,8 +89,10 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
                 .ddl("CREATE TABLE balances as (" +
                         "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
                         ");")
-                .returns("cust_id\tts\n" +
-                        "abc\t2022-03-23T00:00:00.000000Z\n");
+                .returns("""
+                        cust_id\tts
+                        abc\t2022-03-23T00:00:00.000000Z
+                        """);
     }
 
     @Test
@@ -93,8 +101,10 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
                 .ddl("CREATE TABLE balances as (" +
                         "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
                         ");")
-                .returns("cust_id\tts\n" +
-                        "abc\t2022-03-23T00:00:00.000000Z\n");
+                .returns("""
+                        cust_id\tts
+                        abc\t2022-03-23T00:00:00.000000Z
+                        """);
     }
 
     @Test
@@ -103,8 +113,10 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
                 .ddl("CREATE TABLE balances as (" +
                         "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
                         ");")
-                .returns("cust_id\tts\n" +
-                        "abc\t2022-03-23T00:00:00.000000Z\n");
+                .returns("""
+                        cust_id\tts
+                        abc\t2022-03-23T00:00:00.000000Z
+                        """);
     }
 
 }

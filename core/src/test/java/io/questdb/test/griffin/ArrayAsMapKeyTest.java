@@ -33,25 +33,31 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
     public void testArrayAsGroupByKey() throws Exception {
         execute("create table array_test(k symbol, ob_buy double[][], ob_sell double[][], ts timestamp) timestamp(ts) partition by day ;");
         execute(
-                "insert into array_test values \n" +
-                        "   ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),\n" +
-                        "   ('vod2', ARRAY[[4., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),   \n" +
-                        "   ('vod3', ARRAY[[3., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123)\n" +
-                        "   ;\n"
+                """
+                        insert into array_test values\s
+                           ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),
+                           ('vod2', ARRAY[[4., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),  \s
+                           ('vod3', ARRAY[[3., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123)
+                           ;
+                        """
         );
-        assertQuery("[]\tk\tcount\n" +
-                        "[[9.0,1000.0],[10.0,10000.0]]\tvod\t1\n" +
-                        "[[4.0,1000.0],[10.0,10000.0]]\tvod2\t1\n" +
-                        "[[3.0,1000.0],[10.0,10000.0]]\tvod3\t1\n",
+        assertQuery("""
+                        []\tk\tcount
+                        [[9.0,1000.0],[10.0,10000.0]]\tvod\t1
+                        [[4.0,1000.0],[10.0,10000.0]]\tvod2\t1
+                        [[3.0,1000.0],[10.0,10000.0]]\tvod3\t1
+                        """,
                 "select ob_buy[1:], k, count() from array_test;",
                 true,
                 true
         );
 
-        assertQuery("ob_buy\tk\tcount\n" +
-                        "[[9.0,1000.0],[10.0,10000.0]]\tvod\t1\n" +
-                        "[[4.0,1000.0],[10.0,10000.0]]\tvod2\t1\n" +
-                        "[[3.0,1000.0],[10.0,10000.0]]\tvod3\t1\n",
+        assertQuery("""
+                        ob_buy\tk\tcount
+                        [[9.0,1000.0],[10.0,10000.0]]\tvod\t1
+                        [[4.0,1000.0],[10.0,10000.0]]\tvod2\t1
+                        [[3.0,1000.0],[10.0,10000.0]]\tvod3\t1
+                        """,
                 "select ob_buy, k, count() from array_test;",
                 true,
                 true
@@ -62,11 +68,13 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
     public void testArrayAsOrderByColumn() throws Exception {
         execute("create table array_test(k symbol, ob_buy double[][], ob_sell double[][], ts timestamp) timestamp(ts) partition by day ;");
         execute(
-                "insert into array_test values \n" +
-                        "   ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),\n" +
-                        "   ('vod2', ARRAY[[4., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),   \n" +
-                        "   ('vod3', ARRAY[[3., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123)\n" +
-                        "   ;\n"
+                """
+                        insert into array_test values\s
+                           ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),
+                           ('vod2', ARRAY[[4., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),  \s
+                           ('vod3', ARRAY[[3., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123)
+                           ;
+                        """
         );
 
         assertQuery("select ob_buy[1:] c, k from array_test order by c;")

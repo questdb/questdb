@@ -791,7 +791,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         SOCountDownLatch returned = new SOCountDownLatch(1);
         if (isWal) {
             createTable += " WAL";
-            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            engine.setPoolListener((factoryType, _, tableToken, event, _, _) -> {
                 if (tableToken != null && tableToken.getTableName().equals(tableName) && factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                     returned.countDown();
                 }

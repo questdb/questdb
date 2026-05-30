@@ -35,38 +35,43 @@ public class WithClauseTest extends AbstractCairoTest {
     public void testWithAliasOverridingTable1() throws Exception {
         assertMemoryLeak(() -> assertQuery("WITH balance as ( SELECT * FROM balance WHERE address = 1 ) " +
                         "SELECT * FROM balance ")
-                .ddl("CREATE TABLE balance (\n" +
-                        "  address LONG,\n" +
-                        "  balance DOUBLE\n" +
-                        ");")
+                .ddl("""
+                        CREATE TABLE balance (
+                          address LONG,
+                          balance DOUBLE
+                        );""")
                 .mutateWith("insert into balance values ( 1, 1.0 ), (2, 2.0);")
                 .returns("address\tbalance\n", "address\tbalance\n1\t1.0\n"));
     }
 
     @Test
     public void testWithAliasOverridingTable2() throws Exception {
-        assertMemoryLeak(() -> assertQuery("WITH balance as ( SELECT * FROM balance WHERE address = 1 ), \n" +
-                        "     balance_other as ( SELECT * FROM balance )\n" +
-                        "SELECT * FROM balance ")
-                .ddl("CREATE TABLE balance (\n" +
-                        "  address LONG,\n" +
-                        "  balance DOUBLE\n" +
-                        ");")
+        assertMemoryLeak(() -> assertQuery("""
+                WITH balance as ( SELECT * FROM balance WHERE address = 1 ),\s
+                     balance_other as ( SELECT * FROM balance )
+                SELECT * FROM balance\s""")
+                .ddl("""
+                        CREATE TABLE balance (
+                          address LONG,
+                          balance DOUBLE
+                        );""")
                 .mutateWith("insert into balance values ( 1, 1.0 ), (2, 2.0);")
                 .returns("address\tbalance\n", "address\tbalance\n1\t1.0\n"));
     }
 
     @Test
     public void testWithAliasOverridingTable3() throws Exception {
-        assertMemoryLeak(() -> assertQuery("WITH balance as ( SELECT * FROM balance WHERE address = 1 ) \n" +
-                "SELECT * FROM ( " +
-                "WITH balance_other AS ( SELECT * FROM balance )\n" +
-                "SELECT * FROM balance " +
-                " ) ORDER BY 1 ")
-                .ddl("CREATE TABLE balance (\n" +
-                "  address LONG,\n" +
-                "  balance DOUBLE\n" +
-                ");")
+        assertMemoryLeak(() -> assertQuery("""
+                WITH balance as ( SELECT * FROM balance WHERE address = 1 )\s
+                SELECT * FROM ( \
+                WITH balance_other AS ( SELECT * FROM balance )
+                SELECT * FROM balance \
+                 ) ORDER BY 1\s""")
+                .ddl("""
+                        CREATE TABLE balance (
+                          address LONG,
+                          balance DOUBLE
+                        );""")
                 .mutateWith("insert into balance values ( 1, 1.0 ), (2, 2.0);")
                 .returns("address\tbalance\n", "address\tbalance\n1\t1.0\n"));
     }
@@ -87,10 +92,11 @@ public class WithClauseTest extends AbstractCairoTest {
                             "FROM balance b1 " +
                             "JOIN balance2 b2 on b1.address = b2.address " +
                             ")")
-                    .ddl("CREATE TABLE balance (\n" +
-                            "  address LONG,\n" +
-                            "  balance DOUBLE\n" +
-                            ");")
+                    .ddl("""
+                            CREATE TABLE balance (
+                              address LONG,
+                              balance DOUBLE
+                            );""")
                     .mutateWith("insert into balance values ( 1, 1.0 ), (2, 2.0);")
                     .noRandomAccess()
                     .returns("address\tbalance\taddress1\tbalance1\n", "address\tbalance\taddress1\tbalance1\n2\t2.0\t2\t2.0\n");
@@ -100,13 +106,14 @@ public class WithClauseTest extends AbstractCairoTest {
     @Test
     public void testWithLatestByFilterGroup() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table contact_events2 as (\n" +
-                    "  select cast(x as SYMBOL) _id,\n" +
-                    "    rnd_symbol('c1', 'c2', 'c3', 'c4') contactid, \n" +
-                    "    CAST(x as Timestamp) timestamp, \n" +
-                    "    rnd_symbol('g1', 'g2', 'g3', 'g4') groupId \n" +
-                    "from long_sequence(500)) \n" +
-                    "timestamp(timestamp)");
+            execute("""
+                    create table contact_events2 as (
+                      select cast(x as SYMBOL) _id,
+                        rnd_symbol('c1', 'c2', 'c3', 'c4') contactid,\s
+                        CAST(x as Timestamp) timestamp,\s
+                        rnd_symbol('g1', 'g2', 'g3', 'g4') groupId\s
+                    from long_sequence(500))\s
+                    timestamp(timestamp)""");
 
             // this is deliberately shuffled column in select to check that correct metadata is used on filtering
             // latest by queries
@@ -119,10 +126,12 @@ public class WithClauseTest extends AbstractCairoTest {
             String expected = sink.toString();
             Assert.assertTrue(expected.length() > 100);
 
-            assertQuery("with eventlist as (\n" +
-                            "    select * from contact_events2 where groupId = 'g1' latest on timestamp partition by _id order by timestamp\n" +
-                            ")\n" +
-                            "select groupId, _id, contactid, timestamp, _id from eventlist where groupId = 'g1' \n")
+            assertQuery("""
+                    with eventlist as (
+                        select * from contact_events2 where groupId = 'g1' latest on timestamp partition by _id order by timestamp
+                    )
+                    select groupId, _id, contactid, timestamp, _id from eventlist where groupId = 'g1'\s
+                    """)
                     .noLeakCheck()
                     .timestamp("timestamp")
                     .sizeMayVary()

@@ -135,8 +135,10 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
             assertQuery("writer_pool")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("table_name\towner_thread_id\tlast_access_timestamp\townership_reason\n" +
-                            "a\tnull\t2024-10-24T17:22:09.842574Z\t\n");
+                    .returns("""
+                            table_name\towner_thread_id\tlast_access_timestamp\townership_reason
+                            a\tnull\t2024-10-24T17:22:09.842574Z\t
+                            """);
 
             execute("create table b as (select 1 as u)");
             execute("create table c as (select 1 as u)");
@@ -144,20 +146,24 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
 
             assertQuery("select table_name,ownership_reason from writer_pool order by 1")
                     .noLeakCheck()
-                    .returns("table_name\townership_reason\n" +
-                            "a\t\n" +
-                            "b\t\n" +
-                            "c\t\n" +
-                            "d\t\n");
+                    .returns("""
+                            table_name\townership_reason
+                            a\t
+                            b\t
+                            c\t
+                            d\t
+                            """);
 
             // assert ordering
             assertQuery("select table_name,ownership_reason from writer_pool order by 1 desc")
                     .noLeakCheck()
-                    .returns("table_name\townership_reason\n" +
-                            "d\t\n" +
-                            "c\t\n" +
-                            "b\t\n" +
-                            "a\t\n");
+                    .returns("""
+                            table_name\townership_reason
+                            d\t
+                            c\t
+                            b\t
+                            a\t
+                            """);
 
             engine.releaseAllWriters();
 
@@ -172,14 +178,18 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
             try (TableWriter ignored = engine.getWriter(engine.getTableTokenIfExists("a"), "test reason")) {
                 assertQuery("select table_name,ownership_reason from writer_pool order by 1 desc")
                         .noLeakCheck()
-                        .returns("table_name\townership_reason\n" +
-                                "a\ttest reason\n");
+                        .returns("""
+                                table_name\townership_reason
+                                a\ttest reason
+                                """);
             }
 
             assertQuery("select table_name,ownership_reason from writer_pool order by 1 desc")
                     .noLeakCheck()
-                    .returns("table_name\townership_reason\n" +
-                            "a\t\n");
+                    .returns("""
+                            table_name\townership_reason
+                            a\t
+                            """);
         });
     }
 }

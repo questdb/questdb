@@ -205,10 +205,12 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
             execute("create table dest as (select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;");
 
-            String expected = "ts\tv\n" +
-                    "1970-01-01T00:00:00.000000Z\t0\n" +
-                    "1970-01-01T00:00:00.020000Z\t2\n" +
-                    "1970-01-01T00:00:00.040000Z\t4\n";
+            String expected = """
+                    ts\tv
+                    1970-01-01T00:00:00.000000Z\t0
+                    1970-01-01T00:00:00.020000Z\t2
+                    1970-01-01T00:00:00.040000Z\t4
+                    """;
 
             assertQuery("dest")
                     .timestamp("ts")
@@ -236,10 +238,12 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             sql += "(select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;";
             execute(sql);
 
-            String expected = "ts\tv\n" +
-                    "1970-01-01T00:00:00.000000Z\t0\n" +
-                    "1970-01-01T00:00:00.020000Z\t2\n" +
-                    "1970-01-01T00:00:00.040000Z\t4\n";
+            String expected = """
+                    ts\tv
+                    1970-01-01T00:00:00.000000Z\t0
+                    1970-01-01T00:00:00.020000Z\t2
+                    1970-01-01T00:00:00.040000Z\t4
+                    """;
 
             assertQuery("dest")
                     .timestamp("ts")
@@ -258,10 +262,12 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             sql += "(select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;";
             execute(sql);
 
-            String expected = "ts\tv\n" +
-                    "1970-01-01T00:00:00.000000Z\t0\n" +
-                    "1970-01-01T00:00:00.020000Z\t2\n" +
-                    "1970-01-01T00:00:00.040000Z\t4\n";
+            String expected = """
+                    ts\tv
+                    1970-01-01T00:00:00.000000Z\t0
+                    1970-01-01T00:00:00.020000Z\t2
+                    1970-01-01T00:00:00.040000Z\t4
+                    """;
 
             assertQuery("dest")
                     .timestamp("ts")

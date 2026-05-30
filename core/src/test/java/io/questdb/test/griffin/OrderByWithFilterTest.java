@@ -25,6 +25,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -1014,21 +1015,16 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
     private void testOrderByWithFilter(String type, int order) throws Exception {
 
-        String function;
-        if ("double".equals(type) || "float".equals(type)) {
-            function = "4+rnd_#TYPE#(50)*100";
-        } else if ("short".equals(type) || "byte".equals(type)) {
-            function = "rnd_#TYPE#(4,100)";
-        } else if ("char".equals(type)) {
-            function = "cast(rnd_byte(4,100) as char)";
-        } else if ("symbol".equals(type)) {
-            function = "cast('' || rnd_int(4,100,50) as symbol)";
-        } else if ("string".equals(type)) {
-            function = "'' || rnd_int(4,100,50)";
-        } else {
-            function = "rnd_#TYPE#(4,100,50)";
-        }
+        String function = switch (type) {
+            case "double", "float" -> "4+rnd_#TYPE#(50)*100";
+            case "short", "byte" -> "rnd_#TYPE#(4,100)";
+            case "char" -> "cast(rnd_byte(4,100) as char)";
+            case "symbol" -> "cast('' || rnd_int(4,100,50) as symbol)";
+            case "string" -> "'' || rnd_int(4,100,50)";
+            case null, default -> "rnd_#TYPE#(4,100,50)";
+        };
 
+        Assert.assertNotNull(type);
         runQueries(
                 "CREATE TABLE test(x #TYPE#, ts TIMESTAMP) timestamp(ts) partition by month;".replace("#TYPE#", type),
                 //should create 3+ partitions with randomly ordered x values
