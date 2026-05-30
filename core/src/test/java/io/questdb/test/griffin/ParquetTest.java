@@ -187,6 +187,55 @@ public class ParquetTest extends AbstractCairoTest {
         testNdArray(5, ARRAY_5D, true);
     }
 
+    // Coverage for the filtered / late-materialization read of a column ABSENT from
+    // the parquet file (added with ALTER TABLE ADD COLUMN after conversion). A query
+    // that filters on a present column and groups by the absent column reads it
+    // through PageFrameFilteredMemoryRecord and ParquetBuffers.decodeRemainingColumns
+    // -- a different code path from the record-scan one covered by
+    // testSelectOnlyAddedColumnAbsentFromParquetPartition. The plan is an Async JIT
+    // Group By (filter null!=c1, keys [s]) over a PARQUET PageFrame; the result must
+    // match the native sibling, where s is a plain all-NULL column-top.
+    //
+    // Unlike the record-scan test, this one passes on master: the filter column c1 is
+    // present in parquet, so the filter pass's decode() already calls remapColumns()
+    // and sizes/zeroes the address lists, leaving the absent VARCHAR slot at address 0
+    // (NULL). It is therefore a guard, not a reproduction -- it pins the aux-vector
+    // zeroing on the late-mat route, so a future regression that zeroed only the data
+    // lists, or mishandled an absent VARCHAR in
+    // PageFrameFilteredMemoryRecord.getVarchar, would surface here as a
+    // native-vs-parquet divergence (or a stale aux read).
+    //
+    // Mirrors testLong256LateMaterializationOverParquet (same WAL single-partition,
+    // 10-row, filter-on-c1 shape) but projects an absent column instead of a present
+    // one. VARCHAR is chosen to exercise the aux-vector read on the filtered record.
+    @Test
+    public void testAbsentColumnLateMaterializationOverParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT " +
+                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
+                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
+                    "FROM long_sequence(10)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // s is added AFTER conversion, so it is absent from the parquet file.
+            execute("ALTER TABLE x ADD COLUMN s VARCHAR");
+            drainWalQueue();
+
+            // Native sibling: s is a regular (all-NULL) column, never absent from storage.
+            execute("CREATE TABLE x_native (c1 TIMESTAMP, ts TIMESTAMP, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native (c1, ts) SELECT c1, ts FROM x");
+            drainWalQueue();
+
+            // Filter on present c1, late-materialize absent s.
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT s, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY s",
+                    "SELECT s, count() FROM x WHERE c1 IS NOT NULL ORDER BY s",
+                    LOG);
+        });
+    }
+
     @Test
     public void testArrayColTops() throws Exception {
         testArrayColTops(false);
