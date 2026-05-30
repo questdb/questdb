@@ -58,7 +58,10 @@ public class GroupByTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                             """
             );
-            assertQueryNoLeakCheck("l\ts\n1\ta\n", query1, null, true, true);
+            assertQuery(query1)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("l\ts\n1\ta\n");
 
             String query2 = "select l as l1, s as s1 from t group by l,s";
             // virtual model must be used here to change aliases
@@ -75,7 +78,10 @@ public class GroupByTest extends AbstractCairoTest {
                                         Frame forward scan on: t
                             """
             );
-            assertQueryNoLeakCheck("l1\ts1\n1\ta\n", query2, null, true, true);
+            assertQuery(query2)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("l1\ts1\n1\ta\n");
         });
     }
 
@@ -261,16 +267,13 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             column\tcount
                             2\t2
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -301,16 +304,13 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             case\tcount
                             1\t2
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -343,16 +343,13 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             case\tcount
                             1\t2
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -380,16 +377,13 @@ public class GroupByTest extends AbstractCairoTest {
                                         Frame forward scan on: t
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tavg\tcolumn\tcolumn1\tavg1\tcolumn2
                             1\t11.5\t22.5\t11\t1.0\t11.0
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -422,16 +416,13 @@ public class GroupByTest extends AbstractCairoTest {
                                         Frame forward scan on: t
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tavg\t:bv
                             1\t11.5\tx
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -458,16 +449,13 @@ public class GroupByTest extends AbstractCairoTest {
                                         Frame forward scan on: t
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             column\tcolumn1\tmin
                             10\t12.5\t11
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -495,16 +483,13 @@ public class GroupByTest extends AbstractCairoTest {
                                         Frame forward scan on: t
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             column\tcolumn1\tmin
                             10\t12.5\t11
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -556,18 +541,16 @@ public class GroupByTest extends AbstractCairoTest {
                                         Frame forward scan on: dat
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("date_report")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             date_report\tcount
                             1970-01-01T00:00:00.000000Z\t3
                             1970-01-02T00:00:00.000000Z\t4
                             1970-01-03T00:00:00.000000Z\t3
-                            """,
-                    query,
-                    "date_report",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -596,18 +579,16 @@ public class GroupByTest extends AbstractCairoTest {
                                         Frame forward scan on: dat
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("date_report")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             date_report\tcount
                             1970-01-01T00:00:00.000000Z\t3
                             1970-01-02T00:00:00.000000Z\t4
                             1970-01-03T00:00:00.000000Z\t3
-                            """,
-                    query,
-                    "date_report",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -637,18 +618,16 @@ public class GroupByTest extends AbstractCairoTest {
                                         Frame forward scan on: dat
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("date_report")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             date_report\tcount
                             1970-01-01T00:00:00.000000Z\t3
                             1970-01-02T00:00:00.000000Z\t4
                             1970-01-03T00:00:00.000000Z\t3
-                            """,
-                    query,
-                    "date_report",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -681,18 +660,16 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("date_report1")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             date_report\tdate_report1\tcount
                             1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t3
                             1970-01-02T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t4
                             1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\t3
-                            """,
-                    query,
-                    "date_report1",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -727,18 +704,16 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("date_report")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             date_report\tminusday\tplusday\tconcat\tcount
                             1970-01-01T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t11970-01-01T00:00:00.000000Z3\t3
                             1970-01-02T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\t11970-01-02T00:00:00.000000Z3\t4
                             1970-01-03T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z\t11970-01-03T00:00:00.000000Z3\t3
-                            """,
-                    query,
-                    "date_report",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -773,18 +748,16 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("date_report")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             date_report\tdt\tplusday\tminusday\tcount
                             1970-01-01T00:00:00.000000Z\t01.01.1970\t1970-01-02T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t3
                             1970-01-02T00:00:00.000000Z\t02.01.1970\t1970-01-03T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t4
                             1970-01-03T00:00:00.000000Z\t03.01.1970\t1970-01-04T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t3
-                            """,
-                    query,
-                    "date_report",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -831,18 +804,16 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("date_report")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             date_report\tdt\tplusday\tmin\tcount\tminminusday
                             1970-01-11T00:00:00.000000Z\t11.01.1970\t1970-01-12T00:00:00.000000Z\t3\t3\t1969-12-31T00:00:00.000000Z
                             1970-01-12T00:00:00.000000Z\t12.01.1970\t1970-01-13T00:00:00.000000Z\t1\t4\t1970-01-01T00:00:00.000000Z
                             1970-01-13T00:00:00.000000Z\t13.01.1970\t1970-01-14T00:00:00.000000Z\t2\t3\t1970-01-02T00:00:00.000000Z
-                            """,
-                    query,
-                    "date_report",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1003,18 +974,15 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT)");
             execute("INSERT INTO t VALUES (1), (2), (3)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT (x)::STRING AS e0, count() AS a0 FROM t GROUP BY 1 ORDER BY 1")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             e0\ta0
                             1\t1
                             2\t1
                             3\t1
-                            """,
-                    "SELECT (x)::STRING AS e0, count() AS a0 FROM t GROUP BY 1 ORDER BY 1",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1130,9 +1098,18 @@ public class GroupByTest extends AbstractCairoTest {
                     true\tJ\t1
                     """;
             String body = "FROM (SELECT c2 AS k, count() AS cnt FROM t)\nWHERE k > 'A'\n";
-            assertQueryNoLeakCheck(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY e0, e1", null, true, true);
-            assertQueryNoLeakCheck(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY e0, 2", null, true, true);
-            assertQueryNoLeakCheck(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY 1, 2", null, true, true);
+            assertQuery("SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY e0, e1")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY e0, 2")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY 1, 2")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -1150,8 +1127,14 @@ public class GroupByTest extends AbstractCairoTest {
                     e0\ta0
                     true\t3
                     """;
-            assertQueryNoLeakCheck(expected, "SELECT true AS e0, max(x) AS a0 FROM t GROUP BY e0", null, true, true);
-            assertQueryNoLeakCheck(expected, "SELECT true AS e0, max(x) AS a0 FROM t GROUP BY 1", null, true, true);
+            assertQuery("SELECT true AS e0, max(x) AS a0 FROM t GROUP BY e0")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT true AS e0, max(x) AS a0 FROM t GROUP BY 1")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -1196,16 +1179,13 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             l\ts\tcolumn
                             1\ta\t2
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1225,20 +1205,20 @@ public class GroupByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
-                        i\tcount
-                        ('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\t2
-                        \t1
-                        """,
-                "select i, count() from (" +
+        assertMemoryLeak(() -> assertQuery("select i, count() from (" +
                         "  (select interval(100000,200000) i) " +
                         "  union all " +
                         "  (select interval(100000,200000) i) " +
                         "  union all " +
                         "  (select null::interval i)" +
-                        ")"
-        ));
+                        ")")
+        .expectSize()
+        .noLeakCheck()
+        .returns("""
+                        i\tcount
+                        ('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\t2
+                        \t1
+                        """));
     }
 
     @Test
@@ -1246,20 +1226,20 @@ public class GroupByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
-                        i\ts\tcount
-                        ('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tfoobar\t2
-                        \t\t1
-                        """,
-                "select i, s, count() from (" +
+        assertMemoryLeak(() -> assertQuery("select i, s, count() from (" +
                         "  (select interval(100000,200000) i, 'foobar' s) " +
                         "  union all " +
                         "  (select interval(100000,200000) i, 'foobar' s) " +
                         "  union all " +
                         "  (select null::interval i, null::string s)" +
-                        ")"
-        ));
+                        ")")
+        .expectSize()
+        .noLeakCheck()
+        .returns("""
+                        i\ts\tcount
+                        ('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tfoobar\t2
+                        \t\t1
+                        """));
     }
 
     @Test
@@ -1279,17 +1259,14 @@ public class GroupByTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('A'), ('A'), ('B')");
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT :b0 AS e0, c, count() AS a0 FROM t GROUP BY c ORDER BY c")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             e0\tc\ta0
                             X\tA\t2
                             X\tB\t1
-                            """,
-                    "SELECT :b0 AS e0, c, count() AS a0 FROM t GROUP BY c ORDER BY c",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1316,30 +1293,24 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v INT) ");
             execute("INSERT INTO t VALUES (1), (2), (3)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT null AS e0, avg(v) AS a0 FROM t GROUP BY 1")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             e0\ta0
                             null\t2.0
-                            """,
-                    "SELECT null AS e0, avg(v) AS a0 FROM t GROUP BY 1",
-                    null,
-                    true,
-                    true
-            );
+                            """);
             // A real key alongside the constant NULL still grouped per real-key value.
             execute("CREATE TABLE t2 (k INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10), (1, 20), (2, 30)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT null AS e0, k, avg(v) AS a FROM t2 GROUP BY 1, k ORDER BY k")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             e0\tk\ta
                             null\t1\t15.0
                             null\t2\t30.0
-                            """,
-                    "SELECT null AS e0, k, avg(v) AS a FROM t2 GROUP BY 1, k ORDER BY k",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1381,17 +1352,14 @@ public class GroupByTest extends AbstractCairoTest {
                     from samp
                     order by vch;""";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             vch\tsum
                             EUR\t9
                             USD\t3
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1434,8 +1402,10 @@ public class GroupByTest extends AbstractCairoTest {
                     select tab1.vch, tab1.x, nested.vch as nested_vch, sum
                     from tab1
                     join nested on nested.vch = tab1.vch;""";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             vch\tx\tnested_vch\tsum
                             1\t1\t1\t8
                             2\t2\t2\t8
@@ -1457,12 +1427,7 @@ public class GroupByTest extends AbstractCairoTest {
                             3\t18\t3\t8
                             4\t19\t4\t8
                             0\t20\t0\t8
-                            """,
-                    query,
-                    null,
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1516,17 +1481,14 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             s\tmax\tmax1
                             a\t-2\t1
                             a\t-1\t1
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1545,17 +1507,14 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by t1.x, t2.x " +
                     "order by t1.x, t2.x";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tmax\tx1
                             1\t1\t1
                             2\t0\t2
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1598,17 +1557,14 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tmax\tcase
                             1\t1\t10
                             2\t0\t200
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1647,17 +1603,14 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tmax\tcase
                             1\t1\t20
                             2\t0\t60
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1699,17 +1652,14 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tmax\tcolumn
                             1\t1\t1677715200000001
                             2\t0\t1677801600000002
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1751,17 +1701,14 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tmax\tdateadd
                             1\t1\t2023-03-02T00:00:01.000000Z
                             2\t0\t2023-03-03T00:00:00.000000Z
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1829,7 +1776,10 @@ public class GroupByTest extends AbstractCairoTest {
                         "  \"fact_table__avg_radiation\" DESC\n" +
                         "LIMIT\n" +
                         "  10000;";
-                assertQueryNoLeakCheck(expectedResult, query1);
+                assertQuery(query1)
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expectedResult);
                 assertPlanNoLeakCheck(
                         query1,
                         "Sort light lo: 10000\n" +
@@ -1867,7 +1817,10 @@ public class GroupByTest extends AbstractCairoTest {
                         "  \"fact_table__avg_radiation\" DESC\n" +
                         "LIMIT\n" +
                         "  10000;";
-                assertQueryNoLeakCheck(expectedResult, query2);
+                assertQuery(query2)
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expectedResult);
                 assertPlanNoLeakCheck(
                         query2,
                         "Sort light lo: 10000\n" +
@@ -1905,7 +1858,10 @@ public class GroupByTest extends AbstractCairoTest {
                         "  \"fact_table__avg_radiation\" DESC\n" +
                         "LIMIT\n" +
                         "  10000;";
-                assertQueryNoLeakCheck(expectedResult, query3);
+                assertQuery(query3)
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expectedResult);
                 assertPlanNoLeakCheck(
                         query3,
                         "Sort light lo: 10000\n" +
@@ -1940,7 +1896,10 @@ public class GroupByTest extends AbstractCairoTest {
                         "  \"fact_table__avg_radiation\" DESC\n" +
                         "LIMIT\n" +
                         "  10000;";
-                assertQueryNoLeakCheck(expectedResult, query4);
+                assertQuery(query4)
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expectedResult);
                 assertPlanNoLeakCheck(
                         query4,
                         "Sort light lo: 10000\n" +
@@ -1988,16 +1947,14 @@ public class GroupByTest extends AbstractCairoTest {
                                         Frame forward scan on: t
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             l\ts\tcolumn
                             1\ta\t0
-                            """,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2020,16 +1977,13 @@ public class GroupByTest extends AbstractCairoTest {
                       TO_STR(timestamp, 'yyyy-MM-dd'),
                       SUM(1)\s
                     FROM foo;""";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             time\tTO_STR\tSUM
                             2020-01-01T00:00:00.000000Z\t2020-01-01\t1
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2059,16 +2013,13 @@ public class GroupByTest extends AbstractCairoTest {
                                     Frame backward scan on: t
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             s2\tsum
                             c\t25
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2100,17 +2051,14 @@ public class GroupByTest extends AbstractCairoTest {
                                         Frame backward scan on: t
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             s2\tsum
                             c\t14
                             d\t12
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2140,16 +2088,13 @@ public class GroupByTest extends AbstractCairoTest {
                                     Frame backward scan on: t
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             concat\tsum
                             _d_\t25
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2181,16 +2126,13 @@ public class GroupByTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             a\tb\tz\tviews
                             1\t2\t3\t1
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2216,8 +2158,10 @@ public class GroupByTest extends AbstractCairoTest {
                     "order by i ";
 
             // cross-check with re-write using aggregate functions
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query1)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\ti\tavg\tsum\tfirst_value
                             1970-01-01T00:00:01.099967Z\tnull\t495.40261282660333\t1668516.0\t481.0
                             1970-01-01T00:00:01.099995Z\t1\t495.08707124010556\t1688742.0\tnull
@@ -2240,9 +2184,7 @@ public class GroupByTest extends AbstractCairoTest {
                             1970-01-01T00:00:01.099999Z\t18\t501.4806333050608\t1773737.0\t204.0
                             1970-01-01T00:00:01.099957Z\t19\t501.01901034386356\t1792145.0\t712.0
                             1970-01-01T00:00:01.099987Z\t20\t498.1350566366541\t1715079.0\t188.0
-                            """,
-                    query1
-            );
+                            """);
 
             assertPlanNoLeakCheck(
                     query1,
@@ -2289,8 +2231,10 @@ public class GroupByTest extends AbstractCairoTest {
                     "  limit -100 )" +
                     "order by i";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query2)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\ti\tavg\tsum\tfirst_value
                             1970-01-01T00:00:01.099967Z\tnull\t495.40261282660333\t1668516.0\t481
                             1970-01-01T00:00:01.099995Z\t1\t495.08707124010556\t1688742.0\tnull
@@ -2313,13 +2257,7 @@ public class GroupByTest extends AbstractCairoTest {
                             1970-01-01T00:00:01.099999Z\t18\t501.4806333050608\t1773737.0\t204
                             1970-01-01T00:00:01.099957Z\t19\t501.01901034386356\t1792145.0\t712
                             1970-01-01T00:00:01.099987Z\t20\t498.1350566366541\t1715079.0\t188
-                            """,
-                    query2,
-                    null,
-                    true,
-                    true,
-                    false
-            );
+                            """);
 
             assertPlanNoLeakCheck(
                     query2,
@@ -2366,16 +2304,13 @@ public class GroupByTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             a\tb\tz\tviews
                             1\t2\t3\t1
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2405,16 +2340,13 @@ public class GroupByTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             a\tB\tz\tviews
                             1\t2\t3\t1
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2448,16 +2380,13 @@ public class GroupByTest extends AbstractCairoTest {
                                         Frame forward scan on: x
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             a\tb\tz\tviews
                             1\t2\t3\t1
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2489,16 +2418,13 @@ public class GroupByTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             a\tb\tc\tviews
                             1\t2\t3\t1
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2615,13 +2541,11 @@ public class GroupByTest extends AbstractCairoTest {
                     group by y_utc_15m \
                     order by y_utc_15m""";
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    query,
-                    "y_utc_15m",
-                    true,
-                    true
-            );
+            assertQuery(query)
+                    .timestamp("y_utc_15m")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             assertPlanNoLeakCheck(
                     query,
@@ -2674,18 +2598,15 @@ public class GroupByTest extends AbstractCairoTest {
                                                 Frame forward scan on: x
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             a\tsum\tz\tviews
                             1\t2\t3\t1
                             1\t3\t1\t1
                             1\t5\t4\t1
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2791,19 +2712,16 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));");
             String query = "select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             k1\tkey2\tkey21\tcount
                             0\t0\t0\t2
                             0\t2\t2\t3
                             1\t1\t1\t3
                             1\t3\t3\t2
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
             assertPlanNoLeakCheck(
                     query,
                     """
@@ -2829,17 +2747,14 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t as ( select x%2 as key, x as value from long_sequence(100));");
             String query = "select key+1, key, key, count(*) from t group by key order by 1,2,3 desc";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             column\tkey\tkey1\tcount
                             1\t0\t0\t50
                             2\t1\t1\t50
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
             assertPlanNoLeakCheck(
                     query,
                     """
@@ -2895,17 +2810,14 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tmax\tdateadd
                             1\t1\t2023-03-02T00:00:01.000000Z
                             2\t0\t2023-03-03T00:00:00.000000Z
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2917,18 +2829,18 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (sym symbol, ts timestamp) timestamp(ts) partition by day;");
             execute("insert into x values ('1','2023-01-01T00:00:00'),('1','2023-01-01T00:00:01'),('2','2023-01-01T00:00:03')");
-            assertQueryNoLeakCheck(
-                    """
-                            sym\tlatest
-                            1\t0
-                            2\t0
-                            """,
-                    "SELECT sym, first((0::timestamp)::long) latest " +
+            assertQuery("SELECT sym, first((0::timestamp)::long) latest " +
                             "FROM x " +
                             "WHERE ts IN '2023-01-01' " +
                             "ORDER BY latest DESC " +
-                            "LIMIT 10;"
-            );
+                            "LIMIT 10;")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            sym\tlatest
+                            1\t0
+                            2\t0
+                            """);
         });
     }
 
@@ -3031,17 +2943,13 @@ public class GroupByTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("b0", "KNWL");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM (SELECT sym AS k, count() AS cnt FROM t)\n" +
+                            "WHERE (cnt IS NOT NULL) AND (:b0::VARCHAR != 'UX')")
+                    .noLeakCheck()
+                    .returns("""
                             k\tcnt
                             A\t1
-                            """,
-                    "SELECT * FROM (SELECT sym AS k, count() AS cnt FROM t)\n" +
-                            "WHERE (cnt IS NOT NULL) AND (:b0::VARCHAR != 'UX')",
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -3079,9 +2987,7 @@ public class GroupByTest extends AbstractCairoTest {
                         from long_sequence(20)) timestamp(ts)""")
                 .expectSize()
                 .returns(expected);
-        assertQueryNoLeakCheck(
-                expected,
-                """
+        assertQuery("""
                         WITH x_sample AS (
                           SELECT id, uuid, url, sum(metric) m_sum
                           FROM x
@@ -3090,8 +2996,10 @@ public class GroupByTest extends AbstractCairoTest {
                         )
                         SELECT url, count(distinct uuid) u_count, count() cnt, avg(m_sum) avg_m_sum
                         FROM x_sample
-                        GROUP BY url"""
-        );
+                        GROUP BY url""")
+                .expectSize()
+                .noLeakCheck()
+                .returns(expected);
     }
 
     @Test
@@ -3104,13 +3012,11 @@ public class GroupByTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (1), (2), (3)");
             bindVariableService.clear();
             bindVariableService.setStr("b0", "5");
-            assertQueryNoLeakCheck(
-                    "e0\ta0\n6\t3\n",
-                    "SELECT :b0::LONG + 1 AS e0, count() AS a0 FROM t",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("SELECT :b0::LONG + 1 AS e0, count() AS a0 FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("e0\ta0\n6\t3\n");
         });
     }
 
@@ -3124,13 +3030,25 @@ public class GroupByTest extends AbstractCairoTest {
             execute("CREATE TABLE t (c2 STRING)");
             execute("INSERT INTO t VALUES ('A'), ('B'), ('C')");
             String expected = "e0\ta0\nX\t3\n";
-            assertQueryNoLeakCheck(expected, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t", null, false, true);
+            assertQuery("SELECT 'X'::CHAR AS e0, count() AS a0 FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertQueryNoLeakCheck(expected, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t", null, false, true);
+            assertQuery("SELECT :b0::CHAR AS e0, count() AS a0 FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertQueryNoLeakCheck(expected, "SELECT :b0 AS e0, count() AS a0 FROM t", null, false, true);
+            assertQuery("SELECT :b0 AS e0, count() AS a0 FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -3155,24 +3073,45 @@ public class GroupByTest extends AbstractCairoTest {
                     e0\ta0
                     X\t0
                     """;
-            assertQueryNoLeakCheck(expected, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t WHERE 1=0", null, false, true);
+            assertQuery("SELECT 'X'::CHAR AS e0, count() AS a0 FROM t WHERE 1=0")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertQueryNoLeakCheck(expected, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t WHERE 1=0", null, false, true);
+            assertQuery("SELECT :b0::CHAR AS e0, count() AS a0 FROM t WHERE 1=0")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertQueryNoLeakCheck(expected, "SELECT :b0 AS e0, count() AS a0 FROM t WHERE 1=0", null, false, true);
+            assertQuery("SELECT :b0 AS e0, count() AS a0 FROM t WHERE 1=0")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
             // Explicit GROUP BY by a constant-equivalent key keeps the empty-result exception.
             // The grammar accepts column references / aliases / position numbers in GROUP
             // BY, so route the bind cases through their projection alias.
             String expectedEmpty = "e0\ta0\n";
-            assertQueryNoLeakCheck(expectedEmpty, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY 'X'::CHAR", null, true, true);
+            assertQuery("SELECT 'X'::CHAR AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY 'X'::CHAR")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expectedEmpty);
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertQueryNoLeakCheck(expectedEmpty, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY e0", null, true, true);
+            assertQuery("SELECT :b0::CHAR AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY e0")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expectedEmpty);
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertQueryNoLeakCheck(expectedEmpty, "SELECT :b0 AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY e0", null, true, true);
+            assertQuery("SELECT :b0 AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY e0")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expectedEmpty);
         });
     }
 
@@ -3203,16 +3142,14 @@ public class GroupByTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tmin\tmax\tcount\tavg\tfirst\tlast
                             150\t10\t50\t5\t30.0\t10\t50
-                            """,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3227,16 +3164,14 @@ public class GroupByTest extends AbstractCairoTest {
                             ('2024-01-02T00:00:00.000000Z')"""
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(v), min(v), max(v), count(*), avg(v), first(v), last(v), first_not_null(v), last_not_null(v) FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tmin\tmax\tcount\tavg\tfirst\tlast\tfirst_not_null\tlast_not_null
                             null\tnull\tnull\t2\tnull\tnull\tnull\tnull\tnull
-                            """,
-                    "SELECT sum(v), min(v), max(v), count(*), avg(v), first(v), last(v), first_not_null(v), last_not_null(v) FROM t",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3257,16 +3192,14 @@ public class GroupByTest extends AbstractCairoTest {
                     (30, '2024-01-03T00:00:00.000000Z', 100),
                     (40, '2024-01-04T00:00:00.000000Z', 200)""");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(v), min(v), max(v), count(*), first(v), last(v), sum(v2), first_not_null(v2), last_not_null(v2) FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tmin\tmax\tcount\tfirst\tlast\tsum1\tfirst_not_null\tlast_not_null
                             100\t10\t40\t4\t10\t40\t300\t100\t200
-                            """,
-                    "SELECT sum(v), min(v), max(v), count(*), first(v), last(v), sum(v2), first_not_null(v2), last_not_null(v2) FROM t",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3275,16 +3208,14 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(v), min(v), max(v), count(*), avg(v), first(v), last(v) FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tmin\tmax\tcount\tavg\tfirst\tlast
                             null\tnull\tnull\t0\tnull\tnull\tnull
-                            """,
-                    "SELECT sum(v), min(v), max(v), count(*), avg(v), first(v), last(v) FROM t",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3316,16 +3247,14 @@ public class GroupByTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             first\tlast\tfirst_not_null\tlast_not_null
                             null\tnull\t10\t30
-                            """,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3355,16 +3284,14 @@ public class GroupByTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             first\tlast
                             10\t31
-                            """,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3386,16 +3313,14 @@ public class GroupByTest extends AbstractCairoTest {
                             (3, 300, 3.5, 3.5, 30, '2024-01-03T00:00:00.000000Z')"""
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(vi), sum(vl), sum(vd), sum(vf), sum(vs), min(vi), max(vi), first(vi), last(vi) FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tsum1\tsum2\tsum3\tsum4\tmin\tmax\tfirst\tlast
                             6\t600\t7.5\t7.5\t60\t1\t3\t1\t3
-                            """,
-                    "SELECT sum(vi), sum(vl), sum(vd), sum(vf), sum(vs), min(vi), max(vi), first(vi), last(vi) FROM t",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3424,16 +3349,14 @@ public class GroupByTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             first\tlast
                             20\t21
-                            """,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3464,16 +3387,14 @@ public class GroupByTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tcount\tfirst
                             90\t3\t20
-                            """,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3490,75 +3411,63 @@ public class GroupByTest extends AbstractCairoTest {
             execute("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
 
             // single table
-            assertQueryNoLeakCheck(
-                    "ref0\n2023-05-29T15:30:00.000000Z\n",
-                    "SELECT ts AS ref0 " +
+            assertQuery("SELECT ts AS ref0 " +
                             "FROM tst " +
                             "GROUP BY ts " +
-                            "ORDER BY ts",
-                    "ref0",
-                    true,
-                    true
-            );
+                            "ORDER BY ts")
+                    .timestamp("ref0")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
-            assertQueryNoLeakCheck(
-                    "ref0\n2023-05-29T15:30:00.000000Z\n",
-                    "SELECT tst.ts AS ref0 " +
+            assertQuery("SELECT tst.ts AS ref0 " +
                             "FROM tst " +
                             "GROUP BY tst.ts " +
-                            "ORDER BY tst.ts",
-                    "ref0",
-                    true,
-                    true
-            );
+                            "ORDER BY tst.ts")
+                    .timestamp("ref0")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
-            assertQueryNoLeakCheck(
-                    "ref0\n2023-05-29T15:30:00.000000Z\n",
-                    "SELECT tst.ts AS ref0 " +
+            assertQuery("SELECT tst.ts AS ref0 " +
                             "FROM tst " +
                             "GROUP BY ts " +
-                            "ORDER BY tst.ts",
-                    "ref0",
-                    true,
-                    true
-            );
+                            "ORDER BY tst.ts")
+                    .timestamp("ref0")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
-            assertQueryNoLeakCheck(
-                    "ref0\n2023-05-29T15:30:00.000000Z\n",
-                    "SELECT ts AS ref0 " +
+            assertQuery("SELECT ts AS ref0 " +
                             "FROM tst " +
                             "GROUP BY tst.ts " +
-                            "ORDER BY ts",
-                    "ref0",
-                    true,
-                    true
-            );
+                            "ORDER BY ts")
+                    .timestamp("ref0")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
             // joins
             for (String join : Arrays.asList("LT JOIN data ", "ASOF JOIN data ", "LEFT JOIN data on (tst.ts > data.dts) ", "INNER JOIN data on (tst.ts > data.dts) ", "CROSS JOIN data ")) {
-                assertQueryNoLeakCheck(
-                        "ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
-                        "SELECT ts AS ref0, dts " +
+                assertQuery("SELECT ts AS ref0, dts " +
                                 "FROM tst " +
                                 join +
                                 "GROUP BY tst.ts, data.dts " +
-                                "ORDER BY ts",
-                        "ref0",
-                        true,
-                        true
-                );
+                                "ORDER BY ts")
+                        .timestamp("ref0")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n");
 
-                assertQueryNoLeakCheck(
-                        "ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
-                        "SELECT ts AS ref0, dts " +
+                assertQuery("SELECT ts AS ref0, dts " +
                                 "FROM tst " +
                                 join +
                                 "GROUP BY ts, data.dts " +
-                                "ORDER BY tst.ts",
-                        "ref0",
-                        true,
-                        true
-                );
+                                "ORDER BY tst.ts")
+                        .timestamp("ref0")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n");
             }
         });
     }
@@ -3595,18 +3504,16 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("ref0")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ref0
                             1970-01-01T00:00:00.000001Z
                             1970-01-01T00:00:00.000002Z
                             1970-01-01T00:00:00.000003Z
-                            """,
-                    query,
-                    "ref0",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3643,18 +3550,16 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("ref0")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ref0
                             1970-01-01T01:00:00.000001Z
                             1970-01-01T01:00:00.000002Z
                             1970-01-01T01:00:00.000003Z
-                            """,
-                    query,
-                    "ref0",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3688,18 +3593,16 @@ public class GroupByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("created")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             created
                             1970-01-01T00:00:00.000001Z
                             1970-01-01T00:00:00.000002Z
                             1970-01-01T00:00:00.000003Z
-                            """,
-                    query,
-                    "created",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3736,17 +3639,14 @@ public class GroupByTest extends AbstractCairoTest {
                                             Frame forward scan on: x
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sym\thour\tavgBid
                             A\t0\t0.4922298136511458
                             B\t0\t0.4796420804429589
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3776,18 +3676,15 @@ public class GroupByTest extends AbstractCairoTest {
                     ") timestamp(timestamp) partition by DAY");
 
             String query = "select sum(\"sum\"), sum(\"count\"), \"category\" from \"avg\" group by \"category\" order by 3";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tsum1\tcategory
                             1.920104572218119\t0.9826178313717698\tA
                             2.0117879412419453\t3.362073294894596\tB
                             6.020496469863701\t5.702005218155505\tC
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             assertPlanNoLeakCheck(
                     query,
