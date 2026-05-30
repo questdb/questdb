@@ -40,7 +40,6 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -197,9 +196,7 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         long ptr = mapValue.getLong(valueIndex);
         if (count >= capacity) {
             long newCapacity = capacity * 2;
-            long newPtr = allocator.malloc(newCapacity * ENTRY_SIZE);
-            Vect.memcpy(newPtr, ptr, count * ENTRY_SIZE);
-            ptr = newPtr;
+            ptr = allocator.realloc(ptr, capacity * ENTRY_SIZE, newCapacity * ENTRY_SIZE);
             mapValue.putLong(valueIndex, ptr);
             mapValue.putLong(valueIndex + 2, newCapacity);
         }
