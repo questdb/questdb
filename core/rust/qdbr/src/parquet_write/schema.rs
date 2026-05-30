@@ -499,10 +499,26 @@ pub fn to_encodings(partition: &Partition) -> Vec<Encoding> {
             if let Some(enc) = c.parquet_encoding_config.encoding() {
                 validate_encoding(c.data_type, enc)
             } else {
-                encoding_map(c.data_type)
+                default_encoding(c.data_type, c.designated_timestamp)
             }
         })
         .collect()
+}
+
+/// Default encoding for a column when the user has not set an explicit
+/// per-column override. The designated timestamp is a sorted, monotonic int64,
+/// so DELTA_BINARY_PACKED stores its near-constant deltas far more compactly
+/// than PLAIN. All other columns fall back to `encoding_map`. Non-designated
+/// timestamps are deliberately excluded: they are not guaranteed to be sorted,
+/// so delta coding offers no reliable benefit over PLAIN for them.
+fn default_encoding(data_type: ColumnType, is_designated_timestamp: bool) -> Encoding {
+    if is_designated_timestamp {
+        // validate_encoding falls back to encoding_map if the type ever stops
+        // supporting DELTA_BINARY_PACKED, so this stays correct by construction.
+        validate_encoding(data_type, Encoding::DeltaBinaryPacked)
+    } else {
+        encoding_map(data_type)
+    }
 }
 
 /// Check whether the given encoding_id is valid for the column type tag.
@@ -1049,6 +1065,53 @@ mod tests {
         );
         assert_eq!(
             validate_encoding(col_type(ColumnTypeTag::String), Encoding::DeltaBinaryPacked),
+            Encoding::DeltaLengthByteArray
+        );
+    }
+
+    #[test]
+    fn test_default_encoding_designated_timestamp_is_delta() {
+        // The designated timestamp defaults to DELTA_BINARY_PACKED rather than PLAIN.
+        assert_eq!(
+            default_encoding(col_type(ColumnTypeTag::Timestamp), true),
+            Encoding::DeltaBinaryPacked
+        );
+    }
+
+    #[test]
+    fn test_default_encoding_non_designated_timestamp_is_plain() {
+        // A non-designated timestamp is not guaranteed sorted, so it keeps PLAIN.
+        assert_eq!(
+            default_encoding(col_type(ColumnTypeTag::Timestamp), false),
+            Encoding::Plain
+        );
+    }
+
+    #[test]
+    fn test_default_encoding_non_timestamp_unaffected() {
+        // The designated-timestamp default must not change other column types.
+        // Plain types stay Plain.
+        for tag in [
+            ColumnTypeTag::Long,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Double,
+            ColumnTypeTag::Float,
+            ColumnTypeTag::Date,
+        ] {
+            assert_eq!(
+                default_encoding(col_type(tag), false),
+                Encoding::Plain,
+                "{:?} should default to Plain",
+                tag
+            );
+        }
+        // Symbol / string-like types keep their encoding_map defaults.
+        assert_eq!(
+            default_encoding(col_type(ColumnTypeTag::Symbol), false),
+            Encoding::RleDictionary
+        );
+        assert_eq!(
+            default_encoding(col_type(ColumnTypeTag::Varchar), false),
             Encoding::DeltaLengthByteArray
         );
     }

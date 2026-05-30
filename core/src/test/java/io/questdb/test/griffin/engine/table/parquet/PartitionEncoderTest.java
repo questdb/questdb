@@ -214,6 +214,51 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDesignatedTimestampDefaultsToDeltaBinaryPacked() throws Exception {
+        // Without an explicit PARQUET(...) override, the designated timestamp is a
+        // sorted, monotonic int64 and defaults to DELTA_BINARY_PACKED. A plain LONG
+        // column is not guaranteed sorted and keeps the PLAIN default.
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE x (" +
+                    " a_long LONG," +
+                    " ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY MONTH");
+
+            execute("INSERT INTO x SELECT" +
+                    " CASE WHEN x % 2 = 0 THEN rnd_long() ELSE NULL END," +
+                    " timestamp_sequence('2015-01-01', 1_000_000)" +
+                    " FROM long_sequence(1000)");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                assertSqlCursors(
+                        "SELECT * FROM x",
+                        "SELECT * FROM read_parquet('x.parquet')"
+                );
+                ParquetTestUtils.assertColumnsUseEncoding(
+                        path.toString(),
+                        configuration.getFilesFacade(),
+                        ParquetEncoding.ENCODING_DELTA_BINARY_PACKED,
+                        1 // ts (designated timestamp)
+                );
+                ParquetTestUtils.assertColumnsDoNotUseEncoding(
+                        path.toString(),
+                        configuration.getFilesFacade(),
+                        ParquetEncoding.ENCODING_DELTA_BINARY_PACKED,
+                        0 // a_long stays PLAIN
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSymbolCompressionOnly() throws Exception {
         assertMemoryLeak(() -> {
             inputRoot = root;
