@@ -79,7 +79,8 @@ pub type TsStatsBackfill<'a> = dyn Fn(usize, usize, usize) -> ParquetResult<i64>
 ///
 /// # Errors
 /// - If any column chunk references an external `file_path` (not supported).
-/// - If sorting columns differ between row groups.
+/// - If the footer's row groups declare conflicting sorting columns and
+///   `qdb_meta` has no designated timestamp to fall back on.
 /// - If `qdb_meta` is present but its schema length doesn't match the parquet column count.
 pub fn convert_from_parquet(
     file_metadata: &FileMetaData,
@@ -104,9 +105,8 @@ pub fn convert_from_parquet(
         }
     }
 
-    // Validate no file_path references and extract/validate sorting columns.
     validate_file_paths(file_metadata)?;
-    let sorting_cols = extract_sorting_columns(file_metadata)?;
+    let sorting_cols = resolve_sorting_columns(file_metadata, qdb_meta)?;
 
     // Detect designated timestamp.
     let designated_ts = detect_designated_timestamp(file_metadata, qdb_meta, &sorting_cols);
@@ -755,21 +755,48 @@ pub(crate) struct SortingCol {
     descending: bool,
 }
 
+/// The dense position and order of qdb_meta's designated timestamp, or `None`
+/// when there is no designated timestamp.
+fn designated_sorting_col(qdb_meta: &QdbMeta) -> Option<SortingCol> {
+    qdb_meta
+        .schema
+        .iter()
+        .position(|col| col.column_type.is_designated())
+        .map(|pos| SortingCol {
+            column_idx: pos as i32,
+            descending: !qdb_meta.schema[pos]
+                .column_type
+                .is_designated_timestamp_ascending(),
+        })
+}
+
+/// Sort columns for `_pm` generation, read from the parquet footer. A
+/// converted-then-O3-merged partition upgraded across the dense-index fix can
+/// declare conflicting sort indices across row groups (a cached group's stale
+/// index vs. a freshly appended group's corrected one). The read path resolves
+/// sorting from qdb_meta and ignores the footer, so on such a conflict fall back
+/// to qdb_meta's designated timestamp instead of aborting `_pm` generation -- and
+/// replica bootstrap with it.
+pub(crate) fn resolve_sorting_columns(
+    file_metadata: &FileMetaData,
+    qdb_meta: Option<&QdbMeta>,
+) -> ParquetResult<Vec<SortingCol>> {
+    match extract_sorting_columns(file_metadata) {
+        Ok(cols) => Ok(cols),
+        Err(e) => match qdb_meta.and_then(designated_sorting_col) {
+            Some(sc) => Ok(vec![sc]),
+            None => Err(e),
+        },
+    }
+}
+
+/// Sort columns declared in the parquet footer. Row groups that declare none are
+/// skipped -- a legacy O3 merge left copied groups unstamped while fresh ones
+/// carried the timestamp sort column -- so only the declaring groups must agree;
+/// genuinely conflicting orders are rejected.
 pub(crate) fn extract_sorting_columns(
     file_metadata: &FileMetaData,
 ) -> ParquetResult<Vec<SortingCol>> {
-    // Row groups that declare sorting columns must agree with each other, but a
-    // row group that declares NONE is tolerated and skipped rather than treated
-    // as a conflict. An O3 merge copies unchanged row groups through
-    // copy_row_group without re-stamping the partition's designated-timestamp
-    // sort column, so a converted-then-merged partition legitimately mixes
-    // copied groups (no sorting columns) with freshly written ones (the
-    // timestamp sort column). Genuinely conflicting sort orders -- two groups
-    // sorted on different columns -- are still rejected.
-    // The reference holds the first declaring group's sorting columns borrowed
-    // straight from the footer (with its rg index, kept only for error
-    // messages). Later declaring groups are compared against it in place, so no
-    // per-row-group Vec is allocated; the result is materialized once at the end.
     let mut reference: Option<(usize, &[SortingColumn])> = None;
 
     for (rg_idx, rg) in file_metadata.row_groups.iter().enumerate() {
@@ -1284,6 +1311,92 @@ mod tests {
         assert_eq!(reader.designated_timestamp(), Some(0));
         assert_eq!(reader.sorting_column_count(), 1);
         assert_eq!(reader.sorting_column(0).unwrap(), 0);
+    }
+
+    /// C1 regression: across a version upgrade an update-mode O3 merge can leave a
+    /// footer whose declaring row groups disagree -- a cached group with the stale
+    /// index 1, a freshly appended group with the corrected index 0. The footer
+    /// reader rejects that, but the migration must trust qdb_meta and not abort.
+    #[test]
+    fn convert_from_parquet_tolerates_conflicting_sort_indices_via_qdb_meta() {
+        use parquet2::metadata::{RowGroupMetaData, SortingColumn};
+
+        // Real, valid file with qdb_meta designating the timestamp at column 0.
+        let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
+        let mut cursor = Cursor::new(&parquet_data);
+        let mut metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata).expect("test parquet has qdb meta");
+
+        // Footer shape: copied group (no sort col), legacy stale [1], corrected [0].
+        let cols = metadata.row_groups[0].columns().to_vec();
+        let n = metadata.row_groups[0].num_rows();
+        metadata.row_groups = vec![
+            RowGroupMetaData::with_sorting_columns(cols.clone(), n, None, 0),
+            RowGroupMetaData::with_sorting_columns(
+                cols.clone(),
+                n,
+                Some(vec![SortingColumn::new(1, false, false)]),
+                1,
+            ),
+            RowGroupMetaData::with_sorting_columns(
+                cols,
+                n,
+                Some(vec![SortingColumn::new(0, false, false)]),
+                2,
+            ),
+        ];
+
+        // The footer reader alone rejects this; the migration must not.
+        assert!(extract_sorting_columns(&metadata).is_err());
+
+        let (pm_bytes, pm_size) =
+            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0, None, None)
+                .expect("convert_from_parquet must resolve sorting from qdb_meta, not the footer");
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size).unwrap();
+        assert_eq!(reader.designated_timestamp(), Some(0));
+        assert_eq!(reader.sorting_column_count(), 1);
+        // The dense designated position (0), not the stale footer index 1.
+        assert_eq!(reader.sorting_column(0).unwrap(), 0);
+
+        // Scoped to QuestDB files: without qdb_meta the conflict still aborts.
+        assert!(convert_from_parquet(&metadata, None, 0, 0, None, None).is_err());
+    }
+
+    /// extract_sorting_columns returns an empty set for a footer with no row groups.
+    #[test]
+    fn extract_sorting_columns_handles_zero_row_groups() {
+        let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
+        let mut cursor = Cursor::new(&parquet_data);
+        let mut metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        metadata.row_groups = vec![];
+        let cols = extract_sorting_columns(&metadata).expect("zero row groups is valid");
+        assert!(cols.is_empty());
+    }
+
+    /// A present-but-empty sorting vector is skipped like None, not treated as a
+    /// conflict against a sibling group that declares a real sort column.
+    #[test]
+    fn extract_sorting_columns_skips_empty_present_sorting_columns() {
+        use parquet2::metadata::{RowGroupMetaData, SortingColumn};
+
+        let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
+        let mut cursor = Cursor::new(&parquet_data);
+        let mut metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+
+        metadata.row_groups = vec![
+            // present but empty -> treated as "no sorting columns", skipped.
+            RowGroupMetaData::with_sorting_columns(vec![], 10, Some(vec![]), 0),
+            RowGroupMetaData::with_sorting_columns(
+                vec![],
+                10,
+                Some(vec![SortingColumn::new(0, false, false)]),
+                0,
+            ),
+        ];
+        let cols = extract_sorting_columns(&metadata)
+            .expect("an empty-but-present sorting vector must be skipped, not conflict");
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0].column_idx, 0);
     }
 
     fn leak_bytes(data: &[u8]) -> &'static [u8] {

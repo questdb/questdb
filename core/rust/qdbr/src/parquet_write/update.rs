@@ -224,13 +224,11 @@ impl ParquetUpdater {
             }
         };
 
-        // The caller derives `sorting_columns` from the table's raw timestamp
-        // writer slot, which keeps a tombstone after DROP COLUMN and so is stale
-        // against the file's dense column layout. Recompute the sort column from
-        // the dense designated-timestamp position recorded in the source
-        // metadata; keep the caller's presence decision (no designated
-        // timestamp -> no sort order). Schema-change rewrites recompute this
-        // again in set_target_schema from the (also dense) target schema.
+        // The caller's `sorting_columns` come from the raw timestamp slot, stale
+        // after a DROP COLUMN. Recompute the sort column from the dense designated
+        // position in the source metadata, but only when both the caller and the
+        // source agree there is one. Schema-change rewrites recompute it again in
+        // set_target_schema from the dense target schema.
         let sorting_columns = sorting_columns.and(designated_sorting_columns(&source_qdb_meta));
 
         // Detect which columns had bloom filters in the original file.
@@ -679,12 +677,9 @@ impl ParquetUpdater {
                 .collect(),
         );
 
-        // Re-stamp the file-level sort order from the dense designated-timestamp
-        // position in the freshly built (dense) target schema. The value set at
-        // construction came from the table's raw timestamp slot, which is stale
-        // once a pre-timestamp column has been dropped. build_raw_row_group and
-        // the inline `_pm` path read sorting_columns() during the copy/insert
-        // calls that follow, so this must run here, before them.
+        // Re-stamp the sort order from the dense target schema: ADD/DROP COLUMN
+        // can shift the timestamp index. Must run before the copy/insert calls
+        // that follow, which read sorting_columns().
         self.parquet_file
             .set_sorting_columns(designated_sorting_columns(&qdb_meta));
 
@@ -1192,27 +1187,13 @@ fn adjust_column_chunk_offsets(col: &mut ColumnChunk, offset_delta: i64) {
     col.offset_index_length = None;
 }
 
-/// Returns the file-level `sorting_columns` for a QuestDB parquet file: a
-/// single entry at the dense column position of the designated timestamp, or
-/// `None` when the schema has no designated timestamp.
-///
-/// `SortingColumn::column_idx` is a positional index into the file's (dense)
-/// columns. The table's raw timestamp slot (`META_OFFSET_TIMESTAMP_INDEX`) is
-/// NOT a valid dense index: `removeColumn` only marks a dropped column deleted,
-/// leaving a tombstone in the raw layout, so after DROP COLUMN the raw slot is
-/// stale against the dense file. Deriving the position from the designated-
-/// timestamp flag in `qdb_meta` mirrors the fresh-encode path (jni.rs) and
-/// end()'s `designated_ts`, so copied row groups and the footer declare the
-/// same dense index a freshly written file would.
-///
-/// The sort direction is always ascending (`descending: false`). QuestDB stores
-/// managed partitions in ascending designated-timestamp order, and both encode
-/// paths that produce these files -- CONVERT PARTITION and the O3 rewrite in
-/// jni.rs -- hard-code ascending. The only writer that honors a descending
-/// order is the COPY-export path, whose files never reach `ParquetUpdater`.
-/// Reading the order bit from `qdb_meta` here (which does record it) would
-/// desync copied row groups from those ascending-only encoders for no gain, so
-/// we match them and keep it ascending.
+/// The file-level `sorting_columns` for a QuestDB parquet file: one entry at the
+/// dense column position of the designated timestamp, or `None` when there is
+/// none. The dense position comes from the `qdb_meta` flag rather than the
+/// table's raw timestamp slot, which goes stale after a DROP COLUMN leaves a
+/// tombstone. Direction is always ascending, matching the encode paths that
+/// produce these files (COPY export, the only descending writer, never reaches
+/// `ParquetUpdater`).
 fn designated_sorting_columns(qdb_meta: &QdbMeta) -> Option<Vec<SortingColumn>> {
     qdb_meta
         .schema
@@ -1223,13 +1204,8 @@ fn designated_sorting_columns(qdb_meta: &QdbMeta) -> Option<Vec<SortingColumn>> 
 
 /// Builds a thrift `RowGroup` from a list of `ColumnChunk`s, computing
 /// `file_offset`, `total_byte_size`, and `total_compressed_size` from the
-/// column metadata.
-///
-/// `sorting_columns` carries the file-level target sort order so that copied
-/// row groups declare the same sorting columns as freshly written ones. Using
-/// the target (not the old footer's own value) is required because ADD/DROP
-/// COLUMN can shift the timestamp index, leaving the old footer's column index
-/// stale. The inline `_pm` path stamps the target value for the same reason.
+/// column metadata. `sorting_columns` carries the file-level target sort order
+/// so copied row groups declare the same value as freshly written ones.
 fn build_raw_row_group(
     columns: Vec<ColumnChunk>,
     num_rows: usize,
@@ -2412,23 +2388,12 @@ mod tests {
         Ok(())
     }
 
-    /// Same regression as copy_row_group_preserves_sorting_columns, but for the
-    /// ADD/DROP COLUMN variant, and it exercises the case the bug report cares
-    /// about: a timestamp-index SHIFT. The old file's footer declares its sort
-    /// column at index 1 (its own designated-timestamp position), but the target
-    /// schema drops the leading column and so the timestamp lands at index 0.
-    /// set_target_schema must re-stamp the dense TARGET index (0), derived from
-    /// the target schema's designated-timestamp flag, and every row group must
-    /// declare it.
-    ///
-    /// Concretely: old schema `[drop_me(id=5), ts(id=0), val(id=1)]` with the
-    /// old footer sort column at index 1; target schema
-    /// `[ts(id=0), val(id=1), added(id=2)]` with the target sort column at
-    /// index 0. `drop_me` is dropped and `added` is backfilled with nulls. To
-    /// prove the index is recomputed (not passed through), the updater is
-    /// constructed with a deliberately bogus sort index that matches neither the
-    /// source's 1 nor the target's 0; the decisive assertion is that the stamped
-    /// `column_idx` is the dense target position 0.
+    /// The ADD/DROP COLUMN variant of copy_row_group_preserves_sorting_columns,
+    /// exercising a timestamp-index shift: old schema
+    /// `[drop_me(id=5), ts(id=0), val(id=1)]` (ts at index 1) becomes target
+    /// `[ts(id=0), val(id=1), added(id=2)]` (ts at index 0). set_target_schema
+    /// must re-stamp the dense target index (0), derived from the target schema's
+    /// designated flag, on every row group.
     #[test]
     fn copy_row_group_with_null_columns_preserves_sorting_columns() -> Result<(), Box<dyn Error>> {
         use crate::allocator::TestAllocatorState;
@@ -2456,10 +2421,10 @@ mod tests {
             .finish(partition)?;
         let src_len = src.as_file().metadata()?.len();
 
-        // 2. Rewrite-mode updater built with a deliberately bogus sort index (7):
-        //    it is neither the source's 1 nor the target's 0, so a passing test
-        //    proves set_target_schema recomputes the dense index rather than
-        //    threading the constructed value through.
+        // Rewrite-mode updater. The constructor already reduces the caller's index
+        // to the source's designated position (1) via designated_sorting_columns;
+        // the test's job is to prove set_target_schema then recomputes it to the
+        // dense target position (0) rather than keeping the source's 1.
         let target_sorting = || Some(vec![SortingColumn::new(0, false, false)]);
         let out = NamedTempFile::new()?;
         let alloc = TestAllocatorState::new();
@@ -2514,11 +2479,8 @@ mod tests {
         updater.insert_row_group(&o3, 1)?;
         updater.end(None)?;
 
-        // 5. Both row groups must declare identical sorting columns, AND the
-        //    stamped column index must be the dense TARGET timestamp position
-        //    (0), proving set_target_schema re-derived it from the target
-        //    schema's designated flag rather than reusing the bogus constructed
-        //    value (7) or the old footer's 1.
+        // Both row groups must declare the dense TARGET timestamp position (0),
+        // proving set_target_schema re-derived it rather than keeping the source's 1.
         let f = out.reopen()?;
         let len = f.metadata()?.len();
         let md = read_metadata_with_size(&mut &f, len)?;
@@ -2531,7 +2493,7 @@ mod tests {
         assert_eq!(
             md.row_groups[0].sorting_columns(),
             &target_sorting(),
-            "copied group must stamp the dense TARGET sort index (0), not the bogus 7 or the old footer's 1",
+            "copied group must stamp the dense TARGET sort index (0), not the source's 1",
         );
         extract_sorting_columns(&md).expect("sorting columns must be consistent across row groups");
         Ok(())
@@ -2625,6 +2587,102 @@ mod tests {
             "rewrite must declare the dense designated-timestamp index (0), not the stale raw slot (1)",
         );
         extract_sorting_columns(&md).expect("sorting columns must be consistent across row groups");
+        Ok(())
+    }
+
+    /// regression through a real update-mode merge (the rewrite-mode tests
+    /// above don't cover it). The cached legacy group keeps its stale footer index
+    /// (1) while the appended group gets the corrected dense index (0), so the
+    /// footer conflicts -- yet the migration must tolerate it via qdb_meta.
+    #[test]
+    fn update_mode_append_tolerated_by_migration_via_qdb_meta() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
+        use crate::parquet_metadata::convert::{convert_from_parquet, extract_sorting_columns};
+        use crate::parquet_metadata::reader::ParquetMetaReader;
+        use parquet2::metadata::SortingColumn;
+
+        // Legacy file: qdb_meta designates ts at dense column 0, but the footer's
+        // row group carries the stale raw-slot index 1 (as a pre-fix binary wrote).
+        let ts = [1i64, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+            ],
+        };
+        let tmp = NamedTempFile::new()?;
+        ParquetWriter::new(tmp.reopen()?)
+            .with_sorting_columns(Some(vec![SortingColumn::new(1, false, false)]))
+            .finish(partition)?;
+        let file_len = tmp.as_file().metadata()?.len();
+
+        // In-place update mode (write_file_size == file_len). The caller passes the
+        // stale slot 1; the constructor re-derives the dense index 0 from qdb_meta.
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            tmp.reopen()?,
+            file_len,
+            tmp.reopen()?,
+            file_len, // update (append) mode
+            Some(vec![SortingColumn::new(1, false, false)]),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+
+        // Append a fresh O3 row group, then finish.
+        let o3_ts = [5i64, 6, 7];
+        let o3_val = [50i32, 60, 70];
+        let o3 = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &o3_ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &o3_val),
+            ],
+        };
+        updater.insert_row_group(&o3, 1)?;
+        updater.end(None)?;
+
+        // The footer now conflicts: cached group keeps 1, appended group carries 0.
+        let f = tmp.reopen()?;
+        let len = f.metadata()?.len();
+        let md = read_metadata_with_size(&mut &f, len)?;
+        assert_eq!(md.row_groups.len(), 2);
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            &Some(vec![SortingColumn::new(1, false, false)]),
+        );
+        assert_eq!(
+            md.row_groups[1].sorting_columns(),
+            &Some(vec![SortingColumn::new(0, false, false)]),
+        );
+        assert!(extract_sorting_columns(&md).is_err());
+
+        // The migration must still succeed via qdb_meta, recording dense position 0.
+        let qdb_raw = md
+            .key_value_metadata
+            .as_ref()
+            .and_then(|kvs| kvs.iter().find(|kv| kv.key == QDB_META_KEY))
+            .and_then(|kv| kv.value.as_ref())
+            .expect("updated file must carry qdb_meta");
+        let qdb_meta = QdbMeta::deserialize(qdb_raw)?;
+        let (pm_bytes, pm_size) = convert_from_parquet(&md, Some(&qdb_meta), 0, 0, None, None)
+            .expect("migration must tolerate the update-mode footer via qdb_meta");
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size).unwrap();
+        assert_eq!(reader.designated_timestamp(), Some(0));
+        assert_eq!(reader.sorting_column_count(), 1);
+        assert_eq!(reader.sorting_column(0).unwrap(), 0);
         Ok(())
     }
 }

@@ -498,9 +498,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
-     * Effective number of sorting columns. When the {@code SORTING_IS_DTS_ASC}
-     * feature flag is set the explicit on-disk array is omitted and the lone
-     * sort column is the ascending designated timestamp, so this returns 1.
+     * Effective number of sorting columns. The {@code SORTING_IS_DTS_ASC} flag
+     * omits the explicit array and means a single sort column (the ascending
+     * designated timestamp).
      */
     public int getSortingColumnCount() {
         if ((Unsafe.getLong(addr + HEADER_FEATURE_FLAGS_OFF) & SORTING_IS_DTS_ASC_FEATURE_FLAG) != 0) {
@@ -510,16 +510,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
-     * Returns the dense parquet column position the file declares as its sort
-     * key at {@code sortingColumnIndex}. When {@code SORTING_IS_DTS_ASC} is set,
-     * position 0 is the designated timestamp; otherwise the value comes from the
-     * explicit array that follows the column descriptors.
-     * <p>
-     * {@code sortingColumnIndex} must be in {@code [0, getSortingColumnCount())}.
-     * The explicit-array branch reads native memory without a runtime bound, so
-     * an out-of-range index would read past the sorting array; the assertion
-     * mirrors the authoritative Rust reader's range check (which returns an
-     * error there) and guards both branches.
+     * Dense parquet column position of the sort key at {@code sortingColumnIndex}
+     * (the designated timestamp under {@code SORTING_IS_DTS_ASC}, else the explicit
+     * array). {@code sortingColumnIndex} must be in {@code [0, getSortingColumnCount())};
+     * the assertion guards the unchecked native read on the explicit-array branch.
      */
     public int getSortingColumnIndex(int sortingColumnIndex) {
         assert sortingColumnIndex >= 0 && sortingColumnIndex < getSortingColumnCount();

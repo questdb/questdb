@@ -402,6 +402,73 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSortingColumnIndexDtsAsc() throws Exception {
+        assertMemoryLeak(() -> {
+            // Sort column == ascending designated timestamp -> SORTING_IS_DTS_ASC,
+            // no explicit array; getSortingColumnIndex reads the designated index.
+            long writerPtr = ParquetMetaFileWriter.create();
+            try {
+                ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, 0);
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("ts");
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), 0, 8, 0, 0, 0, 0, 0);
+                }
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("val");
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), 1, 5, 0, 0, 0, 0, 0);
+                }
+                ParquetMetaFileWriter.addSortingColumn(writerPtr, 0);
+                long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
+                try {
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    reader.of(ParquetMetaFileWriter.resultDataPtr(resultPtr), ParquetMetaFileWriter.resultParquetMetaFileSize(resultPtr));
+                    reader.resolveFooter(Long.MAX_VALUE);
+                    Assert.assertEquals(1, reader.getSortingColumnCount());
+                    Assert.assertEquals(0, reader.getSortingColumnIndex(0));
+                } finally {
+                    ParquetMetaFileWriter.destroyResult(resultPtr);
+                }
+            } finally {
+                ParquetMetaFileWriter.destroyWriter(writerPtr);
+            }
+        });
+    }
+
+    @Test
+    public void testSortingColumnIndexExplicitArray() throws Exception {
+        assertMemoryLeak(() -> {
+            // Sort column != designated timestamp -> the index comes from the
+            // explicit on-disk array, not getDesignatedTimestampColumnIndex().
+            long writerPtr = ParquetMetaFileWriter.create();
+            try {
+                ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, 0);
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("ts");
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), 0, 8, 0, 0, 0, 0, 0);
+                }
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("val");
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), 1, 5, 0, 0, 0, 0, 0);
+                }
+                ParquetMetaFileWriter.addSortingColumn(writerPtr, 1);
+                long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
+                try {
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    reader.of(ParquetMetaFileWriter.resultDataPtr(resultPtr), ParquetMetaFileWriter.resultParquetMetaFileSize(resultPtr));
+                    reader.resolveFooter(Long.MAX_VALUE);
+                    Assert.assertEquals(1, reader.getSortingColumnCount());
+                    Assert.assertEquals(0, reader.getDesignatedTimestampColumnIndex());
+                    Assert.assertEquals(1, reader.getSortingColumnIndex(0));
+                } finally {
+                    ParquetMetaFileWriter.destroyResult(resultPtr);
+                }
+            } finally {
+                ParquetMetaFileWriter.destroyWriter(writerPtr);
+            }
+        });
+    }
+
+    @Test
     public void testDesignatedTimestampColumnIndexNone() throws Exception {
         assertMemoryLeak(() -> {
             // Build without designated timestamp.
