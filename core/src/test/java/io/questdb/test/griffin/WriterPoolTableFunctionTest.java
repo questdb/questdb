@@ -65,11 +65,9 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyPool() throws Exception {
-        assertQuery(
-                "table_name\towner_thread_id\tlast_access_timestamp\townership_reason\n",
-                "select * from writer_pool()",
-                null
-        );
+        assertQuery("select * from writer_pool()")
+                .noRandomAccess()
+                .returns("table_name\towner_thread_id\tlast_access_timestamp\townership_reason\n");
     }
 
     @Test
@@ -134,74 +132,54 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a as (select 1 as u)");
 
-            assertQueryNoLeakCheck(
-                    "table_name\towner_thread_id\tlast_access_timestamp\townership_reason\n" +
-                            "a\tnull\t2024-10-24T17:22:09.842574Z\t\n",
-                    "writer_pool",
-                    null,
-                    false
-            );
+            assertQuery("writer_pool")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\towner_thread_id\tlast_access_timestamp\townership_reason\n" +
+                            "a\tnull\t2024-10-24T17:22:09.842574Z\t\n");
 
             execute("create table b as (select 1 as u)");
             execute("create table c as (select 1 as u)");
             execute("create table d as (select 1 as u)");
 
-            assertQueryNoLeakCheck(
-                    "table_name\townership_reason\n" +
+            assertQuery("select table_name,ownership_reason from writer_pool order by 1")
+                    .noLeakCheck()
+                    .returns("table_name\townership_reason\n" +
                             "a\t\n" +
                             "b\t\n" +
                             "c\t\n" +
-                            "d\t\n",
-                    "select table_name,ownership_reason from writer_pool order by 1",
-                    null,
-                    true
-            );
+                            "d\t\n");
 
             // assert ordering
-            assertQueryNoLeakCheck(
-                    "table_name\townership_reason\n" +
+            assertQuery("select table_name,ownership_reason from writer_pool order by 1 desc")
+                    .noLeakCheck()
+                    .returns("table_name\townership_reason\n" +
                             "d\t\n" +
                             "c\t\n" +
                             "b\t\n" +
-                            "a\t\n",
-                    "select table_name,ownership_reason from writer_pool order by 1 desc",
-                    null,
-                    true
-            );
+                            "a\t\n");
 
             engine.releaseAllWriters();
 
-            assertQueryNoLeakCheck(
-                    "table_name\townership_reason\n",
-                    "select table_name,ownership_reason from writer_pool order by 1",
-                    null,
-                    true
-            );
+            assertQuery("select table_name,ownership_reason from writer_pool order by 1")
+                    .noLeakCheck()
+                    .returns("table_name\townership_reason\n");
 
-            assertQueryNoLeakCheck(
-                    "table_name\townership_reason\n",
-                    "select table_name,ownership_reason from writer_pool order by 1 desc",
-                    null,
-                    true
-            );
+            assertQuery("select table_name,ownership_reason from writer_pool order by 1 desc")
+                    .noLeakCheck()
+                    .returns("table_name\townership_reason\n");
 
             try (TableWriter ignored = engine.getWriter(engine.getTableTokenIfExists("a"), "test reason")) {
-                assertQueryNoLeakCheck(
-                        "table_name\townership_reason\n" +
-                                "a\ttest reason\n",
-                        "select table_name,ownership_reason from writer_pool order by 1 desc",
-                        null,
-                        true
-                );
+                assertQuery("select table_name,ownership_reason from writer_pool order by 1 desc")
+                        .noLeakCheck()
+                        .returns("table_name\townership_reason\n" +
+                                "a\ttest reason\n");
             }
 
-            assertQueryNoLeakCheck(
-                    "table_name\townership_reason\n" +
-                            "a\t\n",
-                    "select table_name,ownership_reason from writer_pool order by 1 desc",
-                    null,
-                    true
-            );
+            assertQuery("select table_name,ownership_reason from writer_pool order by 1 desc")
+                    .noLeakCheck()
+                    .returns("table_name\townership_reason\n" +
+                            "a\t\n");
         });
     }
 }

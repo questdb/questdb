@@ -119,18 +119,14 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  from long_sequence(10);"
         );
 
-        assertQuery(
-                """
+        assertQuery("select l, s, ts from trips where s = 'DEF' order by ts desc")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\ts\tts
                         7\tDEF\t2022-01-09T22:40:00.000000Z
                         6\tDEF\t2022-01-08T18:53:20.000000Z
-                        """,
-                "select l, s, ts from trips where s = 'DEF' order by ts desc",
-                null,
-                "ts###DESC",
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -157,7 +153,10 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
                         "  from long_sequence(10);"
         );
-        assertQuery("""
+        assertQuery("select l, s, ts from trips where s != 'A1' and test_match() order by ts desc")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\ts\tts
                         9\tA0\t2022-01-12T06:13:20.000000Z
                         8\tA2\t2022-01-11T02:26:40.000000Z
@@ -165,10 +164,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         5\tA2\t2022-01-07T15:06:40.000000Z
                         3\tA0\t2022-01-05T07:33:20.000000Z
                         2\tA2\t2022-01-04T03:46:40.000000Z
-                        """,
-                "select l, s, ts from trips where s != 'A1' and test_match() order by ts desc",
-                null, "ts###DESC", true, false
-        );
+                        """);
     }
 
     @Test
@@ -181,7 +177,10 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  from long_sequence(10);"
         );
 
-        assertQuery("""
+        assertQuery("select l, s, ts from trips where s in (select 'DEF' union all select 'ABC' ) and length(s) = 3 order by ts desc")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\ts\tts
                         9\tDEF\t2022-01-12T06:13:20.000000Z
                         8\tDEF\t2022-01-11T02:26:40.000000Z
@@ -189,10 +188,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         3\tABC\t2022-01-05T07:33:20.000000Z
                         2\tABC\t2022-01-04T03:46:40.000000Z
                         1\tABC\t2022-01-03T00:00:00.000000Z
-                        """,
-                "select l, s, ts from trips where s in (select 'DEF' union all select 'ABC' ) and length(s) = 3 order by ts desc",
-                null, "ts###DESC", true, false
-        );
+                        """);
     }
 
     @Test
@@ -205,7 +201,10 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  from long_sequence(10);"
         );
 
-        assertQuery("""
+        assertQuery("select l, s, ts from trips where s in (select 'DEF'::varchar union all select 'ABC'::varchar ) and length(s) = 3 order by ts desc")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\ts\tts
                         9\tDEF\t2022-01-12T06:13:20.000000Z
                         8\tDEF\t2022-01-11T02:26:40.000000Z
@@ -213,10 +212,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         3\tABC\t2022-01-05T07:33:20.000000Z
                         2\tABC\t2022-01-04T03:46:40.000000Z
                         1\tABC\t2022-01-03T00:00:00.000000Z
-                        """,
-                "select l, s, ts from trips where s in (select 'DEF'::varchar union all select 'ABC'::varchar ) and length(s) = 3 order by ts desc",
-                null, "ts###DESC", true, false
-        );
+                        """);
     }
 
     @Test
@@ -229,7 +225,10 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  from long_sequence(10);"
         );
         //A0, A1, A2, A0, A1, A2, A0, A1, A2, A0
-        assertQuery("""
+        assertQuery("select l, s, ts from trips where s in ('A2', 'A0') and length(s) = 2 order by ts desc")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\ts\tts
                         9\tA0\t2022-01-12T06:13:20.000000Z
                         8\tA2\t2022-01-11T02:26:40.000000Z
@@ -237,10 +236,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         5\tA2\t2022-01-07T15:06:40.000000Z
                         3\tA0\t2022-01-05T07:33:20.000000Z
                         2\tA2\t2022-01-04T03:46:40.000000Z
-                        """,
-                "select l, s, ts from trips where s in ('A2', 'A0') and length(s) = 2 order by ts desc",
-                null, "ts###DESC", true, false
-        );
+                        """);
     }
 
     @Test
@@ -267,15 +263,15 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
                         "  from long_sequence(10);"
         );
-        assertQuery("""
+        assertQuery("select l, s, ts from trips where s != 'A1' and s != 'A0' and test_match() order by ts desc")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\ts\tts
                         8\tA2\t2022-01-11T02:26:40.000000Z
                         5\tA2\t2022-01-07T15:06:40.000000Z
                         2\tA2\t2022-01-04T03:46:40.000000Z
-                        """,
-                "select l, s, ts from trips where s != 'A1' and s != 'A0' and test_match() order by ts desc",
-                null, "ts###DESC", true, false
-        );
+                        """);
     }
 
     @Test
@@ -288,15 +284,15 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  from long_sequence(10);"
         );
         //A0, A1, A2, A0, A1, A2, A0, A1, A2, A0
-        assertQuery("""
+        assertQuery("select l, s, ts from trips where s = 'A2' and test_match() order by ts desc")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\ts\tts
                         8\tA2\t2022-01-11T02:26:40.000000Z
                         5\tA2\t2022-01-07T15:06:40.000000Z
                         2\tA2\t2022-01-04T03:46:40.000000Z
-                        """,
-                "select l, s, ts from trips where s = 'A2' and test_match() order by ts desc",
-                null, "ts###DESC", true, false
-        );
+                        """);
     }
 
     @Test
@@ -357,12 +353,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                                             Frame forward scan on: tab
                     """);
 
-            assertQuery("""
+            assertQuery(query)
+                    .returns("""
                     month\tuid
                     1970-01-01T00:05:00.000000Z\tA5a
                     1970-01-01T00:04:00.000000Z\tA6a
                     1970-01-01T00:03:00.000000Z\tA7a
-                    """, query, null, true, false);
+                    """);
         });
     }
 
@@ -403,12 +400,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                                         Frame forward scan on: tab
                     """);
 
-            assertQuery("""
+            assertQuery(query)
+                    .returns("""
                     month\tuid
                     1970-01-01T00:03:00.000000Z\tA3a
                     1970-01-01T00:04:00.000000Z\tA4a
                     1970-01-01T00:05:00.000000Z\tA5a
-                    """, query, null, true, false);
+                    """);
         });
     }
 
@@ -459,8 +457,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                                                     Frame forward scan on: tab
                     """);
 
-            assertQuery(
-                    """
+            assertQuery(query)
+                    .returns("""
                             month\tts1\tuid
                             1970-01-01T00:05:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a
                             1970-01-01T00:05:00.000000Z\t1970-01-01T00:04:00.000001Z\tA4a
@@ -471,12 +469,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                             1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000001Z\tA3a
                             1970-01-01T00:03:00.000000Z\t1970-01-01T00:04:00.000001Z\tA4a
                             1970-01-01T00:03:00.000000Z\t1970-01-01T00:05:00.000001Z\tA5a
-                            """,
-                    query,
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -513,11 +506,12 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                                           intervals: [("2019-06-30T00:00:00.000000Z","MAX")]
                     """);
 
-            assertQuery("""
+            assertQuery(query)
+                    .returns("""
                     vendor_id
                     A1
                     A2
-                    """, query, null, true, false);
+                    """);
         });
     }
 
@@ -570,17 +564,12 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                                                 Frame forward scan on: t2
                     """);
 
-            assertQuery(
-                    """
+            assertQuery(query)
+                    .returns("""
                             vendor_id
                             A2
                             A1
-                            """,
-                    query,
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -686,50 +675,50 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  from long_sequence(10)"
         );
 
-        assertQuery("""
+        assertQuery("select l as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\tts\tcol1\tcol2
                         10\t2022-01-03T13:00:00.000000Z\t100\t1000
                         9\t2022-01-03T10:13:20.000000Z\t90\t900
                         8\t2022-01-03T07:26:40.000000Z\t80\t800
                         10\t2022-01-02T01:00:00.000000Z\tnull\t
-                        """,
-                "select l as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
-                null, "ts###DESC", true, false
-        );
+                        """);
 
-        assertQuery("""
+        assertQuery("select l + 1000 as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\tts\tcol1\tcol2
                         1010\t2022-01-03T13:00:00.000000Z\t100\t1000
                         1009\t2022-01-03T10:13:20.000000Z\t90\t900
                         1008\t2022-01-03T07:26:40.000000Z\t80\t800
                         1010\t2022-01-02T01:00:00.000000Z\tnull\t
-                        """,
-                "select l + 1000 as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
-                null, "ts###DESC", true, false
-        );
+                        """);
 
-        assertQuery("""
+        assertQuery("select l, ts, col1, col2 from trips where l > 8 order by ts")
+                .ddl(null)
+                .timestamp("ts")
+                .returns("""
                         l\tts\tcol1\tcol2
                         9\t2022-01-01T22:13:20.000000Z\tnull\t
                         10\t2022-01-02T01:00:00.000000Z\tnull\t
                         9\t2022-01-03T10:13:20.000000Z\t90\t900
                         10\t2022-01-03T13:00:00.000000Z\t100\t1000
-                        """,
-                "select l, ts, col1, col2 from trips where l > 8 order by ts",
-                null, "ts", true, false
-        );
+                        """);
 
-        assertQuery("""
+        assertQuery("select l, ts, col1, col2 from trips where ts between '2022-01-01T14' and '2022-01-02T23' and l > 3 order by ts desc limit 5")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\tts\tcol1\tcol2
                         4\t2022-01-02T20:20:00.000000Z\t40\t400
                         10\t2022-01-02T01:00:00.000000Z\tnull\t
                         9\t2022-01-01T22:13:20.000000Z\tnull\t
                         8\t2022-01-01T19:26:40.000000Z\tnull\t
                         7\t2022-01-01T16:40:00.000000Z\tnull\t
-                        """,
-                "select l, ts, col1, col2 from trips where ts between '2022-01-01T14' and '2022-01-02T23' and l > 3 order by ts desc limit 5",
-                null, "ts###DESC", true, false
-        );
+                        """);
     }
 
     @Test
@@ -742,15 +731,15 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  from long_sequence(1000);"
         );
 
-        assertQuery("""
+        assertQuery("select l, ts from trips " +
+                        "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
+                        "order by ts desc limit 1")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\tts
                         5\t2022-01-07T15:06:40.000000Z
-                        """,
-                "select l, ts from trips " +
-                        "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
-                        "order by ts desc limit 1",
-                null, "ts###DESC", true, false
-        );
+                        """);
     }
 
     @Test
@@ -763,16 +752,16 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  from long_sequence(1000);"
         );
 
-        assertQuery("""
+        assertQuery("select l, ts from trips " +
+                        "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
+                        "order by ts desc limit 3, 5")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\tts
                         2\t2022-01-04T03:46:40.000000Z
                         1\t2022-01-03T00:00:00.000000Z
-                        """,
-                "select l, ts from trips " +
-                        "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
-                        "order by ts desc limit 3, 5",
-                null, "ts###DESC", true, false
-        );
+                        """);
     }
 
     @Test
@@ -786,17 +775,17 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  from long_sequence(10);"
         );
 
-        assertQuery("""
+        assertQuery("select l, ts from trips " +
+                        "where l <=5 and ts < '2022-01-04T04' " +
+                        "order by ts desc")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\tts
                         3\t2022-01-04T03:46:40.000000Z
                         2\t2022-01-03T13:53:20.000000Z
                         1\t2022-01-03T00:00:00.000000Z
-                        """,
-                "select l, ts from trips " +
-                        "where l <=5 and ts < '2022-01-04T04' " +
-                        "order by ts desc",
-                null, "ts###DESC", true, false
-        );
+                        """);
     }
 
     @Test
@@ -810,17 +799,17 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  from long_sequence(10);"
         );
 
-        assertQuery("""
+        assertQuery("select l, ts from trips where l <=5 order by ts asc limit 5")
+                .ddl(null)
+                .timestampAsc("ts")
+                .returns("""
                         l\tts
                         1\t2022-01-03T00:00:00.000000Z
                         2\t2022-01-04T03:46:40.000000Z
                         3\t2022-01-05T07:33:20.000000Z
                         4\t2022-01-06T11:20:00.000000Z
                         5\t2022-01-07T15:06:40.000000Z
-                        """,
-                "select l, ts from trips where l <=5 order by ts asc limit 5",
-                null, "ts###ASC", true, false
-        );
+                        """);
     }
 
     @Test
@@ -834,17 +823,17 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  from long_sequence(10);"
         );
 
-        assertQuery("""
+        assertQuery("select l, ts from trips where l <=5 order by ts desc limit 5")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\tts
                         5\t2022-01-07T15:06:40.000000Z
                         4\t2022-01-06T11:20:00.000000Z
                         3\t2022-01-05T07:33:20.000000Z
                         2\t2022-01-04T03:46:40.000000Z
                         1\t2022-01-03T00:00:00.000000Z
-                        """,
-                "select l, ts from trips where l <=5 order by ts desc limit 5",
-                null, "ts###DESC", true, false
-        );
+                        """);
     }
 
     @Test
@@ -865,17 +854,17 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                             "  from long_sequence(10);"
             );
 
-            assertQuery("""
+            assertQuery("select l, ts from trips where l <=5 order by ts desc limit 5")
+                    .ddl(null)
+                    .timestampDesc("ts")
+                    .returns("""
                             l\tts
                             5\t2022-01-07T15:06:40.000000Z
                             4\t2022-01-06T11:20:00.000000Z
                             3\t2022-01-05T07:33:20.000000Z
                             2\t2022-01-04T03:46:40.000000Z
                             1\t2022-01-03T00:00:00.000000Z
-                            """,
-                    "select l, ts from trips where l <=5 order by ts desc limit 5",
-                    null, "ts###DESC", true, false
-            );
+                            """);
         } finally {
             sqlExecutionContext.setJitMode(jitMode);
         }
@@ -969,31 +958,28 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
                 String expected = header + result.substring(loIdx, hiIdx);
 
-                assertQuery(
-                        expected,
-                        query + " " + lo + ", " + hi,
-                        expectedTimestamp,
-                        true,
-                        true
-                );
+                assertQuery(query + " " + lo + ", " + hi)
+                        .timestamp(expectedTimestamp)
+                        .expectSize()
+                        .returns(expected);
             }
         }
     }
 
     private void assertOrderByInOverClause(String expected, String direction) throws Exception {
-        assertQuery(expected,
-                "select ts, temp from \n" +
+        assertQuery("select ts, temp from \n" +
                         "( \n" +
                         "  select temp, ts, \n" +
                         "         row_number() over (partition by timestamp_floor('y', ts) order by temp " + direction + ")  rid \n" +
                         "  from weather \n" +
                         ") inq \n" +
                         "where rid = 1 \n" +
-                        "order by ts",
-                "create table weather as " +
+                        "order by ts")
+                .ddl("create table weather as " +
                         "(select cast(x*36000000000 as timestamp) ts, \n" +
-                        "  rnd_float(0)*100 temp from long_sequence(1000));", "ts"
-        );
+                        "  rnd_float(0)*100 temp from long_sequence(1000));")
+                .timestamp("ts")
+                .returns(expected);
     }
 
     private void runQueries(String... queries) throws Exception {
@@ -1013,17 +999,17 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  from long_sequence(10);"
         );
 
-        assertQuery("""
+        assertQuery("select l, ts from trips where l <= 5 order by ts desc")
+                .ddl(null)
+                .timestampDesc("ts")
+                .returns("""
                         l\tts
                         5\t2022-01-07T15:06:40.000000Z
                         4\t2022-01-06T11:20:00.000000Z
                         3\t2022-01-05T07:33:20.000000Z
                         2\t2022-01-04T03:46:40.000000Z
                         1\t2022-01-03T00:00:00.000000Z
-                        """,
-                "select l, ts from trips where l <= 5 order by ts desc",
-                null, "ts###DESC", true, false
-        );
+                        """);
     }
 
     private void testOrderByWithFilter(String type, int order) throws Exception {
@@ -1079,20 +1065,17 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         };
 
         if ("string".equals(type) || "symbol".equals(type)) {
-            assertQuery(expectedResult,
-                    ("select x from test where x in ('1', '2', '3') and y = null order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
-                    null, null, true, false
-            );
+            assertQuery(("select x from test where x in ('1', '2', '3') and y = null order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type))
+                    .ddl(null)
+                    .returns(expectedResult);
         } else if ("char".equals(type)) {
-            assertQuery(expectedResult,
-                    ("select x from test where x in (cast(1 as char), cast(2 as char), cast(3 as char)) and y = null order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
-                    null, null, true, false
-            );
+            assertQuery(("select x from test where x in (cast(1 as char), cast(2 as char), cast(3 as char)) and y = null order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type))
+                    .ddl(null)
+                    .returns(expectedResult);
         } else {
-            assertQuery(expectedResult,
-                    ("select x from test where x <= 3 and y = null order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
-                    null, null, true, false
-            );
+            assertQuery(("select x from test where x <= 3 and y = null order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type))
+                    .ddl(null)
+                    .returns(expectedResult);
         }
     }
 }

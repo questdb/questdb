@@ -69,22 +69,13 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
                         "   ;\n"
         );
 
-        assertException(
-                "select ob_buy[1:] c, k from array_test order by c;",
-                48,
-                "DOUBLE[][] is not a supported type in ORDER BY clause"
-        );
+        assertQuery("select ob_buy[1:] c, k from array_test order by c;")
+                .fails(48, "DOUBLE[][] is not a supported type in ORDER BY clause");
 
-        assertException(
-                "select ob_buy, k from array_test order by ob_buy;",
-                42,
-                "DOUBLE[][] is not a supported type in ORDER BY clause"
-        );
+        assertQuery("select ob_buy, k from array_test order by ob_buy;")
+                .fails(42, "DOUBLE[][] is not a supported type in ORDER BY clause");
 
-        assertException(
-                "select k, ob_buy from array_test order by 2;",
-                42,
-                "DOUBLE[][] is not a supported type in ORDER BY clause"
-        );
+        assertQuery("select k, ob_buy from array_test order by 2;")
+                .fails(42, "DOUBLE[][] is not a supported type in ORDER BY clause");
     }
 }

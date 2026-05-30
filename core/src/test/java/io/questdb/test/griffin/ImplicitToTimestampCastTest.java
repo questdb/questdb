@@ -69,42 +69,42 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
 
     @Test
     public void testImplicitStringConstExpressionToTimestampCastWorks() throws Exception {
-        assertQuery("cust_id\tts\n" +
-                        "abc\t2022-03-23T00:00:00.000000Z\n",
-                "select * from balances where ts = '2022-03-23' || ' 00:00'",
-                "CREATE TABLE balances as (" +
+        assertQuery("select * from balances where ts = '2022-03-23' || ' 00:00'")
+                .ddl("CREATE TABLE balances as (" +
                         "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
-                        ");", null, true, false);
+                        ");")
+                .returns("cust_id\tts\n" +
+                        "abc\t2022-03-23T00:00:00.000000Z\n");
     }
 
     @Test
     public void testImplicitStringLiteralToTimestampConversionWorks() throws Exception {
-        assertQuery("cust_id\tts\n" +
-                        "abc\t2022-03-23T00:00:00.000000Z\n",
-                "select * from balances where ts = '2022-03-23'",
-                "CREATE TABLE balances as (" +
+        assertQuery("select * from balances where ts = '2022-03-23'")
+                .ddl("CREATE TABLE balances as (" +
                         "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
-                        ");", null, true, false);
+                        ");")
+                .returns("cust_id\tts\n" +
+                        "abc\t2022-03-23T00:00:00.000000Z\n");
     }
 
     @Test
     public void testImplicitSymbolConstExpressionToTimestampCastWorks() throws Exception {
-        assertQuery("cust_id\tts\n" +
-                        "abc\t2022-03-23T00:00:00.000000Z\n",
-                "select * from balances where ts = cast(('2022-03-23' || ' 00:00') as symbol)",
-                "CREATE TABLE balances as (" +
+        assertQuery("select * from balances where ts = cast(('2022-03-23' || ' 00:00') as symbol)")
+                .ddl("CREATE TABLE balances as (" +
                         "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
-                        ");", null, true, false);
+                        ");")
+                .returns("cust_id\tts\n" +
+                        "abc\t2022-03-23T00:00:00.000000Z\n");
     }
 
     @Test
     public void testImplicitSymbolLiteralToTimestampConversionWorks() throws Exception {
-        assertQuery("cust_id\tts\n" +
-                        "abc\t2022-03-23T00:00:00.000000Z\n",
-                "select * from balances where ts = cast('2022-03-23' as symbol)",
-                "CREATE TABLE balances as (" +
+        assertQuery("select * from balances where ts = cast('2022-03-23' as symbol)")
+                .ddl("CREATE TABLE balances as (" +
                         "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
-                        ");", null, true, false);
+                        ");")
+                .returns("cust_id\tts\n" +
+                        "abc\t2022-03-23T00:00:00.000000Z\n");
     }
 
 }

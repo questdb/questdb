@@ -471,15 +471,7 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
-                            country\t2000\t2010
-                            NL\t1005\t1065
-                            US\t8579\t8783
-                            NL\t1005\t1065
-                            US\t8579\t8783
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 SUM(population)
@@ -493,11 +485,17 @@ public class PivotTest extends AbstractSqlParserTest {
                                 FOR year IN (2000, 2010)
                                 GROUP BY country
                             )
-                            """,
-                    null,
-                    false,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            country\t2000\t2010
+                            NL\t1005\t1065
+                            US\t8579\t8783
+                            NL\t1005\t1065
+                            US\t8579\t8783
+                            """);
         });
     }
 
@@ -506,14 +504,15 @@ public class PivotTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS, 5);
             execute(ddlMonthlySales);
-            assertException("""
+            assertQuery("""
                     SELECT * FROM monthly_sales
                     PIVOT (
                         SUM(amount)
                         FOR month IN ('JAN', 'FEB', 'MAR', 'APR')
                           empid IN (1, 2)
                     )
-                    """, 104, "PIVOT produces too many columns: 8, limit is 5");
+                    """)
+                    .fails(104, "PIVOT produces too many columns: 8, limit is 5");
         });
     }
 
@@ -522,7 +521,7 @@ public class PivotTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS, 10);
             execute(ddlMonthlySales);
-            assertException("""
+            assertQuery("""
                     SELECT * FROM monthly_sales
                     PIVOT (
                         SUM(amount),
@@ -531,7 +530,8 @@ public class PivotTest extends AbstractSqlParserTest {
                         FOR month IN ('JAN', 'FEB', 'MAR', 'APR')
                         GROUP BY empid
                     )
-                    """, 28, "PIVOT produces too many columns: 12, limit is 10");
+                    """)
+                    .fails(28, "PIVOT produces too many columns: 12, limit is 10");
         });
     }
 
@@ -541,13 +541,7 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
-                            country	NL	US
-                            NL	3228	null
-                            US	null	26872
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM (
                                 SELECT * FROM cities
                                 PIVOT (
@@ -560,11 +554,14 @@ public class PivotTest extends AbstractSqlParserTest {
                                 FOR country IN ('NL', 'US')
                                 GROUP BY country
                             ) order by country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country	NL	US
+                            NL	3228	null
+                            US	null	26872
+                            """);
         });
     }
 
@@ -615,18 +612,15 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertException(
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 SUM(population)
                                 FOR year IN (2000, 2010, 2020)
                                 GROUP BY 1
                             )
-                            """,
-                    97,
-                    "cannot use positional group by inside `PIVOT`"
-            );
+                            """)
+                    .fails(97, "cannot use positional group by inside `PIVOT`");
         });
     }
 
@@ -636,18 +630,15 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertException(
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 SUM(population)
                                 FOR year IN (SELECT year FROM cities WHERE year > 9999)
                                 GROUP BY country
                             )
-                            """,
-                    66,
-                    "PIVOT IN subquery returned empty result set"
-            );
+                            """)
+                    .fails(66, "PIVOT IN subquery returned empty result set");
         });
     }
 
@@ -657,18 +648,15 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertException(
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 SUM(population)
                                 FOR year IN (SELECT year, country FROM cities)
                                 GROUP BY country
                             )
-                            """,
-                    66,
-                    "PIVOT IN subquery must return exactly one column, got 2"
-            );
+                            """)
+                    .fails(66, "PIVOT IN subquery must return exactly one column, got 2");
         });
     }
 
@@ -685,14 +673,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', array[1, 2], 30),
                         ('B', array[3, 4], 40);
                     """);
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 56, "unsupported PIVOT FOR column type: DOUBLE[]");
+                    """)
+                    .fails(56, "unsupported PIVOT FOR column type: DOUBLE[]");
         });
     }
 
@@ -709,14 +698,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 'A'::binary, 30),
                         ('B', 'B'::binary, 40);
                     """);
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 56, "unsupported PIVOT FOR column type: BINARY");
+                    """)
+                    .fails(56, "unsupported PIVOT FOR column type: BINARY");
         });
     }
 
@@ -726,14 +716,15 @@ public class PivotTest extends AbstractSqlParserTest {
             execute("CREATE TABLE data (grp SYMBOL, cat BOOLEAN, val INT);");
             execute("CREATE TABLE cats (c BOOLEAN);");
             execute("INSERT INTO cats VALUES (true), (false);");
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: BOOLEAN");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: BOOLEAN");
         });
     }
 
@@ -751,24 +742,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp\t1\t2
-                            A\t10\t20
-                            B\t30\t40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\t1\t2
+                            A\t10\t20
+                            B\t30\t40
+                            """);
         });
     }
 
@@ -786,24 +774,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 'Y', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp\tX\tY
-                            A\t10\t20
-                            B\t30\t40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tX\tY
+                            A\t10\t20
+                            B\t30\t40
+                            """);
         });
     }
 
@@ -821,24 +806,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', '2024-01-02', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp	"2024-01-01T00:00:00.000Z"	"2024-01-02T00:00:00.000Z"
-                            A	10	20
-                            B	30	40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	"2024-01-01T00:00:00.000Z"	"2024-01-02T00:00:00.000Z"
+                            A	10	20
+                            B	30	40
+                            """);
         });
     }
 
@@ -856,14 +838,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.75m, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(20,2)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: DECIMAL(20,2)");
         });
     }
 
@@ -881,14 +864,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.75m, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(4,2)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: DECIMAL(4,2)");
         });
     }
 
@@ -906,14 +890,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.75m, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(40,2)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: DECIMAL(40,2)");
         });
     }
 
@@ -931,14 +916,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.75m, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(9,2)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: DECIMAL(9,2)");
         });
     }
 
@@ -956,14 +942,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.75m, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(10,2)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: DECIMAL(10,2)");
         });
     }
 
@@ -981,14 +968,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.5m, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: DECIMAL(2,1)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: DECIMAL(2,1)");
         });
     }
 
@@ -1006,24 +994,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.5, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp	"1.5"	"2.5"
-                            A	10	20
-                            B	30	40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	"1.5"	"2.5"
+                            A	10	20
+                            B	30	40
+                            """);
         });
     }
 
@@ -1040,24 +1025,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 'cat_2', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp	cat_1	cat_2	cat_3	cat_4	cat_5	cat_6	cat_7	cat_8	cat_9	cat_0
-                            A	10	20	null	null	null	null	null	null	null	null
-                            B	30	40	null	null	null	null	null	null	null	null
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	cat_1	cat_2	cat_3	cat_4	cat_5	cat_6	cat_7	cat_8	cat_9	cat_0
+                            A	10	20	null	null	null	null	null	null	null	null
+                            B	30	40	null	null	null	null	null	null	null	null
+                            """);
         });
     }
 
@@ -1075,24 +1057,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2.5, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp	"1.5"	"2.5"
-                            A	10	20
-                            B	30	40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	"1.5"	"2.5"
+                            A	10	20
+                            B	30	40
+                            """);
         });
     }
 
@@ -1110,14 +1089,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', #u09v, 40);
                     """);
 
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     ) ORDER BY grp
-                    """, 48, "there is no matching operator `IN` with the argument type: GEOHASH(4c)");
+                    """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: GEOHASH(4c)");
         });
     }
 
@@ -1135,24 +1115,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', '192.168.1.2', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp	"192.168.1.1"	"192.168.1.2"
-                            A	10	20
-                            B	30	40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	"192.168.1.1"	"192.168.1.2"
+                            A	10	20
+                            B	30	40
+                            """);
         });
     }
 
@@ -1164,24 +1141,21 @@ public class PivotTest extends AbstractSqlParserTest {
             execute("CREATE TABLE years (y INT);");
             execute("INSERT INTO years VALUES (2000), (2010);");
 
-            assertQueryNoLeakCheck(
-                    """
-                            country\t2000\t2010
-                            NL\t1005\t1065
-                            US\t8579\t8783
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 SUM(population)
                                 FOR year IN (SELECT y FROM years)
                                 GROUP BY country
                             ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country\t2000\t2010
+                            NL\t1005\t1065
+                            US\t8579\t8783
+                            """);
         });
     }
 
@@ -1199,15 +1173,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', to_long128(2, 2), 40);
                     """);
 
-            assertException(
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """, 48, "there is no matching operator `IN` with the argument type: LONG128");
+                            """)
+                    .fails(48, "there is no matching operator `IN` with the argument type: LONG128");
         });
     }
 
@@ -1227,15 +1201,15 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', to_long256(2, 2, 2, 2), 40);
                     """);
 
-            assertException(
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """, 56, "unsupported PIVOT FOR column type: LONG256");
+                            """)
+                    .fails(56, "unsupported PIVOT FOR column type: LONG256");
         });
     }
 
@@ -1253,24 +1227,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2000000000000, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp\t1000000000000\t2000000000000
-                            A\t10\t20
-                            B\t30\t40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\t1000000000000\t2000000000000
+                            A\t10\t20
+                            B\t30\t40
+                            """);
         });
     }
 
@@ -1279,14 +1250,15 @@ public class PivotTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE data (grp SYMBOL, cat SYMBOL, val INT);");
             execute("CREATE TABLE cats AS (SELECT 'cat_' || x::string as c FROM long_sequence(100000));");
-            assertException("""
+            assertQuery("""
                     SELECT * FROM data
                     PIVOT (
                         SUM(val)
                         FOR cat IN (SELECT c FROM cats)
                         GROUP BY grp
                     )
-                    """, 56, "PIVOT produces too many columns: 5001, limit is 5000");
+                    """)
+                    .fails(56, "PIVOT produces too many columns: 5001, limit is 5000");
         });
     }
 
@@ -1308,13 +1280,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('West', 'prod_2', 'Q2', 450);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            region\tprod_1_Q1\tprod_1_Q2\tprod_2_Q1\tprod_2_Q2\tprod_3_Q1\tprod_3_Q2
-                            East\t100\t150\t200\t250\tnull\tnull
-                            West\t300\t350\t400\t450\tnull\tnull
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM sales
                             PIVOT (
                                 SUM(amount)
@@ -1322,11 +1288,14 @@ public class PivotTest extends AbstractSqlParserTest {
                                     quarter IN (SELECT q FROM quarters)
                                 GROUP BY region
                             ) ORDER BY region
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            region\tprod_1_Q1\tprod_1_Q2\tprod_2_Q1\tprod_2_Q2\tprod_3_Q1\tprod_3_Q2
+                            East\t100\t150\t200\t250\tnull\tnull
+                            West\t300\t350\t400\t450\tnull\tnull
+                            """);
         });
     }
 
@@ -1344,24 +1313,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', null, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp\t1\tNULL
-                            A\t10\t20
-                            B\t30\t40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\t1\tNULL
+                            A\t10\t20
+                            B\t30\t40
+                            """);
         });
     }
 
@@ -1379,24 +1345,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', null, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp\tX\tNULL
-                            A\t10\t20
-                            B\t30\t40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tX\tNULL
+                            A\t10\t20
+                            B\t30\t40
+                            """);
         });
     }
 
@@ -1414,24 +1377,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 2, 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp\t1\t2
-                            A\t10\t20
-                            B\t30\t40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\t1\t2
+                            A\t10\t20
+                            B\t30\t40
+                            """);
         });
     }
 
@@ -1449,24 +1409,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 'Y', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp\tX\tY
-                            A\t10\t20
-                            B\t30\t40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tX\tY
+                            A\t10\t20
+                            B\t30\t40
+                            """);
         });
     }
 
@@ -1484,24 +1441,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 'Y', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp\tX\tY
-                            A\t10\t20
-                            B\t30\t40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tX\tY
+                            A\t10\t20
+                            B\t30\t40
+                            """);
         });
     }
 
@@ -1519,24 +1473,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', '2024-01-02T00:00:00.000000Z', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp	"2024-01-01T00:00:00.000000Z"	"2024-01-02T00:00:00.000000Z"
-                            A	10	20
-                            B	30	40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	"2024-01-01T00:00:00.000000Z"	"2024-01-02T00:00:00.000000Z"
+                            A	10	20
+                            B	30	40
+                            """);
         });
     }
 
@@ -1554,24 +1505,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('B', 'Y', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp\tX\tY
-                            A\t10\t20
-                            B\t30\t40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(val)
                                 FOR cat IN (SELECT c FROM cats)
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tX\tY
+                            A\t10\t20
+                            B\t30\t40
+                            """);
         });
     }
 
@@ -1627,24 +1575,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('G2', 'B', null);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            grp	A_SUM(val)	A_count(val)	B_SUM(val)	B_count(val)
-                            G1	10	1	null	0
-                            G2	20	1	null	0
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM sparse
                             PIVOT (
                                 SUM(val), count(val)
                                 FOR cat IN ('A', 'B')
                                 GROUP BY grp
                             ) ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	A_SUM(val)	A_count(val)	B_SUM(val)	B_count(val)
+                            G1	10	1	null	0
+                            G2	20	1	null	0
+                            """);
         });
     }
 
@@ -1673,7 +1618,11 @@ public class PivotTest extends AbstractSqlParserTest {
                     ) select * from A asof join B ON (vehicle_id) LIMIT 10
                     ;""";
 
-            assertQueryNoLeakCheck("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .returns("""
                             timestamp	vehicle_id	i000	i001	i002	i003	i004	i005	i006	i007	i008	i009	timestamp1	vehicle_id1	s000	s001	s002	s003	s004	s005	s006	s007	s008	s009
                             2025-01-01T00:00:00.000000Z	AAA000	null	856.0	366.0	25.0	-475.0	29.0	373.0	-998.0	-881.0	-6.0	2025-01-01T00:00:00.000000Z	AAA000	val_-48	val_-516	val_-972	val_-714	val_-703	val_481	val_512	val_116	val_97	val_-405
                             2025-01-01T00:00:00.000000Z	AAA001	698.0	859.0	-893.0	716.0	51.0	-57.0	-16.0	886.0	-904.0	-727.0	2025-01-01T00:00:00.000000Z	AAA001	val_-964	val_-305	val_-171	val_-104	val_-279	val_198	val_-769	val_-127	val_228	val_-723
@@ -1685,12 +1634,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             2025-01-01T00:00:00.000000Z	AAA007	191.0	868.0	87.0	-820.0	-934.0	485.0	31.0	-147.0	-168.0	627.0	2025-01-01T00:00:00.000000Z	AAA007	val_242	val_-531	val_-138	val_60	val_37	val_-995	val_43	val_782	val_640	val_75
                             2025-01-01T00:00:00.000000Z	AAA008	-693.0	-721.0	-472.0	-964.0	-42.0	-64.0	483.0	-509.0	-412.0	-942.0	2025-01-01T00:00:00.000000Z	AAA008	val_-67	val_17	val_444	val_-190	val_692	val_941	val_385	val_468	val_-384	val_795
                             2025-01-01T00:00:00.000000Z	AAA009	910.0	276.0	451.0	293.0	-333.0	827.0	834.0	-242.0	-199.0	-336.0	2025-01-01T00:00:00.000000Z	AAA009	val_889	val_407	val_-806	val_895	val_460	val_-743	val_988	val_-320	val_435	val_583
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    false,
-                    false);
+                            """);
 
             assertPlanNoLeakCheck(query,
                     """
@@ -1849,24 +1793,21 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
-                            country\t2000\t2010\t2020
-                            NL\t1005\t1065\t1158
-                            US\t8579\t8783\t9510
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 coalesce(NULL, NULL, SUM(population))
                                 FOR year IN (2000, 2010, 2020)
                                 GROUP BY country
                             ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country\t2000\t2010\t2020
+                            NL\t1005\t1065\t1158
+                            US\t8579\t8783\t9510
+                            """);
         });
     }
 
@@ -1881,24 +1822,21 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
-                            country\t2000\t2010\t2020
-                            NL\t0\t0\t0
-                            US\t0\t0\t0
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 coalesce(0, SUM(population))
                                 FOR year IN (2000, 2010, 2020)
                                 GROUP BY country
                             ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country\t2000\t2010\t2020
+                            NL\t0\t0\t0
+                            US\t0\t0\t0
+                            """);
         });
     }
 
@@ -1949,13 +1887,7 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
-                            country	2000_COUNT()	2000_last(population)	2010_COUNT()	2010_last(population)	2020_COUNT()	2020_last(population)	null_COUNT()	null_last(population)	2030_COUNT()	2030_last(population)
-                            NL	1	1005	1	1065	1	1158	0	null	0	null
-                            US	2	8015	2	8175	2	8772	0	null	0	null
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 COUNT(*),
@@ -1963,11 +1895,14 @@ public class PivotTest extends AbstractSqlParserTest {
                                 FOR year IN (2000, 2010, 2020, null, 2030)
                                 GROUP BY country
                             ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country	2000_COUNT()	2000_last(population)	2010_COUNT()	2010_last(population)	2020_COUNT()	2020_last(population)	null_COUNT()	null_last(population)	2030_COUNT()	2030_last(population)
+                            NL	1	1005	1	1065	1	1158	0	null	0	null
+                            US	2	8015	2	8175	2	8772	0	null	0	null
+                            """);
         });
     }
 
@@ -1983,24 +1918,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('S2', 'humidity', 55.8);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            sensor	temp	humidity
-                            S1	12.75	30.1
-                            S2	14.15	27.9
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM measurements
                             PIVOT (
                                 avg(value) / 2
                                 FOR metric IN ('temp', 'humidity')
                                 GROUP BY sensor
                             ) ORDER BY sensor
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sensor	temp	humidity
+                            S1	12.75	30.1
+                            S2	14.15	27.9
+                            """);
         });
     }
 
@@ -2020,22 +1952,19 @@ public class PivotTest extends AbstractSqlParserTest {
                             ) order by country;
                             """;
 
-            assertException(query, 60, "PIVOT IN subquery returned empty result set");
+            assertQuery(query)
+                    .fails(60, "PIVOT IN subquery returned empty result set");
 
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             country\t2000\t2010\t2020
                             NL\t1005\t1065\t1158
                             US\t8579\t8783\t9510
-                            """,
-                    query,
-                    null,
-                    true,
-                    true,
-                    false
-            );
+                            """);
 
             assertPlanNoLeakCheck(query,
                     """
@@ -2071,21 +2000,19 @@ public class PivotTest extends AbstractSqlParserTest {
                             );
                             """;
 
-            assertException(query, 60, "PIVOT IN subquery returned empty result set");
+            assertQuery(query)
+                    .fails(60, "PIVOT IN subquery returned empty result set");
 
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             2000_Amsterdam\t2000_New York City\t2000_Seattle\t2010_Amsterdam\t2010_New York City\t2010_Seattle\t2020_Amsterdam\t2020_New York City\t2020_Seattle
                             1005\t8015\t564\t1065\t8175\t608\t1158\t8772\t738
-                            """,
-                    query,
-                    null,
-                    false,
-                    true,
-                    false
-            );
+                            """);
 
             assertPlanNoLeakCheck(query,
                     """
@@ -2119,21 +2046,19 @@ public class PivotTest extends AbstractSqlParserTest {
                             );
                             """;
 
-            assertException(query, 81, "PIVOT IN subquery returned empty result set");
+            assertQuery(query)
+                    .fails(81, "PIVOT IN subquery returned empty result set");
 
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             2000_Amsterdam_SUM(population)	2000_Amsterdam_AVG(population)	2000_New York City_SUM(population)	2000_New York City_AVG(population)	2000_Seattle_SUM(population)	2000_Seattle_AVG(population)	2010_Amsterdam_SUM(population)	2010_Amsterdam_AVG(population)	2010_New York City_SUM(population)	2010_New York City_AVG(population)	2010_Seattle_SUM(population)	2010_Seattle_AVG(population)	2020_Amsterdam_SUM(population)	2020_Amsterdam_AVG(population)	2020_New York City_SUM(population)	2020_New York City_AVG(population)	2020_Seattle_SUM(population)	2020_Seattle_AVG(population)
                             1005	1005.0	8015	8015.0	564	564.0	1065	1065.0	8175	8175.0	608	608.0	1158	1158.0	8772	8772.0	738	738.0
-                            """,
-                    query,
-                    null,
-                    false,
-                    true,
-                    false
-            );
+                            """);
 
             assertPlanNoLeakCheck(query,
                     """
@@ -2154,22 +2079,19 @@ public class PivotTest extends AbstractSqlParserTest {
     public void testPivotWithEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
-            assertQueryNoLeakCheck(
-                    """
-                            country\t2000\t2010\t2020
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 SUM(population)
                                 FOR year IN (2000, 2010, 2020)
                                 GROUP BY country
                             )
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country\t2000\t2010\t2020
+                            """);
         });
     }
 
@@ -2179,24 +2101,21 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
-                            country	0	10
-                            NL	1005	1065
-                            US	8579	8783
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 SUM(population)
                                 FOR year - 2000 IN (0, 10)
                                 GROUP BY country
                             ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country	0	10
+                            NL	1005	1065
+                            US	8579	8783
+                            """);
         });
     }
 
@@ -2368,13 +2287,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('US', 'America');
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            continent\t2000\t2010\t2020
-                            America\t8579\t8783\t9510
-                            Europe\t1005\t1065\t1158
-                            """,
-                    """
+            assertQuery("""
                             SELECT continent, "2000", "2010", "2020" FROM (
                                 SELECT ci.continent, c.year, c.population
                                 FROM cities c
@@ -2385,11 +2298,14 @@ public class PivotTest extends AbstractSqlParserTest {
                                 FOR year IN (2000, 2010, 2020)
                                 GROUP BY continent
                             ) ORDER BY continent
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            continent\t2000\t2010\t2020
+                            America\t8579\t8783\t9510
+                            Europe\t1005\t1065\t1158
+                            """);
         });
     }
 
@@ -2440,24 +2356,21 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
-                            country\t2000_min\t2000_max\t2010_min\t2010_max\t2020_min\t2020_max
-                            NL\t1005\t1005\t1065\t1065\t1158\t1158
-                            US\t564\t8015\t608\t8175\t738\t8772
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 MIN(population) AS min, MAX(population) AS max
                                 FOR year IN (2000, 2010, 2020)
                                 GROUP BY country
                             ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country\t2000_min\t2000_max\t2010_min\t2010_max\t2020_min\t2020_max
+                            NL\t1005\t1005\t1065\t1065\t1158\t1158
+                            US\t564\t8015\t608\t8175\t738\t8772
+                            """);
         });
     }
 
@@ -2856,22 +2769,19 @@ public class PivotTest extends AbstractSqlParserTest {
             // conditions down to the inner query, so no rows match when FOR values don't
             // exist in the data (e.g., year IN (1990, 1995) filters out all rows).
             // This behavior is kept for performance reasons.
-            assertQueryNoLeakCheck(
-                    """
-                            country\t1990\t1995
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 SUM(population)
                                 FOR year IN (1990, 1995)
                                 GROUP BY country
                             ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country\t1990\t1995
+                            """);
         });
     }
 
@@ -2893,8 +2803,11 @@ public class PivotTest extends AbstractSqlParserTest {
                     ) ORDER BY timestamp
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns("""
                             timestamp	ADA-USD_buy	ADA-USD_sell	ADA-USDT_buy	ADA-USDT_sell	BTC-USD_buy	BTC-USD_sell
                             2024-12-19T08:10:00.000000Z	null	0.9716	null	0.9716	null	null
                             2024-12-19T08:10:00.100000Z	null	null	null	null	101502.2	101502.1
@@ -2904,13 +2817,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             2024-12-19T08:10:00.600000Z	null	null	null	null	101502.2	null
                             2024-12-19T08:10:00.700000Z	null	null	null	null	101500.66666666667	101500.57777777778
                             2024-12-19T08:10:00.900000Z	null	null	null	null	101497.6	101497.25
-                            """,
-                    query,
-                    "timestamp",
-                    true,
-                    true,
-                    false
-            );
+                            """);
 
             assertPlanNoLeakCheck(query,
                     """
@@ -2955,27 +2862,24 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('E', 'null', 90);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            category	NULL	X	Y	null_2	y_2
-                            A	null	21	null	null	null
-                            B	null	null	41	null	null
-                            C	null	61	71	null	null
-                            D	91	null	null	null	81
-                            E	null	null	null	101	null
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM data
                             PIVOT (
                                 SUM(value + 1) + 10
                                 FOR type IN (select distinct type from data order by type)
                                 GROUP BY category
                             ) ORDER BY category
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            category	NULL	X	Y	null_2	y_2
+                            A	null	21	null	null	null
+                            B	null	null	41	null	null
+                            C	null	61	71	null	null
+                            D	91	null	null	null	81
+                            E	null	null	null	101	null
+                            """);
         });
     }
 
@@ -3025,14 +2929,13 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlMonthlySales);
             execute(dmlMonthlySales);
 
-            assertException("""
+            assertQuery("""
                             monthly_sales\s
                             PIVOT (
                               SUM(amount)\s
                               FOR MONTH IN ('JAN', 'FEB', 'MAR')\s
-                            )ORDER BY EMPID;""",
-                    86,
-                    "Invalid column: EMPID");
+                            )ORDER BY EMPID;""")
+                    .fails(86, "Invalid column: EMPID");
 
             assertSql("""
                             EMPID	JAN	FEB	MAR
@@ -3119,24 +3022,21 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('info', 'warning', 'msg4');
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            category\tcritical\twarning
-                            error\tmsg1\tmsg2
-                            info\tmsg3\tmsg4
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM logs
                             PIVOT (
                                 last(message)
                                 FOR status IN ('critical', 'warning')
                                 GROUP BY category
                             ) ORDER BY category
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            category\tcritical\twarning
+                            error\tmsg1\tmsg2
+                            info\tmsg3\tmsg4
+                            """);
         });
     }
 
@@ -3148,24 +3048,21 @@ public class PivotTest extends AbstractSqlParserTest {
             execute("CREATE TABLE years (y INT);");
             execute("INSERT INTO years VALUES (2000), (2000), (2010);");
 
-            assertQueryNoLeakCheck(
-                    """
-                            country\t2000\t2010
-                            NL\t1005\t1065
-                            US\t8579\t8783
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 SUM(population)
                                 FOR year IN (SELECT y FROM years)
                                 GROUP BY country
                             ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country\t2000\t2010
+                            NL\t1005\t1065
+                            US\t8579\t8783
+                            """);
         });
     }
 
@@ -3181,24 +3078,22 @@ public class PivotTest extends AbstractSqlParserTest {
                         ('2024-01-02', 'B', 40);
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tA\tB
-                            2024-01-01T00:00:00.000000Z\t10\t20
-                            2024-01-02T00:00:00.000000Z\t30\t40
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM events
                             PIVOT (
                                 SUM(value)
                                 FOR category IN ('A', 'B')
                                 GROUP BY ts
                             ) ORDER BY ts
-                            """,
-                    "ts",
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tA\tB
+                            2024-01-01T00:00:00.000000Z\t10\t20
+                            2024-01-02T00:00:00.000000Z\t30\t40
+                            """);
         });
     }
 
@@ -3429,7 +3324,10 @@ public class PivotTest extends AbstractSqlParserTest {
                               )ORDER BY timestamp ASC;
                             """;
 
-            assertQuery("""
+            assertQuery(pivotQuery)
+                    .timestampAsc("timestamp")
+                    .expectSize()
+                    .returns("""
                             timestamp\tETH-USDT_buy\tETH-USDT_sell
                             2024-12-19T08:10:00.700999Z\tnull\t3678.25
                             2024-12-19T08:10:00.736000Z\tnull\t3678.25
@@ -3437,16 +3335,10 @@ public class PivotTest extends AbstractSqlParserTest {
                             2024-12-19T08:10:00.772999Z\tnull\t3678.0
                             2024-12-19T08:10:00.887000Z\t3678.01\tnull
                             2024-12-19T08:10:00.950000Z\tnull\t3678.0
-                            """,
-                    pivotQuery,
-                    "timestamp###ASC",
-                    true,
-                    true);
+                            """);
 
-            assertException(
-                    pivotQuery.replace("GROUP BY timestamp", "GROUP BY 1"),
-                    110,
-                    "cannot use positional group by inside `PIVOT`");
+            assertQuery(pivotQuery.replace("GROUP BY timestamp", "GROUP BY 1"))
+                    .fails(110, "cannot use positional group by inside `PIVOT`");
         });
     }
 
@@ -3674,7 +3566,10 @@ public class PivotTest extends AbstractSqlParserTest {
                         LIMIT -10
                     );""";
 
-            assertQueryNoLeakCheck("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             timestamp	vehicle_id	i000
                             2025-01-01T00:00:00.000000Z	AAA001	698.0
                             2025-01-01T00:00:00.000000Z	AAA002	388.0
@@ -3696,12 +3591,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             2025-01-01T00:00:00.009000Z	AAA051	-461.0
                             2025-01-01T00:00:00.009000Z	AAA050	-753.0
                             2025-01-01T00:00:00.010000Z	AAA000	-636.0
-                            """,
-                    query,
-                    null,
-                    false,
-                    false,
-                    false);
+                            """);
 
             assertPlanNoLeakCheck(query,
                     """
@@ -3786,24 +3676,21 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            assertQueryNoLeakCheck(
-                    """
-                            country\t2000\t2010\t2020
-                            NL\t1005\t1065\t1158
-                            US\t8579\t8783\t9510
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM cities
                             PIVOT (
                                 abs(SUM(population))
                                 FOR year IN (2000, 2010, 2020)
                                 GROUP BY country
                             ) ORDER BY country
-                            """,
-                    null,
-                    true,
-                    true,
-                    false);
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            country\t2000\t2010\t2020
+                            NL\t1005\t1065\t1158
+                            US\t8579\t8783\t9510
+                            """);
         });
     }
 }

@@ -240,20 +240,19 @@ public class SecurityTest extends AbstractCairoTest {
             memoryRestrictedEngine.reloadTableNames();
 
             execute("insert into balances values (1, 'EUR', 140.6)");
-            assertQuery(
-                    "cust_id\tccy\tbalance\n1\tEUR\t140.6\n",
-                    "select * from balances",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select * from balances")
+                    .expectSize()
+                    .returns("cust_id\tccy\tbalance\n1\tEUR\t140.6\n");
 
             try {
                 assertExceptionNoLeakCheck("alter table balances add column newcol int", readOnlyExecutionContext);
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
-            assertQueryNoLeakCheck("cust_id\tccy\tbalance\n1\tEUR\t140.6\n", "select * from balances");
+            assertQuery("select * from balances")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("cust_id\tccy\tbalance\n1\tEUR\t140.6\n");
         });
     }
 
@@ -443,7 +442,10 @@ public class SecurityTest extends AbstractCairoTest {
                 TestUtils.assertContains(ex.getMessage(), "permission denied");
             }
             try {
-                assertQueryNoLeakCheck("count\n1\n", "select count() from balances", null);
+                assertQuery("select count() from balances")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
                 Assert.fail();
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.toString().contains("table does not exist"));
@@ -475,7 +477,10 @@ public class SecurityTest extends AbstractCairoTest {
             } catch (Exception ex) {
                 TestUtils.assertContains(ex.getMessage(), "permission denied");
             }
-            assertQuery("count\n0\n", "select count() from balances", null, false, true);
+            assertQuery("select count() from balances")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
         });
     }
 
@@ -485,17 +490,16 @@ public class SecurityTest extends AbstractCairoTest {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
             memoryRestrictedEngine.reloadTableNames();
 
-            assertQuery("count\n0\n", "select count() from balances", null, false, true);
+            assertQuery("select count() from balances")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
 
             execute("insert into balances values (1, 'EUR', 140.6)");
-            assertQuery(
-                    "count\n1\n",
-                    "select count() from balances",
-
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select count() from balances")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
 
             try {
                 execute("insert into balances values (2, 'ZAR', 140.6)", readOnlyExecutionContext);
@@ -504,7 +508,10 @@ public class SecurityTest extends AbstractCairoTest {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
 
-            assertQuery("count\n1\n", "select count() from balances", null, false, true);
+            assertQuery("select count() from balances")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
         });
     }
 
@@ -670,13 +677,9 @@ public class SecurityTest extends AbstractCairoTest {
                     " rnd_double(2) d2," +
                     " timestamp_sequence(0, 1000000000) ts2" +
                     " from long_sequence(1000)) timestamp(ts2)");
-            assertQuery(
-                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                    "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                    null,
-                    false,
-                    false
-            );
+            assertQuery("select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
+                    .noRandomAccess()
+                    .returns("sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n");
 
             try {
                 assertQueryNoLeakCheck(
@@ -745,13 +748,9 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts2" +
                     " from long_sequence(1000)) timestamp(ts2)");
 
-            assertQuery(
-                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                    "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                    null,
-                    false,
-                    false
-            );
+            assertQuery("select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
+                    .noRandomAccess()
+                    .returns("sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n");
 
             try {
                 assertQueryNoLeakCheck(
@@ -1103,7 +1102,10 @@ public class SecurityTest extends AbstractCairoTest {
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
-            assertQuery("count\n0\n", "select count() from balances", null, false, true);
+            assertQuery("select count() from balances")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
         });
     }
 
@@ -1181,13 +1183,9 @@ public class SecurityTest extends AbstractCairoTest {
                             " from long_sequence(1000)) timestamp(ts2)"
             );
 
-            assertQuery(
-                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                    "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3",
-                    null,
-                    false,
-                    false
-            );
+            assertQuery("select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3")
+                    .noRandomAccess()
+                    .returns("sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n");
             memoryRestrictedCompiler.setFullFatJoins(fullFat);
             try {
                 assertQueryNoLeakCheck(

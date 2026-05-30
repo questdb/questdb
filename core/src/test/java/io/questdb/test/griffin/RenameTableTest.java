@@ -53,12 +53,14 @@ public class RenameTableTest extends AbstractCairoTest {
 
     @Test
     public void testFunctionDestTableName() throws Exception {
-        assertException("rename table x to y()", 19, "function call is not allowed here");
+        assertQuery("rename table x to y()")
+                .fails(19, "function call is not allowed here");
     }
 
     @Test
     public void testFunctionSrcTableName() throws Exception {
-        assertException("rename table x() to y", 14, "function call is not allowed here");
+        assertQuery("rename table x() to y")
+                .fails(14, "function call is not allowed here");
     }
 
     @Test
@@ -103,7 +105,8 @@ public class RenameTableTest extends AbstractCairoTest {
 
     @Test
     public void testRenameTrailingDebris() throws Exception {
-        assertException("rename table x to y xyz", 20, "debris?");
+        assertQuery("rename table x to y xyz")
+                .fails(20, "debris?");
     }
 
     @Test
@@ -112,7 +115,11 @@ public class RenameTableTest extends AbstractCairoTest {
                 () -> {
                     createX();
                     execute("rename table 'x' to 'y'");
-                    assertQuery("i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
+                    assertQuery("y")
+                            .ddl(null)
+                            .timestamp("timestamp")
+                            .expectSize()
+                            .returns("i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
                                     "1\tmsft\t50.938\t2018-01-01T00:12:00.000000Z\tfalse\tXYZ\t0.4621835429127854\t0.55991614\t31\t2015-06-22T18:58:53.562Z\tPEHN\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ\n" +
                                     "2\tgoogl\t42.281\t2018-01-01T00:24:00.000000Z\tfalse\tABC\t0.4138164748227684\t0.5522494\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t\n" +
                                     "3\tgoogl\t17.371\t2018-01-01T00:36:00.000000Z\tfalse\tABC\t0.05384400312338511\t0.09750569\t327\t2015-09-26T18:05:10.217Z\tHYRX\t-3214230645884399728\t1970-01-01T00:33:20.000000Z\t28\t00000000 8e e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28\tSUWDSWUGS\n" +
@@ -123,14 +130,7 @@ public class RenameTableTest extends AbstractCairoTest {
                                     "8\tgoogl\t57.086\t2018-01-01T01:36:00.000000Z\ttrue\tABC\t0.6707018622395736\t0.07594013\t199\t2015-09-12T07:21:40.050Z\t\t-4058426794463997577\t1970-01-01T01:56:40.000000Z\t37\t00000000 ea 4e ea 8b f5 0f 2d b3 14 33\tFFLRBROMNXKUIZ\n" +
                                     "9\tgoogl\t81.44200000000001\t2018-01-01T01:48:00.000000Z\tfalse\t\t0.2677326840703891\t0.5425297\t1001\t2015-11-14T07:05:22.934Z\tHYRX\t-8793423647053878901\t1970-01-01T02:13:20.000000Z\t33\t00000000 25 c2 20 ff 70 3a c7 8a b3 14 cd 47 0b 0c\tFMQNTOG\n" +
                                     "10\tmsft\t3.973\t2018-01-01T02:00:00.000000Z\tfalse\tXYZ\tnull\tnull\t828\t2015-06-18T18:07:42.406Z\tPEHN\t-7398902448022205322\t1970-01-01T02:30:00.000000Z\t50\t00000000 fb 2e 42 fa f5 6e 8f 80 e3 54 b8 07 b1 32 57 ff\n" +
-                                    "00000010 9a ef 88 cb\tCNGTNLEGPUHH\n",
-                            "y",
-                            null,
-
-                            "timestamp",
-                            true,
-                            true
-                    );
+                                    "00000010 9a ef 88 cb\tCNGTNLEGPUHH\n");
                 }
         );
     }

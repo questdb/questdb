@@ -45,11 +45,8 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSrcTable();
 
-            assertException(
-                    "create table dest as (select * from src) like src",
-                    41,
-                    "unexpected token [like]"
-            );
+            assertQuery("create table dest as (select * from src) like src")
+                    .fails(41, "unexpected token [like]");
         });
     }
 
@@ -137,11 +134,8 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSrcTable();
 
-            assertException(
-                    "create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);",
-                    13,
-                    "cannot insert rows out of order to non-partitioned table."
-            );
+            assertQuery("create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);")
+                    .fails(13, "cannot insert rows out of order to non-partitioned table.");
         });
     }
 
@@ -216,13 +210,10 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.020000Z\t2\n" +
                     "1970-01-01T00:00:00.040000Z\t4\n";
 
-            assertQuery(
-                    expected,
-                    "dest",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("dest")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -250,13 +241,10 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.020000Z\t2\n" +
                     "1970-01-01T00:00:00.040000Z\t4\n";
 
-            assertQuery(
-                    expected,
-                    "dest",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("dest")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -275,13 +263,10 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.020000Z\t2\n" +
                     "1970-01-01T00:00:00.040000Z\t4\n";
 
-            assertQuery(
-                    expected,
-                    "dest",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("dest")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 

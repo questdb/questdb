@@ -1787,7 +1787,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             WorkerPool pool = new WorkerPool(() -> workerCount);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String symbolGen = "rnd_symbol_zipf(1000, 2.0)";
 
                         // Create prices table with enough data points

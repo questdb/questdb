@@ -111,98 +111,80 @@ public class AddIndexTest extends AbstractCairoTest {
 
     @Test
     public void testAlterTableAlterColumnSyntaxError1() throws Exception {
-        assertException(
-                "alter table trades alter columnz",
-                "create table trades as (\n" +
+        assertQuery("alter table trades alter columnz")
+                .ddl("create table trades as (\n" +
                         "    select \n" +
                         "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360) ts \n" +
                         "    from long_sequence(30)\n" +
-                        ") timestamp(ts) partition by DAY",
-                25,
-                "'column' or 'partition' expected"
-        );
+                        ") timestamp(ts) partition by DAY")
+                .fails(25, "'column' or 'partition' expected");
     }
 
     @Test
     public void testAlterTableAlterColumnSyntaxError2() throws Exception {
-        assertException(
-                "alter table trades alter column price add index",
-                "create table trades as (\n" +
+        assertQuery("alter table trades alter column price add index")
+                .ddl("create table trades as (\n" +
                         "    select \n" +
                         "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360) ts \n" +
                         "    from long_sequence(30)\n" +
-                        ") timestamp(ts) partition by DAY",
-                32,
-                "indexes are only supported for symbol type [column=price, type=DOUBLE]"
-        );
+                        ") timestamp(ts) partition by DAY")
+                .fails(32, "indexes are only supported for symbol type [column=price, type=DOUBLE]");
     }
 
     @Test
     public void testAlterTableAlterColumnSyntaxError3() throws Exception {
-        assertException(
-                "alter table trades alter column sym add index",
-                "create table trades as (\n" +
+        assertQuery("alter table trades alter column sym add index")
+                .ddl("create table trades as (\n" +
                         "    select \n" +
                         "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360) ts \n" +
                         "    from long_sequence(30)\n" +
-                        "), index(sym) timestamp(ts) partition by DAY",
-                12,
-                "column is already indexed [column=sym]"
-        );
+                        "), index(sym) timestamp(ts) partition by DAY")
+                .fails(12, "column is already indexed [column=sym]");
     }
 
     @Test
     public void testAlterTableAttachPartitionSyntaxError1() throws Exception {
-        assertException(
-                "alter table trades attach bucket",
-                "create table trades as (\n" +
+        assertQuery("alter table trades attach bucket")
+                .ddl("create table trades as (\n" +
                         "    select \n" +
                         "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360) ts \n" +
                         "    from long_sequence(30)\n" +
-                        ") timestamp(ts) partition by DAY",
-                26,
-                "'partition' expected"
-        );
+                        ") timestamp(ts) partition by DAY")
+                .fails(26, "'partition' expected");
     }
 
     @Test
     public void testAlterTableDropColumnSyntaxError1() throws Exception {
-        assertException(
-                "alter table trades drop bucket",
-                "create table trades as (\n" +
+        assertQuery("alter table trades drop bucket")
+                .ddl("create table trades as (\n" +
                         "    select \n" +
                         "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360) ts \n" +
                         "    from long_sequence(30)\n" +
-                        ") timestamp(ts) partition by DAY",
-                24,
-                "'column' or 'partition' expected"
-        );
+                        ") timestamp(ts) partition by DAY")
+                .fails(24, "'column' or 'partition' expected");
     }
 
     @Test
     public void testAlterTableRenameColumnSyntaxError1() throws Exception {
-        assertException(
-                "alter table trades rename bucket",
-                "create table trades as (\n" +
+        assertQuery("alter table trades rename bucket")
+                .ddl("create table trades as (\n" +
                         "    select \n" +
                         "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360) ts \n" +
                         "    from long_sequence(30)\n" +
-                        ") timestamp(ts) partition by DAY",
-                26,
-                "'column' expected"
-        );
+                        ") timestamp(ts) partition by DAY")
+                .fails(26, "'column' expected");
     }
 
     @Test
@@ -226,20 +208,16 @@ public class AddIndexTest extends AbstractCairoTest {
                 "ABB\t0.7763904674818695\t1970-01-03T00:00:00.009720Z\n" +
                 "HBC\t0.0011075361080621349\t1970-01-03T00:00:00.010440Z\n";
 
-        assertQuery(
-                expected,
-                "select * from trades where (sym = 'ABB' or sym = 'HBC')",
-                "create table trades as (\n" +
+        assertQuery("select * from trades where (sym = 'ABB' or sym = 'HBC')")
+                .ddl("create table trades as (\n" +
                         "    select \n" +
                         "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360) ts \n" +
                         "    from long_sequence(30)\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "alter table trades alter column sym add index",
-                expected,
-                true
-        );
+                        ") timestamp(ts) partition by DAY")
+                .mutateWith("alter table trades alter column sym add index")
+                .timestamp("ts")
+                .returns(expected, expected);
     }
 }

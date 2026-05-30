@@ -33,51 +33,48 @@ public class WithClauseTest extends AbstractCairoTest {
 
     @Test
     public void testWithAliasOverridingTable1() throws Exception {
-        assertMemoryLeak(() -> assertQuery("address\tbalance\n",
-                "WITH balance as ( SELECT * FROM balance WHERE address = 1 ) " +
-                        "SELECT * FROM balance ",
-                "CREATE TABLE balance (\n" +
+        assertMemoryLeak(() -> assertQuery("WITH balance as ( SELECT * FROM balance WHERE address = 1 ) " +
+                        "SELECT * FROM balance ")
+                .ddl("CREATE TABLE balance (\n" +
                         "  address LONG,\n" +
                         "  balance DOUBLE\n" +
-                        ");",
-                null,
-                "insert into balance values ( 1, 1.0 ), (2, 2.0);",
-                "address\tbalance\n1\t1.0\n",
-                true));
+                        ");")
+                .mutateWith("insert into balance values ( 1, 1.0 ), (2, 2.0);")
+                .returns("address\tbalance\n", "address\tbalance\n1\t1.0\n"));
     }
 
     @Test
     public void testWithAliasOverridingTable2() throws Exception {
-        assertMemoryLeak(() -> assertQuery("address\tbalance\n",
-                "WITH balance as ( SELECT * FROM balance WHERE address = 1 ), \n" +
+        assertMemoryLeak(() -> assertQuery("WITH balance as ( SELECT * FROM balance WHERE address = 1 ), \n" +
                         "     balance_other as ( SELECT * FROM balance )\n" +
-                        "SELECT * FROM balance ",
-                "CREATE TABLE balance (\n" +
+                        "SELECT * FROM balance ")
+                .ddl("CREATE TABLE balance (\n" +
                         "  address LONG,\n" +
                         "  balance DOUBLE\n" +
-                        ");",
-                null,
-                "insert into balance values ( 1, 1.0 ), (2, 2.0);",
-                "address\tbalance\n1\t1.0\n",
-                true));
+                        ");")
+                .mutateWith("insert into balance values ( 1, 1.0 ), (2, 2.0);")
+                .returns("address\tbalance\n", "address\tbalance\n1\t1.0\n"));
     }
 
     @Test
     public void testWithAliasOverridingTable3() throws Exception {
-        assertMemoryLeak(() -> assertQuery("address\tbalance\n", "WITH balance as ( SELECT * FROM balance WHERE address = 1 ) \n" +
+        assertMemoryLeak(() -> assertQuery("WITH balance as ( SELECT * FROM balance WHERE address = 1 ) \n" +
                 "SELECT * FROM ( " +
                 "WITH balance_other AS ( SELECT * FROM balance )\n" +
                 "SELECT * FROM balance " +
-                " ) ORDER BY 1 ", "CREATE TABLE balance (\n" +
+                " ) ORDER BY 1 ")
+                .ddl("CREATE TABLE balance (\n" +
                 "  address LONG,\n" +
                 "  balance DOUBLE\n" +
-                ");", null, "insert into balance values ( 1, 1.0 ), (2, 2.0);", "address\tbalance\n1\t1.0\n", true, false, false));
+                ");")
+                .mutateWith("insert into balance values ( 1, 1.0 ), (2, 2.0);")
+                .returns("address\tbalance\n", "address\tbalance\n1\t1.0\n"));
     }
 
     @Test
     public void testWithAliasOverridingTable4() throws Exception {
         assertMemoryLeak(() -> {//to force 2nd balance with clause parsing
-            assertQuery("address\tbalance\taddress1\tbalance1\n", "WITH balance2 as ( SELECT * FROM balance WHERE address = 2 ) " +
+            assertQuery("WITH balance2 as ( SELECT * FROM balance WHERE address = 2 ) " +
                             "SELECT * FROM (" +
                             "(" +
                             "WITH balance as (select * from balance where address = 1) " +
@@ -89,17 +86,14 @@ public class WithClauseTest extends AbstractCairoTest {
                             "SELECT * " +
                             "FROM balance b1 " +
                             "JOIN balance2 b2 on b1.address = b2.address " +
-                            ")", "CREATE TABLE balance (\n" +
+                            ")")
+                    .ddl("CREATE TABLE balance (\n" +
                             "  address LONG,\n" +
                             "  balance DOUBLE\n" +
-                            ");",
-                    null,
-                    "insert into balance values ( 1, 1.0 ), (2, 2.0);",
-                    "address\tbalance\taddress1\tbalance1\n2\t2.0\t2\t2.0\n",
-                    false,
-                    false,
-                    false
-            );
+                            ");")
+                    .mutateWith("insert into balance values ( 1, 1.0 ), (2, 2.0);")
+                    .noRandomAccess()
+                    .returns("address\tbalance\taddress1\tbalance1\n", "address\tbalance\taddress1\tbalance1\n2\t2.0\t2\t2.0\n");
         });
     }
 
@@ -125,21 +119,21 @@ public class WithClauseTest extends AbstractCairoTest {
             String expected = sink.toString();
             Assert.assertTrue(expected.length() > 100);
 
-            assertQueryNoLeakCheck(expected,
-                    "with eventlist as (\n" +
+            assertQuery("with eventlist as (\n" +
                             "    select * from contact_events2 where groupId = 'g1' latest on timestamp partition by _id order by timestamp\n" +
                             ")\n" +
-                            "select groupId, _id, contactid, timestamp, _id from eventlist where groupId = 'g1' \n",
-                    "timestamp", true, false, true);
+                            "select groupId, _id, contactid, timestamp, _id from eventlist where groupId = 'g1' \n")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .sizeMayVary()
+                    .returns(expected);
         });
     }
 
     @Test
     public void testWithSelectTwoWheres() throws Exception {
-        assertException("with example as (select * from long_sequence(1))\n" +
-                        "select * from example where true where false;",
-                82,
-                "unexpected token [where]"
-        );
+        assertQuery("with example as (select * from long_sequence(1))\n" +
+                        "select * from example where true where false;")
+                .fails(82, "unexpected token [where]");
     }
 }

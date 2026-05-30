@@ -969,16 +969,13 @@ public class UnionAllCastTest extends AbstractCairoTest {
             execute("insert into events2 values ('1', 1.5, 'flash')");
             execute("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQueryNoLeakCheck(
-                    // Empty table expected
-                    "contact\tgroupid\teventid\n",
-                    """
+            assertQuery("""
                             events1
                             except
-                            events2""",
-                    null,
-                    true
-            );
+                            events2""")
+                    .noLeakCheck()
+                    .returns(// Empty table expected
+                    "contact\tgroupid\teventid\n");
         });
     }
 
@@ -995,20 +992,17 @@ public class UnionAllCastTest extends AbstractCairoTest {
             execute("insert into events2 values ('1', 1.5, 'flash')");
             execute("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQueryNoLeakCheck(
-                    // Empty table expected
+            assertQuery("""
+                            (events1
+                            except
+                            events2) order by 1 desc""")
+                    .noLeakCheck()
+                    .returns(// Empty table expected
                     """
                             contact\tgroupid\teventid
                             2\t1.600000023841858\tstand
                             1\t1.600000023841858\tstand
-                            """,
-                    """
-                            (events1
-                            except
-                            events2) order by 1 desc""",
-                    null,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1023,16 +1017,13 @@ public class UnionAllCastTest extends AbstractCairoTest {
             execute("insert into events2 values ('1', 1.5, 'flash')");
             execute("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQueryNoLeakCheck(
-                    // Empty table expected
-                    "contact\tgroupid\teventid\n",
-                    """
+            assertQuery("""
                             events1
                             except
-                            events2""",
-                    null,
-                    true
-            );
+                            events2""")
+                    .noLeakCheck()
+                    .returns(// Empty table expected
+                    "contact\tgroupid\teventid\n");
         });
     }
 
@@ -1049,20 +1040,17 @@ public class UnionAllCastTest extends AbstractCairoTest {
             execute("insert into events2 values ('1', 1.5, 'flash')");
             execute("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQueryNoLeakCheck(
-                    // Empty table expected
+            assertQuery("""
+                            (events1
+                            except
+                            events2) order by 1 desc""")
+                    .noLeakCheck()
+                    .returns(// Empty table expected
                     """
                             contact\tgroupid\teventid
                             2\t1.6\tstand
                             1\t1.6\tstand
-                            """,
-                    """
-                            (events1
-                            except
-                            events2) order by 1 desc""",
-                    null,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2012,20 +2000,17 @@ public class UnionAllCastTest extends AbstractCairoTest {
             execute("insert into events2 values ('1', 1.5, 'flash')");
             execute("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQueryNoLeakCheck(
-                    // Empty table expected
+            assertQuery("""
+                            (events1
+                            intersect
+                            events2) order by 1 desc""")
+                    .noLeakCheck()
+                    .returns(// Empty table expected
                     """
                             contact\tgroupid\teventid
                             2\t1.5\tstand
                             1\t1.5\tflash
-                            """,
-                    """
-                            (events1
-                            intersect
-                            events2) order by 1 desc""",
-                    null,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2042,20 +2027,17 @@ public class UnionAllCastTest extends AbstractCairoTest {
             execute("insert into events2 values ('1', 1.5, 'flash')");
             execute("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQueryNoLeakCheck(
-                    // Empty table expected
+            assertQuery("""
+                            (events1
+                            intersect
+                            events2) order by 1 desc""")
+                    .noLeakCheck()
+                    .returns(// Empty table expected
                     """
                             contact\tgroupid\teventid
                             2\t1.5\tstand
                             1\t1.5\tflash
-                            """,
-                    """
-                            (events1
-                            intersect
-                            events2) order by 1 desc""",
-                    null,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2824,16 +2806,13 @@ public class UnionAllCastTest extends AbstractCairoTest {
         // a match against column "a" in the union
         execute("create table y as (select rnd_double() u, rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))");
         engine.releaseAllWriters();
-        assertQuery(
-                """
+        assertQuery("(x union all y) where a = '27'")
+                .ddl("create table x as (select rnd_double() u, rnd_boolean() a, rnd_symbol('a','b') c from long_sequence(5))")
+                .noRandomAccess()
+                .returns("""
                         u\ta\tc
                         0.6607777894187332\t27\ty
-                        """,
-                "(x union all y) where a = '27'", "create table x as (select rnd_double() u, rnd_boolean() a, rnd_symbol('a','b') c from long_sequence(5))",
-                null,
-                false,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -3171,53 +3150,46 @@ public class UnionAllCastTest extends AbstractCairoTest {
         );
     }
 
-    private static void testUnionAllWithNull(String expected, String function) throws Exception {
+    private void testUnionAllWithNull(String expected, String function) throws Exception {
         testUnionAllWithNull(expected, function, true);
     }
 
-    private static void testUnionAllWithNull(String expected, String function, boolean testUnion) throws Exception {
+    private void testUnionAllWithNull(String expected, String function, boolean testUnion) throws Exception {
         execute("create table y as (select " + function + " c from long_sequence(5))");
         execute("create table x as (select " + function + " a from long_sequence(5))");
         engine.releaseAllWriters();
 
-        assertQuery(
-                expected,
-                "(select a, null c from x) union all (select null b, c from y)",
-                null,
-                null,
-                false,
-                true
-        );
+        assertQuery("(select a, null c from x) union all (select null b, c from y)")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
 
         if (testUnion) {
             testUnionWithNull(expected);
         }
     }
 
-    private static void testUnionWithNull(String expected) throws Exception {
-        assertQuery(
-                expected,
-                "(select a, null c from x) union (select null b, c from y)",
-                null,
-                null,
-                false,
-                false
-        );
+    private void testUnionWithNull(String expected) throws Exception {
+        assertQuery("(select a, null c from x) union (select null b, c from y)")
+                .ddl(null)
+                .noRandomAccess()
+                .returns(expected);
     }
 
     private void assertFailure(String ddlX, String ddlY, int pos) throws Exception {
         execute(ddlY);
         engine.releaseAllWriters();
-        assertException(
-                "x union all y",
-                ddlX,
-                pos,
-                "unsupported cast"
-        );
+        assertQuery("x union all y")
+                .ddl(ddlX)
+                .fails(pos, "unsupported cast");
     }
 
     private void testUnion(String expected) throws Exception {
-        assertQuery(expected, "x union y", null, null, false, false);
+        assertQuery("x union y")
+                .ddl(null)
+                .noRandomAccess()
+                .returns(expected);
     }
 
     private void testUnionAll(String expected, String ddlX, String ddlY) throws Exception {
@@ -3240,6 +3212,10 @@ public class UnionAllCastTest extends AbstractCairoTest {
     private void testUnionAll(String expected, String sql, String ddlX, String ddlY) throws Exception {
         execute(ddlY);
         engine.releaseAllWriters();
-        assertQuery(expected, sql, ddlX, null, false, true);
+        assertQuery(sql)
+                .ddl(ddlX)
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 }
