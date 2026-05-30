@@ -1308,30 +1308,36 @@ public class Mig941Test extends AbstractCairoTest {
     }
 
     @Test
-    public void testMigrateToleratesO3MergedFooterWithMixedSortingColumns() throws Exception {
-        // End-to-end reproduction of the replica-bootstrap crash through a REAL
-        // O3 merge. The OSS suite otherwise only constructs the mixed footer by
-        // hand in the Rust unit tests; this drives the actual merge and the
-        // actual Mig941 reader over the bytes it leaves on disk.
+    public void testMig941RegeneratesPmFromConsistentO3MergedFooter() throws Exception {
+        // End-to-end guard that a real O3 merge leaves a footer Mig941 can
+        // regenerate _pm from without crashing. A replica restoring a backup has
+        // no _pm sidecar, so bootstrap runs Mig941, which reads the on-disk
+        // footer through extract_sorting_columns.
         //
-        // An O3 merge in rewrite mode copies the unchanged row groups and writes
-        // the touched ones fresh. Before the fix the copied groups dropped their
-        // sorting columns while the fresh groups kept the timestamp sort column,
-        // so the footer declared sorting columns on some row groups and none on
-        // others. A replica restoring a backup has no _pm sidecar, so bootstrap
-        // runs Mig941, which reads the on-disk footer through the strict
-        // extract_sorting_columns validator -- that used to abort with
-        // "sorting columns differ between row groups" and crash the replica.
-        // After the fix every row group declares the same sorting columns and
-        // Mig941 regenerates _pm cleanly.
+        // Before the fix an O3 merge in rewrite mode copied the unchanged row
+        // groups without their sorting columns while writing the touched ones
+        // with the timestamp sort column, so the footer declared sorting columns
+        // on some row groups and none on others -- and extract_sorting_columns
+        // aborted with "sorting columns differ between row groups", crashing the
+        // replica. Fix 2 now stamps every row group (copied and fresh) with the
+        // same dense sort column, so the footer this merge produces is internally
+        // consistent and Mig941 reads it cleanly.
+        //
+        // This asserts that consistent end state plus the dense sort index
+        // (Fix 3). It does NOT exercise extract_sorting_columns' tolerance of a
+        // genuinely mixed or conflicting footer, which can only originate from a
+        // pre-fix binary: Fix 2 makes the post-fix merge consistent, so the
+        // tolerance path is unreachable here. That path is covered by the Rust
+        // unit tests extract_sorting_columns_tolerates_groups_without_sorting and
+        // convert_from_parquet_tolerates_conflicting_sort_indices_via_qdb_meta.
         //
         // A small row group size yields more than one row group per partition.
         // An ADD COLUMN before the O3 insert makes the partition schema differ
         // from the on-disk parquet, which forces O3PartitionJob down the rewrite
         // path (hasSchemaChange, O3PartitionJob.java:210) rather than an in-place
         // append: it copies the untouched row group through
-        // copy_row_group_with_null_columns -- the exact site that used to drop
-        // the sorting columns -- and writes the touched one fresh.
+        // copy_row_group_with_null_columns -- the site that used to drop the
+        // sorting columns -- and writes the touched one fresh.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
 
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
@@ -1364,8 +1370,9 @@ public class Mig941Test extends AbstractCairoTest {
             drainWalQueue();
 
             // O3 insert into the first row group's range: the merge rewrites the
-            // touched group and copies the untouched one, yielding the
-            // copied-plus-fresh footer the bug mishandled.
+            // touched group and copies the untouched one. Pre-fix the copied
+            // group lost its sorting columns; post-fix both groups declare the
+            // same dense sort column.
             execute("INSERT INTO t VALUES(99, '2024-06-10T00:30:00.000000Z', 7)");
             drainWalQueue();
 
@@ -1388,8 +1395,8 @@ public class Mig941Test extends AbstractCairoTest {
                 Assert.assertTrue("remove _pm sidecar", ff.removeQuiet(path.$()));
             }
 
-            // The regression: before the fix this aborted reading the mixed
-            // footer. It must now succeed.
+            // The regression: pre-fix the inconsistent footer aborted here; the
+            // consistent footer the post-fix merge produces must migrate cleanly.
             runMig941(token);
 
             // _pm regenerated from the real merged footer, recording a single
@@ -1409,9 +1416,9 @@ public class Mig941Test extends AbstractCairoTest {
                     reader.of(parquetMetaAddr, parquetMetaSize);
                     reader.resolveFooter(Long.MAX_VALUE);
                     Assert.assertEquals(3, reader.getColumnCount());
-                    // The mixed footer only arises when copied and fresh row
-                    // groups coexist, so guard that the merge actually left more
-                    // than one row group.
+                    // The consistency guarantee is only meaningfully exercised
+                    // when copied and fresh row groups coexist, so guard that the
+                    // merge actually left more than one row group.
                     Assert.assertTrue(
                             "expected the O3 merge to leave more than one row group",
                             reader.getRowGroupCount() > 1
