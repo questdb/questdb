@@ -425,7 +425,10 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                     "timestamp_sequence_ns(0, 2000000000) as ts_ns " +
                     "from long_sequence(10)" +
                     ") timestamp(ts)");
-            assertQuery("""
+            assertQuery("select ts, ts_ns, ts = ts_ns from x")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tts_ns\tcolumn
                             1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000000Z\tfalse
                             1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:02.000000000Z\ttrue
@@ -437,9 +440,11 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                             1970-01-01T00:00:08.000000Z\t1970-01-01T00:00:14.000000000Z\tfalse
                             1970-01-01T00:00:09.000000Z\t1970-01-01T00:00:16.000000000Z\tfalse
                             1970-01-01T00:00:10.000000Z\t1970-01-01T00:00:18.000000000Z\tfalse
-                            """,
-                    "select ts, ts_ns, ts = ts_ns from x");
-            assertQuery("""
+                            """);
+            assertQuery("select ts, ts_ns, ts_ns = ts from x")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tts_ns\tcolumn
                             1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000000Z\tfalse
                             1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:02.000000000Z\ttrue
@@ -451,10 +456,12 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                             1970-01-01T00:00:08.000000Z\t1970-01-01T00:00:14.000000000Z\tfalse
                             1970-01-01T00:00:09.000000Z\t1970-01-01T00:00:16.000000000Z\tfalse
                             1970-01-01T00:00:10.000000Z\t1970-01-01T00:00:18.000000000Z\tfalse
-                            """,
-                    "select ts, ts_ns, ts_ns = ts from x");
+                            """);
 
-            assertQuery("""
+            assertQuery("select ts, ts = '1970-01-01T00:00:03.000000000Z',ts = '1970-01-01T00:00:03.000000001Z'  from x")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tcolumn\tcolumn1
                             1970-01-01T00:00:01.000000Z\tfalse\tfalse
                             1970-01-01T00:00:02.000000Z\tfalse\tfalse
@@ -466,9 +473,10 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                             1970-01-01T00:00:08.000000Z\tfalse\tfalse
                             1970-01-01T00:00:09.000000Z\tfalse\tfalse
                             1970-01-01T00:00:10.000000Z\tfalse\tfalse
-                            """,
-                    "select ts, ts = '1970-01-01T00:00:03.000000000Z',ts = '1970-01-01T00:00:03.000000001Z'  from x");
-            assertQuery("""
+                            """);
+            assertQuery("select ts_ns, '1970-01-01T00:00:04.000000Z' = ts_ns  from x")
+                    .expectSize()
+                    .returns("""
                             ts_ns\tcolumn
                             1970-01-01T00:00:00.000000000Z\tfalse
                             1970-01-01T00:00:02.000000000Z\tfalse
@@ -480,8 +488,7 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                             1970-01-01T00:00:14.000000000Z\tfalse
                             1970-01-01T00:00:16.000000000Z\tfalse
                             1970-01-01T00:00:18.000000000Z\tfalse
-                            """,
-                    "select ts_ns, '1970-01-01T00:00:04.000000Z' = ts_ns  from x");
+                            """);
         });
     }
 
