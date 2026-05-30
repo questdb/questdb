@@ -141,8 +141,21 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "select x, cast(x * 1000000L" + (leftTableTimestampType == TestTimestampType.NANO ? "*1000L" : "") + " as #TIMESTAMP) time from long_sequence(10)" +
                             ") timestamp(time)", leftTableTimestampType.getTypeName());
 
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("""
+                            select t1.time1 + 1 as time, t1.x, t2.x, t1.x - t2.x
+                            from\s
+                            (
+                                (
+                                    select time - 1 as time1, x
+                                    from positions2
+                                )
+                                timestamp(time1)
+                            ) t1
+                            asof join positions2 t2""")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                                     time\tx\tx1\tcolumn
                                     1970-01-01T00:00:01.000000Z\t1\tnull\tnull
                                     1970-01-01T00:00:02.000000Z\t2\t1\t1
@@ -155,19 +168,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     1970-01-01T00:00:09.000000Z\t9\t8\t1
                                     1970-01-01T00:00:10.000000Z\t10\t9\t1
                                     """,
-                            leftTableTimestampType.getTypeName()),
-                    """
-                            select t1.time1 + 1 as time, t1.x, t2.x, t1.x - t2.x
-                            from\s
-                            (
-                                (
-                                    select time - 1 as time1, x
-                                    from positions2
-                                )
-                                timestamp(time1)
-                            ) t1
-                            asof join positions2 t2"""
-            );
+                            leftTableTimestampType.getTypeName()));
         });
     }
 
@@ -3488,7 +3489,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String hintedQuery = "SELECT /*+ asof_index(x y) */ " + queryBody;
             printSql("EXPLAIN " + hintedQuery);
             TestUtils.assertContains(sink, "AsOf Join Indexed");
-            assertSql(expected, hintedQuery);
+            assertQuery(hintedQuery)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
             assertQueryNoLeakCheck(expected, hintedQuery, "ts", false, true);
         });
     }
@@ -3555,7 +3561,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String hintedQuery = "SELECT /*+ asof_index(x y) */ " + queryBody;
             printSql("EXPLAIN " + hintedQuery);
             TestUtils.assertContains(sink, "AsOf Join Indexed");
-            assertSql(expected, hintedQuery);
+            assertQuery(hintedQuery)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
             assertQueryNoLeakCheck(expected, hintedQuery, "ts", false, true);
         });
     }
