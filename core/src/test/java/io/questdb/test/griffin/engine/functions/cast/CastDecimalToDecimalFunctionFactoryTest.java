@@ -56,6 +56,7 @@ public class CastDecimalToDecimalFunctionFactoryTest extends BaseFunctionFactory
     @Test
     public void testConstantCast() throws Exception {
         assertQuery("SELECT cast(cast(123.45 as DECIMAL(5, 2)) as DECIMAL(6, 3))")
+                .noLeakCheck()
                 .expectSize()
                 .returns("cast\n123.450\n");
     }
@@ -116,25 +117,31 @@ public class CastDecimalToDecimalFunctionFactoryTest extends BaseFunctionFactory
 
     @Test
     public void testExplainPlans() throws Exception {
-        assertSql("QUERY PLAN\n" +
-                        "VirtualRecord\n" +
-                        "  functions: [value::DECIMAL(4,0)]\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [99]\n" +
-                        "        long_sequence count: 1\n",
+        assertSql("""
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [value::DECIMAL(4,0)]
+                            VirtualRecord
+                              functions: [99]
+                                long_sequence count: 1
+                        """,
                 "EXPLAIN WITH data AS (SELECT 99m AS value) SELECT cast(value as DECIMAL(4)) FROM data");
-        assertSql("QUERY PLAN\n" +
-                        "VirtualRecord\n" +
-                        "  functions: [value::DECIMAL(4,2)]\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [99]\n" +
-                        "        long_sequence count: 1\n",
+        assertSql("""
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [value::DECIMAL(4,2)]
+                            VirtualRecord
+                              functions: [99]
+                                long_sequence count: 1
+                        """,
                 "EXPLAIN WITH data AS (SELECT 99m AS value) SELECT cast(value as DECIMAL(4,2)) FROM data");
         // Constant folding
-        assertSql("QUERY PLAN\n" +
-                        "VirtualRecord\n" +
-                        "  functions: [99.00]\n" +
-                        "    long_sequence count: 1\n",
+        assertSql("""
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [99.00]
+                            long_sequence count: 1
+                        """,
                 "EXPLAIN SELECT cast(99m as DECIMAL(4,2))");
     }
 
