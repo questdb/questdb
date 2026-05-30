@@ -436,6 +436,60 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTwapRejectsConvertingTimestampCast() throws Exception {
+        // ts is a microsecond timestamp, so ts::timestamp_ns is a *converting*
+        // cast: CastTimestampToTimestampFunctionFactory wraps the column in a
+        // Func that rescales micros to nanos. Unlike the identity ts::timestamp
+        // cast (see testTwapAcceptsDesignatedTimestampCast), ColumnFunction.unwrap
+        // cannot see the designated-timestamp column through that wrapper, so
+        // twap() rejects the argument as not being the designated timestamp.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertExceptionNoLeakCheck(
+                    "SELECT twap(price, ts::timestamp_ns) FROM tbl",
+                    7,
+                    "twap() requires the table's designated timestamp as the second argument",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testTwapRejectsDescendingScan() throws Exception {
+        // The aggregate appends rows in scan order using the timestamp as the
+        // sort key and treats each per-frame batch as already key-sorted. A
+        // backward scan delivers rows in reverse order within a page frame,
+        // breaking that invariant and producing wrong output silently. This is
+        // a distinct rejection path from the metadata-mismatch reorder tests:
+        // here the base reports SCAN_DIRECTION_BACKWARD while still carrying the
+        // designated timestamp, so the timestamp-argument check passes and only
+        // the scan-direction check fires.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, grp SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'a', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'a', '2024-01-01T01:00:00.000000Z')
+                    """);
+            // ORDER BY ts DESC inside the inner SELECT compiles to a backward
+            // page-frame scan when paired with LIMIT - the inner SELECT
+            // without LIMIT is dropped by the optimiser.
+            assertExceptionNoLeakCheck(
+                    "SELECT twap(price, ts) FROM (SELECT * FROM t ORDER BY ts DESC LIMIT 10)",
+                    7,
+                    "twap() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT grp, twap(price, ts) FROM (SELECT * FROM t ORDER BY ts DESC LIMIT 10) GROUP BY grp",
+                    12,
+                    "twap() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testTwapRejectsNonDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             // 'ts' is the designated timestamp; 'ts2' is an ordinary timestamp column.
