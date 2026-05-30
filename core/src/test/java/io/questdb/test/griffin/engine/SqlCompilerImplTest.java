@@ -121,42 +121,48 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             String booleanError = "boolean expression expected";
 
-            assertExceptionNoLeakCheck(
-                    "select * from a " +
-                            "join b on a.i - b.i", 30, booleanError
-            );
+            assertQuery("select * from a " +
+                            "join b on a.i - b.i")
+                    .noLeakCheck()
+                    .fails(30, booleanError);
 
-            assertExceptionNoLeakCheck(
-                    "select * from a " +
-                            "left join b on a.i - b.i", 35, booleanError
-            );
+            assertQuery("select * from a " +
+                            "left join b on a.i - b.i")
+                    .noLeakCheck()
+                    .fails(35, booleanError);
 
-            assertExceptionNoLeakCheck(
-                    "select * from a " +
-                            "join b on a.ts = b.ts and a.i - b.i", 46, booleanError
-            );
+            assertQuery("select * from a " +
+                            "join b on a.ts = b.ts and a.i - b.i")
+                    .noLeakCheck()
+                    .fails(46, booleanError);
 
-            assertExceptionNoLeakCheck(
-                    "select * from a " +
-                            "left join b on a.ts = b.ts and a.i - b.i", 51, booleanError
-            );
+            assertQuery("select * from a " +
+                            "left join b on a.ts = b.ts and a.i - b.i")
+                    .noLeakCheck()
+                    .fails(51, booleanError);
 
             for (String join : Arrays.asList("ASOF  ", "LT    ", "SPLICE")) {
-                assertExceptionNoLeakCheck(
-                        "select * " +
+                assertQuery("select * " +
                                 "from a " +
-                                "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join), 37, "unsupported " + join.trim() + " join expression"
-                );
+                                "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join))
+                        .noLeakCheck()
+                        .fails(37, "unsupported " + join.trim() + " join expression");
             }
 
             String unexpectedError = "expression type mismatch, expected: BOOLEAN, actual: INT";
             // position of the first + operator
-            assertExceptionNoLeakCheck("select * from a join b on a.i + b.i and a.i - b.i", 30, unexpectedError);
+            assertQuery("select * from a join b on a.i + b.i and a.i - b.i")
+                    .noLeakCheck()
+                    .fails(30, unexpectedError);
 
             // position of the first + operator
-            assertExceptionNoLeakCheck("select * from a left join b on a.i + b.i and a.i - b.i", 35, unexpectedError);
+            assertQuery("select * from a left join b on a.i + b.i and a.i - b.i")
+                    .noLeakCheck()
+                    .fails(35, unexpectedError);
 
-            assertExceptionNoLeakCheck("select * from a join b on a.ts = b.ts and a.i - b.i and b.i - a.i", 46, unexpectedError);
+            assertQuery("select * from a join b on a.ts = b.ts and a.i - b.i and b.i - a.i")
+                    .noLeakCheck()
+                    .fails(46, unexpectedError);
         });
     }
 
@@ -170,33 +176,61 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             for (String frameType : Arrays.asList("rows ", "range")) {
                 String queryPrefix = prefix + frameType;
 
-                assertExceptionNoLeakCheck(queryPrefix + " between preceding and current row)  from trips", 60, "frame bound value expected before 'preceding'");
+                assertQuery(queryPrefix + " between preceding and current row)  from trips")
+                        .noLeakCheck()
+                        .fails(60, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and preceding)  from trips", 77, "frame bound value expected before 'preceding'");
+                assertQuery(queryPrefix + " between 10 preceding and preceding)  from trips")
+                        .noLeakCheck()
+                        .fails(77, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and following)  from trips", 77, "frame bound value expected before 'following'");
+                assertQuery(queryPrefix + " between 10 preceding and following)  from trips")
+                        .noLeakCheck()
+                        .fails(77, "frame bound value expected before 'following'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " preceding)  from trips", 52, "frame bound value expected before 'preceding'");
+                assertQuery(queryPrefix + " preceding)  from trips")
+                        .noLeakCheck()
+                        .fails(52, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " following)  from trips", 52, "frame bound value expected before 'following'");
+                assertQuery(queryPrefix + " following)  from trips")
+                        .noLeakCheck()
+                        .fails(52, "frame bound value expected before 'following'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between)  from trips", 59, "'preceding' or 'following' expected");
+                assertQuery(queryPrefix + " between)  from trips")
+                        .noLeakCheck()
+                        .fails(59, "'preceding' or 'following' expected");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between '' preceding and current row)  from trips", 60, "integer expression expected");
+                assertQuery(queryPrefix + " between '' preceding and current row)  from trips")
+                        .noLeakCheck()
+                        .fails(60, "integer expression expected");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between null preceding and current row)  from trips", 60, "integer expression expected");
+                assertQuery(queryPrefix + " between null preceding and current row)  from trips")
+                        .noLeakCheck()
+                        .fails(60, "integer expression expected");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between #012 preceding and current row)  from trips", 60, "integer expression expected");
+                assertQuery(queryPrefix + " between #012 preceding and current row)  from trips")
+                        .noLeakCheck()
+                        .fails(60, "integer expression expected");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 30d preceding and current row)  from trips", 60, "integer expression expected");
+                assertQuery(queryPrefix + " between 30d preceding and current row)  from trips")
+                        .noLeakCheck()
+                        .fails(60, "integer expression expected");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 30 preceding and 10f preceding)  from trips", 77, "integer expression expected");
+                assertQuery(queryPrefix + " between 30 preceding and 10f preceding)  from trips")
+                        .noLeakCheck()
+                        .fails(77, "integer expression expected");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 30 preceding and 10.1f preceding)  from trips", 77, "integer expression expected");
+                assertQuery(queryPrefix + " between 30 preceding and 10.1f preceding)  from trips")
+                        .noLeakCheck()
+                        .fails(77, "integer expression expected");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 30 preceding and 10g preceding)  from trips", 77, "invalid constant");
+                assertQuery(queryPrefix + " between 30 preceding and 10g preceding)  from trips")
+                        .noLeakCheck()
+                        .fails(77, "invalid constant");
 
-                assertExceptionNoLeakCheck(queryPrefix + " 10.2f preceding)  from trips", 52, "integer expression expected");
+                assertQuery(queryPrefix + " 10.2f preceding)  from trips")
+                        .noLeakCheck()
+                        .fails(52, "integer expression expected");
             }
         });
     }
@@ -204,31 +238,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testAddColumnTypeInterval() throws Exception {
         execute("create table x (a varchar)");
-        assertException(
-                "alter table x add column b interval",
-                27,
-                "non-persisted type: interval"
-        );
+        assertQuery("alter table x add column b interval")
+                .fails(27, "non-persisted type: interval");
     }
 
     @Test
     public void testAlterColumnTypeToInterval() throws Exception {
         execute("create table x (a varchar)");
-        assertException(
-                "alter table x alter column a type interval",
-                34,
-                "non-persisted type: interval"
-        );
+        assertQuery("alter table x alter column a type interval")
+                .fails(34, "non-persisted type: interval");
     }
 
     @Test
     public void testAlterTableAddIndexBitmapIncludeFails() throws Exception {
         execute("create table t_idx (ts TIMESTAMP, sym SYMBOL, p DOUBLE) timestamp(ts) PARTITION BY DAY BYPASS WAL");
-        assertException(
-                "alter table t_idx alter column sym add index type bitmap include (p)",
-                57,
-                "INCLUDE is only supported for POSTING index type"
-        );
+        assertQuery("alter table t_idx alter column sym add index type bitmap include (p)")
+                .fails(57, "INCLUDE is only supported for POSTING index type");
     }
 
     @Test
@@ -284,31 +309,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testAlterTableAddColumnPostingCapacityFails() throws Exception {
         execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
-        assertException(
-                "alter table t_idx add column sym SYMBOL INDEX TYPE POSTING CAPACITY 256",
-                59,
-                "CAPACITY is only supported for BITMAP index type"
-        );
+        assertQuery("alter table t_idx add column sym SYMBOL INDEX TYPE POSTING CAPACITY 256")
+                .fails(59, "CAPACITY is only supported for BITMAP index type");
     }
 
     @Test
     public void testAlterTableAddColumnPostingDeltaCapacityFails() throws Exception {
         execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
-        assertException(
-                "alter table t_idx add column sym SYMBOL INDEX TYPE POSTING DELTA CAPACITY 256",
-                65,
-                "CAPACITY is only supported for BITMAP index type"
-        );
+        assertQuery("alter table t_idx add column sym SYMBOL INDEX TYPE POSTING DELTA CAPACITY 256")
+                .fails(65, "CAPACITY is only supported for BITMAP index type");
     }
 
     @Test
     public void testAlterTableAddColumnPostingEfCapacityFails() throws Exception {
         execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
-        assertException(
-                "alter table t_idx add column sym SYMBOL INDEX TYPE POSTING EF CAPACITY 256",
-                62,
-                "CAPACITY is only supported for BITMAP index type"
-        );
+        assertQuery("alter table t_idx add column sym SYMBOL INDEX TYPE POSTING EF CAPACITY 256")
+                .fails(62, "CAPACITY is only supported for BITMAP index type");
     }
 
     private void addColumnAndAssertType(String alterSql, String expectedIndexType) throws Exception {
@@ -323,11 +339,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testAlterTableAddIndexPostingCapacityFails() throws Exception {
         execute("create table t_idx (ts TIMESTAMP, sym SYMBOL, p DOUBLE) timestamp(ts) PARTITION BY DAY BYPASS WAL");
-        assertException(
-                "alter table t_idx alter column sym add index type posting capacity 256",
-                58,
-                "CAPACITY is only supported for BITMAP index type"
-        );
+        assertQuery("alter table t_idx alter column sym add index type posting capacity 256")
+                .fails(58, "CAPACITY is only supported for BITMAP index type");
     }
 
     @Test
@@ -2244,23 +2257,25 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCloseMissingArgRejected() throws Exception {
-        assertException("CLOSE", 5, "argument expected");
+        assertQuery("CLOSE")
+                .fails(5, "argument expected");
     }
 
     @Test
     public void testCloseSemicolonNotAcceptedAsArg() throws Exception {
-        assertException("CLOSE;", 5, "argument expected");
+        assertQuery("CLOSE;")
+                .fails(5, "argument expected");
     }
 
     @Test
     public void testColumnNameWithDot() throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck(
-                "create table x (" +
+        assertMemoryLeak(() -> assertQuery("create table x (" +
                         "t TIMESTAMP, " +
                         "`bool.flag` BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by MONTH", 29, "new column name contains invalid characters"
-        ));
+                        "partition by MONTH")
+        .noLeakCheck()
+        .fails(29, "new column name contains invalid characters"));
     }
 
     @Test
@@ -2309,11 +2324,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertSql("column\ntrue\n", "select cast(null as string) = null");
             assertSql("column\ntrue\n", "select cast(null as string) <= null");
             assertSql("column\ntrue\n", "select cast(null as string) >= null");
-            assertExceptionNoLeakCheck(
-                    "select datediff('ma', 0::timestamp, 1::timestamp) ",
-                    16,
-                    "argument type mismatch for function `datediff` at #1 expected: CHAR, actual: STRING"
-            );
+            assertQuery("select datediff('ma', 0::timestamp, 1::timestamp) ")
+                    .noLeakCheck()
+                    .fails(16, "argument type mismatch for function `datediff` at #1 expected: CHAR, actual: STRING");
         });
     }
 
@@ -2635,11 +2648,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertSql("column\ntrue\n", "select cast(null as string) = null");
             assertSql("column\ntrue\n", "select cast(null as string) <= null");
             assertSql("column\ntrue\n", "select cast(null as string) >= null");
-            assertExceptionNoLeakCheck(
-                    "select datediff('ma', 0::timestamp, 1::timestamp) ",
-                    16,
-                    "argument type mismatch for function `datediff` at #1 expected: CHAR, actual: STRING"
-            );
+            assertQuery("select datediff('ma', 0::timestamp, 1::timestamp) ")
+                    .noLeakCheck()
+                    .fails(16, "argument type mismatch for function `datediff` at #1 expected: CHAR, actual: STRING");
         });
     }
 
@@ -2781,27 +2792,32 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCompileSetDanglingComma() throws Exception {
-        assertException("SET x = y,", 10, "value expected");
+        assertQuery("SET x = y,")
+                .fails(10, "value expected");
     }
 
     @Test
     public void testCompileSetMissingName() throws Exception {
-        assertException("SET", 3, "parameter name expected");
+        assertQuery("SET")
+                .fails(3, "parameter name expected");
     }
 
     @Test
     public void testCompileSetMissingNameSemicolon() throws Exception {
-        assertException("SET;", 3, "parameter name expected");
+        assertQuery("SET;")
+                .fails(3, "parameter name expected");
     }
 
     @Test
     public void testCompileSetMissingOperator() throws Exception {
-        assertException("SET x", 5, "'=' or 'TO' expected");
+        assertQuery("SET x")
+                .fails(5, "'=' or 'TO' expected");
     }
 
     @Test
     public void testCompileSetMissingValue() throws Exception {
-        assertException("SET x =", 7, "value expected");
+        assertQuery("SET x =")
+                .fails(7, "value expected");
     }
 
     @Test
@@ -2894,12 +2910,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 " timestamp_sequence(400000000000, 500000000) ts" +
                 " from long_sequence(5)) timestamp(ts) partition by DAY";
 
-        assertException(
-                "alter table x convert partition to list '1970-01-01' to '1970-01-02'",
-                ddl,
-                35,
-                "'parquet' or 'native' expected"
-        );
+        assertQuery("alter table x convert partition to list '1970-01-01' to '1970-01-02'")
+                .ddl(ddl)
+                .fails(35, "'parquet' or 'native' expected");
     }
 
     @Test
@@ -2908,12 +2921,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 " timestamp_sequence(400000000000, 500000000) ts" +
                 " from long_sequence(5)) timestamp(ts) partition by DAY";
 
-        assertException(
-                "alter table x convert to parquet list '1970-01-01' to '1970-01-02'",
-                ddl,
-                22,
-                "'partition' expected"
-        );
+        assertQuery("alter table x convert to parquet list '1970-01-01' to '1970-01-02'")
+                .ddl(ddl)
+                .fails(22, "'partition' expected");
     }
 
     @Test
@@ -2922,12 +2932,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 " timestamp_sequence(400000000000, 500000000) ts" +
                 " from long_sequence(5)) timestamp(ts) partition by DAY";
 
-        assertException(
-                "alter table x convert partition list '1970-01-01' to '1970-01-02'",
-                ddl,
-                32,
-                "'to' expected"
-        );
+        assertQuery("alter table x convert partition list '1970-01-01' to '1970-01-02'")
+                .ddl(ddl)
+                .fails(32, "'to' expected");
     }
 
     @Test
@@ -3027,14 +3034,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectCharToGeoHash() throws Exception {
-        assertQuery(
-                "geohash\n",
-                "select geohash from geohash",
-                "create table geohash (geohash geohash(1c))",
-                null,
-                "insert into geohash " +
-                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
-                """
+        assertQuery("select geohash from geohash")
+                .ddl("create table geohash (geohash geohash(1c))")
+                .expectSize()
+                .mutateWith("insert into geohash " +
+                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)")
+                .returns("geohash\n", """
                         geohash
                         q
                         q
@@ -3046,45 +3051,33 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         u
                         q
                         u
-                        """,
-                true,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testCreateAsSelectCharToGeoShort() throws Exception {
-        assertException(
-                "insert into geohash " +
-                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)",
-                "create table geohash (geohash geohash(2c))",
-                27,
-                "inconvertible types: CHAR -> GEOHASH(2c) [from=cast, to=geohash]"
-        );
+        assertQuery("insert into geohash " +
+                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)")
+                .ddl("create table geohash (geohash geohash(2c))")
+                .fails(27, "inconvertible types: CHAR -> GEOHASH(2c) [from=cast, to=geohash]");
     }
 
     @Test
     public void testCreateAsSelectCharToGeoWiderByte() throws Exception {
-        assertException(
-                "insert into geohash " +
-                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)",
-                "create table geohash (geohash geohash(6b))",
-                27,
-                "inconvertible types: CHAR -> GEOHASH(6b) [from=cast, to=geohash]"
-        );
+        assertQuery("insert into geohash " +
+                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)")
+                .ddl("create table geohash (geohash geohash(6b))")
+                .fails(27, "inconvertible types: CHAR -> GEOHASH(6b) [from=cast, to=geohash]");
     }
 
     @Test
     public void testCreateAsSelectCharToNarrowGeoByte() throws Exception {
-        assertQuery(
-                "geohash\n",
-                "select geohash from geohash",
-                "create table geohash (geohash geohash(4b))",
-                null,
-                "insert into geohash " +
-                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
-                """
+        assertQuery("select geohash from geohash")
+                .ddl("create table geohash (geohash geohash(4b))")
+                .expectSize()
+                .mutateWith("insert into geohash " +
+                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)")
+                .returns("geohash\n", """
                         geohash
                         1011
                         1011
@@ -3096,11 +3089,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         1101
                         1011
                         1101
-                        """,
-                true,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -3144,14 +3133,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectGeoHashBitsLiteralTooManyBits() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    "geohash\n",
-                    "select geohash from geohash",
-                    "create table geohash (geohash geohash(6b))",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select geohash from geohash")
+                    .ddl("create table geohash (geohash geohash(6b))")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("geohash\n");
             try {
                 execute("insert into geohash values(##1000111000111000111000111000111000111000111000110000110100101)");
                 Assert.fail();
@@ -3165,14 +3151,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectGeoHashBitsLiteralTooManyChars() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    "geohash\n",
-                    "select geohash from geohash",
-                    "create table geohash (geohash geohash(6b))",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select geohash from geohash")
+                    .ddl("create table geohash (geohash geohash(6b))")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("geohash\n");
             try {
                 execute("insert into geohash values(##sp052w92p1p82)");
                 Assert.fail();
@@ -3210,14 +3193,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectGeoHashByteSizedStorage5() throws Exception {
-        assertQuery(
-                "geohash\n",
-                "select geohash from geohash",
-                "create table geohash (geohash geohash(1c))",
-                null,
-                "insert into geohash " +
-                        "select rnd_str('q','u','e') from long_sequence(10)",
-                """
+        assertQuery("select geohash from geohash")
+                .ddl("create table geohash (geohash geohash(1c))")
+                .expectSize()
+                .mutateWith("insert into geohash " +
+                        "select rnd_str('q','u','e') from long_sequence(10)")
+                .returns("geohash\n", """
                         geohash
                         q
                         q
@@ -3229,24 +3210,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         u
                         q
                         u
-                        """,
-                true,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testCreateAsSelectGeoHashCharsLiteralNotChars() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    "geohash\n",
-                    "select geohash from geohash",
-                    "create table geohash (geohash geohash(5b))",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select geohash from geohash")
+                    .ddl("create table geohash (geohash geohash(5b))")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("geohash\n");
             try {
                 execute("insert into geohash values(#sp@in)");
                 Assert.fail();
@@ -3260,14 +3234,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectGeoHashCharsLiteralTooFewChars() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    "geohash\n",
-                    "select geohash from geohash",
-                    "create table geohash (geohash geohash(11b))",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select geohash from geohash")
+                    .ddl("create table geohash (geohash geohash(11b))")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("geohash\n");
             try {
                 execute("insert into geohash values(#sp)");
                 Assert.fail();
@@ -3281,14 +3252,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectGeoHashCharsLiteralTooManyChars() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    "geohash\n",
-                    "select geohash from geohash",
-                    "create table geohash (geohash geohash(12c))",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select geohash from geohash")
+                    .ddl("create table geohash (geohash geohash(12c))")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("geohash\n");
             try {
                 execute("insert into geohash values(#sp052w92p1p8889)");
                 Assert.fail();
@@ -3302,14 +3270,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectGeoHashCharsLiteralTruncating() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    "geohash\n",
-                    "select geohash from geohash",
-                    "create table geohash (geohash geohash(6c))",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select geohash from geohash")
+                    .ddl("create table geohash (geohash geohash(6c))")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("geohash\n");
             execute("insert into geohash values(#sp052w92p18)");
             assertSql(
                     """
@@ -3324,19 +3289,43 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectGeoHashCharsLiteralWithWrongBits() throws Exception {
         assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck("select #sp052w92p1p87", 7, "invalid constant: #sp052w92p1p87");
-            assertExceptionNoLeakCheck("select #sp052w92p1p8/", 20, "missing bits size for GEOHASH constant");
-            assertExceptionNoLeakCheck("select #sp052w92p1p8/ R", 22, "missing bits size for GEOHASH constant");
-            assertExceptionNoLeakCheck("select #sp052w92p1p8/0R", 21, "missing bits size for GEOHASH constant");
-            assertExceptionNoLeakCheck("select #sp052w92p1p8/t", 21, "missing bits size for GEOHASH constant");
-            assertExceptionNoLeakCheck("select #sp052w92p1p8/-1", 21, "missing bits size for GEOHASH constant");
-            assertExceptionNoLeakCheck("select #sp052w92p1p8/ 61", 7, "invalid bits size for GEOHASH constant");
-            assertExceptionNoLeakCheck("select #sp052w92p1p8/ 011", 7, "invalid constant: #sp052w92p1p8/011");
-            assertExceptionNoLeakCheck("select #sp052w92p1p8/045", 7, "invalid constant: #sp052w92p1p8/045");
+            assertQuery("select #sp052w92p1p87")
+                    .noLeakCheck()
+                    .fails(7, "invalid constant: #sp052w92p1p87");
+            assertQuery("select #sp052w92p1p8/")
+                    .noLeakCheck()
+                    .fails(20, "missing bits size for GEOHASH constant");
+            assertQuery("select #sp052w92p1p8/ R")
+                    .noLeakCheck()
+                    .fails(22, "missing bits size for GEOHASH constant");
+            assertQuery("select #sp052w92p1p8/0R")
+                    .noLeakCheck()
+                    .fails(21, "missing bits size for GEOHASH constant");
+            assertQuery("select #sp052w92p1p8/t")
+                    .noLeakCheck()
+                    .fails(21, "missing bits size for GEOHASH constant");
+            assertQuery("select #sp052w92p1p8/-1")
+                    .noLeakCheck()
+                    .fails(21, "missing bits size for GEOHASH constant");
+            assertQuery("select #sp052w92p1p8/ 61")
+                    .noLeakCheck()
+                    .fails(7, "invalid bits size for GEOHASH constant");
+            assertQuery("select #sp052w92p1p8/ 011")
+                    .noLeakCheck()
+                    .fails(7, "invalid constant: #sp052w92p1p8/011");
+            assertQuery("select #sp052w92p1p8/045")
+                    .noLeakCheck()
+                    .fails(7, "invalid constant: #sp052w92p1p8/045");
             // lacks precision
-            assertExceptionNoLeakCheck("select #sp/15", 7, "invalid constant: #sp/15");
-            assertExceptionNoLeakCheck("select #/0", 7, "invalid bits size for GEOHASH constant: #/0");
-            assertExceptionNoLeakCheck("select #sp052w92p18/0", 7, "invalid bits size for GEOHASH constant");
+            assertQuery("select #sp/15")
+                    .noLeakCheck()
+                    .fails(7, "invalid constant: #sp/15");
+            assertQuery("select #/0")
+                    .noLeakCheck()
+                    .fails(7, "invalid bits size for GEOHASH constant: #/0");
+            assertQuery("select #sp052w92p18/0")
+                    .noLeakCheck()
+                    .fails(7, "invalid bits size for GEOHASH constant");
         });
     }
 
@@ -3466,14 +3455,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testCreateAsSelectInVolumeFail() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQueryNoLeakCheck(
-                        "geohash\n",
-                        "select geohash from geohash",
-                        "create table geohash (geohash geohash(1c)) in volume 'niza'",
-                        null,
-                        "insert into geohash " +
-                                "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
-                        """
+                assertQuery("select geohash from geohash")
+                        .ddl("create table geohash (geohash geohash(1c)) in volume 'niza'")
+                        .expectSize()
+                        .noLeakCheck()
+                        .mutateWith("insert into geohash " +
+                                "select cast(rnd_str('q','u','e') as char) from long_sequence(10)")
+                        .returns("geohash\n", """
                                 geohash
                                 q
                                 q
@@ -3485,11 +3473,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                 u
                                 q
                                 u
-                                """,
-                        true,
-                        true,
-                        false
-                );
+                                """);
                 Assert.fail();
             } catch (SqlException e) {
                 if (Os.isWindows()) {
@@ -3537,9 +3521,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             };
             try {
                 configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
-                assertQuery(
-                        "geohash\n", "select geohash from " + tableName, "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into " + tableName +
-                                " select cast(rnd_str('q','u','e') as char) from long_sequence(10)", """
+                assertQuery("select geohash from " + tableName)
+                        .ddl("create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'")
+                        .expectSize()
+                        .mutateWith("insert into " + tableName +
+                                " select cast(rnd_str('q','u','e') as char) from long_sequence(10)")
+                        .returns("geohash\n", """
                                 geohash
                                 q
                                 q
@@ -3551,8 +3538,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                 u
                                 q
                                 u
-                                """, true, true, false
-                );
+                                """);
                 Assert.fail();
             } catch (SqlException e) {
                 if (Os.isWindows()) {
@@ -3579,9 +3565,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             try {
                 configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
                 Assert.assertTrue(volume.delete());
-                assertQuery(
-                        "geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into geohash " +
-                                "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", """
+                assertQuery("select geohash from geohash")
+                        .ddl("create table geohash (geohash geohash(1c)) in volume '" + volumeAlias + "'")
+                        .expectSize()
+                        .mutateWith("insert into geohash " +
+                                "select cast(rnd_str('q','u','e') as char) from long_sequence(10)")
+                        .returns("geohash\n", """
                                 geohash
                                 q
                                 q
@@ -3593,8 +3582,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                 u
                                 q
                                 u
-                                """, true, true, false
-                );
+                                """);
                 Assert.fail();
             } catch (SqlException | CairoException e) {
                 if (Os.isWindows()) {
@@ -3610,11 +3598,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectInvalidTimestamp() throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck(
-                "create table y as (" +
+        assertMemoryLeak(() -> assertQuery("create table y as (" +
                         "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
-                        ")  timestamp(a) partition by DAY", 97, "TIMESTAMP column expected"
-        ));
+                        ")  timestamp(a) partition by DAY")
+        .noLeakCheck()
+        .fails(97, "TIMESTAMP column expected"));
     }
 
     @Test
@@ -4008,11 +3996,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableWithInterval() throws Exception {
-        assertException(
-                "create table x (a varchar, b interval)",
-                29,
-                "non-persisted type: interval"
-        );
+        assertQuery("create table x (a varchar, b interval)")
+                .fails(29, "non-persisted type: interval");
     }
 
     @Test
@@ -4045,62 +4030,48 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCursorFunctionCannotBeUsedAsColumn() throws Exception {
-        assertExceptionNoLeakCheck(
-                "select query_activity() from long_sequence(100L);",
-                7,
-                "cursor function cannot be used as a column [column=query_activity]"
-        );
+        assertQuery("select query_activity() from long_sequence(100L);")
+                .noLeakCheck()
+                .fails(7, "cursor function cannot be used as a column [column=query_activity]");
 
-        assertExceptionNoLeakCheck(
-                """
+        assertQuery("""
                         select 1 from long_sequence(1)
                         UNION ALL
-                        select query_activity() from long_sequence(100L);""",
-                48,
-                "cursor function cannot be used as a column [column=query_activity]"
-        );
+                        select query_activity() from long_sequence(100L);""")
+                .noLeakCheck()
+                .fails(48, "cursor function cannot be used as a column [column=query_activity]");
 
-        assertExceptionNoLeakCheck(
-                """
+        assertQuery("""
                         with q as (
                           select query_activity() a, 1 as n from long_sequence(1)
                         )
-                        select a, n from q;""",
-                21,
-                "cursor function cannot be used as a column [column=a]"
-        );
+                        select a, n from q;""")
+                .noLeakCheck()
+                .fails(21, "cursor function cannot be used as a column [column=a]");
 
-        assertExceptionNoLeakCheck(
-                """
+        assertQuery("""
                         with q as (
                           select query_activity() a, 1L as n from long_sequence(1)
                         )
                         select q.a from long_sequence(10) ls\s
-                        inner join q on ls.x = q.n;""",
-                21,
-                "cursor function cannot be used as a column [column=a]"
-        );
+                        inner join q on ls.x = q.n;""")
+                .noLeakCheck()
+                .fails(21, "cursor function cannot be used as a column [column=a]");
 
-        assertExceptionNoLeakCheck(
-                """
+        assertQuery("""
                         with q as (
                           select query_activity() a, 1L as n from long_sequence(1)
                         )
                         select q.* from long_sequence(10) ls\s
-                        inner join q on ls.x = q.n;""",
-                21,
-                "cursor function cannot be used as a column [column=a]"
-        );
+                        inner join q on ls.x = q.n;""")
+                .noLeakCheck()
+                .fails(21, "cursor function cannot be used as a column [column=a]");
     }
 
     @Test
     public void testCursorFunctionCannotBeUsedAsColumnFreesParsedFunction() throws Exception {
-        assertException(
-                "SELECT pg_attrdef() AS c FROM long_sequence(1)",
-                7,
-                "cursor function cannot be used as a column [column=c]",
-                sqlExecutionContext
-        );
+        assertQuery("SELECT pg_attrdef() AS c FROM long_sequence(1)")
+                .fails(7, "cursor function cannot be used as a column [column=c]");
     }
 
     @Test
@@ -4139,18 +4110,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """
             );
 
-            assertExceptionNoLeakCheck("select x1 as a, a as a from t", 18, "Duplicate column [name=a]");
+            assertQuery("select x1 as a, a as a from t")
+                    .noLeakCheck()
+                    .fails(18, "Duplicate column [name=a]");
         });
     }
 
     @Test
     public void testDiscardMissingArgRejected() throws Exception {
-        assertException("DISCARD", 7, "argument expected");
+        assertQuery("DISCARD")
+                .fails(7, "argument expected");
     }
 
     @Test
     public void testDiscardSemicolonNotAcceptedAsArg() throws Exception {
-        assertException("DISCARD;", 7, "argument expected");
+        assertQuery("DISCARD;")
+                .fails(7, "argument expected");
     }
 
     @Test
@@ -4165,8 +4140,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """
             );
 
-            assertExceptionNoLeakCheck("select distinct x1 as a, a from tab", 25, "Invalid column: a");
-            assertExceptionNoLeakCheck("select distinct x1 - 1 as a, a + 1 from tab", 29, "Invalid column: a");
+            assertQuery("select distinct x1 as a, a from tab")
+                    .noLeakCheck()
+                    .fails(25, "Invalid column: a");
+            assertQuery("select distinct x1 - 1 as a, a + 1 from tab")
+                    .noLeakCheck()
+                    .fails(29, "Invalid column: a");
         });
     }
 
@@ -4184,13 +4163,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             );
             engine.releaseAllWriters();
 
-            assertExceptionNoLeakCheck(
-                    "create table x (" +
+            assertQuery("create table x (" +
                             "t TIMESTAMP, " +
                             "y BOOLEAN) " +
                             "timestamp(t) " +
-                            "partition by MONTH", 13, "table already exists"
-            );
+                            "partition by MONTH")
+                    .noLeakCheck()
+                    .fails(13, "table already exists");
         });
     }
 
@@ -4278,7 +4257,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testExecuteQuery() throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck("select * from (select rnd_int() x from long_sequence(20)) timestamp(x)", 68, "not a TIMESTAMP"));
+        assertMemoryLeak(() -> assertQuery("select * from (select rnd_int() x from long_sequence(20)) timestamp(x)")
+        .noLeakCheck()
+        .fails(68, "not a TIMESTAMP"));
     }
 
     @Test
@@ -4298,11 +4279,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test(time TIMESTAMP, symbol STRING);");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)",
-                    97,
-                    "there is no matching function `SUM` with the argument types: (INT, INT)"
-            );
+            assertQuery("SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)")
+                    .noLeakCheck()
+                    .fails(97, "there is no matching function `SUM` with the argument types: (INT, INT)");
         });
     }
 
@@ -4311,8 +4290,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab ( ts timestamp)");
 
-            assertExceptionNoLeakCheck("SELECT * FROM tab WHERE SUM(\"\", \"\")", 32, "Invalid column: ");
-            assertExceptionNoLeakCheck("SELECT * FROM tab WHERE SUM(\"\", \"ts\")", 28, "Invalid column: ");
+            assertQuery("SELECT * FROM tab WHERE SUM(\"\", \"\")")
+                    .noLeakCheck()
+                    .fails(32, "Invalid column: ");
+            assertQuery("SELECT * FROM tab WHERE SUM(\"\", \"ts\")")
+                    .noLeakCheck()
+                    .fails(28, "Invalid column: ");
         });
     }
 
@@ -4321,11 +4304,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab(event short);");
 
-            assertExceptionNoLeakCheck("SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ) ", 54, "too few arguments for 'in' [found=1,expected=2]");
-            assertExceptionNoLeakCheck("SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ())", 54, "too few arguments for 'in'");
-            assertExceptionNoLeakCheck("SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ()", 54, "too few arguments for 'in'");
-            assertExceptionNoLeakCheck("SELECT event IN () FROM tab", 13, "too few arguments for 'in'");
-            assertExceptionNoLeakCheck("SELECT COUNT(*) FROM tab a join tab b on a.event > (b.event IN ())", 60, "too few arguments for 'in'");
+            assertQuery("SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ) ")
+                    .noLeakCheck()
+                    .fails(54, "too few arguments for 'in' [found=1,expected=2]");
+            assertQuery("SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ())")
+                    .noLeakCheck()
+                    .fails(54, "too few arguments for 'in'");
+            assertQuery("SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ()")
+                    .noLeakCheck()
+                    .fails(54, "too few arguments for 'in'");
+            assertQuery("SELECT event IN () FROM tab")
+                    .noLeakCheck()
+                    .fails(13, "too few arguments for 'in'");
+            assertQuery("SELECT COUNT(*) FROM tab a join tab b on a.event > (b.event IN ())")
+                    .noLeakCheck()
+                    .fails(60, "too few arguments for 'in'");
         });
     }
 
@@ -4382,16 +4375,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             count
                             2
-                            """,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4491,16 +4482,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testGetCurrentUser() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select current_user()")
+                .expectSize()
+                .returns("""
                         current_user
                         admin
-                        """,
-                "select current_user()",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -4595,7 +4582,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testInLongTypeMismatch() throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck("select 1 from long_sequence(1) where x in (123.456)", 43, "cannot compare LONG with type DOUBLE"));
+        assertMemoryLeak(() -> assertQuery("select 1 from long_sequence(1) where x in (123.456)")
+        .noLeakCheck()
+        .fails(43, "cannot compare LONG with type DOUBLE"));
     }
 
     @Test
@@ -5199,7 +5188,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             engine.releaseAllWriters();
 
-            assertExceptionNoLeakCheck("insert into tab ( x, 'X', ts ) values ( 7, 10, 11 )", 21, "Duplicate column [name=X]");
+            assertQuery("insert into tab ( x, 'X', ts ) values ( 7, 10, 11 )")
+                    .noLeakCheck()
+                    .fails(21, "Duplicate column [name=X]");
         });
     }
 
@@ -5215,7 +5206,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             engine.releaseAllWriters();
 
-            assertExceptionNoLeakCheck("insert into tabula ( 龜, '龜', ts ) values ( 7, 10, 11 )", 24, "Duplicate column [name=龜]");
+            assertQuery("insert into tabula ( 龜, '龜', ts ) values ( 7, 10, 11 )")
+                    .noLeakCheck()
+                    .fails(24, "Duplicate column [name=龜]");
         });
     }
 
@@ -5509,14 +5502,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertGeoHashBitsLiteralNotBits() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    "geohash\n",
-                    "select geohash from geohash",
-                    "create table geohash (geohash geohash(5b))",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select geohash from geohash")
+                    .ddl("create table geohash (geohash geohash(5b))")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("geohash\n");
             try {
                 execute("insert into geohash values(##11211)");
                 Assert.fail();
@@ -5530,14 +5520,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertGeoHashBitsLiteralTooFewBits() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    "geohash\n",
-                    "select geohash from geohash",
-                    "create table geohash (geohash geohash(6b))",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select geohash from geohash")
+                    .ddl("create table geohash (geohash geohash(6b))")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("geohash\n");
             try {
                 execute("insert into geohash values(##10001)");
                 Assert.fail();
@@ -5682,25 +5669,19 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testInsertLong256() throws Exception {
-        assertQuery(
-                "long256\n",
-                "long256",
-                "create table long256 (long256 long256)",
-                null,
-                "insert into long256 values" +
+        assertQuery("long256")
+                .ddl("create table long256 (long256 long256)")
+                .expectSize()
+                .mutateWith("insert into long256 values" +
                         "('0x6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3a')," +
                         "('0X6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3b')," +
-                        "('6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3c')",
-                """
+                        "('6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3c')")
+                .returns("long256\n", """
                         long256
                         0x6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3a
                         0x6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3b
                         0x6bbf0c833a5448baa23a0366d85079afc390e9837e67ac3f653076982d02dd3c
-                        """,
-                true,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -5986,16 +5967,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             count
                             0
-                            """,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6029,153 +6008,128 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query1)
+                    .timestamp("created")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             created
                             1970-01-01T00:00:00.000002Z
-                            """,
-                    query1,
-                    "created",
-                    false,
-                    false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            created\tvalue\tcreated1\tvalue1
-                            1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000001Z\t1
-                            1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2
-                            """,
-                    "SELECT * FROM " +
+            assertQuery("SELECT * FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT -1) as T1 " +
                             "LEFT OUTER JOIN tab as T2 ON T1.value::string ~ '[0-9]'  " +
-                            "WHERE T2.created is null or T2.created::long > 0",
-                    "created",
-                    false,
-                    false
-            );
+                            "WHERE T2.created is null or T2.created::long > 0")
+                    .timestamp("created")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            created\tvalue\tcreated1\tvalue1
+                            1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000001Z\t1
+                            1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            value\tvalue1\tvalue2
-                            0\t1\t2
-                            0\t2\tnull
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT 1) as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created<T2.created " +
                             "LEFT JOIN tab as T3 ON T2.created<T3.created " +
-                            "WHERE T2.created::long > 0",
-                    null,
-                    false,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            "WHERE T2.created::long > 0")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             value\tvalue1\tvalue2
-                            0\t1\t1
-                            0\t2\t2
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            0\t1\t2
+                            0\t2\tnull
+                            """);
+
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT 1) as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created<T2.created " +
-                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T2.value - T3.value = 0",
-                    null,
-                    false,
-                    false
-            );
+                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T2.value - T3.value = 0")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            value\tvalue1\tvalue2
+                            0\t1\t1
+                            0\t2\t2
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T2.value = 2 ")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             value\tvalue1\tvalue2
                             0\t1\tnull
                             0\t2\t2
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            """);
+
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT 1) as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created<T2.created " +
-                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T2.value = 2 ",
-                    null,
-                    false,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T3.value = 1 ")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             value\tvalue1\tvalue2
                             0\t1\t1
                             0\t2\tnull
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            """);
+
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT 1) as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created<T2.created " +
-                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T3.value = 1 ",
-                    null,
-                    false,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T1.value = 0 ")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             value\tvalue1\tvalue2
                             0\t1\t1
                             0\t2\t2
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            """);
+
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT 1) as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created<T2.created " +
-                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T1.value = 0 ",
-                    null,
-                    false,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            "LEFT JOIN tab as T3 ON T2.created=T3.created and 1=1 ")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             value\tvalue1\tvalue2
                             0\t1\t1
                             0\t2\t2
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            """);
+
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT 1) as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created<T2.created " +
-                            "LEFT JOIN tab as T3 ON T2.created=T3.created and 1=1 ",
-                    null,
-                    false,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T1.created = T1.created ")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             value\tvalue1\tvalue2
                             0\t1\t1
                             0\t2\t2
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
-                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T1.created = T1.created ",
-                    null,
-                    false,
-                    false
-            );
+                            """);
 
             String query3 = "SELECT T1.value, T2.value, T3.value, T4.value " +
                     "FROM (SELECT *  FROM tab limit 2) as T1 " +
@@ -6214,27 +6168,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query3)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             value\tvalue1\tvalue2\tvalue3
                             0\t2\t2\tnull
                             1\t2\t2\tnull
-                            """,
-                    query3,
-                    null,
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
     @Test
     public void testListEmptyArgs() throws Exception {
-        assertException(
-                "select list() from long_sequence(1)",
-                7,
-                "no arguments provided"
-        );
+        assertQuery("select list() from long_sequence(1)")
+                .fails(7, "no arguments provided");
     }
 
     @Test
@@ -6243,44 +6191,42 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("create table tab ( created timestamp, value long ) timestamp(created) ");
             execute("insert into tab values (0, 0), (1, 1)");
 
-            assertQueryNoLeakCheck(
-                    """
-                            count
-                            1
-                            """,
-                    "SELECT " +
+            assertQuery("SELECT " +
                             "  count(*) " +
                             "FROM " +
                             "  tab as T1 " +
                             "  JOIN tab as T2 ON T1.created < T2.created " +
-                            "  JOIN tab as T3 ON T2.created = T3.created",
-                    null,
-                    false,
-                    true
-            );
+                            "  JOIN tab as T3 ON T2.created = T3.created")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            count
+                            1
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            count
-                            1
-                            """,
-                    "SELECT " +
+            assertQuery("SELECT " +
                             "  count(*) " +
                             "FROM " +
                             "  tab as T1 " +
                             "  JOIN tab as T2 ON T1.created < T2.created " +
-                            "  JOIN tab as T3 ON T2.value = T3.value",
-                    null,
-                    false,
-                    true
-            );
+                            "  JOIN tab as T3 ON T2.value = T3.value")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            count
+                            1
+                            """);
         });
     }
 
     @Test
     public void testOrderByDouble() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x order by d desc")
+                .ddl("create table x as (select (6-x)::double d from long_sequence(5) union all select null)")
+                .expectSize()
+                .returns("""
                         d
                         null
                         5.0
@@ -6288,27 +6234,27 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         3.0
                         2.0
                         1.0
-                        """,
-                "select * from x order by d desc",
-                "create table x as (select (6-x)::double d from long_sequence(5) union all select null)",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testOrderByEmptyIdentifier() throws Exception {
         assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck("select 1 from long_sequence(1) order by ''", 40, "non-empty literal or expression expected");
-            assertExceptionNoLeakCheck("select 1 from long_sequence(1) order by \"\"", 40, "non-empty literal or expression expected");
+            assertQuery("select 1 from long_sequence(1) order by ''")
+                    .noLeakCheck()
+                    .fails(40, "non-empty literal or expression expected");
+            assertQuery("select 1 from long_sequence(1) order by \"\"")
+                    .noLeakCheck()
+                    .fails(40, "non-empty literal or expression expected");
         });
     }
 
     @Test
     public void testOrderByFloat() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x order by f desc")
+                .ddl("create table x as (select (6-x)::float f from long_sequence(5) union all select null::float)")
+                .expectSize()
+                .returns("""
                         f
                         null
                         5.0
@@ -6316,13 +6262,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         3.0
                         2.0
                         1.0
-                        """,
-                "select * from x order by f desc",
-                "create table x as (select (6-x)::float f from long_sequence(5) union all select null::float)",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -6337,25 +6277,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             " FROM long_sequence(1000)" +
                             ")", sqlExecutionContext
             );
-            assertQueryNoLeakCheck(
-                    """
-                            sym\tavg_angle_rad\tSUM(sine)
-                            A\t-1.95703125\t168.46508050039918
-                            B\t11.255060728744938\t183.76121842808922
-                            C\t-0.888030888030888\t164.8875613340687
-                            """,
-                    "SELECT" +
+            assertQuery("SELECT" +
                             "    sym AS 'sym'," +
                             "    avg(angle_rad) AS avg_angle_rad," +
                             "    sum(sine) AS 'SUM(sine)' " +
                             "FROM trigonometry " +
                             "GROUP BY sym " +
                             "ORDER BY 'prefix' || sym, \"SUM(sine)\" DESC " +
-                            "LIMIT 1000",
-                    null,
-                    true,
-                    true
-            );
+                            "LIMIT 1000")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            sym\tavg_angle_rad\tSUM(sine)
+                            A\t-1.95703125\t168.46508050039918
+                            B\t11.255060728744938\t183.76121842808922
+                            C\t-0.888030888030888\t164.8875613340687
+                            """);
         });
     }
 
@@ -6371,25 +6308,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             " FROM long_sequence(1000)" +
                             ")", sqlExecutionContext
             );
-            assertQueryNoLeakCheck(
-                    """
-                            sym\tavg_angle_rad\tSUM(sine)
-                            A\t-1.95703125\t168.46508050039918
-                            B\t11.255060728744938\t183.76121842808922
-                            C\t-0.888030888030888\t164.8875613340687
-                            """,
-                    "SELECT" +
+            assertQuery("SELECT" +
                             "    sym AS 'sym'," +
                             "    avg(angle_rad) AS avg_angle_rad," +
                             "    sum(sine) AS \"SUM(sine)\" " +
                             "FROM trigonometry " +
                             "GROUP BY sym " +
                             "ORDER BY 'prefix' || sym, \"SUM(sine)\" DESC " +
-                            "LIMIT 1000",
-                    null,
-                    true,
-                    true
-            );
+                            "LIMIT 1000")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            sym\tavg_angle_rad\tSUM(sine)
+                            A\t-1.95703125\t168.46508050039918
+                            B\t11.255060728744938\t183.76121842808922
+                            C\t-0.888030888030888\t164.8875613340687
+                            """);
         });
     }
 
@@ -6562,55 +6496,41 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testReindexSyntaxError() throws Exception {
         assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck(
-                    "REINDEX TABLE xxx",
-                    "create table xxx as (" +
+            assertQuery("REINDEX TABLE xxx")
+                    .ddl("create table xxx as (" +
                             "select " +
                             "rnd_symbol('A', 'B', 'C') as sym1," +
                             "rnd_symbol(4,4,4,2) as sym2," +
                             "x," +
                             "timestamp_sequence(0, 100000000) ts " +
                             "from long_sequence(10000)" +
-                            "), index(sym1), index(sym2)",
-                    "REINDEX TABLE xxx".length(),
-                    "LOCK EXCLUSIVE expected"
-            );
+                            "), index(sym1), index(sym2)")
+                    .noLeakCheck()
+                    .fails("REINDEX TABLE xxx".length(), "LOCK EXCLUSIVE expected");
 
-            assertExceptionNoLeakCheck(
-                    "REINDEX TABLE xxx COLUMN sym2",
-                    "REINDEX TABLE xxx COLUMN sym2".length(),
-                    "LOCK EXCLUSIVE expected"
-            );
+            assertQuery("REINDEX TABLE xxx COLUMN sym2")
+                    .noLeakCheck()
+                    .fails("REINDEX TABLE xxx COLUMN sym2".length(), "LOCK EXCLUSIVE expected");
 
-            assertExceptionNoLeakCheck(
-                    "REINDEX TABLE xxx LOCK",
-                    "REINDEX TABLE xxx LOCK".length(),
-                    "LOCK EXCLUSIVE expected"
-            );
+            assertQuery("REINDEX TABLE xxx LOCK")
+                    .noLeakCheck()
+                    .fails("REINDEX TABLE xxx LOCK".length(), "LOCK EXCLUSIVE expected");
 
-            assertExceptionNoLeakCheck(
-                    "REINDEX TABLE xxx PARTITION '1234''",
-                    "REINDEX TABLE xxx PARTITION '1234''".length(),
-                    "LOCK EXCLUSIVE expected"
-            );
+            assertQuery("REINDEX TABLE xxx PARTITION '1234''")
+                    .noLeakCheck()
+                    .fails("REINDEX TABLE xxx PARTITION '1234''".length(), "LOCK EXCLUSIVE expected");
 
-            assertExceptionNoLeakCheck(
-                    "REINDEX xxx PARTITION '1234''",
-                    "REINDEX ".length(),
-                    "TABLE expected"
-            );
+            assertQuery("REINDEX xxx PARTITION '1234''")
+                    .noLeakCheck()
+                    .fails("REINDEX ".length(), "TABLE expected");
 
-            assertExceptionNoLeakCheck(
-                    "REINDEX TABLE ",
-                    "REINDEX TABLE ".length(),
-                    "table name expected"
-            );
+            assertQuery("REINDEX TABLE ")
+                    .noLeakCheck()
+                    .fails("REINDEX TABLE ".length(), "table name expected");
 
-            assertExceptionNoLeakCheck(
-                    "REINDEX TABLE xxx COLUMN \"sym1\" lock exclusive twice",
-                    "REINDEX TABLE xxx COLUMN \"sym1\" lock exclusive twice".length(),
-                    "EOF expecte"
-            );
+            assertQuery("REINDEX TABLE xxx COLUMN \"sym1\" lock exclusive twice")
+                    .noLeakCheck()
+                    .fails("REINDEX TABLE xxx COLUMN \"sym1\" lock exclusive twice".length(), "EOF expecte");
         });
     }
 
@@ -6692,12 +6612,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testResetMissingArgRejected() throws Exception {
-        assertException("RESET", 5, "argument expected");
+        assertQuery("RESET")
+                .fails(5, "argument expected");
     }
 
     @Test
     public void testResetSemicolonNotAcceptedAsArg() throws Exception {
-        assertException("RESET;", 5, "argument expected");
+        assertQuery("RESET;")
+                .fails(5, "argument expected");
     }
 
     @Test
@@ -6737,16 +6659,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             count
                             2
-                            """,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6780,161 +6700,134 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query1)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             created
                             
                             
-                            """,
-                    query1,
-                    null,
-                    false,
-                    false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            created\tvalue\tcreated1\tvalue1
-                            1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000001Z\t1
-                            1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2
-                            """,
-                    "SELECT * FROM " +
+            assertQuery("SELECT * FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT -1) as T1 " +
                             "RIGHT OUTER JOIN tab as T2 ON T1.value::string ~ '[0-9]'  " +
-                            "WHERE T2.created is null or T2.created::long > 0",
-                    null,
-                    false,
-                    false
-            );
+                            "WHERE T2.created is null or T2.created::long > 0")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            created\tvalue\tcreated1\tvalue1
+                            1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000001Z\t1
+                            1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            value\tvalue1\tvalue2
-                            null\tnull\t0
-                            null\tnull\t1
-                            0\t1\t2
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT 1) as T1 " +
                             "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
                             "RIGHT JOIN tab as T3 ON T2.created<T3.created " +
-                            "WHERE T2.created::long > 0",
-                    null,
-                    false,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            "WHERE T2.created::long > 0")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             value\tvalue1\tvalue2
-                            null\t0\t0
-                            0\t1\t1
-                            0\t2\t2
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            null\tnull\t0
+                            null\tnull\t1
+                            0\t1\t2
+                            """);
+
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT 1) as T1 " +
                             "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
-                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T2.value - T3.value = 0",
-                    null,
-                    false,
-                    false
-            );
+                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T2.value - T3.value = 0")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            value\tvalue1\tvalue2
+                            null\t0\t0
+                            0\t1\t1
+                            0\t2\t2
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T2.value = 2 ")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             value\tvalue1\tvalue2
                             0\t2\t2
                             null\tnull\t1
                             null\tnull\t0
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            """);
+
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT 1) as T1 " +
                             "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
-                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T2.value = 2 ",
-                    null,
-                    false,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T3.value = 1 ")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             value\tvalue1\tvalue2
                             0\t1\t1
                             null\tnull\t2
                             null\tnull\t0
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            """);
+
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT 1) as T1 " +
                             "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
-                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T3.value = 1 ",
-                    null,
-                    false,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T1.value = 0 ")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             value\tvalue1\tvalue2
                             0\t1\t1
                             0\t2\t2
                             null\tnull\t0
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            """);
+
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT 1) as T1 " +
                             "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
-                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T1.value = 0 ",
-                    null,
-                    false,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and 1=1 ")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             value\tvalue1\tvalue2
                             null\t0\t0
                             0\t1\t1
                             0\t2\t2
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            """);
+
+            assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
                             "( SELECT * " +
                             "  FROM tab " +
                             "  LIMIT 1) as T1 " +
                             "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
-                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and 1=1 ",
-                    null,
-                    false,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T1.created = T1.created ")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             value\tvalue1\tvalue2
                             null\t0\t0
                             0\t1\t1
                             0\t2\t2
-                            """,
-                    "SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
-                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T1.created = T1.created ",
-                    null,
-                    false,
-                    false
-            );
+                            """);
 
             String query3 = "SELECT T1.value, T2.value, T3.value, T4.value " +
                     "FROM (SELECT *  FROM tab limit 2) as T1 " +
@@ -6973,47 +6866,31 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    "value\tvalue1\tvalue2\tvalue3\n",
-                    query3,
-                    null,
-                    false,
-                    false
-            );
+            assertQuery(query3)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("value\tvalue1\tvalue2\tvalue3\n");
         });
     }
 
     @Test
     public void testRndSymbolEmptyArgs() throws Exception {
-        assertException(
-                "select rnd_symbol() from long_sequence(1)",
-                7,
-                "no arguments provided"
-        );
+        assertQuery("select rnd_symbol() from long_sequence(1)")
+                .fails(7, "no arguments provided");
     }
 
     @Test
     public void testSelectCharInListContainingNull() throws Exception {
-        assertQuery(
-                "c\n1\n\n",
-                "select * from xCHAR where c in ('1', null)",
-                "create table xCHAR as (select '1'::char c union all select null::char );",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from xCHAR where c in ('1', null)")
+                .ddl("create table xCHAR as (select '1'::char c union all select null::char );")
+                .returns("c\n1\n\n");
     }
 
     @Test
     public void testSelectCharInNull() throws Exception {
-        assertQuery(
-                "c\n\n",
-                "select * from xCHAR where c in null",
-                "create table xCHAR as (select '1'::char c union all select null::char )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from xCHAR where c in null")
+                .ddl("create table xCHAR as (select '1'::char c union all select null::char )")
+                .returns("c\n\n");
     }
 
     @Test
@@ -7067,38 +6944,23 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDateInListContainingNull() throws Exception {
-        assertQuery(
-                "c\n1970-01-01T00:00:00.001Z\n\n",
-                "select * from x where c in (cast(1 as date), cast(null as date))",
-                "create table x as (select cast(1 as date) c union all select null::date )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c in (cast(1 as date), cast(null as date))")
+                .ddl("create table x as (select cast(1 as date) c union all select null::date )")
+                .returns("c\n1970-01-01T00:00:00.001Z\n\n");
     }
 
     @Test
     public void testSelectDateInNullString() throws Exception {
-        assertQuery(
-                "c\n\n",
-                "select * from x where c in null::string",
-                "create table x as (select cast(1 as date) c union all select null::date )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c in null::string")
+                .ddl("create table x as (select cast(1 as date) c union all select null::date )")
+                .returns("c\n\n");
     }
 
     @Test
     public void testSelectDoubleInListContainingNull() throws Exception {
-        assertQuery(
-                "c\n1.0\nnull\n",
-                "select * from x where c in (1.0, null, 1::byte, 1::short, 1::int, 1::long)",
-                "create table x as (select 1d c union all select null::double )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c in (1.0, null, 1::byte, 1::short, 1::int, 1::long)")
+                .ddl("create table x as (select 1d c union all select null::double )")
+                .returns("c\n1.0\nnull\n");
     }
 
     @Test
@@ -7132,62 +6994,37 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDoubleInNull() throws Exception {
-        assertQuery(
-                "c\nnull\n",
-                "select * from x where c in null",
-                "create table x as (select 1.0 c union all select null::double )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c in null")
+                .ddl("create table x as (select 1.0 c union all select null::double )")
+                .returns("c\nnull\n");
     }
 
     @Test
     public void testSelectDoubleNotInListContainingNull() throws Exception {
-        assertQuery(
-                "c\n1.0\n",
-                "select * from x where c not in (2.0,null)",
-                "create table x as (select 1.0d c union all select null::double )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c not in (2.0,null)")
+                .ddl("create table x as (select 1.0d c union all select null::double )")
+                .returns("c\n1.0\n");
     }
 
     @Test
     public void testSelectFloatInListContainingNull() throws Exception {
-        assertQuery(
-                "c\n1.0\nnull\n",
-                "select * from x where c in (1.0f, null, 1::byte, 1::short, 1::int, 1::long)",
-                "create table x as (select 1f c union all select null::float )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c in (1.0f, null, 1::byte, 1::short, 1::int, 1::long)")
+                .ddl("create table x as (select 1f c union all select null::float )")
+                .returns("c\n1.0\nnull\n");
     }
 
     @Test
     public void testSelectFloatInNull() throws Exception {
-        assertQuery(
-                "c\nnull\n",
-                "select * from x where c in null",
-                "create table x as (select 1.0f c union all select null::float )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c in null")
+                .ddl("create table x as (select 1.0f c union all select null::float )")
+                .returns("c\nnull\n");
     }
 
     @Test
     public void testSelectFloatNotInListContainingNull() throws Exception {
-        assertQuery(
-                "c\n1.0\n",
-                "select * from x where c not in (2.0f,null)",
-                "create table x as (select 1.0f c union all select null::float )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c not in (2.0f,null)")
+                .ddl("create table x as (select 1.0f c union all select null::float )")
+                .returns("c\n1.0\n");
     }
 
     @Test
@@ -7197,70 +7034,59 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "select * from ( select x, x::float from long_sequence(1000000) order by 2 desc limit 999999 ) ";
 
         assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck(query.replace("#SETOP#", "UNION"), 96, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
-            assertExceptionNoLeakCheck(query.replace("#SETOP#", "UNION ALL"), 99, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
-            assertExceptionNoLeakCheck(query.replace("#SETOP#", "EXCEPT"), 97, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
-            assertExceptionNoLeakCheck(query.replace("#SETOP#", "EXCEPT ALL"), 100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
-            assertExceptionNoLeakCheck(query.replace("#SETOP#", "INTERSECT"), 100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
-            assertExceptionNoLeakCheck(query.replace("#SETOP#", "INTERSECT ALL"), 103, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
+            assertQuery(query.replace("#SETOP#", "UNION"))
+                    .noLeakCheck()
+                    .fails(96, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
+            assertQuery(query.replace("#SETOP#", "UNION ALL"))
+                    .noLeakCheck()
+                    .fails(99, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
+            assertQuery(query.replace("#SETOP#", "EXCEPT"))
+                    .noLeakCheck()
+                    .fails(97, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
+            assertQuery(query.replace("#SETOP#", "EXCEPT ALL"))
+                    .noLeakCheck()
+                    .fails(100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
+            assertQuery(query.replace("#SETOP#", "INTERSECT"))
+                    .noLeakCheck()
+                    .fails(100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
+            assertQuery(query.replace("#SETOP#", "INTERSECT ALL"))
+                    .noLeakCheck()
+                    .fails(103, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
         });
     }
 
     @Test
     public void testSelectIntInListContainingNull() throws Exception {
-        assertQuery(
-                "c\n1\nnull\n",
-                "select * from x where c in (1,null)",
-                "create table x as (select 1 c union all select null::int )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c in (1,null)")
+                .ddl("create table x as (select 1 c union all select null::int )")
+                .returns("c\n1\nnull\n");
     }
 
     @Test
     public void testSelectIntInNull() throws Exception {
-        assertQuery(
-                "c\nnull\n",
-                "select * from x where c in null",
-                "create table x as (select 1 c union all select null::int )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c in null")
+                .ddl("create table x as (select 1 c union all select null::int )")
+                .returns("c\nnull\n");
     }
 
     @Test
     public void testSelectIntNotInListContainingNull() throws Exception {
-        assertQuery(
-                "c\n1\n",
-                "select * from x where c not in (2,null)",
-                "create table x as (select 1 c union all select null::int )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c not in (2,null)")
+                .ddl("create table x as (select 1 c union all select null::int )")
+                .returns("c\n1\n");
     }
 
     @Test
     public void testSelectInvalidGeoHashLiteralBits() throws Exception {
-        assertException(
-                "select ##k from long_sequence(10)",
-                7,
-                "invalid constant: ##k"
-        );
+        assertQuery("select ##k from long_sequence(10)")
+                .fails(7, "invalid constant: ##k");
     }
 
     @Test
     public void testSelectLongInListContainingNull() throws Exception {
-        assertQuery(
-                "c\n1\nnull\n",
-                "select * from x where c in (1,null, 1::byte, 1::short, 1::int, 1::long)",
-                "create table x as (select 1L c union all select null::long )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c in (1,null, 1::byte, 1::short, 1::int, 1::long)")
+                .ddl("create table x as (select 1L c union all select null::long )")
+                .returns("c\n1\nnull\n");
     }
 
     @Test
@@ -7288,132 +7114,89 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testSelectLongInNull() throws Exception {
-        assertQuery(
-                "c\nnull\n",
-                "select * from x where c in null",
-                "create table x as (select 1L c union all select null::long )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c in null")
+                .ddl("create table x as (select 1L c union all select null::long )")
+                .returns("c\nnull\n");
     }
 
     @Test
     public void testSelectLongNotInListContainingNull() throws Exception {
-        assertQuery(
-                "c\n1\n",
-                "select * from x where c not in (2,null)",
-                "create table x as (select 1L c union all select null::long )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c not in (2,null)")
+                .ddl("create table x as (select 1L c union all select null::long )")
+                .returns("c\n1\n");
     }
 
     @Test
     public void testSelectStrInListContainingNull() throws Exception {
-        assertQuery(
-                """
-                        l\tstr
-                        2\t2
-                        3\t
-                        """,
-                "select * from x where str in (null, '2', '2'::symbol)",
-                "create table x as " +
+        assertQuery("select * from x where str in (null, '2', '2'::symbol)")
+                .ddl("create table x as " +
                         "(" +
                         "select 1L as l, '1' as str  union all " +
                         "select 2L, '2' union all " +
                         "select 3L,  null " +
-                        ")",
-                null,
-                true,
-                false
-        );
+                        ")")
+                .returns("""
+                        l\tstr
+                        2\t2
+                        3\t
+                        """);
     }
 
     @Test
     public void testSelectStrInNull() throws Exception {
-        assertQuery(
-                """
-                        l\tstr
-                        3\t
-                        """,
-                "select * from x where str in null",
-                "create table x as " +
+        assertQuery("select * from x where str in null")
+                .ddl("create table x as " +
                         "(" +
                         "select 1L as l, '1' as str  union all " +
                         "select 2L, '2' union all " +
                         "select 3L, null " +
-                        ")",
-                null,
-                true,
-                false
-        );
+                        ")")
+                .returns("""
+                        l\tstr
+                        3\t
+                        """);
     }
 
     @Test
     public void testSelectTimestampInListContainingNull() throws Exception {
-        assertQuery(
-                "c\n1970-01-01T00:00:00.000001Z\n\n",
-                "select * from x where c in (1,null)",
-                "create table x as (select 1::timestamp c union all select null::timestamp )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c in (1,null)")
+                .ddl("create table x as (select 1::timestamp c union all select null::timestamp )")
+                .returns("c\n1970-01-01T00:00:00.000001Z\n\n");
     }
 
     @Test
     public void testSelectTimestampInNull() throws Exception {
-        assertQuery(
-                "c\n\n",
-                "select * from x where c in null",
-                "create table x as (select 1::timestamp c union all select null::timestamp )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c in null")
+                .ddl("create table x as (select 1::timestamp c union all select null::timestamp )")
+                .returns("c\n\n");
     }
 
     @Test
     public void testSelectTimestampInNullString() throws Exception {
-        assertQuery(
-                "c\n\n",
-                "select * from x where c in null::string",
-                "create table x as (select 1::timestamp c union all select null::timestamp )",
-                null,
-                true,
-                false
-        );
+        assertQuery("select * from x where c in null::string")
+                .ddl("create table x as (select 1::timestamp c union all select null::timestamp )")
+                .returns("c\n\n");
     }
 
     @Test
     public void testSelectWithEmptySubSelectInWhereClause() throws Exception {
         assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck(
-                    "select 1 from tab where (\"\")",
-                    "create table tab (i int)",
-                    25,
-                    "Invalid column"
-            );
+            assertQuery("select 1 from tab where (\"\")")
+                    .ddl("create table tab (i int)")
+                    .noLeakCheck()
+                    .fails(25, "Invalid column");
 
-            assertExceptionNoLeakCheck(
-                    "select 1 from tab where (\"a\")",
-                    25,
-                    "Invalid column"
-            );
+            assertQuery("select 1 from tab where (\"a\")")
+                    .noLeakCheck()
+                    .fails(25, "Invalid column");
 
-            assertExceptionNoLeakCheck(
-                    "select 1 from tab where ('')",
-                    25,
-                    "boolean expression expected"
-            );
+            assertQuery("select 1 from tab where ('')")
+                    .noLeakCheck()
+                    .fails(25, "boolean expression expected");
 
-            assertExceptionNoLeakCheck(
-                    "select 1 from tab where ('a')",
-                    25,
-                    "boolean expression expected"
-            );
+            assertQuery("select 1 from tab where ('a')")
+                    .noLeakCheck()
+                    .fails(25, "boolean expression expected");
         });
     }
 
@@ -7428,10 +7211,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 VTJW_ffyu\t1970-01-01T00:00:00.040000Z
                 """;
 
-        assertQuery(
-                expected,
-                "select concat(a, '_', to_lowercase(b)) cc, k from x",
-                "create table x as " +
+        assertQuery("select concat(a, '_', to_lowercase(b)) cc, k from x")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol(5,4,4,1) a," +
@@ -7439,11 +7220,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 10000) k" +
                         " from" +
                         " long_sequence(5)" +
-                        ") timestamp(k)",
-                "k",
-                true,
-                true
-        );
+                        ") timestamp(k)")
+                .timestamp("k")
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -7480,13 +7260,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     APPL\tAPPL\tAPPL_APPL
                     APPL\tAPPL\tAPPL_APPL
                     """;
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select xx.a, yy.b, concat(xx.a, '_', yy.b) c from xx join yy on xx.a = yy.b",
-                    null,
-                    false,
-                    false
-            );
+            assertQuery("select xx.a, yy.b, concat(xx.a, '_', yy.b) c from xx join yy on xx.a = yy.b")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -7496,10 +7273,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 a\tb\tk
                 IBM\tIBM\t1970-01-01T00:00:00.000000Z
                 """;
-        assertQuery(
-                expected,
-                "select a, b, k from x where a=b",
-                "create table x as " +
+        assertQuery("select a, b, k from x where a=b")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_str('IBM', 'APPL', 'SPY', 'FB') a," +
@@ -7507,89 +7282,80 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 10000) k" +
                         " from" +
                         " long_sequence(5)" +
-                        ") timestamp(k)",
-                "k",
-                true,
-                false
-        );
+                        ") timestamp(k)")
+                .timestamp("k")
+                .returns(expected);
     }
 
     @Test
     public void testTimestampWithNanosInWhereClause() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x where ts between '2019-10-17T00:00:00.200000123Z' and '2019-10-17T00:00:00.800000123Z'")
+                .ddl("create table x as " +
+                        "(SELECT x, timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), rnd_short(1,5) * 100000L) as ts FROM long_sequence(5)" +
+                        ")")
+                .returns("""
                         x\tts
                         2\t2019-10-17T00:00:00.200000Z
                         3\t2019-10-17T00:00:00.700000Z
                         4\t2019-10-17T00:00:00.800000Z
-                        """,
-                "select * from x where ts between '2019-10-17T00:00:00.200000123Z' and '2019-10-17T00:00:00.800000123Z'",
-                "create table x as " +
-                        "(SELECT x, timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), rnd_short(1,5) * 100000L) as ts FROM long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testTrailingContentAfterBeginRejected() throws Exception {
-        assertException("BEGIN extra_token", 6, "unexpected token [extra_token]");
+        assertQuery("BEGIN extra_token")
+                .fails(6, "unexpected token [extra_token]");
     }
 
     @Test
     public void testTrailingContentAfterBeginTransactionRejected() throws Exception {
-        assertException("BEGIN TRANSACTION extra_token", 18, "unexpected token [extra_token]");
+        assertQuery("BEGIN TRANSACTION extra_token")
+                .fails(18, "unexpected token [extra_token]");
     }
 
     @Test
     public void testTrailingContentAfterCloseRejected() throws Exception {
-        assertException("CLOSE ALL extra", 10, "unexpected token [extra]");
+        assertQuery("CLOSE ALL extra")
+                .fails(10, "unexpected token [extra]");
     }
 
     @Test
     public void testTrailingContentAfterCommitRejected() throws Exception {
-        assertException("COMMIT extra_token", 7, "unexpected token [extra_token]");
+        assertQuery("COMMIT extra_token")
+                .fails(7, "unexpected token [extra_token]");
     }
 
     @Test
     public void testTrailingContentAfterDdlRejected() throws Exception {
-        assertException(
-                "create table tab (x int) select",
-                25,
-                "unexpected token [select]"
-        );
+        assertQuery("create table tab (x int) select")
+                .fails(25, "unexpected token [select]");
     }
 
     @Test
     public void testTrailingContentAfterDiscardRejected() throws Exception {
-        assertException("DISCARD ALL extra", 12, "unexpected token [extra]");
+        assertQuery("DISCARD ALL extra")
+                .fails(12, "unexpected token [extra]");
     }
 
     @Test
     public void testTrailingContentAfterNoOpRejected() throws Exception {
-        assertException(
-                "RESET ALL extra",
-                10,
-                "unexpected token [extra]"
-        );
+        assertQuery("RESET ALL extra")
+                .fails(10, "unexpected token [extra]");
     }
 
     @Test
     public void testTrailingContentAfterRollbackRejected() throws Exception {
-        assertException("ROLLBACK extra_token", 9, "unexpected token [extra_token]");
+        assertQuery("ROLLBACK extra_token")
+                .fails(9, "unexpected token [extra_token]");
     }
 
     @Test
     public void testTrailingContentAfterSelectRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (x int)");
-            assertExceptionNoLeakCheck(
-                    "select x from tab limit 10 extra_token",
-                    27,
-                    "unexpected token [extra_token]"
-            );
+            assertQuery("select x from tab limit 10 extra_token")
+                    .noLeakCheck()
+                    .fails(27, "unexpected token [extra_token]");
         });
     }
 
@@ -7597,26 +7363,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testTrailingContentAfterSemicolonRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (x int)");
-            assertExceptionNoLeakCheck(
-                    "select x from tab; select x from tab",
-                    19,
-                    "unexpected token [select]"
-            );
+            assertQuery("select x from tab; select x from tab")
+                    .noLeakCheck()
+                    .fails(19, "unexpected token [select]");
         });
     }
 
     @Test
     public void testTrailingContentAfterSetRejected() throws Exception {
-        assertException(
-                "SET x = y extra_token",
-                10,
-                "unexpected token [extra_token]"
-        );
+        assertQuery("SET x = y extra_token")
+                .fails(10, "unexpected token [extra_token]");
     }
 
     @Test
     public void testTrailingContentAfterUnlistenRejected() throws Exception {
-        assertException("UNLISTEN * extra", 11, "unexpected token [extra]");
+        assertQuery("UNLISTEN * extra")
+                .fails(11, "unexpected token [extra]");
     }
 
     @Test
@@ -7624,9 +7386,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (x int)");
             // trailing semicolon should not cause an error
-            assertQuery("x\n",
-                    "select x from tab;",
-                    "", true, true);
+            assertQuery("select x from tab;")
+                    .timestamp("")
+                    .expectSize()
+                    .returns("x\n");
         });
     }
 
@@ -7635,9 +7398,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (x int)");
             // no trailing content should not cause an error
-            assertQuery("x\n",
-                    "select x from tab",
-                    "", true, true);
+            assertQuery("select x from tab")
+                    .timestamp("")
+                    .expectSize()
+                    .returns("x\n");
         });
     }
 
@@ -7681,12 +7445,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testUnlistenMissingArgRejected() throws Exception {
-        assertException("UNLISTEN", 8, "argument expected");
+        assertQuery("UNLISTEN")
+                .fails(8, "argument expected");
     }
 
     @Test
     public void testUnlistenSemicolonNotAcceptedAsArg() throws Exception {
-        assertException("UNLISTEN;", 8, "argument expected");
+        assertQuery("UNLISTEN;")
+                .fails(8, "argument expected");
     }
 
     @Test
@@ -7788,13 +7554,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     private void assertCastByteFail(int castTo) throws Exception {
-        assertException(
-                "create table y as (" +
+        assertQuery("create table y as (" +
                         "select * from (select rnd_byte(2,50) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                89,
-                "unsupported cast"
-        );
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                .fails(89, "unsupported cast");
     }
 
     private void assertCastDate(String expectedData, int castTo) throws Exception {
@@ -7818,13 +7581,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     private void assertCastDoubleFail(int castTo) throws Exception {
-        assertException(
-                "create table y as (" +
+        assertQuery("create table y as (" +
                         "select * from (select rnd_double(2) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                88,
-                "unsupported cast"
-        );
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                .fails(88, "unsupported cast");
     }
 
     private void assertCastFloat(String expectedData, int castTo) throws Exception {
@@ -7838,13 +7598,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     private void assertCastFloatFail(int castTo) throws Exception {
-        assertException(
-                "create table y as (" +
+        assertQuery("create table y as (" +
                         "select * from (select rnd_float(2) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                87,
-                "unsupported cast"
-        );
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                .fails(87, "unsupported cast");
     }
 
     private void assertCastInt(String expectedData, int castTo) throws Exception {
@@ -7862,13 +7619,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     private void assertCastIntFail(int castTo) throws Exception {
-        assertException(
-                "create table y as (" +
+        assertQuery("create table y as (" +
                         "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                92,
-                "unsupported cast"
-        );
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                .fails(92, "unsupported cast");
     }
 
     private void assertCastLong(String expectedData, int castTo) throws Exception {
@@ -7886,13 +7640,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     private void assertCastLongFail(int castTo) throws Exception {
-        assertException(
-                "create table y as (" +
+        assertQuery("create table y as (" +
                         "select * from (select rnd_long(0, 30, 2) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                93,
-                "unsupported cast"
-        );
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                .fails(93, "unsupported cast");
     }
 
     private void assertCastShort(String expectedData, int castTo) throws Exception {
@@ -7909,33 +7660,24 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     private void assertCastShortFail(int castTo) throws Exception {
-        assertException(
-                "create table y as (" +
+        assertQuery("create table y as (" +
                         "select * from (select rnd_short(2,10) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                90,
-                "unsupported cast"
-        );
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                .fails(90, "unsupported cast");
     }
 
     private void assertCastStringFail(int castTo) throws Exception {
-        assertException(
-                "create table y as (" +
+        assertQuery("create table y as (" +
                         "select * from (select rnd_str(5,10,2) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                90,
-                "unsupported cast"
-        );
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                .fails(90, "unsupported cast");
     }
 
     private void assertCastSymbolFail(int castTo) throws Exception {
-        assertException(
-                "create table y as (" +
+        assertQuery("create table y as (" +
                         "select rnd_symbol(4,6,10,2) a from long_sequence(20)" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                79,
-                "unsupported cast"
-        );
+                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                .fails(79, "unsupported cast");
     }
 
     private void assertCastTimestamp(String expectedData, int castTo) throws Exception {
@@ -7978,7 +7720,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     private void assertException(FilesFacade ff, CharSequence sql, CharSequence message) throws Exception {
-        assertMemoryLeak(ff, () -> assertExceptionNoLeakCheck(sql, 13, message));
+        assertMemoryLeak(ff, () -> assertQuery(sql)
+        .noLeakCheck()
+        .fails(13, message));
     }
 
     private void assertInsertAsSelectIOError(AtomicBoolean inError, FilesFacade ff) throws Exception {
@@ -8016,35 +7760,25 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     private void selectDoubleInListWithBindVariable() throws Exception {
-        assertQuery(
-                "c\n1.0\n",
-                "select * from x where c in (:val)",
-                null, true, false
-        );
+        assertQuery("select * from x where c in (:val)")
+                .returns("c\n1.0\n");
 
         bindVariableService.clear();
     }
 
     private void selectLongInListWithBindVariable() throws Exception {
-        assertQuery(
-                "c\n1\n",
-                "select * from x where c in (:val)",
-                null, true, false
-        );
+        assertQuery("select * from x where c in (:val)")
+                .returns("c\n1\n");
 
         bindVariableService.clear();
     }
 
     private void testGeoHashWithBits(String columnSize, String geoHash, String expected) throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery(
-                    "geohash\n",
-                    "select geohash from geohash",
-                    String.format("create table geohash (geohash geohash(%s))", columnSize),
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select geohash from geohash")
+                    .ddl(String.format("create table geohash (geohash geohash(%s))", columnSize))
+                    .expectSize()
+                    .returns("geohash\n");
             execute(String.format("insert into geohash values(%s)", geoHash));
             assertSql(expected, "geohash");
         });
