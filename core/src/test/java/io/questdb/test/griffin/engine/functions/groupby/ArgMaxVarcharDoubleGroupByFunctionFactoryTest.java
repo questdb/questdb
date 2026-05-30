@@ -38,27 +38,27 @@ public class ArgMaxVarcharDoubleGroupByFunctionFactoryTest extends AbstractCairo
     public void testArgMaxAllNull() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES (null, null), (null, null)");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
     public void testArgMaxEmptyStringValue() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES ('', 5.0), ('beta', 3.0)");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
     public void testArgMaxEmptyTable() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
     public void testArgMaxMixedNullValueAndNullKey() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES (null, 5.0), ('beta', null)");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
@@ -144,14 +144,14 @@ public class ArgMaxVarcharDoubleGroupByFunctionFactoryTest extends AbstractCairo
     public void testArgMaxSimple() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES ('alpha', 1.0), ('beta', 3.0), ('gamma', 2.0)");
-        assertQuery("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\nbeta\n");
     }
 
     @Test
     public void testArgMaxTieBreaking() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES ('alpha', 3.0), ('beta', 3.0), ('gamma', 1.0)");
-        assertQuery("arg_max\nalpha\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\nalpha\n");
     }
 
     @Test
@@ -164,27 +164,27 @@ public class ArgMaxVarcharDoubleGroupByFunctionFactoryTest extends AbstractCairo
                     ('B', 'gamma', 5.0),
                     ('B', 'delta', 4.0)
                 """);
-        assertQuery("sym\targ_max\nA\tbeta\nB\tgamma\n", "SELECT sym, arg_max(value, key) FROM tab ORDER BY sym", null, true, true);
+        assertQuery("SELECT sym, arg_max(value, key) FROM tab ORDER BY sym").expectSize().returns("sym\targ_max\nA\tbeta\nB\tgamma\n");
     }
 
     @Test
     public void testArgMaxWithNullKey() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES ('alpha', null), ('beta', 3.0), ('gamma', 2.0)");
-        assertQuery("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\nbeta\n");
     }
 
     @Test
     public void testArgMaxWithNullValue() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES (null, 5.0), ('beta', 3.0)");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
     public void testArgMaxWithNullValueNotAtMax() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES (null, 1.0), ('beta', 3.0)");
-        assertQuery("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\nbeta\n");
     }
 }

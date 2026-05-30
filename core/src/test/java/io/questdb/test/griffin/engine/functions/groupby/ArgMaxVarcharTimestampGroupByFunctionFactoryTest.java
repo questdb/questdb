@@ -38,27 +38,27 @@ public class ArgMaxVarcharTimestampGroupByFunctionFactoryTest extends AbstractCa
     public void testArgMaxAllNull() throws Exception {
         execute("CREATE TABLE tab (value varchar, key timestamp)");
         execute("INSERT INTO tab VALUES (null, null), (null, null)");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
     public void testArgMaxEmptyStringValue() throws Exception {
         execute("CREATE TABLE tab (value varchar, key timestamp)");
         execute("INSERT INTO tab VALUES ('', '2023-01-05T00:00:00.000000Z'), ('beta', '2023-01-03T00:00:00.000000Z')");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
     public void testArgMaxEmptyTable() throws Exception {
         execute("CREATE TABLE tab (value varchar, key timestamp)");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
     public void testArgMaxMixedNullValueAndNullKey() throws Exception {
         execute("CREATE TABLE tab (value varchar, key timestamp)");
         execute("INSERT INTO tab VALUES (null, '2023-01-05T00:00:00.000000Z'), ('beta', null)");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
@@ -144,14 +144,14 @@ public class ArgMaxVarcharTimestampGroupByFunctionFactoryTest extends AbstractCa
     public void testArgMaxSimple() throws Exception {
         execute("CREATE TABLE tab (value varchar, key timestamp)");
         execute("INSERT INTO tab VALUES ('alpha', '2023-01-01T00:00:00.000000Z'), ('beta', '2023-01-03T00:00:00.000000Z'), ('gamma', '2023-01-02T00:00:00.000000Z')");
-        assertQuery("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\nbeta\n");
     }
 
     @Test
     public void testArgMaxTieBreaking() throws Exception {
         execute("CREATE TABLE tab (value varchar, key timestamp)");
         execute("INSERT INTO tab VALUES ('alpha', '2023-01-03T00:00:00.000000Z'), ('beta', '2023-01-03T00:00:00.000000Z'), ('gamma', '2023-01-01T00:00:00.000000Z')");
-        assertQuery("arg_max\nalpha\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\nalpha\n");
     }
 
     @Test
@@ -164,27 +164,27 @@ public class ArgMaxVarcharTimestampGroupByFunctionFactoryTest extends AbstractCa
                     ('B', 'gamma', '2023-01-05T00:00:00.000000Z'),
                     ('B', 'delta', '2023-01-04T00:00:00.000000Z')
                 """);
-        assertQuery("sym\targ_max\nA\tbeta\nB\tgamma\n", "SELECT sym, arg_max(value, key) FROM tab ORDER BY sym", null, true, true);
+        assertQuery("SELECT sym, arg_max(value, key) FROM tab ORDER BY sym").expectSize().returns("sym\targ_max\nA\tbeta\nB\tgamma\n");
     }
 
     @Test
     public void testArgMaxWithNullKey() throws Exception {
         execute("CREATE TABLE tab (value varchar, key timestamp)");
         execute("INSERT INTO tab VALUES ('alpha', null), ('beta', '2023-01-03T00:00:00.000000Z'), ('gamma', '2023-01-02T00:00:00.000000Z')");
-        assertQuery("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\nbeta\n");
     }
 
     @Test
     public void testArgMaxWithNullValue() throws Exception {
         execute("CREATE TABLE tab (value varchar, key timestamp)");
         execute("INSERT INTO tab VALUES (null, '2023-01-05T00:00:00.000000Z'), ('beta', '2023-01-03T00:00:00.000000Z')");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
     public void testArgMaxWithNullValueNotAtMax() throws Exception {
         execute("CREATE TABLE tab (value varchar, key timestamp)");
         execute("INSERT INTO tab VALUES (null, '2023-01-01T00:00:00.000000Z'), ('beta', '2023-01-03T00:00:00.000000Z')");
-        assertQuery("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\nbeta\n");
     }
 }
