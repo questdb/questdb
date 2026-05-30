@@ -107,7 +107,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             sparkline
-
+                            
                             """,
                     "SELECT sparkline(val) FROM t",
                     null,
@@ -261,7 +261,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             sparkline
-
+                            
                             """,
                     "SELECT sparkline(val) FROM t",
                     null,
