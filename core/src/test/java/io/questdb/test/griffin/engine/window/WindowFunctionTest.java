@@ -542,20 +542,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cr is null and cr_ref is null then 0.0 when cr is null or cr_ref is null then 1.0 else abs(cr - cr_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cr is null and cr_ref is null then 0.0 when cr is null or cr_ref is null then 1.0 else abs(cr - cr_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "corr(y, x) over (order by ts) cr, " +
                             "case when stddev_pop(x) over (order by ts) = 0 or stddev_pop(y) over (order by ts) = 0 then null " +
                             "else covar_pop(y, x) over (order by ts) / (stddev_pop(x) over (order by ts) * stddev_pop(y) over (order by ts)) end cr_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -565,12 +566,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 5.0), (5, 2, 20.0, 10.0), (6, 2, 30.0, 15.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cr is null and cr_ref is null then 0.0 when cr is null or cr_ref is null then 1.0 else abs(cr - cr_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cr is null and cr_ref is null then 0.0 when cr is null or cr_ref is null then 1.0 else abs(cr - cr_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "corr(y, x) over (partition by i order by ts range between 2 microseconds preceding and current row) cr, " +
@@ -580,8 +576,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "(stddev_pop(x) over (partition by i order by ts range between 2 microseconds preceding and current row) * " +
                             "stddev_pop(y) over (partition by i order by ts range between 2 microseconds preceding and current row)) end cr_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -652,19 +654,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             // running frame (Welford path)
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select max(case when cr is null and cr_ref is null then 0.0 when cr is null or cr_ref is null then 1.0 else abs(cr - cr_ref) end) max_diff " +
+            assertQuery("select max(case when cr is null and cr_ref is null then 0.0 when cr is null or cr_ref is null then 1.0 else abs(cr - cr_ref) end) max_diff " +
                             "from (" +
                             "select " +
                             "corr(y, x) over (partition by i order by ts) cr, " +
                             "corr(y, x) over (partition by i) cr_ref " +
                             "from tab WHERE i = 1" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -681,26 +684,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "('1970-01-01T00:00:05', 1, 5.0, 10.0)");
 
             // non-partitioned: RANGE BETWEEN 2 second PRECEDING AND CURRENT ROW — evicts old rows
-            assertSql(
-                    """
+            assertQuery("select count(*) cnt from (" +
+                            "select covar_pop(y, x) over (order by ts range between 2 second preceding and current row) cv from tab" +
+                            ") where cv is not null")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             cnt
                             5
-                            """,
-                    "select count(*) cnt from (" +
-                            "select covar_pop(y, x) over (order by ts range between 2 second preceding and current row) cv from tab" +
-                            ") where cv is not null"
-            );
+                            """);
 
             // partitioned: same with partition by
-            assertSql(
-                    """
+            assertQuery("select count(*) cnt from (" +
+                            "select covar_pop(y, x) over (partition by i order by ts range between 2 second preceding and current row) cv from tab" +
+                            ") where cv is not null")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             cnt
                             5
-                            """,
-                    "select count(*) cnt from (" +
-                            "select covar_pop(y, x) over (partition by i order by ts range between 2 second preceding and current row) cv from tab" +
-                            ") where cv is not null"
-            );
+                            """);
         });
     }
 
@@ -731,15 +736,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 6.0)");
 
-            assertSql(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, covar_pop(y, x) over () cp, corr(y, x) over () cr from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tcp\tcr
                             1970-01-01T00:00:00.000001Z\t1.3333333333333333\t1.0
                             1970-01-01T00:00:00.000002Z\t1.3333333333333333\t1.0
                             1970-01-01T00:00:00.000003Z\t1.3333333333333333\t1.0
-                            """),
-                    "select ts, covar_pop(y, x) over () cp, corr(y, x) over () cr from tab"
-            );
+                            """));
         });
     }
 
@@ -749,19 +755,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "covar_pop(y, x) over (order by ts) cv, " +
                             "(avg(x * y) over (order by ts) - avg(x) over (order by ts) * avg(y) over (order by ts)) cv_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -771,12 +778,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "covar_pop(y, x) over (order by ts range between 10 microseconds preceding and current row) cv, " +
@@ -784,8 +786,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "avg(x) over (order by ts range between 10 microseconds preceding and current row) * " +
                             "avg(y) over (order by ts range between 10 microseconds preceding and current row)) cv_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -795,12 +803,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "covar_pop(y, x) over (order by ts rows between 2 preceding and current row) cv, " +
@@ -808,8 +811,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "avg(x) over (order by ts rows between 2 preceding and current row) * " +
                             "avg(y) over (order by ts rows between 2 preceding and current row)) cv_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -819,17 +828,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0)");
 
-            assertSql(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, covar_pop(y, x) over (partition by i) cv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tcv
                             1970-01-01T00:00:00.000001Z\t1\t1.3333333333333333
                             1970-01-01T00:00:00.000002Z\t1\t1.3333333333333333
                             1970-01-01T00:00:00.000003Z\t1\t1.3333333333333333
                             1970-01-01T00:00:00.000004Z\t2\t0.5
                             1970-01-01T00:00:00.000005Z\t2\t0.5
-                            """),
-                    "select ts, i, covar_pop(y, x) over (partition by i) cv from tab"
-            );
+                            """));
         });
     }
 
@@ -839,19 +849,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "covar_pop(y, x) over (partition by i order by ts) cv, " +
                             "(avg(x * y) over (partition by i order by ts) - avg(x) over (partition by i order by ts) * avg(y) over (partition by i order by ts)) cv_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -861,19 +872,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 6.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "covar_pop(y, x) over () cv, " +
                             "(avg(x * y) over () - avg(x) over () * avg(y) over ()) cv_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -890,15 +902,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "('1970-01-01T00:00:05', 2, 11.0, 22.0), " +
                     "('1970-01-01T00:00:06', 2, 12.0, 24.0)");
 
-            assertSql(
-                    """
+            assertQuery("select count(*) cnt from (" +
+                            "select covar_pop(y, x) over (partition by i order by ts range between unbounded preceding and 2 microseconds preceding) cv from tab" +
+                            ") where cv is not null")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             cnt
                             4
-                            """,
-                    "select count(*) cnt from (" +
-                            "select covar_pop(y, x) over (partition by i order by ts range between unbounded preceding and 2 microseconds preceding) cv from tab" +
-                            ") where cv is not null"
-            );
+                            """);
         });
     }
 
@@ -913,26 +926,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 execute("insert into tab select (x * 1000000)::timestamp, x % 2, x::double, (x * 2)::double from long_sequence(30)");
 
                 // non-partitioned: 30 rows > capacity 10 → inline buffer doubling
-                assertSql(
-                        """
+                assertQuery("select count(*) cnt from (" +
+                                "select covar_pop(y, x) over (order by ts range between 100 second preceding and current row) cv from tab" +
+                                ") where cv is not null")
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
                                 cnt
                                 30
-                                """,
-                        "select count(*) cnt from (" +
-                                "select covar_pop(y, x) over (order by ts range between 100 second preceding and current row) cv from tab" +
-                                ") where cv is not null"
-                );
+                                """);
 
                 // partitioned: 15 rows per partition > capacity 10 → expandRingBuffer
-                assertSql(
-                        """
+                assertQuery("select count(*) cnt from (" +
+                                "select covar_pop(y, x) over (partition by i order by ts range between 100 second preceding and current row) cv from tab" +
+                                ") where cv is not null")
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
                                 cnt
                                 30
-                                """,
-                        "select count(*) cnt from (" +
-                                "select covar_pop(y, x) over (partition by i order by ts range between 100 second preceding and current row) cv from tab" +
-                                ") where cv is not null"
-                );
+                                """);
             });
         } finally {
             node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 1024 * 1024);
@@ -996,17 +1011,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "('1970-01-01T00:00:04', 4.0, 8.0), " +
                     "('1970-01-01T00:00:05', 5.0, 10.0)");
 
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, covar_pop(y, x) over (order by ts range between unbounded preceding and 2 microseconds preceding) cv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tcv
                             1970-01-01T00:00:01.000000Z\tnull
                             1970-01-01T00:00:02.000000Z\t0.0
                             1970-01-01T00:00:03.000000Z\t0.5
                             1970-01-01T00:00:04.000000Z\t1.3333333333333333
                             1970-01-01T00:00:05.000000Z\t2.5
-                            """),
-                    "select ts, covar_pop(y, x) over (order by ts range between unbounded preceding and 2 microseconds preceding) cv from tab"
-            );
+                            """));
         });
     }
 
@@ -1079,20 +1096,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
                             "from (" +
                             "select covar_samp(y, x) over (order by ts range between 10 microseconds preceding and current row) cv, " +
                             "(count(case when x is not null and y is not null then 1 end) over (order by ts range between 10 microseconds preceding and current row)::double / " +
                             "(count(case when x is not null and y is not null then 1 end) over (order by ts range between 10 microseconds preceding and current row) - 1)) * " +
                             "covar_pop(y, x) over (order by ts range between 10 microseconds preceding and current row) cv_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -1102,20 +1120,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
                             "from (" +
                             "select covar_samp(y, x) over (order by ts rows between 2 preceding and current row) cv, " +
                             "(count(case when x is not null and y is not null then 1 end) over (order by ts rows between 2 preceding and current row)::double / " +
                             "(count(case when x is not null and y is not null then 1 end) over (order by ts rows between 2 preceding and current row) - 1)) * " +
                             "covar_pop(y, x) over (order by ts rows between 2 preceding and current row) cv_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -1125,20 +1144,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
                             "from (" +
                             "select covar_samp(y, x) over (partition by i) cv, " +
                             "(count(case when x is not null and y is not null then 1 end) over (partition by i)::double / " +
                             "(count(case when x is not null and y is not null then 1 end) over (partition by i) - 1)) * " +
                             "covar_pop(y, x) over (partition by i) cv_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -1148,20 +1168,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0), (6, 2, 12.0, 24.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
                             "from (" +
                             "select covar_samp(y, x) over (partition by i order by ts range between 10 microseconds preceding and current row) cv, " +
                             "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts range between 10 microseconds preceding and current row)::double / " +
                             "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts range between 10 microseconds preceding and current row) - 1)) * " +
                             "covar_pop(y, x) over (partition by i order by ts range between 10 microseconds preceding and current row) cv_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -1171,12 +1192,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "covar_samp(y, x) over (partition by i order by ts rows between 2 preceding and current row) cv, " +
@@ -1184,8 +1200,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts rows between 2 preceding and current row) - 1)) * " +
                             "covar_pop(y, x) over (partition by i order by ts rows between 2 preceding and current row) cv_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -1195,20 +1217,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
                             "from (" +
                             "select covar_samp(y, x) over (partition by i order by ts) cv, " +
                             "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts)::double / " +
                             "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts) - 1)) * " +
                             "covar_pop(y, x) over (partition by i order by ts) cv_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -1218,20 +1241,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 6.0), (4, 4.0, 8.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
                             "from (" +
                             "select covar_samp(y, x) over () cv, " +
                             "(count(case when x is not null and y is not null then 1 end) over ()::double / " +
                             "(count(case when x is not null and y is not null then 1 end) over () - 1)) * " +
                             "covar_pop(y, x) over () cv_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -1283,20 +1307,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 6.0), (4, 4.0, 8.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
                             "from (" +
                             "select covar_samp(y, x) over (order by ts) cv, " +
                             "(count(case when x is not null and y is not null then 1 end) over (order by ts)::double / " +
                             "(count(case when x is not null and y is not null then 1 end) over (order by ts) - 1)) * " +
                             "covar_pop(y, x) over (order by ts) cv_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -1327,53 +1352,43 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Test first_value(double) with window function over partitioned data with large frame
             // Test the last row of each partition to verify boundary conditions
-            assertSql(
-                    """
-                            i\tts\tfirst_d_window
-                            0\t1970-01-01T00:00:00.460000Z\t560000.0
-                            1\t1970-01-01T00:00:00.459997Z\t559994.0
-                            2\t1970-01-01T00:00:00.459998Z\t559996.0
-                            3\t1970-01-01T00:00:00.459999Z\t559998.0
-                            """,
-                    "select i, ts, first_d_window from (" +
+            assertQuery("select i, ts, first_d_window from (" +
                             "select i, ts, " +
                             "first_value(d) over (partition by i order by ts range between 80000 preceding and current row) as first_d_window, " +
                             "row_number() over (partition by i order by ts desc) as rn " +
                             "from tab " +
                             "where i < 4" +
                             ") where rn = 1 " +
-                            "order by i"
-            );
-
-            // Test with ignore nulls - should handle null values properly in large datasets
-            assertSql(
-                    """
-                            i\tts\tfirst_d_ignore_nulls
+                            "order by i")
+                    .noLeakCheck()
+                    .returns("""
+                            i\tts\tfirst_d_window
                             0\t1970-01-01T00:00:00.460000Z\t560000.0
                             1\t1970-01-01T00:00:00.459997Z\t559994.0
                             2\t1970-01-01T00:00:00.459998Z\t559996.0
                             3\t1970-01-01T00:00:00.459999Z\t559998.0
-                            """,
-                    "select i, ts, first_d_ignore_nulls from (" +
+                            """);
+
+            // Test with ignore nulls - should handle null values properly in large datasets
+            assertQuery("select i, ts, first_d_ignore_nulls from (" +
                             "select i, ts, " +
                             "first_value(d) ignore nulls over (partition by i order by ts range between 80000 preceding and current row) as first_d_ignore_nulls, " +
                             "row_number() over (partition by i order by ts desc) as rn " +
                             "from tab " +
                             "where i < 4" +
                             ") where rn = 1 " +
-                            "order by i"
-            );
+                            "order by i")
+                    .noLeakCheck()
+                    .returns("""
+                            i\tts\tfirst_d_ignore_nulls
+                            0\t1970-01-01T00:00:00.460000Z\t560000.0
+                            1\t1970-01-01T00:00:00.459997Z\t559994.0
+                            2\t1970-01-01T00:00:00.459998Z\t559996.0
+                            3\t1970-01-01T00:00:00.459999Z\t559998.0
+                            """);
 
             // Cross-check: verify the first value in the window range
-            assertSql(
-                    """
-                            i\tfirst_d
-                            0\t560000.0
-                            1\t559994.0
-                            2\t559996.0
-                            3\t559998.0
-                            """,
-                    """
+            assertQuery("""
                              select main_data.i, min(main_data.d) as first_d
                               from (
                                 select data.d, data.i, data.ts
@@ -1392,8 +1407,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                               where main_data.i in (0,1,2,3)
                               group by main_data.i
                               order by main_data.i\
-                            """
-            );
+                            """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            i\tfirst_d
+                            0\t560000.0
+                            1\t559994.0
+                            2\t559996.0
+                            3\t559998.0
+                            """);
         });
     }
 
@@ -1576,9 +1599,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     ts\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
                     1970-01-01T00:00:00.460000Z\t419999.5\t2.2400253333E10\t380000.0\t380000.0\tnull\t459999.0\t80001\t53334\t80001\t80001\t80001\t459999.0\t380000.0
                     """);
-            assertSql(
-                    expected,
-                    " select" +
+            assertQuery(" select" +
                             " max(ts) as ts," +
                             " avg(j) as avg," +
                             " sum(j::double) as sum," +
@@ -1599,8 +1620,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             " row_number() over (order by ts desc) as rn" +
                             " from tab order by ts desc" +
                             ") " +
-                            "where rn between 1 and 80001 "
-            );
+                            "where rn between 1 and 80001 ")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             String expected2 = replaceTimestampSuffix("""
                     ts\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
@@ -1647,17 +1671,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     ts\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
                     1970-01-01T00:00:01.100000Z\t49980.066958378644\t3.815028491E9\t2073.0\t2073.0\t46392.0\t46392.0\t80001\t76331\t80001\t80001\t80001\t100000.0\t3.0
                     """);
-            assertSql(
-                    expected,
-                    " select max(ts) as ts, avg(j) as avg, sum(j::double) as sum, last(j::double) as first_value," +
+            assertQuery(" select max(ts) as ts, avg(j) as avg, sum(j::double) as sum, last(j::double) as first_value," +
                             "last_not_null(j::double) as first_value_ignore_nulls, " +
                             "first(j::double) as last_value, first_not_null(j::double) as last_value_ignore_nulls, " +
                             "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
                             "max(j::double) as max, min(j::double) as min " +
                             "from " +
                             "( select ts, i, j, s, d, c, row_number() over (order by ts desc) as rn from tab order by ts desc) " +
-                            "where rn between 1 and 80001 "
-            );
+                            "where rn between 1 and 80001 ")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             String expected2 = replaceTimestampSuffix("""
                     ts\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
@@ -1708,9 +1733,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             // cross-check with re-write using aggregate functions
-            assertSql(
-                    expected,
-                    "select max(ts) as ts, i, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value, " +
+            assertQuery("select max(ts) as ts, i, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value, " +
                             "first_not_null(j::double) as first_value_ignore_nulls, " +
                             "last(j::double) as last_value, last_not_null(j::double) as last_value_ignore_nulls, " +
                             "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
@@ -1722,8 +1745,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "  order by data.i, ts " +
                             ") " +
                             "group by i " +
-                            "order by i"
-            );
+                            "order by i")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             String expected2 = replaceTimestampSuffix("""
                     ts\ti\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
@@ -1800,9 +1825,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             // cross-check with re-write using aggregate functions
-            assertSql(
-                    expected,
-                    "select max(ts) as ts, i, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value, " +
+            assertQuery("select max(ts) as ts, i, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value, " +
                             "first_not_null(j::double) as first_value_ignore_nulls, " +
                             "last(j::double) as last_value, last_not_null(j::double) as last_value_ignore_nulls, " +
                             "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
@@ -1814,8 +1837,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "  order by data.i, ts " +
                             ") " +
                             "group by i " +
-                            "order by i "
-            );
+                            "order by i ")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             String expected2 = replaceTimestampSuffix("""
                     ts\ti\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
@@ -1903,9 +1928,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             // cross-check with re-write using aggregate functions
-            assertSql(
-                    expected,
-                    " select max(ts) as ts, i, avg(j::double) as avg, sum(j::double) as sum, last(j::double) as first_value, " +
+            assertQuery(" select max(ts) as ts, i, avg(j::double) as avg, sum(j::double) as sum, last(j::double) as first_value, " +
                             "last_not_null(j::double) as first_value_ignore_nulls, first(j::double) as last_value, first_not_null(j::double) as last_value_ignore_nulls," +
                             "count(*) as count, count(j::double) as count1, count(s) as count2, " +
                             "count(d) as count3, count(c) as count4, max(j::double) as max, min(j::double) as min " +
@@ -1913,8 +1936,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "( select ts, i, j, s, d, c, row_number() over (partition by i order by ts desc) as rn from tab order by ts desc) " +
                             "where rn between 1 and 80001 " +
                             "group by i " +
-                            "order by i"
-            );
+                            "order by i")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             String expected2 = replaceTimestampSuffix("""
                     ts\ti\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
@@ -2761,8 +2786,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into dups2 select (x/4)::timestamp, x%2, case when x % 3 = 0 THEN NULL ELSE x%5 END, x, 'k' || (x%5) ::symbol, x*2::double," +
                     " 'k' || x from long_sequence(10)");
 
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select * from dups2 order by i, n")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tn\ts\td\tc
                             1970-01-01T00:00:00.000000Z\t0\t2\t2\tk2\t4.0\tk2
                             1970-01-01T00:00:00.000001Z\t0\t4\t4\tk4\t8.0\tk4
@@ -2774,9 +2801,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000001Z\t1\t0\t5\tk0\t10.0\tk5
                             1970-01-01T00:00:00.000001Z\t1\t2\t7\tk2\t14.0\tk7
                             1970-01-01T00:00:00.000002Z\t1\tnull\t9\tk4\t18.0\tk9
-                            """),
-                    "select * from dups2 order by i, n"
-            );
+                            """));
 
             assertQueryNoLeakCheck(
                     replaceTimestampSuffix("""
@@ -3532,8 +3557,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, j from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj
                             1970-01-01T00:00:00.000001Z\t0\t1
                             1970-01-01T00:00:00.000002Z\t0\t2
@@ -3542,9 +3570,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t1\t0
                             1970-01-01T00:00:00.000006Z\t1\tnull
                             1970-01-01T00:00:00.000007Z\t1\t2
-                            """),
-                    "select ts, i, j from tab"
-            );
+                            """));
 
             assertQueryNoLeakCheck(
                     replaceTimestampSuffix("""
@@ -3666,7 +3692,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true
             );
 
-            assertSql(replaceTimestampSuffix("""
+            assertQuery("tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                     ts\ti\tj\td\ts\tc
                     1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tk1\tk1
                     1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tk2\tk2
@@ -3675,7 +3705,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tk0\tk5
                     1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tk1\tk6
                     1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tk2\tk7
-                    """), "tab");
+                    """));
 
             assertQueryNoLeakCheck(
                     replaceTimestampSuffix("""
@@ -4539,15 +4569,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into trades values ('ETH', 200, 'sell', 2000000)");
 
             // Inline OVER with table-qualified column references
-            assertSql(
-                    """
+            assertQuery("SELECT t.symbol, t.ts, lag(t.ts) OVER (PARTITION BY t.symbol ORDER BY t.ts) as lag FROM trades t")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             symbol\tts\tlag
                             BTC\t1970-01-01T00:00:00.000000Z\t
                             BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z
                             ETH\t1970-01-01T00:00:02.000000Z\t
-                            """,
-                    "SELECT t.symbol, t.ts, lag(t.ts) OVER (PARTITION BY t.symbol ORDER BY t.ts) as lag FROM trades t"
-            );
+                            """);
         });
     }
 
@@ -4561,26 +4592,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into fx_trades values ('ETH', 200, 'sell', 2000000)");
 
             // Unprefixed columns inside OVER
-            assertSql(
-                    """
+            assertQuery("SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER (PARTITION BY symbol ORDER BY timestamp) as lag FROM fx_trades t")
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             symbol\ttimestamp\tlag
                             BTC\t1970-01-01T00:00:00.000000Z\t
                             BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z
                             ETH\t1970-01-01T00:00:02.000000Z\t
-                            """,
-                    "SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER (PARTITION BY symbol ORDER BY timestamp) as lag FROM fx_trades t"
-            );
+                            """);
 
             // Table-prefixed columns inside OVER
-            assertSql(
-                    """
+            assertQuery("SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER (PARTITION BY t.symbol ORDER BY t.timestamp) as lag FROM fx_trades t")
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             symbol\ttimestamp\tlag
                             BTC\t1970-01-01T00:00:00.000000Z\t
                             BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z
                             ETH\t1970-01-01T00:00:02.000000Z\t
-                            """,
-                    "SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER (PARTITION BY t.symbol ORDER BY t.timestamp) as lag FROM fx_trades t"
-            );
+                            """);
         });
     }
 
@@ -6411,33 +6444,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(360000-x)*2::double " +
                     "from long_sequence(360000)");
 
-            assertSql(
-                    """
-                            i\tts\td\tmax_d_window
-                            0\t1970-01-01T00:00:00.460000Z\t0.0\t160000.0
-                            1\t1970-01-01T00:00:00.459997Z\t6.0\t160006.0
-                            2\t1970-01-01T00:00:00.459998Z\t4.0\t160004.0
-                            3\t1970-01-01T00:00:00.459999Z\t2.0\t160002.0
-                            """,
-                    "select i, ts, d, max_d_window from (" +
+            assertQuery("select i, ts, d, max_d_window from (" +
                             "select i, ts, d, " +
                             "max(d) over (partition by i order by ts range between 80000 preceding and current row) as max_d_window, " +
                             "row_number() over (partition by i order by ts desc) as rn " +
                             "from tab " +
                             "where i < 4" +
                             ") where rn = 1 " +
-                            "order by i"
-            );
+                            "order by i")
+                    .noLeakCheck()
+                    .returns("""
+                            i\tts\td\tmax_d_window
+                            0\t1970-01-01T00:00:00.460000Z\t0.0\t160000.0
+                            1\t1970-01-01T00:00:00.459997Z\t6.0\t160006.0
+                            2\t1970-01-01T00:00:00.459998Z\t4.0\t160004.0
+                            3\t1970-01-01T00:00:00.459999Z\t2.0\t160002.0
+                            """);
 
-            assertSql(
-                    """
-                            max_d\ti
-                            160000.0\t0
-                            160006.0\t1
-                            160004.0\t2
-                            160002.0\t3
-                            """,
-                    "select max(d) as max_d, i " +
+            assertQuery("select max(d) as max_d, i " +
                             "from ( " +
                             "  select data.d, data.i " +
                             "  from (select i, max(ts) as max from tab group by i) cnt " +
@@ -6446,8 +6470,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             ") " +
                             "where i in (0,1,2,3) " +
                             "group by i " +
-                            "order by i"
-            );
+                            "order by i")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_d\ti
+                            160000.0\t0
+                            160006.0\t1
+                            160004.0\t2
+                            160002.0\t3
+                            """);
         });
     }
 
@@ -6478,34 +6510,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "from long_sequence(360000)"
             );
 
-            assertSql(
-                    """
-                            i\tts\td\tmax_d_window
-                            0\t1970-01-01T00:00:00.000460000Z\t0.0\t160000.0
-                            1\t1970-01-01T00:00:00.000459997Z\t6.0\t160006.0
-                            2\t1970-01-01T00:00:00.000459998Z\t4.0\t160004.0
-                            3\t1970-01-01T00:00:00.000459999Z\t2.0\t160002.0
-                            """,
-                    "select i, ts, d, max_d_window from (" +
+            assertQuery("select i, ts, d, max_d_window from (" +
                             "select i, ts, d, " +
                             "max(d) over (partition by i order by ts range between 80000 preceding and current row) as max_d_window, " +
                             "row_number() over (partition by i order by ts desc) as rn " +
                             "from tab " +
                             "where i < 4" +
                             ") where rn = 1 " +
-                            "order by i"
-            );
+                            "order by i")
+                    .noLeakCheck()
+                    .returns("""
+                            i\tts\td\tmax_d_window
+                            0\t1970-01-01T00:00:00.000460000Z\t0.0\t160000.0
+                            1\t1970-01-01T00:00:00.000459997Z\t6.0\t160006.0
+                            2\t1970-01-01T00:00:00.000459998Z\t4.0\t160004.0
+                            3\t1970-01-01T00:00:00.000459999Z\t2.0\t160002.0
+                            """);
 
             // Cross-check: aggregate query equivalent to the window function
-            assertSql(
-                    """
-                            max_d\ti
-                            160000.0\t0
-                            160006.0\t1
-                            160004.0\t2
-                            160002.0\t3
-                            """,
-                    "select max(d) as max_d, i " +
+            assertQuery("select max(d) as max_d, i " +
                             "from ( " +
                             "  select data.d, data.i " +
                             "  from (select i, max(ts) as max from tab group by i) cnt " +
@@ -6514,8 +6537,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             ") " +
                             "where i in (0,1,2,3) " +
                             "group by i " +
-                            "order by i"
-            );
+                            "order by i")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_d\ti
+                            160000.0\t0
+                            160006.0\t1
+                            160004.0\t2
+                            160002.0\t3
+                            """);
         });
     }
 
@@ -6727,34 +6758,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Test max(timestamp) with window function over partitioned data with large frame
             // Test the last row of each partition to verify boundary conditions
-            assertSql(
-                    """
-                            i\tts\tmax_ts_window
-                            0\t1970-01-01T00:00:00.460000Z\t1970-01-01T00:00:00.460000Z
-                            1\t1970-01-01T00:00:00.459997Z\t1970-01-01T00:00:00.459997Z
-                            2\t1970-01-01T00:00:00.459998Z\t1970-01-01T00:00:00.459998Z
-                            3\t1970-01-01T00:00:00.459999Z\t1970-01-01T00:00:00.459999Z
-                            """,
-                    "select i, ts, max_ts_window from (" +
+            assertQuery("select i, ts, max_ts_window from (" +
                             "select i, ts, " +
                             "max(ts) over (partition by i order by ts range between 80000 preceding and current row) as max_ts_window, " +
                             "row_number() over (partition by i order by ts desc) as rn " +
                             "from tab " +
                             "where i < 4" +
                             ") where rn = 1 " +
-                            "order by i"
-            );
+                            "order by i")
+                    .noLeakCheck()
+                    .returns("""
+                            i\tts\tmax_ts_window
+                            0\t1970-01-01T00:00:00.460000Z\t1970-01-01T00:00:00.460000Z
+                            1\t1970-01-01T00:00:00.459997Z\t1970-01-01T00:00:00.459997Z
+                            2\t1970-01-01T00:00:00.459998Z\t1970-01-01T00:00:00.459998Z
+                            3\t1970-01-01T00:00:00.459999Z\t1970-01-01T00:00:00.459999Z
+                            """);
 
             // Cross-check: aggregate query equivalent to the window function
-            assertSql(
-                    """
-                            max_ts\ti
-                            1970-01-01T00:00:00.460000Z\t0
-                            1970-01-01T00:00:00.459997Z\t1
-                            1970-01-01T00:00:00.459998Z\t2
-                            1970-01-01T00:00:00.459999Z\t3
-                            """,
-                    "select max(ts) as max_ts, i " +
+            assertQuery("select max(ts) as max_ts, i " +
                             "from ( " +
                             "  select data.ts, data.i " +
                             "  from (select i, max(ts) as max from tab group by i) cnt " +
@@ -6763,8 +6785,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             ") " +
                             "where i in (0,1,2,3) " +
                             "group by i " +
-                            "order by i"
-            );
+                            "order by i")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_ts\ti
+                            1970-01-01T00:00:00.460000Z\t0
+                            1970-01-01T00:00:00.459997Z\t1
+                            1970-01-01T00:00:00.459998Z\t2
+                            1970-01-01T00:00:00.459999Z\t3
+                            """);
         });
     }
 
@@ -6795,34 +6825,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Test max(timestamp_ns) with window function over partitioned data with large frame
             // Test the last row of each partition to verify boundary conditions
-            assertSql(
-                    """
-                            i\tts\tmax_ts_window
-                            0\t1970-01-01T00:00:00.000460000Z\t1970-01-01T00:00:00.000460000Z
-                            1\t1970-01-01T00:00:00.000459997Z\t1970-01-01T00:00:00.000459997Z
-                            2\t1970-01-01T00:00:00.000459998Z\t1970-01-01T00:00:00.000459998Z
-                            3\t1970-01-01T00:00:00.000459999Z\t1970-01-01T00:00:00.000459999Z
-                            """,
-                    "select i, ts, max_ts_window from (" +
+            assertQuery("select i, ts, max_ts_window from (" +
                             "select i, ts, " +
                             "max(ts) over (partition by i order by ts range between 80000 preceding and current row) as max_ts_window, " +
                             "row_number() over (partition by i order by ts desc) as rn " +
                             "from tab " +
                             "where i < 4" +
                             ") where rn = 1 " +
-                            "order by i"
-            );
+                            "order by i")
+                    .noLeakCheck()
+                    .returns("""
+                            i\tts\tmax_ts_window
+                            0\t1970-01-01T00:00:00.000460000Z\t1970-01-01T00:00:00.000460000Z
+                            1\t1970-01-01T00:00:00.000459997Z\t1970-01-01T00:00:00.000459997Z
+                            2\t1970-01-01T00:00:00.000459998Z\t1970-01-01T00:00:00.000459998Z
+                            3\t1970-01-01T00:00:00.000459999Z\t1970-01-01T00:00:00.000459999Z
+                            """);
 
             // Cross-check: aggregate query equivalent to the window function
-            assertSql(
-                    """
-                            max_ts\ti
-                            1970-01-01T00:00:00.000460000Z\t0
-                            1970-01-01T00:00:00.000459997Z\t1
-                            1970-01-01T00:00:00.000459998Z\t2
-                            1970-01-01T00:00:00.000459999Z\t3
-                            """,
-                    "select max(ts) as max_ts, i " +
+            assertQuery("select max(ts) as max_ts, i " +
                             "from ( " +
                             "  select data.ts, data.i " +
                             "  from (select i, max(ts) as max from tab group by i) cnt " +
@@ -6831,8 +6852,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             ") " +
                             "where i in (0,1,2,3) " +
                             "group by i " +
-                            "order by i"
-            );
+                            "order by i")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_ts\ti
+                            1970-01-01T00:00:00.000460000Z\t0
+                            1970-01-01T00:00:00.000459997Z\t1
+                            1970-01-01T00:00:00.000459998Z\t2
+                            1970-01-01T00:00:00.000459999Z\t3
+                            """);
         });
     }
 
@@ -7420,19 +7449,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab2 values ('2021-01-03T00:00:00.000000Z', 20, 'B')");
             execute("insert into tab2 values ('2021-01-04T00:00:00.000000Z', 30, 'A')");
 
-            assertSql(
-                    """
+            assertQuery("SELECT t1.ts as t1_ts, t1.val as t1_val, t1.grp as t1_grp, t2.ts as t2_ts, t2.val as t2_val, " +
+                            "CASE WHEN t1.ts > t2.ts THEN t1.ts ELSE t2.ts END as ttt " +
+                            "FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp ORDER BY t1.ts, t2.ts")
+                    .timestamp("t1_ts")
+                    .noLeakCheck()
+                    .returns("""
                             t1_ts\tt1_val\tt1_grp\tt2_ts\tt2_val\tttt
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-02T00:00:00.000000Z\t10\t2021-01-02T00:00:00.000000Z
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-03T00:00:00.000000Z\t20\t2021-01-03T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-02T00:00:00.000000Z\t10\t2021-01-03T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z
-                            """,
-                    "SELECT t1.ts as t1_ts, t1.val as t1_val, t1.grp as t1_grp, t2.ts as t2_ts, t2.val as t2_val, " +
-                            "CASE WHEN t1.ts > t2.ts THEN t1.ts ELSE t2.ts END as ttt " +
-                            "FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp ORDER BY t1.ts, t2.ts"
-            );
+                            """);
             assertQueryNoLeakCheck(
                     """
                             t1_ts\tt1_val\tt1_grp\tt2_ts\tt2_val\tmax_ts
@@ -7850,34 +7879,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Test min(double) with window function over partitioned data with large frame
             // Test the last row of each partition to verify boundary conditions
-            assertSql(
-                    """
-                            i\tts\tmin_d_window
-                            0\t1970-01-01T00:00:00.460000Z\t560000.0
-                            1\t1970-01-01T00:00:00.459997Z\t559994.0
-                            2\t1970-01-01T00:00:00.459998Z\t559996.0
-                            3\t1970-01-01T00:00:00.459999Z\t559998.0
-                            """,
-                    "select i, ts, min_d_window from (" +
+            assertQuery("select i, ts, min_d_window from (" +
                             "select i, ts, " +
                             "min(d) over (partition by i order by ts range between 80000 preceding and current row) as min_d_window, " +
                             "row_number() over (partition by i order by ts desc) as rn " +
                             "from tab " +
                             "where i < 4" +
                             ") where rn = 1 " +
-                            "order by i"
-            );
+                            "order by i")
+                    .noLeakCheck()
+                    .returns("""
+                            i\tts\tmin_d_window
+                            0\t1970-01-01T00:00:00.460000Z\t560000.0
+                            1\t1970-01-01T00:00:00.459997Z\t559994.0
+                            2\t1970-01-01T00:00:00.459998Z\t559996.0
+                            3\t1970-01-01T00:00:00.459999Z\t559998.0
+                            """);
 
             // Cross-check: aggregate query equivalent to the window function
-            assertSql(
-                    """
-                            min_d\ti
-                            560000.0\t0
-                            559994.0\t1
-                            559996.0\t2
-                            559998.0\t3
-                            """,
-                    "select min(d) as min_d, i " +
+            assertQuery("select min(d) as min_d, i " +
                             "from ( " +
                             "  select data.d, data.i " +
                             "  from (select i, max(ts) as max from tab group by i) cnt " +
@@ -7886,8 +7906,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             ") " +
                             "where i in (0,1,2,3) " +
                             "group by i " +
-                            "order by i"
-            );
+                            "order by i")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            min_d\ti
+                            560000.0\t0
+                            559994.0\t1
+                            559996.0\t2
+                            559998.0\t3
+                            """);
         });
     }
 
@@ -8692,14 +8720,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (2, 1000000)");
 
             String longName = "a".repeat(200);
-            assertSql(
-                    """
+            assertQuery("SELECT sum(x) OVER " + longName + " FROM t WINDOW " + longName + " AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum
                             1.0
                             3.0
-                            """,
-                    "SELECT sum(x) OVER " + longName + " FROM t WINDOW " + longName + " AS (ORDER BY ts)"
-            );
+                            """);
         });
     }
 
@@ -8799,17 +8828,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 2000000)");
 
             // Named window referenced inside a nested window function
-            assertSql(
-                    """
+            assertQuery("SELECT sum(row_number() OVER w) OVER () as outer_sum " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY ts)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             outer_sum
                             6.0
                             6.0
                             6.0
-                            """,
-                    "SELECT sum(row_number() OVER w) OVER () as outer_sum " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY ts)"
-            );
+                            """);
         });
     }
 
@@ -8923,24 +8952,26 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (2, 1000000)");
 
             // Quoted name in WINDOW clause, unquoted in OVER
-            assertSql(
-                    """
+            assertQuery("SELECT sum(x) OVER w FROM t WINDOW \"w\" AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum
                             1.0
                             3.0
-                            """,
-                    "SELECT sum(x) OVER w FROM t WINDOW \"w\" AS (ORDER BY ts)"
-            );
+                            """);
 
             // Unquoted name in WINDOW clause, quoted in OVER
-            assertSql(
-                    """
+            assertQuery("SELECT sum(x) OVER \"w\" FROM t WINDOW w AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum
                             1.0
                             3.0
-                            """,
-                    "SELECT sum(x) OVER \"w\" FROM t WINDOW w AS (ORDER BY ts)"
-            );
+                            """);
         });
     }
 
@@ -9085,14 +9116,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (2, 1000000)");
 
             // Unicode characters in quoted window name
-            assertSql(
-                    """
+            assertQuery("SELECT sum(x) OVER \"窗口\" FROM t WINDOW \"窗口\" AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum
                             1.0
                             3.0
-                            """,
-                    "SELECT sum(x) OVER \"窗口\" FROM t WINDOW \"窗口\" AS (ORDER BY ts)"
-            );
+                            """);
         });
     }
 
@@ -9105,24 +9137,26 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // "window" is a context-sensitive keyword (not in KEYWORDS set),
             // so it's valid as a window name without quoting
-            assertSql(
-                    """
+            assertQuery("SELECT sum(x) OVER window FROM t WINDOW window AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum
                             1.0
                             3.0
-                            """,
-                    "SELECT sum(x) OVER window FROM t WINDOW window AS (ORDER BY ts)"
-            );
+                            """);
 
             // Quoted also works
-            assertSql(
-                    """
+            assertQuery("SELECT sum(x) OVER \"window\" FROM t WINDOW \"window\" AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum
                             1.0
                             3.0
-                            """,
-                    "SELECT sum(x) OVER \"window\" FROM t WINDOW \"window\" AS (ORDER BY ts)"
-            );
+                            """);
         });
     }
 
@@ -9634,15 +9668,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into trades values ('ETH', 200, 'sell', 2000000)");
 
             // WINDOW clause with table-qualified column references
-            assertSql(
-                    """
+            assertQuery("SELECT t.symbol, t.ts, lag(t.ts) OVER w as lag FROM trades t WINDOW w AS (PARTITION BY t.symbol ORDER BY t.ts)")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             symbol\tts\tlag
                             BTC\t1970-01-01T00:00:00.000000Z\t
                             BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z
                             ETH\t1970-01-01T00:00:02.000000Z\t
-                            """,
-                    "SELECT t.symbol, t.ts, lag(t.ts) OVER w as lag FROM trades t WINDOW w AS (PARTITION BY t.symbol ORDER BY t.ts)"
-            );
+                            """);
         });
     }
 
@@ -9655,28 +9690,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into fx_trades values ('ETH', 200, 'sell', 2000000)");
 
             // WINDOW clause with table-prefixed columns
-            assertSql(
-                    """
+            assertQuery("SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER w as lag " +
+                            "FROM fx_trades t WINDOW w AS (PARTITION BY t.symbol ORDER BY t.timestamp)")
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             symbol\ttimestamp\tlag
                             BTC\t1970-01-01T00:00:00.000000Z\t
                             BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z
                             ETH\t1970-01-01T00:00:02.000000Z\t
-                            """,
-                    "SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER w as lag " +
-                            "FROM fx_trades t WINDOW w AS (PARTITION BY t.symbol ORDER BY t.timestamp)"
-            );
+                            """);
 
             // WINDOW clause with unprefixed columns
-            assertSql(
-                    """
+            assertQuery("SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER w as lag " +
+                            "FROM fx_trades t WINDOW w AS (PARTITION BY symbol ORDER BY timestamp)")
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             symbol\ttimestamp\tlag
                             BTC\t1970-01-01T00:00:00.000000Z\t
                             BTC\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z
                             ETH\t1970-01-01T00:00:02.000000Z\t
-                            """,
-                    "SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER w as lag " +
-                            "FROM fx_trades t WINDOW w AS (PARTITION BY symbol ORDER BY timestamp)"
-            );
+                            """);
         });
     }
 
@@ -11326,19 +11363,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, 14.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev(j) over (partition by i order by ts) sd, " +
                             "stddev_samp(j) over (partition by i order by ts) sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -18646,12 +18684,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, rnd_long(1, 100_000, 5), rnd_double(0) * 100_000 from long_sequence(100_000)");
 
             // Cross-validate stddev_pop against sqrt(avg(x²) - avg(x)²) over a large sliding window
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 6) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 6) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_pop(d) over (order by ts rows between 999 preceding and current row) sd, " +
@@ -18659,8 +18692,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "avg(d) over (order by ts rows between 999 preceding and current row) * " +
                             "avg(d) over (order by ts rows between 999 preceding and current row)) sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -18670,19 +18709,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_pop(j) over (order by ts) sd, " +
                             "sqrt(avg(j * j) over (order by ts) - avg(j) over (order by ts) * avg(j) over (order by ts)) sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -18692,12 +18732,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_pop(j) over (order by ts range between 2 microseconds preceding and current row) sd, " +
@@ -18707,8 +18742,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "avg(j) over (order by ts range between 2 microseconds preceding and current row)" +
                             ") sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -18718,12 +18759,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_pop(j) over (order by ts rows between 2 preceding and current row) sd, " +
@@ -18733,8 +18769,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "avg(j) over (order by ts rows between 2 preceding and current row)" +
                             ") sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -18744,19 +18786,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, 4.0), (4, 2, null), (5, 2, null), (6, 3, 10.0), (7, 3, 14.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_pop(j) over (partition by i) sd, " +
                             "sqrt(avg(j * j) over (partition by i) - avg(j) over (partition by i) * avg(j) over (partition by i)) sd_ref " +
                             "from tab" +
-                            ") where i in (1, 3)"
-            );
+                            ") where i in (1, 3)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -18766,19 +18809,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_pop(j) over (partition by i order by ts) sd, " +
                             "sqrt(avg(j * j) over (partition by i order by ts) - avg(j) over (partition by i order by ts) * avg(j) over (partition by i order by ts)) sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -18788,12 +18832,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd, " +
@@ -18803,8 +18842,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "avg(j) over (partition by i order by ts range between 2 microseconds preceding and current row)" +
                             ") sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -18814,12 +18859,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_pop(j) over (partition by i order by ts rows between 2 preceding and current row) sd, " +
@@ -18829,8 +18869,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "avg(j) over (partition by i order by ts rows between 2 preceding and current row)" +
                             ") sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -18843,12 +18889,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             String rangeVal = timestampType == TestTimestampType.MICRO ? "10000" : "10000000";
 
             // Cross-validate stddev_pop over partitioned range frame
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 6) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 6) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_pop(d) over (partition by i order by ts range between " + rangeVal + " preceding and current row) sd, " +
@@ -18856,8 +18897,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "avg(d) over (partition by i order by ts range between " + rangeVal + " preceding and current row) * " +
                             "avg(d) over (partition by i order by ts range between " + rangeVal + " preceding and current row)) sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -18867,19 +18914,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 5.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_pop(j) over () sd, " +
                             "sqrt(avg(j * j) over () - avg(j) over () * avg(j) over ()) sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -18895,8 +18943,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "('1970-01-01T00:00:05', 2, 200.0), " +
                     "('1970-01-01T00:00:06', 2, 300.0)");
 
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, stddev_pop(val) over (partition by i order by ts range between unbounded preceding and 2 microseconds preceding) sd from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tsd
                             1970-01-01T00:00:01.000000Z\t1\tnull
                             1970-01-01T00:00:02.000000Z\t1\t0.0
@@ -18904,9 +18956,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:04.000000Z\t2\tnull
                             1970-01-01T00:00:05.000000Z\t2\t0.0
                             1970-01-01T00:00:06.000000Z\t2\t50.0
-                            """),
-                    "select ts, i, stddev_pop(val) over (partition by i order by ts range between unbounded preceding and 2 microseconds preceding) sd from tab"
-            );
+                            """));
         });
     }
 
@@ -18921,26 +18971,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 execute("insert into tab select (x * 1000000)::timestamp, x % 2, x::double from long_sequence(50)");
 
                 // non-partitioned: 50 rows > capacity 16 → inline buffer doubling
-                assertSql(
-                        """
+                assertQuery("select count(*) cnt from (" +
+                                "select stddev_pop(val) over (order by ts range between 100 second preceding and current row) sd from tab" +
+                                ") where sd is not null")
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
                                 cnt
                                 50
-                                """,
-                        "select count(*) cnt from (" +
-                                "select stddev_pop(val) over (order by ts range between 100 second preceding and current row) sd from tab" +
-                                ") where sd is not null"
-                );
+                                """);
 
                 // partitioned: 25 rows per partition > initial range buffer (32 default, but capacity=16 from pageSize) → expandRingBuffer
-                assertSql(
-                        """
+                assertQuery("select count(*) cnt from (" +
+                                "select stddev_pop(val) over (partition by i order by ts range between 100 second preceding and current row) sd from tab" +
+                                ") where sd is not null")
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
                                 cnt
                                 50
-                                """,
-                        "select count(*) cnt from (" +
-                                "select stddev_pop(val) over (partition by i order by ts range between 100 second preceding and current row) sd from tab" +
-                                ") where sd is not null"
-                );
+                                """);
             });
         } finally {
             node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 1024 * 1024);
@@ -19076,17 +19128,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // At ts=3s: frame = [ts <= 3s-2µs] = {10, 20} → stddev=5
             // At ts=4s: {10, 20, 30} → stddev=8.165
             // At ts=5s: {10, 20, 30, 40} → stddev=11.18
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, stddev_pop(val) over (order by ts range between unbounded preceding and 2 microseconds preceding) sd from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tsd
                             1970-01-01T00:00:01.000000Z\tnull
                             1970-01-01T00:00:02.000000Z\t0.0
                             1970-01-01T00:00:03.000000Z\t5.0
                             1970-01-01T00:00:04.000000Z\t8.16496580927726
                             1970-01-01T00:00:05.000000Z\t11.180339887498949
-                            """),
-                    "select ts, stddev_pop(val) over (order by ts range between unbounded preceding and 2 microseconds preceding) sd from tab"
-            );
+                            """));
         });
     }
 
@@ -19098,14 +19152,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1), (2, 1, 3), (3, 2, 10), (4, 2, 20)");
 
-            assertSql(
-                    """
+            assertQuery("select i, stddev(j) sd from tab order by i")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             i\tsd
                             1\t1.4142135623730951
                             2\t7.0710678118654755
-                            """,
-                    "select i, stddev(j) sd from tab order by i"
-            );
+                            """);
         });
     }
 
@@ -19115,14 +19169,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0), (2, 1, 3.0), (3, 2, 10.0), (4, 2, 20.0)");
 
-            assertSql(
-                    """
+            assertQuery("select i, stddev(j) sd from tab order by i")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             i\tsd
                             1\t1.4142135623730951
                             2\t7.0710678118654755
-                            """,
-                    "select i, stddev(j) sd from tab order by i"
-            );
+                            """);
         });
     }
 
@@ -19178,19 +19232,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_samp(j) over (order by ts) sd, " +
                             "sqrt(count(j) over (order by ts)::double / (count(j) over (order by ts) - 1)) * stddev_pop(j) over (order by ts) sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19200,12 +19255,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_samp(j) over (order by ts range between 2 microseconds preceding and current row) sd, " +
@@ -19214,8 +19264,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "(count(j) over (order by ts range between 2 microseconds preceding and current row) - 1)) * " +
                             "stddev_pop(j) over (order by ts range between 2 microseconds preceding and current row) sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19225,12 +19281,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_samp(j) over (order by ts rows between 2 preceding and current row) sd, " +
@@ -19239,8 +19290,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "(count(j) over (order by ts rows between 2 preceding and current row) - 1)) * " +
                             "stddev_pop(j) over (order by ts rows between 2 preceding and current row) sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19250,19 +19307,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_samp(j) over (partition by i order by ts) sd, " +
                             "sqrt(count(j) over (partition by i order by ts)::double / (count(j) over (partition by i order by ts) - 1)) * stddev_pop(j) over (partition by i order by ts) sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19272,12 +19330,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_samp(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd, " +
@@ -19286,8 +19339,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "(count(j) over (partition by i order by ts range between 2 microseconds preceding and current row) - 1)) * " +
                             "stddev_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19297,12 +19356,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_samp(j) over (partition by i order by ts rows between 2 preceding and current row) sd, " +
@@ -19311,8 +19365,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "(count(j) over (partition by i order by ts rows between 2 preceding and current row) - 1)) * " +
                             "stddev_pop(j) over (partition by i order by ts rows between 2 preceding and current row) sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19322,19 +19382,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 5.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_samp(j) over () sd, " +
                             "sqrt(count(j) over ()::double / (count(j) over () - 1)) * stddev_pop(j) over () sd_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19434,19 +19495,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
+            assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "var_pop(j) over (order by ts) vr, " +
                             "stddev_pop(j) over (order by ts) sd " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19478,19 +19540,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, rnd_double(0) * 100_000 from long_sequence(50_000)");
 
             // Cross-validate var_pop = stddev_pop²
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 6) max_diff " +
+            assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 6) max_diff " +
                             "from (" +
                             "select " +
                             "var_pop(d) over (order by ts rows between 999 preceding and current row) vr, " +
                             "stddev_pop(d) over (order by ts rows between 999 preceding and current row) sd " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19500,19 +19563,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
+            assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "var_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) vr, " +
                             "stddev_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19522,16 +19586,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 5.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
+            assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
                             "from (" +
                             "select var_pop(j) over () vr, stddev_pop(j) over () sd from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19569,19 +19634,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
+            assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "var_samp(j) over (order by ts) vr, " +
                             "stddev_samp(j) over (order by ts) sd " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19612,16 +19678,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, 14.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
+            assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
                             "from (" +
                             "select var_samp(j) over (partition by i order by ts) vr, stddev_samp(j) over (partition by i order by ts) sd from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19631,16 +19698,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 5.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
+            assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
                             "from (" +
                             "select var_samp(j) over () vr, stddev_samp(j) over () sd from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -19685,19 +19753,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, 14.0)");
 
-            assertSql(
-                    """
-                            max_diff
-                            0.0
-                            """,
-                    "select round(max(case when vr is null and vr_ref is null then 0.0 when vr is null or vr_ref is null then 1.0 else abs(vr - vr_ref) end), 12) max_diff " +
+            assertQuery("select round(max(case when vr is null and vr_ref is null then 0.0 when vr is null or vr_ref is null then 1.0 else abs(vr - vr_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "variance(j) over (partition by i order by ts) vr, " +
                             "var_samp(j) over (partition by i order by ts) vr_ref " +
                             "from tab" +
-                            ")"
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            max_diff
+                            0.0
+                            """);
         });
     }
 
@@ -21835,7 +21904,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "('2021-01-13 09:30:00', 'SPY', 373.00, 373.50, 372.50, 373.25, 1300)," +
                     "('2021-01-14 09:30:00', 'SPY', 373.00, 373.50, 372.50, 373.25, 1400);");
             drainWalQueue();
-            assertSql(replaceTimestampSuffix("""
+            assertQuery("WITH true_ranges AS " +
+                            "( SELECT rn, ticker, timestamp, open, high, low, close, high-low AS day_range, avg_14_bar_range, " +
+                            "greatest(high-low, abs(high-prev_close), abs(low-prev_close)) as true_range FROM " +
+                            "( SELECT timestamp, ticker, open, high, low, close, row_number() OVER (PARTITION BY ticker ORDER BY timestamp) as rn, " +
+                            "avg(high - low) OVER (PARTITION BY ticker ORDER BY timestamp ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) as avg_14_bar_range, " +
+                            "LAG(close) OVER (PARTITION BY ticker ORDER BY timestamp) AS prev_close, FROM x WHERE ticker = 'SPY' ))" +
+                            "SELECT rn, ticker, timestamp, open, high, low, close, atr FROM ( " +
+                            "SELECT rn, ticker, timestamp, open, high, low, close, avg(true_range) OVER " +
+                            "(PARTITION BY ticker ORDER BY timestamp ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS atr FROM true_ranges ) ORDER BY ticker, timestamp DESC;")
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             rn\tticker\ttimestamp\topen\thigh\tlow\tclose\tatr
                             14\tSPY\t2021-01-14T09:30:00.000000Z\t373.0\t373.5\t372.5\t373.25\t1.0
                             13\tSPY\t2021-01-13T09:30:00.000000Z\t373.0\t373.5\t372.5\t373.25\t1.0
@@ -21851,16 +21930,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             3\tSPY\t2021-01-03T09:30:00.000000Z\t370.5\t371.0\t370.0\t370.75\t1.0
                             2\tSPY\t2021-01-02T09:30:00.000000Z\t370.25\t370.75\t369.75\t370.5\t1.0
                             1\tSPY\t2021-01-01T09:30:00.000000Z\t370.0\t370.5\t369.5\t370.25\t1.0
-                            """),
-                    "WITH true_ranges AS " +
-                            "( SELECT rn, ticker, timestamp, open, high, low, close, high-low AS day_range, avg_14_bar_range, " +
-                            "greatest(high-low, abs(high-prev_close), abs(low-prev_close)) as true_range FROM " +
-                            "( SELECT timestamp, ticker, open, high, low, close, row_number() OVER (PARTITION BY ticker ORDER BY timestamp) as rn, " +
-                            "avg(high - low) OVER (PARTITION BY ticker ORDER BY timestamp ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) as avg_14_bar_range, " +
-                            "LAG(close) OVER (PARTITION BY ticker ORDER BY timestamp) AS prev_close, FROM x WHERE ticker = 'SPY' ))" +
-                            "SELECT rn, ticker, timestamp, open, high, low, close, atr FROM ( " +
-                            "SELECT rn, ticker, timestamp, open, high, low, close, avg(true_range) OVER " +
-                            "(PARTITION BY ticker ORDER BY timestamp ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS atr FROM true_ranges ) ORDER BY ticker, timestamp DESC;");
+                            """));
         });
     }
 
