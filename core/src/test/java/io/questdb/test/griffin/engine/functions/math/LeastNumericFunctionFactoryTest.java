@@ -33,11 +33,8 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testLeastNumericFunctionFactoryDecimalOverflow() throws Exception {
-        assertException(
-                "select least(123.456::decimal(76,73), 99999::int)",
-                43,
-                "inconvertible value: 99999 [INT -> DECIMAL(76,73)]"
-        );
+        assertQuery("select least(123.456::decimal(76,73), 99999::int)")
+                .fails(43, "inconvertible value: 99999 [INT -> DECIMAL(76,73)]");
     }
 
     @Test
@@ -166,8 +163,8 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testLeastNumericFunctionFactoryUnsupportedTypes() throws Exception {
-        assertException("select least(5, 5.2, 'abc', 2)", 21, "unsupported type");
-        assertException("select least(5, 5.2, 'abc'::varchar, 2)", 26, "unsupported type");
+        assertQuery("select least(5, 5.2, 'abc', 2)").fails(21, "unsupported type");
+        assertQuery("select least(5, 5.2, 'abc'::varchar, 2)").fails(26, "unsupported type");
     }
 
     @Test
@@ -210,7 +207,7 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testLeastNumericFunctionFactoryWithNoArgs() throws Exception {
-        assertException("select least();", 7, "at least one argument is required ");
+        assertQuery("select least();").fails(7, "at least one argument is required ");
     }
 
     @Test
@@ -225,14 +222,13 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
                             "('2021-10-05T14:31:35.878Z', 'AAPL', 250, 123.0);"
             );
 
-            assertQuery(
-                    "least\tleast1\n" +
+            assertQuery("select least(price, 247), least(amount, 123.2) from x")
+                    .expectSize()
+                    .returns("least\tleast1\n" +
                             "245.0\t123.2\n" +
                             "245.0\t123.2\n" +
                             "247.0\t123.1\n" +
-                            "247.0\t123.0\n",
-                    "select least(price, 247), least(amount, 123.2) from x"
-            );
+                            "247.0\t123.0\n");
         });
     }
 
