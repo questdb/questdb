@@ -170,11 +170,8 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
     @Test
     public void testZeroWeights() throws Exception {
         // All zero weights should fail at runtime when constructing the function
-        assertException(
-                "select rnd_symbol_weighted('A', 0, 'B', 0) as testCol from long_sequence(10)",
-                7,
-                "total weight must be positive"
-        );
+        assertQuery("select rnd_symbol_weighted('A', 0, 'B', 0) as testCol from long_sequence(10)")
+                .fails(7, "total weight must be positive");
     }
 
     @Test
