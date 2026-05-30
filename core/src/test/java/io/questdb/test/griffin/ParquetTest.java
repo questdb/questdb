@@ -290,10 +290,11 @@ public class ParquetTest extends AbstractCairoTest {
     // with assertions off, call setCapacity(0)). remapColumns() must instead leave
     // the already-cleared lists empty for a zero-column read.
     //
-    // count(*) with a constant GROUP BY forces the non-keyed group-by reduce path,
-    // which navigates every page frame -- decoding the parquet frame -- while
-    // projecting zero columns. The older partition is parquet; the active
-    // '2024-06-02' stays native (the active partition cannot be converted).
+    // count(*) with a constant GROUP BY keeps a single constant key, routing
+    // through the keyed group-by reduce path (AsyncGroupByRecordCursor), which
+    // navigates every page frame -- decoding the parquet frame -- while projecting
+    // zero columns. The older partition is parquet; the active '2024-06-02' stays
+    // native (the active partition cannot be converted).
     @Test
     public void testCountStarOverParquetPartition() throws Exception {
         assertMemoryLeak(() -> {
@@ -302,13 +303,92 @@ public class ParquetTest extends AbstractCairoTest {
                     "(1, '2024-06-01T00:00:00.000000Z'), (2, '2024-06-02T00:00:00.000000Z');");
             execute("alter table x convert partition to parquet where ts in '2024-06-01';");
 
-            assertSql(
+            // Pin the plan: the regression only reproduces while this query takes the
+            // group-by reduce path that decodes the parquet frame. If the optimizer
+            // ever folded the constant GROUP BY into the metadata-only
+            // CountRecordCursorFactory (whose plan is just "Count"), no frame would
+            // decode and the test would pass trivially on broken code. The PageFrame
+            // node below is what guarantees the parquet frame is actually visited.
+            assertPlanNoLeakCheck(
+                    "select count(*) from x group by 1+2",
+                    """
+                            VirtualRecord
+                              functions: [count]
+                                Async Group By workers: 1
+                                  keys: [column]
+                                  keyFunctions: [3]
+                                  values: [count(*)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                            """
+            );
+
+            // assertQueryNoLeakCheck re-creates the cursor and re-reads the result,
+            // so it also exercises parquet decode re-entry (assertSql reads once).
+            assertQueryNoLeakCheck(
                     """
                             count
                             2
                             """,
-                    "select count(*) from x group by 1+2"
+                    "select count(*) from x group by 1+2",
+                    null, // no DDL; the table is already built above
+                    null, // group-by result has no designated timestamp
+                    true, // supportsRandomAccess
+                    true // expectSize
             );
+        });
+    }
+
+    @Test
+    public void testDecimal128LateMaterializationOverParquet() throws Exception {
+        // Sibling of testLong256LateMaterializationOverParquet that exercises the 16-byte
+        // late-materialization path through PageFrameFilteredMemoryRecord.getDecimal128.
+        // Keeps the LONG256 fix honest: any future regression that drops the getRowIndex
+        // routing for getDecimal128 (or the wider DECIMAL128 family) will surface here as
+        // a native-vs-parquet divergence on the GROUP BY key column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k DECIMAL(38, 5), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT " +
+                    "rnd_decimal(38, 5, 0) AS k, " +
+                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
+                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
+                    "FROM long_sequence(10)");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (k DECIMAL(38, 5), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
+                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testDecimal256LateMaterializationOverParquet() throws Exception {
+        // Sibling of testLong256LateMaterializationOverParquet for the 32-byte
+        // DECIMAL256 family (PageFrameFilteredMemoryRecord.getDecimal256).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k DECIMAL(76, 10), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT " +
+                    "rnd_decimal(76, 10, 0) AS k, " +
+                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
+                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
+                    "FROM long_sequence(10)");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (k DECIMAL(76, 10), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
+                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
+                    LOG);
         });
     }
 
@@ -464,6 +544,74 @@ public class ParquetTest extends AbstractCairoTest {
                 execute("drop table expected");
             });
         }
+    }
+
+    @Test
+    public void testDecimalFilterMismatchedScaleOverParquet() throws Exception {
+        // Regression for two bugs the fuzzer surfaced together:
+        //   (1) PushdownFilterExtractor pushed the literal's raw value at the
+        //       literal's scale, so parquet row group statistics were compared
+        //       against a value at the wrong scale and pruned every group.
+        //   (2) CompareDecimal{64,128,256}Function did not short-circuit NULL,
+        //       so Decimal128/256.compareTo(NULL, x) = -1 made every NULL row
+        //       satisfy any "<", "<=" filter (and "!=" symmetrically).
+        // Either bug alone produced a primary-vs-shadow divergence in the fuzzer
+        // (native incorrectly matched NULLs while parquet correctly pruned the
+        // group). The test asserts that:
+        //   - `c1 <= literal` matches no NULL rows on either path,
+        //   - parquet matches the same non-null rows native does.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c1 DECIMAL(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES " +
+                    "(NULL, '2024-01-01'), " +
+                    "(0.00001::DECIMAL(18,5), '2024-01-02'), " +
+                    "(0.00002::DECIMAL(18,5), '2024-01-03'), " +
+                    "(NULL, '2024-01-04'), " +
+                    "(99999999999.00000::DECIMAL(18,5), '2024-01-05')");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (c1 DECIMAL(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            // Mismatched-scale literals across partitions split into many small row groups.
+            // Two non-null small rows match; NULLs must NOT match.
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT count() FROM x_native WHERE c1 <= 26945.4149::DECIMAL(18, 4)",
+                    "SELECT count() FROM x WHERE c1 <= 26945.4149::DECIMAL(18, 4)",
+                    LOG);
+            // Single tight bound that includes only the two small values
+            assertSql("count\n2\n",
+                    "SELECT count() FROM x_native WHERE c1 <= 26945.4149::DECIMAL(18, 4)");
+            assertSql("count\n2\n",
+                    "SELECT count() FROM x WHERE c1 <= 26945.4149::DECIMAL(18, 4)");
+            // <= an even tighter bound — only the smallest matches
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT count() FROM x_native WHERE c1 <= 0.000015::DECIMAL(18, 6)",
+                    "SELECT count() FROM x WHERE c1 <= 0.000015::DECIMAL(18, 6)",
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testDecimalFilterWithBindVariableSkipsPushdown() throws Exception {
+        // Regression: PushdownFilterExtractor.rescaleDecimalForPushdown
+        // called DecimalUtil.load(... null) which evaluates the function. For
+        // a bind variable wrapped in a chained ::BYTE::DECIMAL cast, the
+        // unbound NamedParameterLinkFunction.getBase() asserted at compile
+        // time. Pushdown now skips runtime-constants - they aren't known at
+        // compile time, can't drive parquet row group statistics, and the
+        // regular row-time filter handles them correctly.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c0 DECIMAL(38, 1), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('10.5'::DECIMAL(38, 1), '2024-01-01T00:00:00.000000Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "5");
+            assertSql(
+                    "c0\tts\n10.5\t2024-01-01T00:00:00.000000Z\n",
+                    "SELECT c0, ts FROM t WHERE NOT ((:b0::BYTE)::DECIMAL(38, 1) >= c0)"
+            );
+        });
     }
 
     @Test
@@ -685,74 +833,6 @@ public class ParquetTest extends AbstractCairoTest {
                             4\t2024-06-13T00:00:00.000000Z\t\t
                             """,
                     "x order by id"
-            );
-        });
-    }
-
-    @Test
-    public void testDecimalFilterMismatchedScaleOverParquet() throws Exception {
-        // Regression for two bugs the fuzzer surfaced together:
-        //   (1) PushdownFilterExtractor pushed the literal's raw value at the
-        //       literal's scale, so parquet row group statistics were compared
-        //       against a value at the wrong scale and pruned every group.
-        //   (2) CompareDecimal{64,128,256}Function did not short-circuit NULL,
-        //       so Decimal128/256.compareTo(NULL, x) = -1 made every NULL row
-        //       satisfy any "<", "<=" filter (and "!=" symmetrically).
-        // Either bug alone produced a primary-vs-shadow divergence in the fuzzer
-        // (native incorrectly matched NULLs while parquet correctly pruned the
-        // group). The test asserts that:
-        //   - `c1 <= literal` matches no NULL rows on either path,
-        //   - parquet matches the same non-null rows native does.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (c1 DECIMAL(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x VALUES " +
-                    "(NULL, '2024-01-01'), " +
-                    "(0.00001::DECIMAL(18,5), '2024-01-02'), " +
-                    "(0.00002::DECIMAL(18,5), '2024-01-03'), " +
-                    "(NULL, '2024-01-04'), " +
-                    "(99999999999.00000::DECIMAL(18,5), '2024-01-05')");
-            drainWalQueue();
-            execute("CREATE TABLE x_native (c1 DECIMAL(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x_native SELECT * FROM x");
-            drainWalQueue();
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
-            drainWalQueue();
-            // Mismatched-scale literals across partitions split into many small row groups.
-            // Two non-null small rows match; NULLs must NOT match.
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
-                    "SELECT count() FROM x_native WHERE c1 <= 26945.4149::DECIMAL(18, 4)",
-                    "SELECT count() FROM x WHERE c1 <= 26945.4149::DECIMAL(18, 4)",
-                    LOG);
-            // Single tight bound that includes only the two small values
-            assertSql("count\n2\n",
-                    "SELECT count() FROM x_native WHERE c1 <= 26945.4149::DECIMAL(18, 4)");
-            assertSql("count\n2\n",
-                    "SELECT count() FROM x WHERE c1 <= 26945.4149::DECIMAL(18, 4)");
-            // <= an even tighter bound — only the smallest matches
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
-                    "SELECT count() FROM x_native WHERE c1 <= 0.000015::DECIMAL(18, 6)",
-                    "SELECT count() FROM x WHERE c1 <= 0.000015::DECIMAL(18, 6)",
-                    LOG);
-        });
-    }
-
-    @Test
-    public void testDecimalFilterWithBindVariableSkipsPushdown() throws Exception {
-        // Regression: PushdownFilterExtractor.rescaleDecimalForPushdown
-        // called DecimalUtil.load(... null) which evaluates the function. For
-        // a bind variable wrapped in a chained ::BYTE::DECIMAL cast, the
-        // unbound NamedParameterLinkFunction.getBase() asserted at compile
-        // time. Pushdown now skips runtime-constants - they aren't known at
-        // compile time, can't drive parquet row group statistics, and the
-        // regular row-time filter handles them correctly.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (c0 DECIMAL(38, 1), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES ('10.5'::DECIMAL(38, 1), '2024-01-01T00:00:00.000000Z')");
-            bindVariableService.clear();
-            bindVariableService.setStr("b0", "5");
-            assertSql(
-                    "c0\tts\n10.5\t2024-01-01T00:00:00.000000Z\n",
-                    "SELECT c0, ts FROM t WHERE NOT ((:b0::BYTE)::DECIMAL(38, 1) >= c0)"
             );
         });
     }
@@ -1451,6 +1531,60 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLong128UuidLateMaterializationOverParquet() throws Exception {
+        // Sibling of testLong256LateMaterializationOverParquet for the 16-byte UUID
+        // family, which routes through PageFrameFilteredMemoryRecord.getLong128Lo /
+        // getLong128Hi at row time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k UUID, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT " +
+                    "rnd_uuid4() AS k, " +
+                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
+                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
+                    "FROM long_sequence(10)");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (k UUID, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
+                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testLong256LateMaterializationOverParquet() throws Exception {
+        // PageFrameFilteredMemoryRecord routes column reads through getRowIndex(columnIndex), which
+        // returns the absolute row index for filter columns and the compacted index for late-
+        // materialized columns. Most overrides are wired up correctly, but getLong256A / getLong256B
+        // fell through to a private parent helper that read with the absolute rowIndex. For a query
+        // that filters on a non-LONG256 column and groups by a LONG256, every late-materialized
+        // LONG256 read returned the wrong row's value, and reads beyond the compacted slice spilled
+        // into adjacent buffer memory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k LONG256, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT " +
+                    "rnd_long256() AS k, " +
+                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
+                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
+                    "FROM long_sequence(10)");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (k LONG256, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
+                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
+                    LOG);
+        });
+    }
+
+    @Test
     public void testMixedPartitionsNativeLast() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1754,111 +1888,6 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDecimal128LateMaterializationOverParquet() throws Exception {
-        // Sibling of testLong256LateMaterializationOverParquet that exercises the 16-byte
-        // late-materialization path through PageFrameFilteredMemoryRecord.getDecimal128.
-        // Keeps the LONG256 fix honest: any future regression that drops the getRowIndex
-        // routing for getDecimal128 (or the wider DECIMAL128 family) will surface here as
-        // a native-vs-parquet divergence on the GROUP BY key column.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (k DECIMAL(38, 5), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x SELECT " +
-                    "rnd_decimal(38, 5, 0) AS k, " +
-                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
-                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
-                    "FROM long_sequence(10)");
-            drainWalQueue();
-            execute("CREATE TABLE x_native (k DECIMAL(38, 5), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x_native SELECT * FROM x");
-            drainWalQueue();
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            drainWalQueue();
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
-                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
-                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
-                    LOG);
-        });
-    }
-
-    @Test
-    public void testDecimal256LateMaterializationOverParquet() throws Exception {
-        // Sibling of testLong256LateMaterializationOverParquet for the 32-byte
-        // DECIMAL256 family (PageFrameFilteredMemoryRecord.getDecimal256).
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (k DECIMAL(76, 10), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x SELECT " +
-                    "rnd_decimal(76, 10, 0) AS k, " +
-                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
-                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
-                    "FROM long_sequence(10)");
-            drainWalQueue();
-            execute("CREATE TABLE x_native (k DECIMAL(76, 10), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x_native SELECT * FROM x");
-            drainWalQueue();
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            drainWalQueue();
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
-                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
-                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
-                    LOG);
-        });
-    }
-
-    @Test
-    public void testLong128UuidLateMaterializationOverParquet() throws Exception {
-        // Sibling of testLong256LateMaterializationOverParquet for the 16-byte UUID
-        // family, which routes through PageFrameFilteredMemoryRecord.getLong128Lo /
-        // getLong128Hi at row time.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (k UUID, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x SELECT " +
-                    "rnd_uuid4() AS k, " +
-                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
-                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
-                    "FROM long_sequence(10)");
-            drainWalQueue();
-            execute("CREATE TABLE x_native (k UUID, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x_native SELECT * FROM x");
-            drainWalQueue();
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            drainWalQueue();
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
-                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
-                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
-                    LOG);
-        });
-    }
-
-    @Test
-    public void testLong256LateMaterializationOverParquet() throws Exception {
-        // PageFrameFilteredMemoryRecord routes column reads through getRowIndex(columnIndex), which
-        // returns the absolute row index for filter columns and the compacted index for late-
-        // materialized columns. Most overrides are wired up correctly, but getLong256A / getLong256B
-        // fell through to a private parent helper that read with the absolute rowIndex. For a query
-        // that filters on a non-LONG256 column and groups by a LONG256, every late-materialized
-        // LONG256 read returned the wrong row's value, and reads beyond the compacted slice spilled
-        // into adjacent buffer memory.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (k LONG256, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x SELECT " +
-                    "rnd_long256() AS k, " +
-                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
-                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
-                    "FROM long_sequence(10)");
-            drainWalQueue();
-            execute("CREATE TABLE x_native (k LONG256, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x_native SELECT * FROM x");
-            drainWalQueue();
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            drainWalQueue();
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
-                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
-                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
-                    LOG);
-        });
-    }
-
-    @Test
     public void testProjectionRepeatedColumnAggregateOverParquet() throws Exception {
         // A SelectedRecord projection can list the same base column twice (e.g.
         // referencing t0.c via a table alias places the column at two output
@@ -1910,79 +1939,27 @@ public class ParquetTest extends AbstractCairoTest {
 
     // Red regression for a parquet column-top SIGSEGV (originally surfaced by
     // BackupFuzzTest.testMatViewRefreshAfterBackup as a crash in
-    // PageFrameMemoryRecord.getSymA over a PARQUET frame).
-    //
-    // When a query projects ONLY column(s) absent from a parquet file (added via
-    // ALTER TABLE ADD COLUMN after the partition was converted to parquet),
-    // PageFrameMemoryPool.ParquetBuffers.decode() sees an empty parquetColumns
-    // list and skips remapColumns() - the only place that sizes and zeroes the
-    // page-address lists. The lists keep stale/uninitialized native memory, so the
-    // record reads a wild page address for the absent column instead of 0 (NULL).
-    // (A native column-top reads NULL correctly - the bug is parquet-only.)
-    //
-    // The raw crash relied on malloc returning non-zero garbage in a freshly
-    // allocated buffer. To make the stale read deterministic, lay out enough
-    // column-PRESENT parquet partitions to drain the parquet frame cache free list
-    // (default capacity 8), so the column-ABSENT parquet frame is forced to REUSE
-    // an already-decoded buffer whose slot 0 still holds a valid 's' data pointer:
-    //   - '2024-06-01'..'2024-06-08': 's' present in parquet -> 8 frames that fill
-    //     the cache, each leaving a valid 's' pointer in its buffer's slot 0.
-    //   - '2024-06-09': 's' ABSENT (converted before ADD COLUMN) -> the 9th frame,
-    //     empty parquetColumns -> remapColumns() skipped -> reuses an evicted
-    //     buffer -> slot 0 still points at that partition's 's' keys.
-    //   - '2024-06-10': native (active), 's' is a column-top -> always NULL.
-    // With the bug, '2024-06-09' reads a prior partition's symbol keys and returns
-    // 'AA' instead of NULL. After the fix the absent column reads as NULL.
-    //
-    // '2024-06-09' must be PARQUET and NON-ACTIVE: the active (newest) partition
-    // cannot be converted to parquet. The trailing native '2024-06-10' keeps it
-    // non-active so the conversion is allowed.
+    // PageFrameMemoryRecord.getSymA over a PARQUET frame). SYMBOL reads through the
+    // data vector only (getSymA gates on pageAddresses), so this variant exercises
+    // the data-vector zeroing. See the VARCHAR variant for the aux-vector path.
     @Test
     public void testSelectOnlyAddedColumnAbsentFromParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (a int, ts timestamp) timestamp(ts) partition by day;");
+        testSelectOnlyAddedColumnAbsentFromParquetPartition("symbol");
+    }
 
-            // '2024-06-09' is converted to parquet BEFORE 's' is added, so its
-            // parquet file does not contain 's'. The native '2024-06-10' (active)
-            // keeps '2024-06-09' non-active so the conversion is allowed.
-            execute("insert into x(a, ts) values (9, '2024-06-09T00:00:00.000000Z'), (10, '2024-06-10T00:00:00.000000Z');");
-            execute("alter table x convert partition to parquet where ts in '2024-06-09';");
-
-            execute("alter table x add column s symbol;");
-
-            // Eight older single-row parquet partitions with non-null 's'. The
-            // default parquet frame cache holds 8 buffers, so scanning these eight
-            // (frames 0-7) drains the free list; the ninth parquet frame
-            // ('2024-06-09') is then forced to reuse one of these buffers.
-            execute("insert into x(a, ts, s) values " +
-                    "(1, '2024-06-01T00:00:00.000000Z', 'AA'), (2, '2024-06-02T00:00:00.000000Z', 'AA'), " +
-                    "(3, '2024-06-03T00:00:00.000000Z', 'AA'), (4, '2024-06-04T00:00:00.000000Z', 'AA'), " +
-                    "(5, '2024-06-05T00:00:00.000000Z', 'AA'), (6, '2024-06-06T00:00:00.000000Z', 'AA'), " +
-                    "(7, '2024-06-07T00:00:00.000000Z', 'AA'), (8, '2024-06-08T00:00:00.000000Z', 'AA');");
-            execute("alter table x convert partition to parquet where ts < '2024-06-09';");
-
-            // Project ONLY 's' so the '2024-06-09' frame decodes zero parquet
-            // columns. The constant '1 one' keeps the base scan reading just 's'
-            // while rendering the NULL rows as a non-blank '\t1'. The 'AA' rows are
-            // '2024-06-01'..'2024-06-08'; the first '\t1' is '2024-06-09' (the bug
-            // returns 'AA' there); the last '\t1' is the native '2024-06-10'.
-            assertSql(
-                    """
-                            s\tone
-                            AA\t1
-                            AA\t1
-                            AA\t1
-                            AA\t1
-                            AA\t1
-                            AA\t1
-                            AA\t1
-                            AA\t1
-                            \t1
-                            \t1
-                            """,
-                    "select s, 1 one from x"
-            );
-        });
+    // VARCHAR variant of testSelectOnlyAddedColumnAbsentFromParquetPartition.
+    // SYMBOL reads through the data vector only (getSymA gates on pageAddresses),
+    // so the symbol test exercises only the data-vector zeroing. Variable-size
+    // types take a different read path that gates on the AUX vector
+    // (getVarcharSize / getVarchar gate on auxPageAddresses, not pageAddresses).
+    // remapColumns() zeroes all four page-address lists, including the aux pair,
+    // so the fix already covers this; this test guards against a regression that
+    // zeroes the data vector but not the aux vectors - that would pass the symbol
+    // test yet dereference a wild aux pointer-of-pointers for VARCHAR (a SIGSEGV
+    // strictly more dangerous than the data-vector one).
+    @Test
+    public void testSelectOnlyAddedVarcharColumnAbsentFromParquetPartition() throws Exception {
+        testSelectOnlyAddedColumnAbsentFromParquetPartition("varchar");
     }
 
     @Test
@@ -2453,6 +2430,98 @@ public class ParquetTest extends AbstractCairoTest {
 
             execute("alter table x convert partition to native where ts >= 0");
             assertSql(expected, "x");
+        });
+    }
+
+    // Shared body for the absent-column regression tests, parameterized by the
+    // added column's type (symbol vs varchar exercise different read paths).
+    //
+    // When a query projects ONLY column(s) absent from a parquet file (added via
+    // ALTER TABLE ADD COLUMN after the partition was converted to parquet),
+    // PageFrameMemoryPool.ParquetBuffers.decode() sees an empty parquetColumns
+    // list and skips remapColumns() - the only place that sizes and zeroes the
+    // page-address lists. The lists keep stale/uninitialized native memory, so the
+    // record reads a wild page address for the absent column instead of 0 (NULL).
+    // (A native column-top reads NULL correctly - the bug is parquet-only.)
+    //
+    // The raw crash relied on malloc returning non-zero garbage in a freshly
+    // allocated buffer. To make the stale read deterministic, lay out enough
+    // column-PRESENT parquet partitions to drain the parquet frame cache free list,
+    // so the column-ABSENT parquet frame is forced to REUSE an already-decoded
+    // buffer whose slot still holds a valid 's' pointer:
+    //   - days 1..cacheCap: 's' present in parquet -> cacheCap frames that fill the
+    //     cache, each leaving a valid 's' pointer in its buffer's slot.
+    //   - day cacheCap+1: 's' ABSENT (converted before ADD COLUMN) -> the
+    //     (cacheCap+1)th frame, empty parquetColumns -> remapColumns() skipped ->
+    //     reuses an evicted buffer -> slot still points at that partition's 's'.
+    //   - day cacheCap+2: native (active), 's' is a column-top -> always NULL.
+    // With the bug, day cacheCap+1 reads a prior partition's 's' and returns 'AA'
+    // (symbol) or a stale aux read (varchar) instead of NULL. After the fix the
+    // absent column reads as NULL.
+    //
+    // The absent partition must be PARQUET and NON-ACTIVE: the active (newest)
+    // partition cannot be converted to parquet. The trailing native partition keeps
+    // it non-active so the conversion is allowed.
+    //
+    // The buffer-reuse trigger depends on exactly cacheCap column-present frames
+    // ahead of the absent frame, so pin getSqlParquetFrameCacheCapacity() instead
+    // of relying on the production default - and tie the partition count to the
+    // same constant. Otherwise a change to the default would silently break the
+    // reuse, the stale read would vanish, and the test would pass even on broken
+    // code.
+    private void testSelectOnlyAddedColumnAbsentFromParquetPartition(String columnType) throws Exception {
+        final int cacheCap = 8;
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, cacheCap);
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, ts timestamp) timestamp(ts) partition by day;");
+
+            // Day cacheCap+1 is converted to parquet BEFORE 's' is added, so its
+            // parquet file does not contain 's'. The native day cacheCap+2 (active)
+            // keeps the absent partition non-active so the conversion is allowed.
+            final String absentDay = String.format("2024-06-%02d", cacheCap + 1);
+            final String nativeDay = String.format("2024-06-%02d", cacheCap + 2);
+            execute("insert into x(a, ts) values " +
+                    "(" + (cacheCap + 1) + ", '" + absentDay + "T00:00:00.000000Z'), " +
+                    "(" + (cacheCap + 2) + ", '" + nativeDay + "T00:00:00.000000Z');");
+            execute("alter table x convert partition to parquet where ts in '" + absentDay + "';");
+
+            execute("alter table x add column s " + columnType + ";");
+
+            // cacheCap older single-row parquet partitions with non-null 's'. The
+            // pinned parquet frame cache holds cacheCap buffers, so scanning these
+            // (frames 0..cacheCap-1) drains the free list; the next parquet frame
+            // (the absent partition) is then forced to reuse one of these buffers.
+            StringBuilder insert = new StringBuilder("insert into x(a, ts, s) values ");
+            for (int day = 1; day <= cacheCap; day++) {
+                if (day > 1) {
+                    insert.append(", ");
+                }
+                insert.append(String.format("(%d, '2024-06-%02dT00:00:00.000000Z', 'AA')", day, day));
+            }
+            insert.append(';');
+            execute(insert.toString());
+            execute("alter table x convert partition to parquet where ts < '" + absentDay + "';");
+
+            // Project ONLY 's' so the absent-column frame decodes zero parquet
+            // columns. The constant '1 one' keeps the base scan reading just 's'
+            // while rendering the NULL rows as a non-blank '\t1'. The first cacheCap
+            // rows are 'AA'; the next '\t1' is the absent parquet partition (the bug
+            // returns 'AA' / a stale aux read there); the last '\t1' is the native
+            // trailing partition.
+            StringBuilder expected = new StringBuilder("s\tone\n");
+            expected.repeat("AA\t1\n", cacheCap);
+            expected.append("\t1\n"); // absent parquet partition -> NULL
+            expected.append("\t1\n"); // native trailing partition -> NULL
+            // assertQueryNoLeakCheck re-creates the cursor and re-reads the result,
+            // so it also exercises parquet decode re-entry (assertSql reads once).
+            assertQueryNoLeakCheck(
+                    expected.toString(),
+                    "select s, 1 one from x",
+                    null, // no DDL; the table is already built above
+                    null, // projection has no designated timestamp
+                    true, // supportsRandomAccess
+                    true // expectSize
+            );
         });
     }
 

@@ -28,8 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Reopenable;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
-import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
@@ -273,6 +273,35 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         frameMemory.clear();
     }
 
+    private void activateDecoder(int frameIndex) {
+        final ParquetDecoder frameDecoder = addressCache.getParquetDecoder(frameIndex);
+        if (frameDecoder instanceof ParquetPartitionDecoder parquetMetaFrame) {
+            if (parquetMetaDecoder.getFileAddr() != parquetMetaFrame.getFileAddr() || parquetMetaDecoder.getFileSize() != parquetMetaFrame.getFileSize()) {
+                parquetMetaDecoder.of(parquetMetaFrame);
+                buildColumnIdMap(parquetMetaDecoder);
+            }
+            activeDecoder = parquetMetaDecoder;
+        } else {
+            ParquetFileDecoder legacyFrame = (ParquetFileDecoder) frameDecoder;
+            if (legacyDecoder.getFileAddr() != legacyFrame.getFileAddr() || legacyDecoder.getFileSize() != legacyFrame.getFileSize()) {
+                legacyDecoder.of(legacyFrame);
+                buildColumnIdMap(legacyDecoder);
+            }
+            activeDecoder = legacyDecoder;
+        }
+    }
+
+    private void buildColumnIdMap(ParquetDecoder decoder) {
+        final int parquetColumnCount = decoder.getColumnCount();
+        columnIdToParquetIdx.clear();
+        for (int i = 0; i < parquetColumnCount; i++) {
+            final int id = decoder.getColumnId(i);
+            // External parquet files may not have field IDs (all -1).
+            // Fall back to positional index so the lookup in openParquet() works.
+            columnIdToParquetIdx.put(id < 0 ? i : id, i);
+        }
+    }
+
     // We don't use additional data structures to speed up the lookups
     // such as <frame_index, buffers> hash table. That's because we don't
     // expect the cache size to be large.
@@ -326,35 +355,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 .put("insufficient memory pool size [size=").put(parquetCacheSize)
                 .put(", usageBit=").put(usageBit)
                 .put(']');
-    }
-
-    private void buildColumnIdMap(ParquetDecoder decoder) {
-        final int parquetColumnCount = decoder.getColumnCount();
-        columnIdToParquetIdx.clear();
-        for (int i = 0; i < parquetColumnCount; i++) {
-            final int id = decoder.getColumnId(i);
-            // External parquet files may not have field IDs (all -1).
-            // Fall back to positional index so the lookup in openParquet() works.
-            columnIdToParquetIdx.put(id < 0 ? i : id, i);
-        }
-    }
-
-    private void activateDecoder(int frameIndex) {
-        final ParquetDecoder frameDecoder = addressCache.getParquetDecoder(frameIndex);
-        if (frameDecoder instanceof ParquetPartitionDecoder parquetMetaFrame) {
-            if (parquetMetaDecoder.getFileAddr() != parquetMetaFrame.getFileAddr() || parquetMetaDecoder.getFileSize() != parquetMetaFrame.getFileSize()) {
-                parquetMetaDecoder.of(parquetMetaFrame);
-                buildColumnIdMap(parquetMetaDecoder);
-            }
-            activeDecoder = parquetMetaDecoder;
-        } else {
-            ParquetFileDecoder legacyFrame = (ParquetFileDecoder) frameDecoder;
-            if (legacyDecoder.getFileAddr() != legacyFrame.getFileAddr() || legacyDecoder.getFileSize() != legacyFrame.getFileSize()) {
-                legacyDecoder.of(legacyFrame);
-                buildColumnIdMap(legacyDecoder);
-            }
-            activeDecoder = legacyDecoder;
-        }
     }
 
     private void openParquet(int frameIndex) {
@@ -637,6 +637,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             ensureCapacityAndZero(pageSizes, columnCount);
             ensureCapacityAndZero(auxPageAddresses, columnCount);
             ensureCapacityAndZero(auxPageSizes, columnCount);
+
+            if (parquetColumns.size() == 0) {
+                // No parquet column was decoded (every projected column was added
+                // after this partition became parquet). openParquet() only adds a
+                // column to parquetColumns when columnIdToParquetIdx maps it to a
+                // present parquet column, so an empty parquetColumns means every
+                // column below would resolve to parquetIdx < 0 and continue. The
+                // zeroing above already left them all at address 0 (NULL), so skip
+                // the dead remap loop.
+                return;
+            }
 
             final ColumnMapping columnMapping = addressCache.getColumnMapping();
             final int readParquetColumnCount = columnMapping.getColumnCount();
