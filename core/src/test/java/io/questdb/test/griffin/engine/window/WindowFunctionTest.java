@@ -144,24 +144,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testAggregateFunctionInPartitionByFails() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         SELECT pickup_datetime, avg(total_amount) OVER (PARTITION BY avg(total_amount)
                           ORDER BY pickup_datetime
                           RANGE BETWEEN '7' PRECEDING AND CURRENT ROW) moving_average_1w
                         FROM trips
                         WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'
-                        SAMPLE BY 1d""",
-                "create table trips as " +
+                        SAMPLE BY 1d""")
+                .ddl("create table trips as " +
                         "(" +
                         "select" +
                         " rnd_double(42) total_amount," +
                         " timestamp_sequence(0, 100000000000) pickup_datetime" +
                         " from long_sequence(10)" +
-                        ") timestamp(pickup_datetime) partition by day",
-                24,
-                "aggregate functions in partition by are not supported"
-        );
+                        ") timestamp(pickup_datetime) partition by day")
+                .fails(24, "aggregate functions in partition by are not supported");
     }
 
     @Test
@@ -6374,20 +6371,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "timestamp_sequence_ns(0, 2000000000) as ts_ns " +
                             "from long_sequence(5)" +
                             ") timestamp(ts)");
-                    assertQuery(
-                            """
+                    assertQuery("select ts, ts_ns, lead(ts, 2, ts_ns) over(), lead(ts_ns, 2, ts) over(), lag(ts, 2, ts_ns) over(), lag(ts_ns, 2, ts) over() from x;")
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
                                     ts\tts_ns\tlead\tlead1\tlag\tlag1
                                     1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000000Z\t1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:04.000000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000000Z
                                     1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:02.000000000Z\t1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:06.000000000Z\t1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:01.000000000Z
                                     1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:04.000000000Z\t1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:08.000000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000000Z
                                     1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:06.000000000Z\t1970-01-01T00:00:06.000000Z\t1970-01-01T00:00:03.000000000Z\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:02.000000000Z
                                     1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:08.000000000Z\t1970-01-01T00:00:08.000000Z\t1970-01-01T00:00:04.000000000Z\t1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:04.000000000Z
-                                    """,
-                            "select ts, ts_ns, lead(ts, 2, ts_ns) over(), lead(ts_ns, 2, ts) over(), lag(ts, 2, ts_ns) over(), lag(ts_ns, 2, ts) over() from x;",
-                            "ts",
-                            true,
-                            true
-                    );
+                                    """);
                 }
         );
     }
@@ -9727,15 +9721,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("create table quotes (bid double, ts timestamp) timestamp(ts)");
 
             // WINDOW functions (named or inline) are not allowed in WINDOW JOIN queries
-            assertException(
-                    "SELECT price, bid, avg(price) OVER w as avg_price " +
+            assertQuery("SELECT price, bid, avg(price) OVER w as avg_price " +
                             "FROM trades " +
                             "WINDOW JOIN quotes ON ts " +
                             "RANGE BETWEEN 10 SECOND PRECEDING AND 10 SECOND FOLLOWING " +
-                            "WINDOW w AS (ORDER BY ts)",
-                    19,
-                    "WINDOW functions are not allowed in WINDOW JOIN queries"
-            );
+                            "WINDOW w AS (ORDER BY ts)")
+                    .fails(19, "WINDOW functions are not allowed in WINDOW JOIN queries");
         });
     }
 
@@ -9743,6 +9734,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNegativeLimitWindowOrderedByNotTimestamp() throws Exception {
         // https://github.com/questdb/questdb/issues/4748
         assertMemoryLeak(() -> assertQuery("""
+                        SELECT x, row_number() OVER (
+                            ORDER BY x asc
+                            RANGE UNBOUNDED PRECEDING
+                        )
+                        FROM long_sequence(10)
+                        limit -10""")
+                .expectSize()
+                .returns("""
                         x\trow_number
                         1\t1
                         2\t2
@@ -9754,15 +9753,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         8\t8
                         9\t9
                         10\t10
-                        """,
-                """
-                        SELECT x, row_number() OVER (
-                            ORDER BY x asc
-                            RANGE UNBOUNDED PRECEDING
-                        )
-                        FROM long_sequence(10)
-                        limit -10""",
-                true)
+                        """)
         );
     }
 
@@ -9776,22 +9767,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // sum(a) OVER () = sum(x) OVER () = 6 for each row
         // sum(6) OVER () = 18 for each row
         // 18 + 18 = 36 for each row
-        assertQuery(
-                """
+        assertQuery("SELECT x as a, sum(sum(x) OVER ()) OVER () + sum(sum(a) OVER ()) OVER () FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         a\tcolumn
                         1\t36.0
                         2\t36.0
                         3\t36.0
-                        """,
-                "SELECT x as a, sum(sum(x) OVER ()) OVER () + sum(sum(a) OVER ()) OVER () FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -9802,22 +9789,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // sum(x) OVER () = 1+2+3 = 6 for each row
         // sum(6) OVER () = 6+6+6 = 18 for each row
         // 18 > 5 is true, so CASE returns 1 for each row
-        assertQuery(
-                """
+        assertQuery("SELECT x as a, CASE WHEN sum(sum(a) OVER ()) OVER () > 5 THEN 1 ELSE 0 END FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         a\tcase
                         1\t1
                         2\t1
                         3\t1
-                        """,
-                "SELECT x as a, CASE WHEN sum(sum(a) OVER ()) OVER () > 5 THEN 1 ELSE 0 END FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -9950,22 +9933,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // x0 is an alias for column x, and sum(x0) OVER () should resolve x0 to the original column x.
         // sum(x) OVER () = 1+2+3 = 6 for each row
         // sum(6) OVER () = 6+6+6 = 18 for each row
-        assertQuery(
-                """
+        assertQuery("SELECT x as x0, sum(sum(x0) OVER ()) OVER () as sum FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         x0\tsum
                         1\t18.0
                         2\t18.0
                         3\t18.0
-                        """,
-                "SELECT x as x0, sum(sum(x0) OVER ()) OVER () as sum FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -9977,37 +9956,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // The validation triggers for alias 'b' first because when there are multiple aliases
         // for the same column (x as a, x as b), the second alias 'b' references the first alias 'a'
         // in innerVirtualModel, and 'a' is not a table column.
-        assertException(
-                "SELECT x as a, x as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () FROM x",
-                "CREATE TABLE x AS (" +
+        assertQuery("SELECT x as a, x as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () FROM x")
+                .ddl("CREATE TABLE x AS (" +
                         "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
                         "FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                48,
-                "Invalid column: b"
-        );
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .fails(48, "Invalid column: b");
     }
 
     @Test
     public void testNestedWindowFunctionsIntermediateValues() throws Exception {
         // Diagnostic test to understand what values the intermediate expressions produce
         // Note: rank() OVER () without ORDER BY returns 1 for all rows (all ties)
-        assertQuery(
-                """
+        assertQuery("SELECT x, row_number() OVER () as rn, rank() OVER () as rk, row_number() OVER () + rank() OVER () as inner_sum FROM t")
+                .ddl("CREATE TABLE t AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         x\trn\trk\tinner_sum
                         1\t1\t1\t2
                         2\t2\t1\t3
                         3\t3\t1\t4
-                        """,
-                "SELECT x, row_number() OVER () as rn, rank() OVER () as rk, row_number() OVER () + rank() OVER () as inner_sum FROM t",
-                "CREATE TABLE t AS (" +
-                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,  // supportsRandomAccess
-                true   // expectSize
-        );
+                        """);
     }
 
     @Test
@@ -10019,25 +9992,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // sum(a) OVER () = 10 + 20 + 30 = 60 for each row
         // sum(b) OVER () = 100 + 200 + 300 = 600 for each row
         // sum(60 + 600) OVER () = 660 * 3 = 1980 for each row
-        assertQuery(
-                """
-                        a\tb\tsum
-                        1\t1\t1980.0
-                        2\t2\t1980.0
-                        3\t3\t1980.0
-                        """,
-                "SELECT id as a, id as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () as sum FROM x",
-                "CREATE TABLE x AS (" +
+        assertQuery("SELECT id as a, id as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () as sum FROM x")
+                .ddl("CREATE TABLE x AS (" +
                         "SELECT x AS id, " +
                         "  x * 10 AS a, " +
                         "  x * 100 AS b, " +
                         "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
                         "FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
+                        a\tb\tsum
+                        1\t1\t1980.0
+                        2\t2\t1980.0
+                        3\t3\t1980.0
+                        """);
     }
 
     @Test
@@ -10056,22 +10025,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // rank() OVER () = 1, 1, 1 for each row (no ORDER BY, so all ties)
         // row_number() + rank() = 2, 3, 4 for each row
         // Running sum: 2, 2+3=5, 5+4=9
-        assertQuery(
-                """
+        assertQuery("SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as sum FROM t")
+                .ddl("CREATE TABLE t AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         x\tsum
                         1\t2.0
                         2\t5.0
                         3\t9.0
-                        """,
-                "SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as sum FROM t",
-                "CREATE TABLE t AS (" +
-                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,  // supportsRandomAccess
-                true   // expectSize
-        );
+                        """);
     }
 
     @Test
@@ -10091,22 +10056,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // row_number() + rank() = 2, 3, 4 for each row
         // Since each row has unique x (1, 2, 3), each partition has one row
         // sum(2) for x=1, sum(3) for x=2, sum(4) for x=3
-        assertQuery(
-                """
+        assertQuery("SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (PARTITION BY x) as sum FROM t")
+                .ddl("CREATE TABLE t AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         x\tsum
                         1\t2.0
                         2\t3.0
                         3\t4.0
-                        """,
-                "SELECT x, sum(row_number() OVER () + rank() OVER ()) OVER (PARTITION BY x) as sum FROM t",
-                "CREATE TABLE t AS (" +
-                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,  // supportsRandomAccess
-                true   // expectSize
-        );
+                        """);
     }
 
     @Test
@@ -10630,8 +10591,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRankWithNoPartitionByAndNoOrderByWildcardLast() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+        assertQuery("select rank() over (), dense_rank() over (), * from trades")
+                .ddl("create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_int(1,2,3) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         rank\tdense_rank\tprice\tsymbol\tts
                         1\t1\t1\tBB\t1970-01-01T00:00:00.000000Z
                         1\t1\t2\tCC\t1970-01-02T03:46:40.000000Z
@@ -10643,26 +10615,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         1\t1\t1\tCC\t1970-01-09T02:26:40.000000Z
                         1\t1\t1\tCC\t1970-01-10T06:13:20.000000Z
                         1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z
-                        """),
-                "select rank() over (), dense_rank() over (), * from trades",
-                "create table trades as " +
+                        """));
+    }
+
+    @Test
+    public void testRankWithNoPartitionByAndOrderBySymbolWildcardLast() throws Exception {
+        assertQuery("select rank() over (order by symbol), dense_rank() over (order by symbol), * from trades")
+                .ddl("create table trades as " +
                         "(" +
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testRankWithNoPartitionByAndOrderBySymbolWildcardLast() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         rank\tdense_rank\tprice\tsymbol\tts
                         3\t2\t1\tBB\t1970-01-01T00:00:00.000000Z
                         7\t3\t2\tCC\t1970-01-02T03:46:40.000000Z
@@ -10674,26 +10643,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         7\t3\t1\tCC\t1970-01-09T02:26:40.000000Z
                         7\t3\t1\tCC\t1970-01-10T06:13:20.000000Z
                         1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z
-                        """),
-                "select rank() over (order by symbol), dense_rank() over (order by symbol), * from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_int(1,2,3) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                true,
-                true
-        );
+                        """));
     }
 
     @Test
     public void testRankWithPartitionAndOrderByNonSymbol() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+        assertQuery("select rank() over (partition by price order by ts), dense_rank() over (partition by price order by ts), price, ts from trades")
+                .ddl("create table trades as " +
+                        "(" +
+                        "select" +
+                        " 42 price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         rank\tdense_rank\tprice\tts
                         1\t1\t42\t1970-01-01T00:00:00.000000Z
                         2\t2\t42\t1970-01-02T03:46:40.000000Z
@@ -10705,26 +10672,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         8\t8\t42\t1970-01-09T02:26:40.000000Z
                         9\t9\t42\t1970-01-10T06:13:20.000000Z
                         10\t10\t42\t1970-01-11T10:00:00.000000Z
-                        """),
-                "select rank() over (partition by price order by ts), dense_rank() over (partition by price order by ts), price, ts from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " 42 price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        """));
     }
 
     @Test
     public void testRankWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select rank() over (partition by symbol order by symbol), dense_rank() over (partition by symbol order by symbol) from trades")
+                .ddl("create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day")
+                .expectSize()
+                .returns("""
                         rank\tdense_rank
                         1\t1
                         1\t1
@@ -10736,26 +10699,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         1\t1
                         1\t1
                         1\t1
-                        """,
-                "select rank() over (partition by symbol order by symbol), dense_rank() over (partition by symbol order by symbol) from trades",
-                "create table trades as " +
+                        """);
+    }
+
+    @Test
+    public void testRankWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
+        assertQuery("select *, rank() over (partition by symbol order by symbol), dense_rank() over (partition by symbol order by symbol) from trades")
+                .ddl("create table trades as " +
                         "(" +
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testRankWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         price\tsymbol\tts\trank\tdense_rank
                         0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t1\t1
                         0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t1\t1
@@ -10767,26 +10727,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\t1\t1
                         0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\t1\t1
                         0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\t1\t1
-                        """),
-                "select *, rank() over (partition by symbol order by symbol), dense_rank() over (partition by symbol order by symbol) from trades",
-                "create table trades as " +
+                        """));
+    }
+
+    @Test
+    public void testRankWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
+        assertQuery("select rank() over (partition by symbol order by symbol), dense_rank() over (partition by symbol order by symbol), * from trades")
+                .ddl("create table trades as " +
                         "(" +
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testRankWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         rank\tdense_rank\tprice\tsymbol\tts
                         1\t1\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z
                         1\t1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z
@@ -10798,26 +10755,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         1\t1\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z
                         1\t1\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z
                         1\t1\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z
-                        """),
-                "select rank() over (partition by symbol order by symbol), dense_rank() over (partition by symbol order by symbol), * from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(42) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                true,
-                true
-        );
+                        """));
     }
 
     @Test
     public void testRankWithPartitionBySymbolAndMultiOrderWildcardLast() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+        assertQuery("select rank() over (partition by symbol order by symbol, price), dense_rank() over (partition by symbol order by symbol, price),  * from trades")
+                .ddl("create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_int(1,2,3) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         rank\tdense_rank\tprice\tsymbol\tts
                         1\t1\t1\tBB\t1970-01-01T00:00:00.000000Z
                         4\t2\t2\tCC\t1970-01-02T03:46:40.000000Z
@@ -10829,26 +10783,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         1\t1\t1\tCC\t1970-01-09T02:26:40.000000Z
                         1\t1\t1\tCC\t1970-01-10T06:13:20.000000Z
                         1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z
-                        """),
-                "select rank() over (partition by symbol order by symbol, price), dense_rank() over (partition by symbol order by symbol, price),  * from trades",
-                "create table trades as " +
+                        """));
+    }
+
+    @Test
+    public void testRankWithPartitionBySymbolAndNoOrderWildcardLast() throws Exception {
+        assertQuery("select rank() over (partition by symbol), dense_rank() over (partition by symbol), * from trades")
+                .ddl("create table trades as " +
                         "(" +
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testRankWithPartitionBySymbolAndNoOrderWildcardLast() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         rank\tdense_rank\tprice\tsymbol\tts
                         1\t1\t1\tBB\t1970-01-01T00:00:00.000000Z
                         1\t1\t2\tCC\t1970-01-02T03:46:40.000000Z
@@ -10860,26 +10812,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         1\t1\t1\tCC\t1970-01-09T02:26:40.000000Z
                         1\t1\t1\tCC\t1970-01-10T06:13:20.000000Z
                         1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z
-                        """),
-                "select rank() over (partition by symbol), dense_rank() over (partition by symbol), * from trades",
-                "create table trades as " +
+                        """));
+    }
+
+    @Test
+    public void testRankWithPartitionBySymbolAndOrderByIntPriceDescWildcardLast() throws Exception {
+        assertQuery("select rank() over (partition by symbol order by price desc), dense_rank() over (partition by symbol order by price desc), * from trades")
+                .ddl("create table trades as " +
                         "(" +
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testRankWithPartitionBySymbolAndOrderByIntPriceDescWildcardLast() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         rank\tdense_rank\tprice\tsymbol\tts
                         2\t2\t1\tBB\t1970-01-01T00:00:00.000000Z
                         1\t1\t2\tCC\t1970-01-02T03:46:40.000000Z
@@ -10891,26 +10840,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         2\t2\t1\tCC\t1970-01-09T02:26:40.000000Z
                         2\t2\t1\tCC\t1970-01-10T06:13:20.000000Z
                         1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z
-                        """),
-                "select rank() over (partition by symbol order by price desc), dense_rank() over (partition by symbol order by price desc), * from trades",
-                "create table trades as " +
+                        """));
+    }
+
+    @Test
+    public void testRankWithPartitionBySymbolAndOrderByIntPriceWildcardLast() throws Exception {
+        assertQuery("select rank() over (partition by symbol order by price), dense_rank() over (partition by symbol order by price), * from trades")
+                .ddl("create table trades as " +
                         "(" +
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testRankWithPartitionBySymbolAndOrderByIntPriceWildcardLast() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         rank\tdense_rank\tprice\tsymbol\tts
                         1\t1\t1\tBB\t1970-01-01T00:00:00.000000Z
                         4\t2\t2\tCC\t1970-01-02T03:46:40.000000Z
@@ -10922,26 +10868,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         1\t1\t1\tCC\t1970-01-09T02:26:40.000000Z
                         1\t1\t1\tCC\t1970-01-10T06:13:20.000000Z
                         1\t1\t2\tAA\t1970-01-11T10:00:00.000000Z
-                        """, timestampType.getTypeName()),
-                "select rank() over (partition by symbol order by price), dense_rank() over (partition by symbol order by price), * from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_int(1,2,3) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                true,
-                true
-        );
+                        """, timestampType.getTypeName()));
     }
 
     @Test
     public void testRankWithPartitionBySymbolAndOrderByPriceWildcardLast() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+        assertQuery("select rank() over (partition by symbol order by price), dense_rank() over (partition by symbol order by price), * from trades")
+                .ddl("create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         rank\tdense_rank\tprice\tsymbol\tts
                         2\t2\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z
                         1\t1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z
@@ -10953,20 +10896,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         4\t4\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z
                         3\t3\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z
                         5\t5\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z
-                        """),
-                "select rank() over (partition by symbol order by price), dense_rank() over (partition by symbol order by price), * from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(42) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                true,
-                true
-        );
+                        """));
     }
 
     @Test
@@ -11053,30 +10983,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberFailsInNonWindowContext() throws Exception {
-        assertException(
-                "select row_number(), * from trades",
-                "create table trades as " +
+        assertQuery("select row_number(), * from trades")
+                .ddl("create table trades as " +
                         "(" +
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                7,
-                "window function called in non-window context, make sure to add OVER clause"
-        );
+                        ") timestamp(ts) partition by day")
+                .fails(7, "window function called in non-window context, make sure to add OVER clause");
     }
 
     @Test
     public void testRowNumberWithFilter() throws Exception {
-        assertQuery(
-                """
-                        author\tsym\tcommits\trk
-                        user1\tETH\t3\t1
-                        user2\tETH\t3\t2
-                        """,
-                "with active_devs as (" +
+        assertQuery("with active_devs as (" +
                         "    select author, sym, count() as commits" +
                         "    from dev_stats" +
                         "    where author is not null and author != 'github-actions[bot]'" +
@@ -11087,25 +11008,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "    select author, sym, commits, row_number() over (partition by sym order by commits desc) as rk" +
                         "    from active_devs" +
                         ") " +
-                        "select * from active_ranked where sym = 'ETH' order by author, sym, commits",
-                "create table dev_stats as " +
+                        "select * from active_ranked where sym = 'ETH' order by author, sym, commits")
+                .ddl("create table dev_stats as " +
                         "(" +
                         "select" +
                         " rnd_symbol('ETH','BTC') sym," +
                         " rnd_symbol('user1','user2') author," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                false
-        );
+                        ") timestamp(ts) partition by day")
+                .returns("""
+                        author\tsym\tcommits\trk
+                        user1\tETH\t3\t1
+                        user2\tETH\t3\t2
+                        """);
     }
 
     @Test
     public void testRowNumberWithNoPartitionAndDifferentOrder() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select *, row_number() over (order by y asc, x desc) as rn from tab order by x asc")
+                .ddl("create table tab as (select x, x%2 y from long_sequence(10))")
+                .expectSize()
+                .returns("""
                         x\ty\trn
                         1\t1\t10
                         2\t0\t5
@@ -11117,19 +11041,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         8\t0\t2
                         9\t1\t6
                         10\t0\t1
-                        """,
-                "select *, row_number() over (order by y asc, x desc) as rn from tab order by x asc",
-                "create table tab as (select x, x%2 y from long_sequence(10))",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testRowNumberWithNoPartitionAndNoOrderInSubQuery() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select symbol, rn + 1 as rn from (select symbol, row_number() over() as rn from trades)")
+                .ddl("create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         symbol\trn
                         CC\t2
                         BB\t3
@@ -11141,26 +11069,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         BB\t9
                         BB\t10
                         BB\t11
-                        """,
-                "select symbol, rn + 1 as rn from (select symbol, row_number() over() as rn from trades)",
-                "create table trades as " +
+                        """);
+    }
+
+    @Test
+    public void testRowNumberWithNoPartitionAndNoOrderWildcardLast() throws Exception {
+        assertQuery("select row_number() over (), * from trades")
+                .ddl("create table trades as " +
                         "(" +
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testRowNumberWithNoPartitionAndNoOrderWildcardLast() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         row_number\tprice\tsymbol\tts
                         1\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z
                         2\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z
@@ -11172,26 +11098,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         8\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z
                         9\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z
                         10\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z
-                        """),
-                "select row_number() over (), * from trades",
-                "create table trades as " +
+                        """));
+    }
+
+    @Test
+    public void testRowNumberWithNoPartitionAndOrderBySymbolWildcardLast() throws Exception {
+        assertQuery("select row_number() over (order by symbol), * from trades")
+                .ddl("create table trades as " +
                         "(" +
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testRowNumberWithNoPartitionAndOrderBySymbolWildcardLast() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         row_number\tprice\tsymbol\tts
                         8\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z
                         2\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z
@@ -11203,26 +11126,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         5\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z
                         6\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z
                         7\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z
-                        """),
-                "select row_number() over (order by symbol), * from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(42) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                true,
-                true
-        );
+                        """));
     }
 
     @Test
     public void testRowNumberWithNoPartitionAndSameOrderFollowedByBaseFactory() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+        assertQuery("select *, row_number() over (order by s) as rn from tab where ts in ('1970-01') order by s")
+                .ddl("create table tab as " +
+                        "(" +
+                        "select" +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence_ns(0, 100000000000000) ts,") +
+                        " rnd_symbol('a','b','c') s" +
+                        " from long_sequence(10)" +
+                        "), index(s) timestamp(ts) partition by month")
+                .noRandomAccess()
+                .returns(replaceTimestampSuffix("""
                         ts\ts\trn
                         1970-01-01T00:00:00.000000Z\ta\t1
                         1970-01-02T03:46:40.000000Z\ta\t2
@@ -11234,25 +11152,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         1970-01-05T15:06:40.000000Z\tc\t8
                         1970-01-06T18:53:20.000000Z\tc\t9
                         1970-01-07T22:40:00.000000Z\tc\t10
-                        """),
-                "select *, row_number() over (order by s) as rn from tab where ts in ('1970-01') order by s",
-                "create table tab as " +
-                        "(" +
-                        "select" +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence_ns(0, 100000000000000) ts,") +
-                        " rnd_symbol('a','b','c') s" +
-                        " from long_sequence(10)" +
-                        "), index(s) timestamp(ts) partition by month",
-                null,
-                false,
-                false
-        );
+                        """));
     }
 
     @Test
     public void testRowNumberWithNoPartitionAndSameOrderNotFollowedByBaseFactory() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+        assertQuery("select *, row_number() over (order by s) as rn from tab where ts in ('1970-01') order by s")
+                .ddl("create table tab as " +
+                        "(" +
+                        "select" +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence_ns(0, 100000000000000) ts,") +
+                        " rnd_symbol('a','b','c') s" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by month")
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         ts\ts\trn
                         1970-01-01T00:00:00.000000Z\ta\t1
                         1970-01-02T03:46:40.000000Z\ta\t2
@@ -11264,25 +11178,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         1970-01-05T15:06:40.000000Z\tc\t8
                         1970-01-06T18:53:20.000000Z\tc\t9
                         1970-01-07T22:40:00.000000Z\tc\t10
-                        """),
-                "select *, row_number() over (order by s) as rn from tab where ts in ('1970-01') order by s",
-                "create table tab as " +
-                        "(" +
-                        "select" +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence_ns(0, 100000000000000) ts,") +
-                        " rnd_symbol('a','b','c') s" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by month",
-                null,
-                true,
-                true
-        );
+                        """));
     }
 
     @Test
     public void testRowNumberWithPartitionAndOrderByNonSymbol() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+        assertQuery("select row_number() over (partition by price order by ts), price, ts from trades")
+                .ddl("create table trades as " +
+                        "(" +
+                        "select" +
+                        " 42 price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence_ns(0, 100000000000000) ts,") +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         row_number\tprice\tts
                         1\t42\t1970-01-01T00:00:00.000000Z
                         2\t42\t1970-01-02T03:46:40.000000Z
@@ -11294,26 +11207,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         8\t42\t1970-01-09T02:26:40.000000Z
                         9\t42\t1970-01-10T06:13:20.000000Z
                         10\t42\t1970-01-11T10:00:00.000000Z
-                        """),
-                "select row_number() over (partition by price order by ts), price, ts from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " 42 price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence_ns(0, 100000000000000) ts,") +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
+                        """));
     }
 
     @Test
     public void testRowNumberWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select row_number() over (partition by symbol order by symbol) from trades")
+                .ddl("create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day")
+                .expectSize()
+                .returns("""
                         row_number
                         1
                         1
@@ -11325,26 +11234,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         4
                         5
                         6
-                        """,
-                "select row_number() over (partition by symbol order by symbol) from trades",
-                "create table trades as " +
+                        """);
+    }
+
+    @Test
+    public void testRowNumberWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
+        assertQuery("select *, row_number() over (partition by symbol order by symbol) from trades")
+                .ddl("create table trades as " +
                         "(" +
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testRowNumberWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         price\tsymbol\tts\trow_number
                         0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t1
                         0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t1
@@ -11356,26 +11262,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\t4
                         0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\t5
                         0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\t6
-                        """),
-                "select *, row_number() over (partition by symbol order by symbol) from trades",
-                "create table trades as " +
+                        """));
+    }
+
+    @Test
+    public void testRowNumberWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
+        assertQuery("select row_number() over (partition by symbol order by symbol), * from trades")
+                .ddl("create table trades as " +
                         "(" +
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testRowNumberWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         row_number\tprice\tsymbol\tts
                         1\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z
                         1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z
@@ -11387,26 +11290,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         4\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z
                         5\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z
                         6\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z
-                        """),
-                "select row_number() over (partition by symbol order by symbol), * from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(42) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                true,
-                true
-        );
+                        """));
     }
 
     @Test
     public void testRowNumberWithPartitionByScalarFunction() throws Exception {
-        assertQuery(
-                replaceTimestampSuffix("""
+        assertQuery("select row_number() over (partition by concat(symbol, '_foo') order by symbol), ts from trades")
+                .ddl("create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix("""
                         row_number\tts
                         1\t1970-01-01T00:00:00.000000Z
                         2\t1970-01-02T03:46:40.000000Z
@@ -11418,19 +11317,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         2\t1970-01-09T02:26:40.000000Z
                         3\t1970-01-10T06:13:20.000000Z
                         3\t1970-01-11T10:00:00.000000Z
-                        """),
-                "select row_number() over (partition by concat(symbol, '_foo') order by symbol), ts from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                true,
-                true
-        );
+                        """));
     }
 
     @Test
@@ -19482,58 +19369,50 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testTwoWindowColumns() throws Exception {
         // Test two window functions with different specifications
-        assertQuery(
-                """
+        assertQuery("SELECT id, " +
+                        "row_number() OVER (ORDER BY ts) AS rn, " +
+                        "sum(id) OVER () AS total " +
+                        "FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         id\trn\ttotal
                         1\t1\t15.0
                         2\t2\t15.0
                         3\t3\t15.0
                         4\t4\t15.0
                         5\t5\t15.0
-                        """,
-                "SELECT id, " +
-                        "row_number() OVER (ORDER BY ts) AS rn, " +
-                        "sum(id) OVER () AS total " +
-                        "FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testTwoWindowFunctionsInArithmetic() throws Exception {
         // Test arithmetic between two window functions: sum() OVER - lag() OVER
-        assertQuery(
-                """
+        assertQuery("SELECT sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS id_diff FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         id_diff
                         null
                         2.0
                         4.0
                         7.0
                         11.0
-                        """,
-                "SELECT sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS id_diff FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testUnSupportImplicitCast() throws Exception {
-        assertException(
-                "SELECT ts, side, lead(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
-                        "AS next_price FROM trades ",
-                "create table trades as " +
+        assertQuery("SELECT ts, side, lead(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
+                        "AS next_price FROM trades ")
+                .ddl("create table trades as " +
                         "(" +
                         "select" +
                         " rnd_double(100) price," +
@@ -19541,17 +19420,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " rnd_symbol('AA','BB','CC') symbol," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                0,
-                "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]"
-        );
+                        ") timestamp(ts) partition by day")
+                .fails(0, "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]");
 
-        assertException(
-                "SELECT ts, side, first_value(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
-                        "AS next_price FROM trades ",
-                0,
-                "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]"
-        );
+        assertQuery("SELECT ts, side, first_value(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
+                        "AS next_price FROM trades ")
+                .fails(0, "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]");
     }
 
     @Test
@@ -19830,24 +19704,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowAvg() throws Exception {
         // Test avg() window function
-        assertQuery(
-                """
+        assertQuery("SELECT id, avg(id) OVER (ORDER BY ts) AS avg_val FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         id\tavg_val
                         1\t1.0
                         2\t1.5
                         3\t2.0
                         4\t2.5
                         5\t3.0
-                        """,
-                "SELECT id, avg(id) OVER (ORDER BY ts) AS avg_val FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -19952,72 +19823,62 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowCount() throws Exception {
         // Test count() window function
-        assertQuery(
-                """
+        assertQuery("SELECT id, count(*) OVER (ORDER BY ts) AS cnt FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         id\tcnt
                         1\t1
                         2\t2
                         3\t3
                         4\t4
                         5\t5
-                        """,
-                "SELECT id, count(*) OVER (ORDER BY ts) AS cnt FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowCumulativeSum() throws Exception {
         // Test cumulative sum using ROWS UNBOUNDED PRECEDING
-        assertQuery(
-                """
+        assertQuery("SELECT id, sum(id) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS cum_sum FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         id\tcum_sum
                         1\t1.0
                         2\t3.0
                         3\t6.0
                         4\t10.0
                         5\t15.0
-                        """,
-                "SELECT id, sum(id) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS cum_sum FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowDenseRank() throws Exception {
         // Test dense_rank() window function with ties
-        assertQuery(
-                """
+        assertQuery("SELECT val, dense_rank() OVER (ORDER BY val) AS drnk FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT " +
+                        "  CASE WHEN x IN (1, 2) THEN 1 WHEN x = 3 THEN 2 ELSE 3 END AS val, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         val\tdrnk
                         1\t1
                         1\t1
                         2\t2
                         3\t3
                         3\t3
-                        """,
-                "SELECT val, dense_rank() OVER (ORDER BY val) AS drnk FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT " +
-                        "  CASE WHEN x IN (1, 2) THEN 1 WHEN x = 3 THEN 2 ELSE 3 END AS val, " +
-                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -20452,48 +20313,42 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFirstValue() throws Exception {
         // Test first_value() window function
-        assertQuery(
-                """
+        assertQuery("SELECT id, first_value(id) OVER (ORDER BY ts) AS first_val FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         id\tfirst_val
                         1\t1
                         2\t1
                         3\t1
                         4\t1
                         5\t1
-                        """,
-                "SELECT id, first_value(id) OVER (ORDER BY ts) AS first_val FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFrameRowsBetween() throws Exception {
         // Test window function with ROWS BETWEEN frame specification
         // Note: QuestDB only supports PRECEDING and CURRENT ROW for frame end
-        assertQuery(
-                """
+        assertQuery("SELECT id, sum(id) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS moving_sum FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         id\tmoving_sum
                         1\t1.0
                         2\t3.0
                         3\t5.0
                         4\t7.0
                         5\t9.0
-                        """,
-                "SELECT id, sum(id) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS moving_sum FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -20503,63 +20358,53 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // 1. Compute sum(id) OVER () for each row: 6 (1+2+3)
         // 2. Add them: 6 + 6 = 12 for each row
         // 3. Sum all those values: 12+12+12 = 36
-        assertQuery(
-                """
+        assertQuery("SELECT sum(sum(id) OVER () + sum(id) OVER ()) AS result FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x as id, timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         result
                         36.0
-                        """,
-                "SELECT sum(sum(id) OVER () + sum(id) OVER ()) AS result FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x as id, timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionArithmeticInsideFunction() throws Exception {
         // Test two window functions in arithmetic expression inside abs()
         // This is the original bug case
-        assertQuery(
-                """
+        assertQuery("SELECT abs(sum(x) OVER () - sum(x) OVER ()) AS result FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         result
                         0.0
                         0.0
                         0.0
-                        """,
-                "SELECT abs(sum(x) OVER () - sum(x) OVER ()) AS result FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x, timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionArithmeticWithOrderBy() throws Exception {
         // Test window function with ORDER BY and arithmetic: row_number() + 1
-        assertQuery(
-                """
+        assertQuery("SELECT row_number() OVER (ORDER BY ts) + 1 AS adjusted_rank FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         adjusted_rank
                         2
                         3
                         4
                         5
                         6
-                        """,
-                "SELECT row_number() OVER (ORDER BY ts) + 1 AS adjusted_rank FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -20569,19 +20414,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // 1. Compute row_number() for each row ordered by ts: 1, 2, 3
         // 2. Sum all those values: 1+2+3 = 6
         // 3. Return single aggregated result
-        assertQuery(
-                """
+        assertQuery("SELECT sum(row_number() OVER (order by ts)) AS result FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         result
                         6
-                        """,
-                "SELECT sum(row_number() OVER (order by ts)) AS result FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -20853,41 +20695,35 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionAsArgumentToCast() throws Exception {
         // Test window function as direct argument to cast() function
-        assertQuery(
-                """
+        assertQuery("SELECT cast(row_number() OVER (ORDER BY ts) AS int) AS result FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         result
                         1
                         2
                         3
-                        """,
-                "SELECT cast(row_number() OVER (ORDER BY ts) AS int) AS result FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionAsArgumentToFunction() throws Exception {
         // Test window function as direct argument to abs() function
-        assertQuery(
-                """
+        assertQuery("SELECT abs(row_number() OVER (ORDER BY ts)) AS result FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         result
                         1
                         2
                         3
-                        """,
-                "SELECT abs(row_number() OVER (ORDER BY ts)) AS result FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -20897,41 +20733,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // 1. Compute row_number() for each row: 1, 2, 3
         // 2. Sum all those values: 1+2+3 = 6
         // 3. Return 6 for each row
-        assertQuery(
-                """
+        assertQuery("SELECT sum(row_number() OVER ()) OVER () AS result FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         result
                         6.0
                         6.0
                         6.0
-                        """,
-                "SELECT sum(row_number() OVER ()) OVER () AS result FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionCastToInt() throws Exception {
         // Test window function cast to int
-        assertQuery(
-                """
+        assertQuery("SELECT row_number() OVER (ORDER BY ts)::int AS rn FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         rn
                         1
                         2
                         3
-                        """,
-                "SELECT row_number() OVER (ORDER BY ts)::int AS rn FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -21179,196 +21008,171 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionInCaseDifferentOverSpecs() throws Exception {
         // Window functions with different OVER specs in THEN vs ELSE branches
-        assertQuery(
-                """
+        assertQuery("SELECT id, CASE " +
+                        "  WHEN id <= 3 THEN sum(id) OVER (ORDER BY ts) " +
+                        "  ELSE sum(id) OVER (PARTITION BY id ORDER BY ts) " +
+                        "END AS result " +
+                        "FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         id\tresult
                         1\t1.0
                         2\t3.0
                         3\t6.0
                         4\t4.0
                         5\t5.0
-                        """,
-                "SELECT id, CASE " +
-                        "  WHEN id <= 3 THEN sum(id) OVER (ORDER BY ts) " +
-                        "  ELSE sum(id) OVER (PARTITION BY id ORDER BY ts) " +
-                        "END AS result " +
-                        "FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionInCaseExpression() throws Exception {
         // Test window function directly inside CASE WHEN condition
-        assertQuery(
-                """
-                        category
-                        first
-                        middle
-                        last
-                        """,
-                "SELECT CASE " +
+        assertQuery("SELECT CASE " +
                         "  WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' " +
                         "  WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' " +
                         "  ELSE 'middle' " +
                         "END AS category " +
-                        "FROM x",
-                "CREATE TABLE x AS (" +
+                        "FROM x")
+                .ddl("CREATE TABLE x AS (" +
                         "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        category
+                        first
+                        middle
+                        last
+                        """);
     }
 
     @Test
     public void testWindowFunctionInCaseThenAndElse() throws Exception {
         // Window functions in both THEN and ELSE with different functions
-        assertQuery(
-                """
+        assertQuery("SELECT id, CASE " +
+                        "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts) " +
+                        "  ELSE lag(id) OVER (ORDER BY ts) " +
+                        "END AS result " +
+                        "FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         id\tresult
                         1\t1
                         2\t2
                         3\t3
                         4\t3
                         5\t4
-                        """,
-                "SELECT id, CASE " +
-                        "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts) " +
-                        "  ELSE lag(id) OVER (ORDER BY ts) " +
-                        "END AS result " +
-                        "FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionInCaseWithCast() throws Exception {
         // Window function with cast inside CASE expression
-        assertQuery(
-                """
+        assertQuery("SELECT id, CASE " +
+                        "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts)::string " +
+                        "  ELSE 'N/A' " +
+                        "END AS result " +
+                        "FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         id\tresult
                         1\t1
                         2\t2
                         3\t3
                         4\tN/A
                         5\tN/A
-                        """,
-                "SELECT id, CASE " +
-                        "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts)::string " +
-                        "  ELSE 'N/A' " +
-                        "END AS result " +
-                        "FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionInPartitionByFails() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         SELECT pickup_datetime, row_number() OVER (PARTITION BY row_number())
                         FROM trips
-                        WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'""",
-                "create table trips as " +
+                        WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'""")
+                .ddl("create table trips as " +
                         "(" +
                         "select" +
                         " rnd_double(42) total_amount," +
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) pickup_datetime" : " timestamp_sequence_ns(0, 100000000000000) pickup_datetime") +
                         " from long_sequence(10)" +
-                        ") timestamp(pickup_datetime) partition by day",
-                56,
-                "window function called in non-window context, make sure to add OVER clause"
-        );
+                        ") timestamp(pickup_datetime) partition by day")
+                .fails(56, "window function called in non-window context, make sure to add OVER clause");
     }
 
     @Test
     public void testWindowFunctionLagMinusLead() throws Exception {
         // Test lag() - lead() window function arithmetic
-        assertQuery(
-                """
+        assertQuery("SELECT lag(id) OVER (ORDER BY ts) - lead(id) OVER (ORDER BY ts) AS diff FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         diff
                         null
                         -2
                         -2
                         null
-                        """,
-                "SELECT lag(id) OVER (ORDER BY ts) - lead(id) OVER (ORDER BY ts) AS diff FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionMultipleInSelect() throws Exception {
         // Test multiple window functions in select with different operations
-        assertQuery(
-                """
+        assertQuery("SELECT " +
+                        "  id, " +
+                        "  sum(id) OVER (ORDER BY ts) AS running_sum, " +
+                        "  lag(id) OVER (ORDER BY ts) AS prev_id, " +
+                        "  sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS diff " +
+                        "FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         id\trunning_sum\tprev_id\tdiff
                         1\t1.0\tnull\tnull
                         2\t3.0\t1\t2.0
                         3\t6.0\t2\t4.0
                         4\t10.0\t3\t7.0
                         5\t15.0\t4\t11.0
-                        """,
-                "SELECT " +
-                        "  id, " +
-                        "  sum(id) OVER (ORDER BY ts) AS running_sum, " +
-                        "  lag(id) OVER (ORDER BY ts) AS prev_id, " +
-                        "  sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS diff " +
-                        "FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionNestedParenthesesWithCast() throws Exception {
         // Deeply nested parentheses with cast
-        assertQuery(
-                """
+        assertQuery("SELECT (((row_number() OVER (ORDER BY ts))))::int AS rn FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         rn
                         1
                         2
                         3
-                        """,
-                "SELECT (((row_number() OVER (ORDER BY ts))))::int AS rn FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -21392,14 +21196,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ('2024-01-03T00:00:00Z', 6, 'c')
                     """);
 
-            assertQuery(
-                    """
-                            z\trn
-                            7\t1
-                            8\t2
-                            9\t3
-                            """,
-                    """
+            assertQuery("""
                             SELECT d.y AS z, row_number() OVER (ORDER BY z) AS rn
                             FROM tab1 t1
                             JOIN (
@@ -21410,11 +21207,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 )
                             ) d ON t1.grp = d.grp
                             ORDER BY z
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """)
+                    .expectSize()
+                    .returns("""
+                            z\trn
+                            7\t1
+                            8\t2
+                            9\t3
+                            """);
         });
     }
 
@@ -21432,25 +21232,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ('2024-01-03T00:00:00Z', 20, 'c')
                     """);
 
-            assertQuery(
-                    """
-                            grp\trn
-                            a\t3
-                            b\t1
-                            c\t2
-                            """,
-                    """
+            assertQuery("""
                             SELECT grp, row_number() OVER (ORDER BY x) AS rn
                             FROM (
                                 SELECT grp, score AS x
                                 FROM tab2
                             )
                             ORDER BY grp
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """)
+                    .expectSize()
+                    .returns("""
+                            grp\trn
+                            a\t3
+                            b\t1
+                            c\t2
+                            """);
         });
     }
 
@@ -21475,22 +21271,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ('2024-01-03T00:00:00Z', 20, 'c')
                     """);
 
-            assertQuery(
-                    """
+            assertQuery("""
+                            SELECT score, score AS x, row_number() OVER (ORDER BY x) AS rn
+                            FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp
+                            ORDER BY score
+                            """)
+                    .expectSize()
+                    .returns("""
                             score\tx\trn
                             10\t10\t1
                             20\t20\t2
                             30\t30\t3
-                            """,
-                    """
-                            SELECT score, score AS x, row_number() OVER (ORDER BY x) AS rn
-                            FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp
-                            ORDER BY score
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -21594,135 +21386,116 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionWithArithmeticInCaseBranches() throws Exception {
         // Window function with arithmetic operations in different CASE branches
-        assertQuery(
-                """
+        assertQuery("SELECT id, CASE " +
+                        "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts) + 1 " +
+                        "  ELSE row_number() OVER (ORDER BY ts) - 1 " +
+                        "END AS result " +
+                        "FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         id\tresult
                         1\t2
                         2\t3
                         3\t4
                         4\t3
                         5\t4
-                        """,
-                "SELECT id, CASE " +
-                        "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts) + 1 " +
-                        "  ELSE row_number() OVER (ORDER BY ts) - 1 " +
-                        "END AS result " +
-                        "FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionWithCast() throws Exception {
         // Test window function with :: cast operator
-        assertQuery(
-                """
+        assertQuery("SELECT row_number() OVER (ORDER BY ts)::string AS rn FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         rn
                         1
                         2
                         3
-                        """,
-                "SELECT row_number() OVER (ORDER BY ts)::string AS rn FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,  // window functions don't support random access
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionWithCastInParentheses() throws Exception {
         // Test window function with cast and outer parentheses
-        assertQuery(
-                """
+        assertQuery("SELECT (row_number() OVER (ORDER BY ts))::string AS rn FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         rn
                         1
                         2
                         3
-                        """,
-                "SELECT (row_number() OVER (ORDER BY ts))::string AS rn FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionWithLimit() throws Exception {
         // Test window function with LIMIT clause
-        assertQuery(
-                """
+        assertQuery("SELECT row_number() OVER (ORDER BY ts) AS rn FROM x LIMIT 2")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         rn
                         1
                         2
-                        """,
-                "SELECT row_number() OVER (ORDER BY ts) AS rn FROM x LIMIT 2",
-                "CREATE TABLE x AS (" +
-                        "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionWithNullHandling() throws Exception {
         // Test window functions with null values in arithmetic
-        assertQuery(
-                """
+        assertQuery("SELECT id, lag(id) OVER (ORDER BY ts) AS prev, id - lag(id) OVER (ORDER BY ts) AS diff FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT " +
+                        "  CASE WHEN x = 2 THEN NULL ELSE x END AS id, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         id\tprev\tdiff
                         1\tnull\tnull
                         null\t1\tnull
                         3\tnull\tnull
                         4\t3\t1
-                        """,
-                "SELECT id, lag(id) OVER (ORDER BY ts) AS prev, id - lag(id) OVER (ORDER BY ts) AS diff FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT " +
-                        "  CASE WHEN x = 2 THEN NULL ELSE x END AS id, " +
-                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionWithPartitionBy() throws Exception {
         // Test window function with PARTITION BY and cast
-        assertQuery(
-                """
+        assertQuery("SELECT sym, row_number() OVER (PARTITION BY sym ORDER BY ts)::string AS rn FROM x ORDER BY sym, ts")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT " +
+                        "  CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS sym, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         sym\trn
                         A\t1
                         A\t2
                         B\t1
                         B\t2
-                        """,
-                "SELECT sym, row_number() OVER (PARTITION BY sym ORDER BY ts)::string AS rn FROM x ORDER BY sym, ts",
-                "CREATE TABLE x AS (" +
-                        "SELECT " +
-                        "  CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS sym, " +
-                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -22023,27 +21796,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowMultiplePartitionBy() throws Exception {
         // Test window function with multiple PARTITION BY columns
-        assertQuery(
-                """
+        assertQuery("SELECT a, b, row_number() OVER (PARTITION BY a, b ORDER BY ts) AS rn FROM x ORDER BY a, b, ts")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT " +
+                        "  CASE WHEN x <= 3 THEN 1 ELSE 2 END AS a, " +
+                        "  CASE WHEN x IN (1, 2, 4) THEN 'X' ELSE 'Y' END AS b, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         a\tb\trn
                         1\tX\t1
                         1\tX\t2
                         1\tY\t1
                         2\tX\t1
                         2\tY\t1
-                        """,
-                "SELECT a, b, row_number() OVER (PARTITION BY a, b ORDER BY ts) AS rn FROM x ORDER BY a, b, ts",
-                "CREATE TABLE x AS (" +
-                        "SELECT " +
-                        "  CASE WHEN x <= 3 THEN 1 ELSE 2 END AS a, " +
-                        "  CASE WHEN x IN (1, 2, 4) THEN 'X' ELSE 'Y' END AS b, " +
-                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -22132,60 +21901,49 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowOrderByDesc() throws Exception {
         // Test window function with ORDER BY DESC
-        assertQuery(
-                """
+        assertQuery("SELECT id, row_number() OVER (ORDER BY ts DESC) AS rn FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         id\trn
                         1\t5
                         2\t4
                         3\t3
                         4\t2
                         5\t1
-                        """,
-                "SELECT id, row_number() OVER (ORDER BY ts DESC) AS rn FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowRank() throws Exception {
         // Test rank() window function with ties
-        assertQuery(
-                """
+        assertQuery("SELECT val, rank() OVER (ORDER BY val) AS rnk FROM x")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT " +
+                        "  CASE WHEN x IN (1, 2) THEN 1 WHEN x = 3 THEN 2 ELSE 3 END AS val, " +
+                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+                .expectSize()
+                .returns("""
                         val\trnk
                         1\t1
                         1\t1
                         2\t3
                         3\t4
                         3\t4
-                        """,
-                "SELECT val, rank() OVER (ORDER BY val) AS rnk FROM x",
-                "CREATE TABLE x AS (" +
-                        "SELECT " +
-                        "  CASE WHEN x IN (1, 2) THEN 1 WHEN x = 3 THEN 2 ELSE 3 END AS val, " +
-                        "  timestamp_sequence('2024-01-01', 1000000) AS ts " +
-                        "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowSpecErrorCurrentWithoutRow() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ROWS BETWEEN CURRENT xyz AND 1 FOLLOWING) FROM t",
-                    41,
-                    "'row' expected after 'current'"
-            );
+            assertQuery("SELECT sum(x) OVER (ROWS BETWEEN CURRENT xyz AND 1 FOLLOWING) FROM t")
+                    .fails(41, "'row' expected after 'current'");
         });
     }
 
@@ -22193,11 +21951,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowSpecErrorEmptySpec() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (",
-                    19,
-                    "')' or window specification expected"
-            );
+            assertQuery("SELECT sum(x) OVER (")
+                    .fails(19, "')' or window specification expected");
         });
     }
 
@@ -22205,11 +21960,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowSpecErrorExcludeCurrentWithoutRow() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT xyz) FROM t",
-                    85,
-                    "'row' expected after 'current'"
-            );
+            assertQuery("SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT xyz) FROM t")
+                    .fails(85, "'row' expected after 'current'");
         });
     }
 
@@ -22217,11 +21969,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowSpecErrorExcludeNoWithoutOthers() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE NO xyz) FROM t",
-                    80,
-                    "'others' expected after 'no'"
-            );
+            assertQuery("SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE NO xyz) FROM t")
+                    .fails(80, "'others' expected after 'no'");
         });
     }
 
@@ -22229,11 +21978,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowSpecErrorOrderByEndOfInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ORDER BY ts",
-                    29,
-                    "')' expected to close window specification"
-            );
+            assertQuery("SELECT sum(x) OVER (ORDER BY ts")
+                    .fails(29, "')' expected to close window specification");
         });
     }
 
@@ -22241,11 +21987,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowSpecErrorOrderWithoutBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ORDER xyz) FROM t",
-                    26,
-                    "'by' expected after 'order'"
-            );
+            assertQuery("SELECT sum(x) OVER (ORDER xyz) FROM t")
+                    .fails(26, "'by' expected after 'order'");
         });
     }
 
@@ -22253,11 +21996,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowSpecErrorPartitionByEndOfInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (PARTITION BY x",
-                    33,
-                    "'order', ',' or ')' expected"
-            );
+            assertQuery("SELECT sum(x) OVER (PARTITION BY x")
+                    .fails(33, "'order', ',' or ')' expected");
         });
     }
 
@@ -22265,11 +22005,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowSpecErrorPartitionWithoutBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (PARTITION xyz) FROM t",
-                    30,
-                    "'by' expected after 'partition'"
-            );
+            assertQuery("SELECT sum(x) OVER (PARTITION xyz) FROM t")
+                    .fails(30, "'by' expected after 'partition'");
         });
     }
 
@@ -22277,11 +22014,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowSpecErrorUnboundedWithoutDirection() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED xyz AND CURRENT ROW) FROM t",
-                    43,
-                    "'preceding' or 'following' expected after 'unbounded'"
-            );
+            assertQuery("SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED xyz AND CURRENT ROW) FROM t")
+                    .fails(43, "'preceding' or 'following' expected after 'unbounded'");
         });
     }
 
@@ -22289,11 +22023,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowSpecErrorUnclosedAfterFrame() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW xyz) FROM t",
-                    81,
-                    "')' expected to close window specification"
-            );
+            assertQuery("SELECT sum(x) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW xyz) FROM t")
+                    .fails(81, "')' expected to close window specification");
         });
     }
 
