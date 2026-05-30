@@ -1204,6 +1204,15 @@ fn adjust_column_chunk_offsets(col: &mut ColumnChunk, offset_delta: i64) {
 /// timestamp flag in `qdb_meta` mirrors the fresh-encode path (jni.rs) and
 /// end()'s `designated_ts`, so copied row groups and the footer declare the
 /// same dense index a freshly written file would.
+///
+/// The sort direction is always ascending (`descending: false`). QuestDB stores
+/// managed partitions in ascending designated-timestamp order, and both encode
+/// paths that produce these files -- CONVERT PARTITION and the O3 rewrite in
+/// jni.rs -- hard-code ascending. The only writer that honors a descending
+/// order is the COPY-export path, whose files never reach `ParquetUpdater`.
+/// Reading the order bit from `qdb_meta` here (which does record it) would
+/// desync copied row groups from those ascending-only encoders for no gain, so
+/// we match them and keep it ascending.
 fn designated_sorting_columns(qdb_meta: &QdbMeta) -> Option<Vec<SortingColumn>> {
     qdb_meta
         .schema

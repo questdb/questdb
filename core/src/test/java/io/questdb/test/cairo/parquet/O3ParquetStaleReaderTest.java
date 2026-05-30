@@ -546,10 +546,14 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                         1, meta.getSortingColumnCount());
                 Assert.assertEquals("sort column index on parquet partition " + i,
                         expectedSortColumnIndex, meta.getSortingColumnIndex(0));
-                // The sole sort key is the designated timestamp, so the declared
-                // sort index and the designated-timestamp index must agree.
-                Assert.assertEquals("sort column must match the designated timestamp on partition " + i,
-                        meta.getDesignatedTimestampColumnIndex(), meta.getSortingColumnIndex(0));
+                // The sole sort key is the designated timestamp, so the
+                // designated-timestamp index must independently equal the
+                // expected dense position. Asserting it against
+                // getSortingColumnIndex(0) would be tautological: that getter
+                // returns getDesignatedTimestampColumnIndex() whenever the
+                // SORTING_IS_DTS_ASC flag is set (which it always is here).
+                Assert.assertEquals("designated timestamp index on parquet partition " + i,
+                        expectedSortColumnIndex, meta.getDesignatedTimestampColumnIndex());
                 parquetCount++;
             }
             Assert.assertTrue("expected at least one parquet partition", parquetCount > 0);

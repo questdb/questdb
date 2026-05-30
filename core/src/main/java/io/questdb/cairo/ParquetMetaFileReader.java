@@ -514,10 +514,16 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * key at {@code sortingColumnIndex}. When {@code SORTING_IS_DTS_ASC} is set,
      * position 0 is the designated timestamp; otherwise the value comes from the
      * explicit array that follows the column descriptors.
+     * <p>
+     * {@code sortingColumnIndex} must be in {@code [0, getSortingColumnCount())}.
+     * The explicit-array branch reads native memory without a runtime bound, so
+     * an out-of-range index would read past the sorting array; the assertion
+     * mirrors the authoritative Rust reader's range check (which returns an
+     * error there) and guards both branches.
      */
     public int getSortingColumnIndex(int sortingColumnIndex) {
+        assert sortingColumnIndex >= 0 && sortingColumnIndex < getSortingColumnCount();
         if ((Unsafe.getLong(addr + HEADER_FEATURE_FLAGS_OFF) & SORTING_IS_DTS_ASC_FEATURE_FLAG) != 0) {
-            assert sortingColumnIndex == 0;
             return getDesignatedTimestampColumnIndex();
         }
         final long sortingArrayAddr = addr + HEADER_FIXED_SIZE + (long) columnCount * COLUMN_DESCRIPTOR_SIZE;

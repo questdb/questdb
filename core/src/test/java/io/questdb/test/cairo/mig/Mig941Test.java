@@ -1307,6 +1307,125 @@ public class Mig941Test extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testMigrateToleratesO3MergedFooterWithMixedSortingColumns() throws Exception {
+        // End-to-end reproduction of the replica-bootstrap crash through a REAL
+        // O3 merge. The OSS suite otherwise only constructs the mixed footer by
+        // hand in the Rust unit tests; this drives the actual merge and the
+        // actual Mig941 reader over the bytes it leaves on disk.
+        //
+        // An O3 merge in rewrite mode copies the unchanged row groups and writes
+        // the touched ones fresh. Before the fix the copied groups dropped their
+        // sorting columns while the fresh groups kept the timestamp sort column,
+        // so the footer declared sorting columns on some row groups and none on
+        // others. A replica restoring a backup has no _pm sidecar, so bootstrap
+        // runs Mig941, which reads the on-disk footer through the strict
+        // extract_sorting_columns validator -- that used to abort with
+        // "sorting columns differ between row groups" and crash the replica.
+        // After the fix every row group declares the same sorting columns and
+        // Mig941 regenerates _pm cleanly.
+        //
+        // A small row group size yields more than one row group per partition.
+        // An ADD COLUMN before the O3 insert makes the partition schema differ
+        // from the on-disk parquet, which forces O3PartitionJob down the rewrite
+        // path (hasSchemaChange, O3PartitionJob.java:210) rather than an in-place
+        // append: it copies the untouched row group through
+        // copy_row_group_with_null_columns -- the exact site that used to drop
+        // the sorting columns -- and writes the touched one fresh.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            // WAL table: an intra-partition O3 merge keeps the partition in
+            // parquet format (a non-WAL table would fall back to native).
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Eight in-order rows at row group size 4 -> two row groups, both
+            // declaring the timestamp sort column once converted.
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (1, '2024-06-10T00:00:00.000000Z'),
+                            (2, '2024-06-10T01:00:00.000000Z'),
+                            (3, '2024-06-10T02:00:00.000000Z'),
+                            (4, '2024-06-10T03:00:00.000000Z'),
+                            (5, '2024-06-10T04:00:00.000000Z'),
+                            (6, '2024-06-10T05:00:00.000000Z'),
+                            (7, '2024-06-10T06:00:00.000000Z'),
+                            (8, '2024-06-10T07:00:00.000000Z')
+                            """
+            );
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
+            drainWalQueue();
+
+            // ADD COLUMN makes the next O3 merge a schema-change rewrite: it
+            // copies the untouched row group (backfilling the new column with
+            // nulls) and writes the touched one fresh.
+            execute("ALTER TABLE t ADD COLUMN v INT");
+            drainWalQueue();
+
+            // O3 insert into the first row group's range: the merge rewrites the
+            // touched group and copies the untouched one, yielding the
+            // copied-plus-fresh footer the bug mishandled.
+            execute("INSERT INTO t VALUES(99, '2024-06-10T00:30:00.000000Z', 7)");
+            drainWalQueue();
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            // Remove _pm so Mig941 regenerates it from the on-disk footer, the
+            // way a replica bootstrapping from a sidecar-less backup does.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                Assert.assertTrue("_pm should exist before removal", ff.exists(path.$()));
+                Assert.assertTrue("remove _pm sidecar", ff.removeQuiet(path.$()));
+            }
+
+            // The regression: before the fix this aborted reading the mixed
+            // footer. It must now succeed.
+            runMig941(token);
+
+            // _pm regenerated from the real merged footer, recording a single
+            // sort column at the dense designated-timestamp position. The schema
+            // is [id, ts, v], so the timestamp sits at dense index 1.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                Assert.assertTrue("_pm should exist after migration", ff.exists(path.$()));
+
+                long parquetMetaSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                Assert.assertTrue("_pm should have positive size", parquetMetaSize > 0);
+
+                long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    reader.of(parquetMetaAddr, parquetMetaSize);
+                    reader.resolveFooter(Long.MAX_VALUE);
+                    Assert.assertEquals(3, reader.getColumnCount());
+                    // The mixed footer only arises when copied and fresh row
+                    // groups coexist, so guard that the merge actually left more
+                    // than one row group.
+                    Assert.assertTrue(
+                            "expected the O3 merge to leave more than one row group",
+                            reader.getRowGroupCount() > 1
+                    );
+                    Assert.assertEquals(1, reader.getSortingColumnCount());
+                    Assert.assertEquals(1, reader.getSortingColumnIndex(0));
+                    Assert.assertEquals(1, reader.getDesignatedTimestampColumnIndex());
+                } finally {
+                    ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                }
+            }
+        });
+    }
+
     private void runMig941(TableToken token) {
         engine.releaseAllWriters();
         engine.releaseAllReaders();
