@@ -40,7 +40,7 @@ import org.junit.Test;
 
 /**
  * SQL-level tests that exercise the per-query memory limit through the
- * tracker-aware keyed SAMPLE BY FILL operators wired by Phase 3:
+ * tracker-aware keyed SAMPLE BY FILL operators:
  * <ul>
  *     <li>{@link io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory} /
  *     {@link io.questdb.griffin.engine.groupby.SampleByFillNullRecordCursorFactory} ->
@@ -62,8 +62,8 @@ import org.junit.Test;
  * {@code keysMap} the same lazy way, binding the tracker in the cursor's
  * {@code of()} before {@code reopen()} and freeing at cursor close; the
  * {@code testFastPath*} cases below exercise it under mixed full and partial
- * fetch. On the fast path the pre-aggregated base GROUP BY (wired by PR 2.5)
- * still charges the dominant key-by-bucket map, so a breach is usually caught
+ * fetch. On the fast path the pre-aggregated base GROUP BY (already
+ * tracker-aware) still charges the dominant key-by-bucket map, so a breach is usually caught
  * there first; wiring {@code keysMap} closes the remaining accounting gap and
  * keeps the per-query counter balanced across the reused cursor's
  * close/reopen cycle.
@@ -106,7 +106,7 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
         // Default alignment (ALIGN TO CALENDAR) routes to the GROUP BY fast-path
         // SampleByFillRecordCursorFactory. A high-cardinality key trips the per-query
         // limit while the keyed maps grow during the build pass -- usually at the base
-        // GROUP BY's key-by-bucket map (PR 2.5), but the fill cursor's keysMap is now
+        // GROUP BY's key-by-bucket map, but the fill cursor's keysMap is now
         // charged too. Either way the breach carries the per-query message.
         assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR");
     }

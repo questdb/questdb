@@ -178,7 +178,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 // first reopen() in the cursor's of(), after the per-query MemoryTracker is
                 // bound, so the map's malloc and the matching free at cursor close balance
                 // on the per-query counter. Mirrors the AbstractSampleByFillRecordCursorFactory
-                // idiom from PR 3.2.
+                // idiom.
                 keysMap = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes, false);
             } else if (fixedPrevSrcCols.size() > 0) {
                 // Non-keyed with at least one fixed-size FILL_PREV source: cache

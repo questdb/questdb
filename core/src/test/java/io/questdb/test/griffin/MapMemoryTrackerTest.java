@@ -38,7 +38,7 @@ import org.junit.Test;
 
 /**
  * SQL-level tests that exercise the per-query memory limit through the
- * tracker-aware map family wired by PR 2.2 ({@link io.questdb.cairo.map.OrderedMap},
+ * tracker-aware map family ({@link io.questdb.cairo.map.OrderedMap},
  * {@link io.questdb.cairo.map.Unordered4Map}, {@link io.questdb.cairo.map.Unordered8Map},
  * {@link io.questdb.cairo.map.UnorderedVarcharMap}).
  * <p>
@@ -64,9 +64,9 @@ public class MapMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByFailsOnLargeKeySet() throws Exception {
-        // Force the synchronous GROUP BY path: PR 2.2 wires the sync GroupByRecordCursorFactory
-        // only. Parallel GROUP BY runs through GroupByMapFragment, which PR 2.2 does not
-        // touch; once a follow-up PR wires it, this override can be lifted.
+        // Force the synchronous GROUP BY path: only the sync GroupByRecordCursorFactory
+        // is tracker-wired. Parallel GROUP BY runs through GroupByMapFragment, which is not
+        // yet wired; once a follow-up wires it, this override can be lifted.
         assertMemoryLeak(() -> {
             sqlExecutionContext.setParallelGroupByEnabled(false);
             execute("CREATE TABLE tab AS (SELECT x AS k, x * 2 AS v FROM long_sequence(50_000))");

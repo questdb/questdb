@@ -39,7 +39,7 @@ import org.junit.Test;
 
 /**
  * SQL-level tests that exercise the per-query memory limit through the
- * tracker-aware {@code MemoryCARW} family wired by PR 2.4:
+ * tracker-aware {@code MemoryCARW} family:
  * {@link io.questdb.cairo.vm.MemoryCARWImpl},
  * {@link io.questdb.cairo.vm.MemoryPARWImpl},
  * {@link io.questdb.cairo.RecordChain},
@@ -63,8 +63,8 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void beforeClass() {
-        // 512 KiB: large enough for the small initial heaps of each operator
-        // wired by PR 2.4 to fit comfortably, small enough that a runaway
+        // 512 KiB: large enough for the small initial heaps of each wired
+        // operator to fit comfortably, small enough that a runaway
         // operator breaches after a few heap doublings. The limit is read
         // lazily on the {@code PerQueryMemoryTrackerProvider}'s first access
         // and cached for the engine's lifetime, so {@code @BeforeClass} is
@@ -279,8 +279,8 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testRepeatedHashJoinCursorRunsReleaseAllocations() throws Exception {
         // Many close/reopen cycles through HashJoinRecordCursorFactory must
-        // release every byte they allocated -- both the join map (PR 2.2
-        // wiring) and the slave RecordChain (PR 2.4 wiring). The load-bearing
+        // release every byte they allocated -- both the join map and the
+        // slave RecordChain. The load-bearing
         // check is assertMemoryLeak: any malloc/free asymmetry would show up
         // as a residual allocation count.
         assertMemoryLeak(() -> {

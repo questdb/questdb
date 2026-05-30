@@ -38,7 +38,7 @@ import org.junit.Test;
 
 /**
  * SQL-level tests that exercise the per-query memory limit through the LATEST BY
- * rowid lists ({@link io.questdb.std.DirectLongList}) wired by PR 2.6, together
+ * rowid lists ({@link io.questdb.std.DirectLongList}), together
  * with the LATEST BY hash maps wired alongside them (the dominant allocator on
  * the map-backed paths).
  * <p>

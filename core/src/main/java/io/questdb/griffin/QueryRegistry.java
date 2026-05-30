@@ -158,8 +158,8 @@ public class QueryRegistry {
 
         // Acquire a per-workload memory tracker if no outer workload has already
         // bound one on the execution context. Nested registrations (subquery
-        // recompiles, mat-view-refresh / WAL-apply paths once those land in
-        // Phase 4) inherit the outer tracker via SqlExecutionContext.
+        // recompiles, mat-view-refresh / WAL-apply paths once those are wired)
+        // inherit the outer tracker via SqlExecutionContext.
         if (executionContext.getMemoryTracker() == null) {
             final MemoryTrackerProvider provider = executionContext.getCairoEngine().getMemoryTrackerProvider();
             final MemoryTracker tracker = provider.acquire(

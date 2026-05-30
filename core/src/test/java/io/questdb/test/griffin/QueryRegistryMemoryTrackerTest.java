@@ -37,8 +37,8 @@ import org.junit.Test;
 
 /**
  * Exercises the per-workload memory-tracker acquire/release lifecycle wired
- * into {@link QueryRegistry#register} / {@link QueryRegistry#unregister} by
- * PR 2.0. No allocation site is wired to use the tracker yet, so the asserts
+ * into {@link QueryRegistry#register} / {@link QueryRegistry#unregister}.
+ * No allocation site is wired to use the tracker yet, so the asserts
  * focus on lifecycle correctness: the tracker is bound on the execution
  * context for the duration of the workload, released at the boundary, and
  * never leaks on the throw path.

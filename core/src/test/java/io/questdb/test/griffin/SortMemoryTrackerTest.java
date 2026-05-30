@@ -38,7 +38,7 @@ import org.junit.Test;
 
 /**
  * SQL-level tests that exercise the per-query memory limit through the
- * tracker-aware sort buffer family wired by PR 2.3
+ * tracker-aware sort buffer family
  * ({@link io.questdb.griffin.engine.AbstractRedBlackTree},
  * {@link io.questdb.griffin.engine.orderby.LongTreeChain},
  * {@link io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain}).

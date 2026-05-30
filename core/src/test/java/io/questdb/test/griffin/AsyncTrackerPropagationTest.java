@@ -48,7 +48,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Exercises the per-query {@code MemoryTracker} plumbing wired into parallel
- * task structs by PR 2.1 of the per-query memory limit. The tracker itself
+ * task structs for the per-query memory limit. The tracker itself
  * does not yet drive any allocation site, so the asserts focus on
  * propagation: a tracker bound on {@code SqlExecutionContext} at workload
  * start must surface on every parallel struct that workers read off the task,

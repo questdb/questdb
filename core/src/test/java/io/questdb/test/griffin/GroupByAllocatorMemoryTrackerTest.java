@@ -39,7 +39,7 @@ import org.junit.Test;
 
 /**
  * SQL-level tests that exercise the per-query memory limit through the
- * tracker-aware GROUP BY function-state allocator wired by PR 2.5:
+ * tracker-aware GROUP BY function-state allocator:
  * {@link io.questdb.griffin.engine.groupby.FastGroupByAllocator} and the
  * {@link io.questdb.std.DirectLongLongHashMap} chunk index it owns.
  * <p>
@@ -71,7 +71,7 @@ import org.junit.Test;
  * Parallel GROUP BY is disabled per test via
  * {@code sqlExecutionContext.setParallelGroupByEnabled(false)} because the
  * parallel path runs through {@code GroupByMapFragment} / the async atoms,
- * which PR 2.5 does not wire.
+ * which are not tracker-aware.
  */
 public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
 
@@ -148,7 +148,7 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
         // grows a single GroupByLongHashSet through the allocator. There is no
         // tracker-aware map on this path (the aggregate lives in a
         // SimpleMapValue), so the breach is charged solely to the allocator -
-        // the cleanest demonstration of PR 2.5's non-keyed wiring.
+        // the cleanest demonstration of the non-keyed allocator wiring.
         assertMemoryLeak(() -> {
             sqlExecutionContext.setParallelGroupByEnabled(false);
             execute("CREATE TABLE tab AS (SELECT x AS v FROM long_sequence(50_000))");

@@ -43,7 +43,7 @@ import org.junit.Test;
 /**
  * SQL-level tests that exercise the per-query memory limit through the Parquet
  * decode buffers ({@link io.questdb.griffin.engine.table.parquet.RowGroupBuffers})
- * wired by the Phase 3 Rust/Parquet opt-ins. The decoded column data is the
+ * wired through the Rust/Parquet opt-ins. The decoded column data is the
  * unbounded allocation: it scales with the row group being materialized, so a
  * runaway scan over wide values trips the limit at the offending decode malloc
  * on the Rust side.
