@@ -37,8 +37,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testBindVarTypeChange() throws Exception {
-        assertQuery("l2price\n" +
-                "9.825714285714286\n", "select l2price(35, 8, 5.2, 23, 9.3, 42, 22.1)");
+        assertQuery("select l2price(35, 8, 5.2, 23, 9.3, 42, 22.1)").expectSize().returns("l2price\n9.825714285714286\n");
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
@@ -177,16 +176,15 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testLevelTwoPrice() throws Exception {
-        assertQuery("l2price\n" +
-                "9.825714285714286\n", "select l2price(35, 8, 5.2, 23, 9.3, 42, 22.1)");
-        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)"); // fail
-        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("select l2price(35, 8, 5.2, 23, 9.3, 42, 22.1)").expectSize().returns("l2price\n9.825714285714286\n");
+        assertQuery("select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\nnull\n"); // fail
+        assertQuery("select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
         assertFailure("[7] there is no matching function `l2price` with the argument types: (INT)", "select l2price(100)");
     }
 
     @Test
     public void testLevelTwoPriceFailsWithEvenArgs() throws Exception {
-        assertException("select l2price(35, 8, 7, 6);", 25, "l2price requires an odd number of arguments.");
+        assertQuery("select l2price(35, 8, 7, 6);").fails(25, "l2price requires an odd number of arguments.");
     }
 
     /**
@@ -194,45 +192,44 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
      */
     @Test
     public void testLevelTwoPriceIncludingNullValue() throws Exception {
-        assertQuery("l2price\n"
-                + "null\n", "select l2price(45, null, 3)");
-        assertQuery("l2price\n"
-                + "null\n", "select l2price(45, 3, null)");
-        assertQuery("l2price\n"
-                + "null\n", "select l2price(45, 5, 3.2, 12, null)");
-        assertQuery("l2price\n"
-                + "null\n", "select l2price(999999, 5, 3.2, 12, 5.1, 10, 12.3, 67, 42.4, 38, 29.9, 39, 40.3, null, 5.1)");
-        assertQuery("l2price\n"
-                + "21.408888888888885\n", "select l2price(45, 5, 3.2, 12, 5.1, 10, 12.3, 67, 42.4, 38, 29.9, 39, 40.3, null, 5.1)");
+        assertQuery("select l2price(45, null, 3)").expectSize().returns("l2price\nnull\n");
+        assertQuery("select l2price(45, 3, null)").expectSize().returns("l2price\nnull\n");
+        assertQuery("select l2price(45, 5, 3.2, 12, null)").expectSize().returns("l2price\nnull\n");
+        assertQuery("select l2price(999999, 5, 3.2, 12, 5.1, 10, 12.3, 67, 42.4, 38, 29.9, 39, 40.3, null, 5.1)")
+                .expectSize()
+                .returns("l2price\nnull\n");
+        assertQuery("select l2price(45, 5, 3.2, 12, 5.1, 10, 12.3, 67, 42.4, 38, 29.9, 39, 40.3, null, 5.1)")
+                .expectSize()
+                .returns("l2price\n21.408888888888885\n");
     }
 
     @Test
     public void testLevelTwoPriceReturnsNullWithNullTarget() throws Exception {
-        assertQuery("l2price\nnull\n", "select l2price(null, 8, 17.2);");
+        assertQuery("select l2price(null, 8, 17.2);").expectSize().returns("l2price\nnull\n");
     }
 
     @Test
     public void testLevelTwoPriceUnrolled() throws Exception {
-        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1)"); // fail
-        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1)");  // win
-        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1)"); // fail
-        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1)"); // win
-        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1)"); // fail
-        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(15, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1)"); // fail
-        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(15, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(20, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)"); // fail
-        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(15, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(20, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(25, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("select l2price(100, 5, 1)").expectSize().returns("l2price\nnull\n"); // fail
+        assertQuery("select l2price(5, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
+        assertQuery("select l2price(100, 5, 1, 5, 1)").expectSize().returns("l2price\nnull\n"); // fail
+        assertQuery("select l2price(5, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
+        assertQuery("select l2price(10, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n"); // win
+        assertQuery("select l2price(100, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\nnull\n"); // fail
+        assertQuery("select l2price(5, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
+        assertQuery("select l2price(10, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
+        assertQuery("select l2price(15, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
+        assertQuery("select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\nnull\n"); // fail
+        assertQuery("select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
+        assertQuery("select l2price(10, 5, 1, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
+        assertQuery("select l2price(15, 5, 1, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
+        assertQuery("select l2price(20, 5, 1, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
+        assertQuery("select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\nnull\n"); // fail
+        assertQuery("select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
+        assertQuery("select l2price(10, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
+        assertQuery("select l2price(15, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
+        assertQuery("select l2price(20, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
+        assertQuery("select l2price(25, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)").expectSize().returns("l2price\n1.0\n");  // win
     }
 
     @Test
@@ -241,8 +238,10 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
             execute("create table x as ( select timestamp_sequence(172800000000, 3600000000) ts, rnd_long(12, 20, 0) as size, rnd_double() as value from long_sequence(10))");
             drainWalQueue();
 
-            assertQuery("avg\n"
-                    + "0.5617574066977766\n", "select avg(l2price(14, size, value)) from x");
+            assertQuery("select avg(l2price(14, size, value)) from x")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("avg\n0.5617574066977766\n");
         });
     }
 
@@ -283,8 +282,11 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "        Frame forward scan on: x\n"
             );
 
-            assertQuery(
-                    "spread\n" +
+            assertQuery("select l2price(14, ask_size, ask_value) " +
+                    "- l2price(14, bid_size, bid_value)" +
+                    " as spread from x")
+                    .expectSize()
+                    .returns("spread\n" +
                             "-0.0745689117121191\n" +
                             "-0.33476968200189616\n" +
                             "-0.2517202513378337\n" +
@@ -294,11 +296,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "-0.01642808233254145\n" +
                             "0.4590854085578898\n" +
                             "null\n" +
-                            "0.214176258308453\n",
-                    "select l2price(14, ask_size, ask_value) " +
-                            "- l2price(14, bid_size, bid_value)" +
-                            " as spread from x"
-            );
+                            "0.214176258308453\n");
         });
     }
 
