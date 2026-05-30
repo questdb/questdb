@@ -29,7 +29,9 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -80,6 +82,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
     private static final int NUM_ITERATIONS = 30;
     private static final int NUM_THREADS = 8;
     private static final int ROWS = 5_000;
+    private static final int SHARED_DEPENDENT_ITERATIONS = 50;
 
     /**
      * Regression guard for a separate but related bug: the owner
@@ -219,6 +222,136 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                                     + "ordering on the keyed (computeKeyedBatch + sharded merge) reduce path",
                             0, mismatches.get()
                     );
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    /**
+     * End-to-end coverage for a shared dependent {@code twap()} on the parallel
+     * group-by path. A lateral join whose correlated subquery references the
+     * outer {@code twap()} makes the keyed group-by a multiply-referenced
+     * (shared) model, so {@code assembleGroupByFunctions} wires a shared
+     * dependent {@link TwapGroupByFunction} that reads through the owner's
+     * {@code GroupByAllocator} (fanned out by {@code setAllocator}). With
+     * parallel group-by enabled and a sharding threshold of 2, the shared
+     * primary compiles to {@code AsyncGroupByRecordCursorFactory} and merges
+     * through the sharded path, while both the owner's {@code getDouble} (the
+     * outer {@code o.t} projection) and the dependent's (driven by the lateral
+     * predicate {@code min_val <= o.t}) malloc the in-place sort's transient aux
+     * buffer from that one shared allocator.
+     *
+     * <p>{@link #testSharedDependentFactoryReuseClearsCachedPtr} disables
+     * parallel group-by and asserts the cache-reset invariant via reflection;
+     * this test instead runs the dependent read end to end on the async/sharded
+     * shared-cursor path - the exact path the fan-out in {@code setAllocator}
+     * exists to support - and asserts the exact known twap. A single thread
+     * drives the cursor (the same-thread-read requirement documented on
+     * {@code setAllocator}) while the reduce phase runs on the worker pool;
+     * the loop re-runs on fresh factories so work-stealing varies the per-slot
+     * frame arrival order across iterations.
+     */
+    @Test
+    public void testParallelSharedDependentTwapMatches() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 50);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 2);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 8);
+
+        final int keyCount = 4;
+        // The lateral subquery's predicate references o.t, so the keyed group-by
+        // is shared and its twap is read once through the owner (o.t projection)
+        // and once through a shared dependent (min_val <= o.t).
+        final String sql = "SELECT o.t, sub.rate "
+                + "FROM (SELECT key, twap(price, ts) AS t FROM tab) o "
+                + "JOIN LATERAL (SELECT rate FROM rates WHERE min_val <= o.t) sub";
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 2)) {
+                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE tab (key SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
+                            sqlExecutionContext
+                    );
+                    engine.execute("CREATE TABLE rates (min_val DOUBLE, rate DOUBLE)", sqlExecutionContext);
+                    // min_val = 0 always matches twap = 2500.0, so each key joins exactly one row.
+                    engine.execute("INSERT INTO rates VALUES (0.0, 0.5)", sqlExecutionContext);
+                    StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+                    boolean first = true;
+                    for (int i = 0; i < ROWS; i++) {
+                        for (int k = 0; k < keyCount; k++) {
+                            if (!first) {
+                                sb.append(",\n");
+                            }
+                            first = false;
+                            sb.append("('k").append(k).append("', ")
+                                    .append((double) (i + 1)).append(", ").append((long) i * 1000).append(')');
+                        }
+                    }
+                    engine.execute(sb.toString(), sqlExecutionContext);
+
+                    // Assert once that the query takes the intended path and that
+                    // the shared dependent is actually read at runtime. Without
+                    // this the value checks below could pass on the owner read
+                    // alone, or vacuously on a serial / non-shared plan.
+                    try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
+                        final PlanSink planSink = new TextPlanSink();
+                        planSink.of(factory, sqlExecutionContext);
+                        final String plan = planSink.getSink().toString();
+                        Assert.assertTrue(
+                                "expected an Async Group By (parallel path) in the plan, was:\n" + plan,
+                                plan.contains("Async Group By")
+                        );
+                        final TwapGroupByFunction dependent = findSharedDependentTwapFunction(factory);
+                        Assert.assertNotNull(
+                                "expected a shared dependent TwapGroupByFunction wired by the lateral join",
+                                dependent
+                        );
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            final Record record = cursor.getRecord();
+                            int rows = 0;
+                            while (cursor.hasNext()) {
+                                rows++;
+                                Assert.assertEquals(EXPECTED_TWAP, record.getDouble(0), 0.0);
+                            }
+                            Assert.assertEquals(keyCount, rows);
+                            // The lateral predicate min_val <= o.t reads the shared
+                            // dependent, so its getDouble memoization must have
+                            // populated - proof the dependent (not only the owner)
+                            // read off the shared allocator.
+                            Assert.assertNotEquals(
+                                    "the shared dependent twap must be read at runtime via the lateral predicate",
+                                    0L, readCachedPtr(dependent)
+                            );
+                        }
+                    }
+
+                    // Drive the shared cursor from a single thread, honouring the
+                    // same-thread-read requirement on setAllocator; the worker pool
+                    // still performs the parallel reduce underneath. Re-running on
+                    // fresh factories lets work-stealing vary the per-slot frame
+                    // arrival order across iterations.
+                    for (int iter = 0; iter < SHARED_DEPENDENT_ITERATIONS; iter++) {
+                        try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext);
+                             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            final Record record = cursor.getRecord();
+                            int rows = 0;
+                            while (cursor.hasNext()) {
+                                rows++;
+                                final double observed = record.getDouble(0);
+                                Assert.assertEquals(
+                                        "iteration " + iter + ": twap() read through the shared dependent must be "
+                                                + "exactly 2500.0 on the parallel sharded path; a deviation means the "
+                                                + "owner's allocator fan-out or the dependent's compaction read regressed",
+                                        EXPECTED_TWAP, observed, 0.0
+                                );
+                            }
+                            Assert.assertEquals(
+                                    "iteration " + iter + ": each of the " + keyCount + " keys must join exactly one rates row",
+                                    keyCount, rows
+                            );
+                        }
+                    }
                 }, configuration, LOG);
             }
         });

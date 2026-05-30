@@ -31,8 +31,10 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
 import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
@@ -84,6 +86,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
     private static final char[] LEVEL_CHARS = {'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'};
     private static final int NON_KEYED_WIDTH = LEVELS * FRAMES_PER_LEVEL; // one rendered char per page frame
     private static final int ROWS_PER_FRAME = 50; // == CAIRO_SQL_PAGE_FRAME_MAX_ROWS
+    private static final int SHARED_DEPENDENT_ITERATIONS = 50;
     private static final int STEPS_PER_LEVEL = 50;
 
     private static Record recordOf(double value) {
@@ -1514,6 +1517,136 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                                     + "Wrong sample: " + sampleWrongValue.get(),
                             0, mismatches.get()
                     );
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testParallelSharedDependentSparklineMatches() throws Exception {
+        // End-to-end coverage for a shared dependent sparkline() on the parallel
+        // group-by path. A lateral join whose correlated subquery references the
+        // outer sparkline() makes the keyed group-by a multiply-referenced
+        // (shared) model, so assembleGroupByFunctions wires a shared dependent
+        // SparklineGroupByFunction that reads (and mallocs its render output)
+        // through the owner's GroupByAllocator, fanned out by setAllocator. With
+        // parallel group-by enabled and a sharding threshold of 2, the shared
+        // primary compiles to AsyncGroupByRecordCursorFactory and merges through
+        // the sharded path, while both the owner's getVarcharA (the outer o.spark
+        // projection) and the dependent's (driven by length(o.spark) in the
+        // lateral predicate) render off that one shared allocator.
+        //
+        // testSharedDependentClearsRenderCache disables parallel group-by and
+        // asserts the cache-reset invariant via reflection; this test instead
+        // runs the dependent read end to end on the async/sharded shared-cursor
+        // path - the exact path the fan-out in setAllocator exists to support -
+        // and asserts the exact known staircase. A single thread drives the
+        // cursor (the same-thread-read requirement documented on setAllocator)
+        // while the reduce phase runs on the worker pool; the loop re-runs on
+        // fresh factories so work-stealing varies the per-slot frame arrival
+        // order across iterations.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, ROWS_PER_FRAME);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 2);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 8);
+
+        final int steps = LEVELS * STEPS_PER_LEVEL;
+        final String expected = expectedStaircase(STEPS_PER_LEVEL);
+        // The lateral subquery's predicate references o.spark, so the keyed
+        // group-by is shared and its sparkline is rendered once through the owner
+        // (o.spark projection) and once through a shared dependent (length(o.spark)).
+        final String sql = "SELECT o.spark, sub.rate "
+                + "FROM (SELECT key, sparkline(val) AS spark FROM tab) o "
+                + "JOIN LATERAL (SELECT rate FROM rates WHERE min_len <= length(o.spark)) sub";
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 2)) {
+                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE tab (key SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
+                            sqlExecutionContext
+                    );
+                    engine.execute("CREATE TABLE rates (min_len INT, rate DOUBLE)", sqlExecutionContext);
+                    // min_len = 0 always matches, so each key joins exactly one row.
+                    engine.execute("INSERT INTO rates VALUES (0, 0.5)", sqlExecutionContext);
+                    StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+                    boolean first = true;
+                    for (int s = 0; s < steps; s++) {
+                        final int level = s / STEPS_PER_LEVEL;
+                        for (int k = 0; k < KEY_COUNT; k++) {
+                            if (!first) {
+                                sb.append(",\n");
+                            }
+                            first = false;
+                            sb.append("('k").append(k).append("', ")
+                                    .append((double) level).append(", ").append((long) s * 1000).append(')');
+                        }
+                    }
+                    engine.execute(sb.toString(), sqlExecutionContext);
+
+                    // Assert once that the query takes the intended path and that
+                    // the shared dependent is actually read at runtime. Without
+                    // this the value checks below could pass on the owner read
+                    // alone, or vacuously on a serial / non-shared plan.
+                    try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
+                        final PlanSink planSink = new TextPlanSink();
+                        planSink.of(factory, sqlExecutionContext);
+                        final String plan = planSink.getSink().toString();
+                        Assert.assertTrue(
+                                "expected an Async Group By (parallel path) in the plan, was:\n" + plan,
+                                plan.contains("Async Group By")
+                        );
+                        final SparklineGroupByFunction dependent = findSharedDependentSparklineFunction(factory);
+                        Assert.assertNotNull(
+                                "expected a shared dependent SparklineGroupByFunction wired by the lateral join",
+                                dependent
+                        );
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            final Record record = cursor.getRecord();
+                            int rows = 0;
+                            while (cursor.hasNext()) {
+                                rows++;
+                                Assert.assertEquals(expected, Utf8s.toString(record.getVarcharA(0)));
+                            }
+                            Assert.assertEquals(KEY_COUNT, rows);
+                            // The lateral predicate length(o.spark) renders the
+                            // shared dependent, so its render-cache must have
+                            // populated - proof the dependent (not only the owner)
+                            // rendered off the shared allocator.
+                            Assert.assertNotEquals(
+                                    "the shared dependent sparkline must be rendered at runtime via the lateral predicate",
+                                    0L, readCachedPairPtrA(dependent)
+                            );
+                        }
+                    }
+
+                    // Drive the shared cursor from a single thread, honouring the
+                    // same-thread-read requirement on setAllocator; the worker pool
+                    // still performs the parallel reduce underneath. Re-running on
+                    // fresh factories lets work-stealing vary the per-slot frame
+                    // arrival order across iterations.
+                    for (int iter = 0; iter < SHARED_DEPENDENT_ITERATIONS; iter++) {
+                        try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext);
+                             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            final Record record = cursor.getRecord();
+                            int rows = 0;
+                            while (cursor.hasNext()) {
+                                rows++;
+                                final String observed = Utf8s.toString(record.getVarcharA(0));
+                                Assert.assertEquals(
+                                        "iteration " + iter + ": sparkline() rendered through the shared dependent "
+                                                + "must be the exact staircase on the parallel sharded path; a deviation "
+                                                + "means the owner's allocator fan-out or the dependent's "
+                                                + "compaction/render read regressed",
+                                        expected, observed
+                                );
+                            }
+                            Assert.assertEquals(
+                                    "iteration " + iter + ": each of the " + KEY_COUNT + " keys must join exactly one rates row",
+                                    KEY_COUNT, rows
+                            );
+                        }
+                    }
                 }, configuration, LOG);
             }
         });

@@ -314,11 +314,12 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     @Override
     public void initSharedFrom(GroupByFunction primary) {
         initValueIndex(primary.getValueIndex());
-        // Register with the primary so its setAllocator propagates the
-        // owner's allocator here. getVarcharA/B's compactInPlace allocates a
-        // transient aux buffer it frees before return, and the rendered
-        // output is reclaimed when the cursor closes - sharing the owner's
-        // allocator is safe.
+        // Register with the primary so its setAllocator propagates the owner's
+        // allocator here (see setAllocator for the same-thread-read requirement
+        // that lets the owner and its dependents share one non-thread-safe
+        // allocator). On the buffer-lifetime side, getVarcharA/B's compactInPlace
+        // frees its transient aux buffer before return, and the rendered output
+        // is reclaimed when the cursor closes.
         SparklineGroupByFunction p = (SparklineGroupByFunction) primary;
         if (p.sharedDependents == null) {
             p.sharedDependents = new ObjList<>();
@@ -422,6 +423,27 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         destValue.putLong(valueIndex + 6, -1L);
     }
 
+    /**
+     * Stores the allocator and fans it out to every shared dependent registered
+     * via {@link #initSharedFrom}. The engine assigns an allocator only to the
+     * owner instance (and, on the parallel path, to the freshly compiled
+     * per-worker copies, which carry no dependents). A dependent left with a
+     * null allocator would NPE in {@link #getVarcharA}/{@link #getVarcharB} when
+     * the in-place sort asks for its transient aux buffer or when the render step
+     * mallocs its output.
+     * <p>
+     * The owner and all its dependents therefore malloc from this one
+     * non-thread-safe allocator. That holds together only under a
+     * same-thread-read requirement: every render call - on the owner and on each
+     * dependent - runs on the single thread that drives the result cursor,
+     * strictly after the parallel aggregate-and-merge phase has finished. The
+     * parallel phase never touches this allocator (each worker has its own), and
+     * the shared cursors produced by {@code AsyncGroupBySharedCursor} are consumed
+     * serially. Two concurrent reads would issue two concurrent mallocs on this
+     * allocator and corrupt its heap, so any future path that reads a primary's
+     * shared cursors from more than one thread must give each reader its own
+     * allocator.
+     */
     @Override
     public void setAllocator(GroupByAllocator allocator) {
         this.allocator = allocator;
