@@ -470,15 +470,12 @@ public class RndMemoizationTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampSequenceNoRandomAccess() throws Exception {
-        assertQuery(
-                "ts\tcolumn\n" +
+        assertQuery("select timestamp_sequence(0, 1000000000) + 42 ts, ts + 1 from long_sequence(3);")
+                .noRandomAccess()
+                .expectSize()
+                .returns("ts\tcolumn\n" +
                         "1970-01-01T00:00:00.000042Z\t1970-01-01T00:16:40.000043Z\n" +
                         "1970-01-01T00:33:20.000042Z\t1970-01-01T00:50:00.000043Z\n" +
-                        "1970-01-01T01:06:40.000042Z\t1970-01-01T01:23:20.000043Z\n",
-                "select timestamp_sequence(0, 1000000000) + 42 ts, ts + 1 from long_sequence(3);",
-                null,
-                false,
-                true
-        );
+                        "1970-01-01T01:06:40.000042Z\t1970-01-01T01:23:20.000043Z\n");
     }
 }

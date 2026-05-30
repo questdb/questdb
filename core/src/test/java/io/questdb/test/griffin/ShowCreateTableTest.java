@@ -515,7 +515,8 @@ public class ShowCreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testTableDoesNotExist() throws Exception {
-        assertMemoryLeak(() -> assertException("show create table foo;", 18, "table does not exist"));
+        assertMemoryLeak(() -> assertQuery("show create table foo;")
+                .fails(18, "table does not exist"));
     }
 
     @Test

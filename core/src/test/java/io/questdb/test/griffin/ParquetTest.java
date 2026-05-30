@@ -262,16 +262,13 @@ public class ParquetTest extends AbstractCairoTest {
             execute("insert into x values (null, '2000-01-01')");
             execute("alter table x convert partition to parquet where ts >= 0");
 
-            assertQuery(
-                    """
+            assertQuery("select count() from x where arr[1] = 42")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count
                             10000
-                            """,
-                    "select count() from x where arr[1] = 42",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2165,8 +2162,11 @@ public class ParquetTest extends AbstractCairoTest {
             execute("insert into x values (25, 172850000000, 'SYM_E_junk9923')");
             execute("insert into x values (26, 172860000000, 'SYM_E_junk9923')");
 
-            TestUtils.LeakProneCode checkData = () -> assertQueryNoLeakCheck(
-                    """
+            TestUtils.LeakProneCode checkData = () -> assertQuery("x")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tts\tname
                             0\t1970-01-01T00:00:00.000000Z\tSYM_A
                             1\t1970-01-01T00:00:10.000000Z\tSYM_A
@@ -2195,12 +2195,7 @@ public class ParquetTest extends AbstractCairoTest {
                             24\t1970-01-03T00:00:40.000000Z\tSYM_E_junk9923
                             25\t1970-01-03T00:00:50.000000Z\tSYM_E_junk9923
                             26\t1970-01-03T00:01:00.000000Z\tSYM_E_junk9923
-                            """,
-                    "x",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             checkData.run();
 

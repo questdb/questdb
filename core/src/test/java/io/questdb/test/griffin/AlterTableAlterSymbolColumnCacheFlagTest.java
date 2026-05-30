@@ -77,9 +77,10 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
         assertMemoryLeak(() -> {
             createX();
 
-            assertQueryNoLeakCheck(expectedOrdered,
-                    "select sym from x order by sym"
-            );
+            assertQuery("select sym from x order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedOrdered);
 
             assertSql(expectedChronological, "select sym, k from x");
 
@@ -89,9 +90,10 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
 
             assertSql(expectedChronological, "select sym, k from x");
 
-            assertQueryNoLeakCheck(expectedOrdered,
-                    "select sym from x order by 1 asc"
-            );
+            assertQuery("select sym from x order by 1 asc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedOrdered);
         });
     }
 
@@ -150,10 +152,10 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
                     "select i, sym from x"
             );
 
-            assertQueryNoLeakCheck(
-                    expectedOrdered,
-                    "select sym from x order by 1 asc"
-            );
+            assertQuery("select sym from x order by 1 asc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedOrdered);
         });
     }
 

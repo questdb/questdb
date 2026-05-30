@@ -33,11 +33,8 @@ import org.junit.Test;
 public class DataGripTest extends AbstractCairoTest {
 
     @Test
-    public void testGetCurrentDatabase() throws SqlException {
-        assertQueryNoLeakCheck(
-                "id\tname\tdescription\tis_template\tallow_connections\towner\n" +
-                        "1\tqdb\t\tfalse\ttrue\tpublic\n",
-                "select N.oid::bigint as id,\n" +
+    public void testGetCurrentDatabase() throws Exception {
+        assertQuery("select N.oid::bigint as id,\n" +
                         "       datname as name,\n" +
                         "       D.description,\n" +
                         "       datistemplate as is_template,\n" +
@@ -45,20 +42,15 @@ public class DataGripTest extends AbstractCairoTest {
                         "       pg_catalog.pg_get_userbyid(N.datdba) as \"owner\"\n" +
                         "from pg_catalog.pg_database N\n" +
                         "  left join pg_catalog.pg_shdescription D on N.oid = D.objoid\n" +
-                        "order by case when datname = pg_catalog.current_database() then -1::bigint else N.oid::bigint end;\n",
-                null,
-                true,
-                sqlExecutionContext
-        );
+                        "order by case when datname = pg_catalog.current_database() then -1::bigint else N.oid::bigint end;\n")
+                .noLeakCheck()
+                .returns("id\tname\tdescription\tis_template\tallow_connections\towner\n" +
+                        "1\tqdb\t\tfalse\ttrue\tpublic\n");
     }
 
     @Test
-    public void testGetDatabaseOwner() throws SqlException {
-        assertQueryNoLeakCheck(
-                "id\tstate_number\tname\tdescription\towner\n" +
-                        "2200\t0\tpublic\t\tpublic\n" +
-                        "11\t0\tpg_catalog\t\tpublic\n",
-                "select N.oid::bigint as id,\n" +
+    public void testGetDatabaseOwner() throws Exception {
+        assertQuery("select N.oid::bigint as id,\n" +
                         "       N.xmin as state_number,\n" +
                         "       nspname as name,\n" +
                         "       D.description,\n" +
@@ -66,30 +58,27 @@ public class DataGripTest extends AbstractCairoTest {
                         "from pg_catalog.pg_namespace N\n" +
                         "  left join pg_catalog.pg_description D on N.oid = D.objoid\n" +
                         "/* */where N.nspname not like 'pg_toast%' and N.nspname not like 'pg_temp%' \n" +
-                        "order by case when nspname = current_schema then -1::bigint else N.oid::bigint end",
-                null,
-                true,
-                sqlExecutionContext
-        );
+                        "order by case when nspname = current_schema then -1::bigint else N.oid::bigint end")
+                .noLeakCheck()
+                .returns("id\tstate_number\tname\tdescription\towner\n" +
+                        "2200\t0\tpublic\t\tpublic\n" +
+                        "11\t0\tpg_catalog\t\tpublic\n");
     }
 
     @Test
-    public void testGetDatabases() throws SqlException {
-        assertQueryNoLeakCheck(
-                "id\tname\tdescription\tis_template\tallow_connections\towner\n" +
-                        "1\tqdb\t\tfalse\ttrue\tpublic\n",
-                "select N.oid::bigint as id,\n" +
+    public void testGetDatabases() throws Exception {
+        assertQuery("select N.oid::bigint as id,\n" +
                         "       datname as name,\n" +
                         "       D.description,\n" +
                         "       datistemplate as is_template,\n" +
                         "       datallowconn as allow_connections,\n" +
                         "       pg_catalog.pg_get_userbyid(N.datdba) as \"owner\"\n" +
                         "from pg_catalog.pg_database N\n" +
-                        "  left join pg_catalog.pg_shdescription D on N.oid = D.objoid",
-                null,
-                false,
-                sqlExecutionContext
-        );
+                        "  left join pg_catalog.pg_shdescription D on N.oid = D.objoid")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("id\tname\tdescription\tis_template\tallow_connections\towner\n" +
+                        "1\tqdb\t\tfalse\ttrue\tpublic\n");
     }
 
     @Test
@@ -119,22 +108,17 @@ public class DataGripTest extends AbstractCairoTest {
 
     @Test
     public void testShowDateStyles() throws Exception {
-        assertQuery(
-                "DateStyle\n" +
-                        "ISO,YMD\n",
-                "show datestyle",
-                null,
-                false,
-                true
-        );
+        assertQuery("show datestyle")
+                .noRandomAccess()
+                .expectSize()
+                .returns("DateStyle\n" +
+                        "ISO,YMD\n");
     }
 
     @Test
     @Ignore
-    public void testStartUpUnknownDBMS() throws SqlException {
-        assertQueryNoLeakCheck(
-                "",
-                "SELECT NULL AS TABLE_CAT, n.nspname AS TABLE_SCHEM," +
+    public void testStartUpUnknownDBMS() throws Exception {
+        assertQuery("SELECT NULL AS TABLE_CAT, n.nspname AS TABLE_SCHEM," +
                         "   ct.relname AS TABLE_NAME," +
                         " NOT i.indisunique AS NON_UNIQUE," +
                         "   NULL AS INDEX_QUALIFIER, ci.relname AS INDEX_NAME," +
@@ -169,11 +153,9 @@ public class DataGripTest extends AbstractCairoTest {
                         "   JOIN pg_catalog.pg_am am ON (ci.relam = am.oid)" +
                         " WHERE true" +
                         "  AND n.nspname = E'\"public\"' AND ct.relname = E'\"xx\"'" +
-                        " ORDER BY NON_UNIQUE, TYPE, INDEX_NAME, ORDINAL_POSITION",
-                null,
-                true,
-                sqlExecutionContext
-        );
+                        " ORDER BY NON_UNIQUE, TYPE, INDEX_NAME, ORDINAL_POSITION")
+                .noLeakCheck()
+                .returns("");
     }
 
     @Test

@@ -31,27 +31,25 @@ public class NullLiteralsTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanIsNotNull() throws Exception {
-        assertQuery(
-                """
-                        v
-                        false
-                        false
-                        false
-                        true
-                        false
-                        false
-                        true
-                        true
-                        true
-                        """,
-                "tab_boolean where v is NOT NULL",
-                """
+        assertQuery("tab_boolean where v is NOT NULL")
+                .ddl("""
                         create table tab_boolean as (
                             select rnd_boolean() as v from long_sequence(9)
-                        );""",
-                null,
-                "insert into tab_boolean values(null)",
-                """
+                        );""")
+                .mutateWith("insert into tab_boolean values(null)")
+                .expectSize()
+                .returns("""
+                        v
+                        false
+                        false
+                        false
+                        true
+                        false
+                        false
+                        true
+                        true
+                        true
+                        """, """
                         v
                         false
                         false
@@ -63,29 +61,19 @@ public class NullLiteralsTest extends AbstractCairoTest {
                         true
                         true
                         false
-                        """,
-                true,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testBooleanIsNull() throws Exception {
-        assertQuery(
-                "v\n",
-                "tab_boolean where v is NULL",
-                """
+        assertQuery("tab_boolean where v is NULL")
+                .ddl("""
                         create table tab_boolean as (
                             select rnd_boolean() as v from long_sequence(9)
-                        );""",
-                null,
-                "insert into tab_boolean values(NULL)",
-                "v\n",
-                true,
-                true,
-                false
-        );
+                        );""")
+                .mutateWith("insert into tab_boolean values(NULL)")
+                .expectSize()
+                .returns("v\n", "v\n");
     }
 
     @Test
@@ -106,8 +94,14 @@ public class NullLiteralsTest extends AbstractCairoTest {
 
     @Test
     public void testByteIsNotNull() throws Exception {
-        assertQuery(
-                """
+        assertQuery("tab_byte where v is NOT NULL")
+                .ddl("""
+                        create table tab_byte as (
+                            select rnd_byte() as v from long_sequence(9)
+                        );""")
+                .mutateWith("insert into tab_byte values(null)")
+                .expectSize()
+                .returns("""
                         v
                         76
                         102
@@ -118,14 +112,7 @@ public class NullLiteralsTest extends AbstractCairoTest {
                         122
                         83
                         90
-                        """, "tab_byte where v is NOT NULL",
-                """
-                        create table tab_byte as (
-                            select rnd_byte() as v from long_sequence(9)
-                        );""",
-                null,
-                "insert into tab_byte values(null)",
-                """
+                        """, """
                         v
                         76
                         102
@@ -137,29 +124,19 @@ public class NullLiteralsTest extends AbstractCairoTest {
                         83
                         90
                         0
-                        """,
-                true,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testByteIsNull() throws Exception {
-        assertQuery(
-                "v\n",
-                "tab_byte where v is NULL",
-                """
+        assertQuery("tab_byte where v is NULL")
+                .ddl("""
                         create table tab_byte as (
                             select rnd_byte() as v from long_sequence(9)
-                        );""",
-                null,
-                "insert into tab_byte values(NULL)",
-                "v\n",
-                true,
-                true,
-                false
-        );
+                        );""")
+                .mutateWith("insert into tab_byte values(NULL)")
+                .expectSize()
+                .returns("v\n", "v\n");
     }
 
     @Test
@@ -180,27 +157,13 @@ public class NullLiteralsTest extends AbstractCairoTest {
 
     @Test
     public void testCharIsNotNull() throws Exception {
-        assertQuery(
-                """
-                        v
-                        V
-                        T
-                        J
-                        W
-                        C
-                        P
-                        S
-                        W
-                        H
-                        """,
-                "tab_char where v is NOT NULL",
-                """
+        assertQuery("tab_char where v is NOT NULL")
+                .ddl("""
                         create table tab_char as (
                             select rnd_char() as v from long_sequence(9)
-                        );""",
-                null,
-                "insert into tab_char values(null)",
-                """
+                        );""")
+                .mutateWith("insert into tab_char values(null)")
+                .returns("""
                         v
                         V
                         T
@@ -211,29 +174,29 @@ public class NullLiteralsTest extends AbstractCairoTest {
                         S
                         W
                         H
-                        """,
-                true,
-                false,
-                false
-        );
+                        """, """
+                        v
+                        V
+                        T
+                        J
+                        W
+                        C
+                        P
+                        S
+                        W
+                        H
+                        """);
     }
 
     @Test
     public void testCharIsNull() throws Exception {
-        assertQuery(
-                "v\n",
-                "tab_char where v is NULL",
-                """
+        assertQuery("tab_char where v is NULL")
+                .ddl("""
                         create table tab_char as (
                             select rnd_char() as v from long_sequence(9)
-                        );""",
-                null,
-                "insert into tab_char values(NULL)",
-                "v\n\n",
-                true,
-                false,
-                false
-        );
+                        );""")
+                .mutateWith("insert into tab_char values(NULL)")
+                .returns("v\n", "v\n\n");
     }
 
     @Test
@@ -254,8 +217,14 @@ public class NullLiteralsTest extends AbstractCairoTest {
 
     @Test
     public void testShortIsNotNull() throws Exception {
-        assertQuery(
-                """
+        assertQuery("tab_short where v is NOT NULL")
+                .ddl("""
+                        create table tab_short as (
+                            select rnd_short() as v from long_sequence(9)
+                        );""")
+                .mutateWith("insert into tab_short values(null)")
+                .expectSize()
+                .returns("""
                         v
                         -27056
                         24814
@@ -266,14 +235,7 @@ public class NullLiteralsTest extends AbstractCairoTest {
                         -1398
                         21015
                         30202
-                        """, "tab_short where v is NOT NULL",
-                """
-                        create table tab_short as (
-                            select rnd_short() as v from long_sequence(9)
-                        );""",
-                null,
-                "insert into tab_short values(null)",
-                """
+                        """, """
                         v
                         -27056
                         24814
@@ -285,29 +247,19 @@ public class NullLiteralsTest extends AbstractCairoTest {
                         21015
                         30202
                         0
-                        """,
-                true,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testShortIsNull() throws Exception {
-        assertQuery(
-                "v\n",
-                "tab_short where v is NULL",
-                """
+        assertQuery("tab_short where v is NULL")
+                .ddl("""
                         create table tab_short as (
                             select rnd_short() as v from long_sequence(9)
-                        );""",
-                null,
-                "insert into tab_short values(NULL)",
-                "v\n",
-                true,
-                true,
-                false
-        );
+                        );""")
+                .mutateWith("insert into tab_short values(NULL)")
+                .expectSize()
+                .returns("v\n", "v\n");
     }
 
     @Test

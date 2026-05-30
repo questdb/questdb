@@ -126,41 +126,20 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             execute("create table a (ts timestamp, i int, s symbol, l long, str string) timestamp(ts) partition by day wal");
             String alterPrefix = "alter table a ";
 
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS",
-                    37,
-                    "deduplicate key column list expected"
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS (;",
-                    39,
-                    "literal expected"
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS (a)",
-                    39,
-                    "deduplicate key column not found "
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS (s)",
-                    39,
-                    "deduplicate key list must include dedicated timestamp column"
-            );
-            assertException(
-                    alterPrefix + "deduplicate KEYS (s);",
-                    26,
-                    "expected 'upsert'"
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT (s);",
-                    33,
-                    "expected 'keys'"
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS",
-                    37,
-                    "column list expected"
-            );
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS")
+                    .fails(37, "deduplicate key column list expected");
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS (;")
+                    .fails(39, "literal expected");
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS (a)")
+                    .fails(39, "deduplicate key column not found ");
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS (s)")
+                    .fails(39, "deduplicate key list must include dedicated timestamp column");
+            assertQuery(alterPrefix + "deduplicate KEYS (s);")
+                    .fails(26, "expected 'upsert'");
+            assertQuery(alterPrefix + "deduplicate UPSERT (s);")
+                    .fails(33, "expected 'keys'");
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS")
+                    .fails(37, "column list expected");
         });
     }
 
@@ -168,49 +147,28 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     public void testCreateTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
             String createPrefix = "create table a (ts timestamp, i int, s symbol, l long, str string)";
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day bypass wal deduplicate UPSERT KEYS(l);",
-                    121,
-                    "deduplication is possible only on WAL tables"
-            );
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (;",
-                    127,
-                    "literal expected"
-            );
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (a);",
-                    127,
-                    "deduplicate key column not found [column=a]"
-            );
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (s);",
-                    127,
-                    "deduplicate key list must include dedicated timestamp column"
-            );
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day wal deduplicate KEYS (s);",
-                    114,
-                    "expected 'upsert'"
-            );
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT (s);",
-                    121,
-                    "expected 'keys'"
-            );
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS",
-                    125,
-                    "column list expected"
-            );
+            assertQuery(createPrefix + " timestamp(ts) partition by day bypass wal deduplicate UPSERT KEYS(l);")
+                    .fails(121, "deduplication is possible only on WAL tables");
+            assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (;")
+                    .fails(127, "literal expected");
+            assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (a);")
+                    .fails(127, "deduplicate key column not found [column=a]");
+            assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (s);")
+                    .fails(127, "deduplicate key list must include dedicated timestamp column");
+            assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate KEYS (s);")
+                    .fails(114, "expected 'upsert'");
+            assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT (s);")
+                    .fails(121, "expected 'keys'");
+            assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS")
+                    .fails(125, "column list expected");
         });
     }
 
     @Test
     public void testCreateTableWithArrayDedupKey() throws Exception {
-        assertMemoryLeak(() -> assertException("CREATE TABLE x (ts TIMESTAMP, arr DOUBLE[])" +
-                        " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, arr)",
-                101, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"));
+        assertMemoryLeak(() -> assertQuery("CREATE TABLE x (ts TIMESTAMP, arr DOUBLE[])" +
+                        " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, arr)")
+                .fails(101, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"));
     }
 
     @Test
@@ -506,8 +464,10 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                             " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL"
             );
-            assertException("ALTER table " + tableName + " dedup UPSERT KEYS(ts,", 54, "')' expected");
-            assertException("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s", 55, "')' expected");
+            assertQuery("ALTER table " + tableName + " dedup UPSERT KEYS(ts,")
+                    .fails(54, "')' expected");
+            assertQuery("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s")
+                    .fails(55, "')' expected");
         });
     }
 
@@ -661,11 +621,8 @@ public class CreateTableDedupTest extends AbstractCairoTest {
 
             execute("ALTER table " + tableName + " dedup disable");
             execute("ALTER table " + tableName + " drop column s");
-            assertException(
-                    "ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)",
-                    57,
-                    "deduplicate key column not found [column=s]"
-            );
+            assertQuery("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)")
+                    .fails(57, "deduplicate key column not found [column=s]");
             drainWalQueue();
 
             try (TableWriter writer = getWriter(tableName)) {

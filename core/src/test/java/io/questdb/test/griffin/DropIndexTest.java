@@ -286,29 +286,23 @@ public class DropIndexTest extends AbstractCairoTest {
                             ")"
             );
             engine.releaseAllWriters();
-            assertException(
-                    "ALTER TABLE підрахунок ALTER COLUMN колонка DROP INDEX",
-                    36,
-                    "column is not indexed [column=колонка]"
-            );
+            assertQuery("ALTER TABLE підрахунок ALTER COLUMN колонка DROP INDEX")
+                    .fails(36, "column is not indexed [column=колонка]");
         });
     }
 
     @Test
     public void testDropIndexOfNonSymbolColumnShouldFail() throws Exception {
-        assertException(
-                "alter table trades alter column price drop index",
-                """
+        assertQuery("alter table trades alter column price drop index")
+                .ddl("""
                         create table trades as (
                             select\s
                                 rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
                                 rnd_double() price,\s
                                 timestamp_sequence(172800000000, 360) ts\s
                             from long_sequence(30)
-                        ), index(sym) timestamp(ts) partition by DAY""",
-                32,
-                "indexes are only supported for symbol type [column=price, type=DOUBLE]"
-        );
+                        ), index(sym) timestamp(ts) partition by DAY""")
+                .fails(32, "indexes are only supported for symbol type [column=price, type=DOUBLE]");
     }
 
     @Test
@@ -510,32 +504,23 @@ public class DropIndexTest extends AbstractCairoTest {
 
     @Test
     public void testDropIndexSyntaxErrors0() throws Exception {
-        assertException(
-                "ALTER TABLE sensors ALTER COLUMN sensor_id dope INDEX",
-                CREATE_TABLE_STMT,
-                43,
-                "'add', 'drop', 'set', 'symbol', 'cache' or 'nocache' expected found 'dope'"
-        );
+        assertQuery("ALTER TABLE sensors ALTER COLUMN sensor_id dope INDEX")
+                .ddl(CREATE_TABLE_STMT)
+                .fails(43, "'add', 'drop', 'set', 'symbol', 'cache' or 'nocache' expected found 'dope'");
     }
 
     @Test
     public void testDropIndexSyntaxErrors1() throws Exception {
-        assertException(
-                "ALTER TABLE sensors ALTER COLUMN sensor_id DROP",
-                CREATE_TABLE_STMT,
-                47,
-                "'index' expected"
-        );
+        assertQuery("ALTER TABLE sensors ALTER COLUMN sensor_id DROP")
+                .ddl(CREATE_TABLE_STMT)
+                .fails(47, "'index' expected");
     }
 
     @Test
     public void testDropIndexSyntaxErrors2() throws Exception {
-        assertException(
-                "ALTER TABLE sensors ALTER COLUMN sensor_id DROP INDEX,",
-                CREATE_TABLE_STMT,
-                53,
-                "unexpected token [,] while trying to drop index"
-        );
+        assertQuery("ALTER TABLE sensors ALTER COLUMN sensor_id DROP INDEX,")
+                .ddl(CREATE_TABLE_STMT)
+                .fails(53, "unexpected token [,] while trying to drop index");
     }
 
     private static void checkMetadataAndTxn(

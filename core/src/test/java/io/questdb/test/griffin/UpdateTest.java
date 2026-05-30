@@ -927,16 +927,13 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            assertException(
-                    "WITH jn AS (select down1.y + down2.y AS sm, down1.s, down2.y " +
+            assertQuery("WITH jn AS (select down1.y + down2.y AS sm, down1.s, down2.y " +
                             "                         FROM down1 JOIN down2 ON down1.s = down2.s" +
                             ")" +
                             "UPDATE up SET s = sm, y = jn.y" +
                             " FROM jn " +
-                            " WHERE jn.s = up.s",
-                    147,
-                    "inconvertible types: LONG -> SYMBOL"
-            );
+                            " WHERE jn.s = up.s")
+                    .fails(147, "inconvertible types: LONG -> SYMBOL");
         });
     }
 
@@ -993,46 +990,22 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // All combinations to update xint
-            assertException(
-                    "UPDATE up SET xint = xdouble",
-                    21,
-                    "inconvertible types: DOUBLE -> INT [from=, to=xint]"
-            );
-            assertException(
-                    "UPDATE up SET xint = xlong",
-                    21,
-                    "inconvertible types: LONG -> INT [from=, to=xint]"
-            );
-            assertException(
-                    "UPDATE up SET xshort = xlong",
-                    23,
-                    "inconvertible types: LONG -> SHORT [from=, to=xshort]"
-            );
-            assertException(
-                    "UPDATE up SET xchar = xlong",
-                    22,
-                    "inconvertible types: LONG -> CHAR [from=, to=xchar]"
-            );
-            assertException(
-                    "UPDATE up SET xbyte = xlong",
-                    22,
-                    "inconvertible types: LONG -> BYTE [from=, to=xbyte]"
-            );
-            assertException(
-                    "UPDATE up SET xlong = xl256",
-                    22,
-                    "inconvertible types: LONG256 -> LONG [from=, to=xlong]"
-            );
-            assertException(
-                    "UPDATE up SET xl256 = xlong",
-                    22,
-                    "inconvertible types: LONG -> LONG256 [from=, to=xl256]"
-            );
-            assertException(
-                    "UPDATE up SET xchar = xlong",
-                    22,
-                    "inconvertible types: LONG -> CHAR [from=, to=xchar]"
-            );
+            assertQuery("UPDATE up SET xint = xdouble")
+                    .fails(21, "inconvertible types: DOUBLE -> INT [from=, to=xint]");
+            assertQuery("UPDATE up SET xint = xlong")
+                    .fails(21, "inconvertible types: LONG -> INT [from=, to=xint]");
+            assertQuery("UPDATE up SET xshort = xlong")
+                    .fails(23, "inconvertible types: LONG -> SHORT [from=, to=xshort]");
+            assertQuery("UPDATE up SET xchar = xlong")
+                    .fails(22, "inconvertible types: LONG -> CHAR [from=, to=xchar]");
+            assertQuery("UPDATE up SET xbyte = xlong")
+                    .fails(22, "inconvertible types: LONG -> BYTE [from=, to=xbyte]");
+            assertQuery("UPDATE up SET xlong = xl256")
+                    .fails(22, "inconvertible types: LONG256 -> LONG [from=, to=xlong]");
+            assertQuery("UPDATE up SET xl256 = xlong")
+                    .fails(22, "inconvertible types: LONG -> LONG256 [from=, to=xl256]");
+            assertQuery("UPDATE up SET xchar = xlong")
+                    .fails(22, "inconvertible types: LONG -> CHAR [from=, to=xchar]");
 
             String expected = """
                     ts\txint\txlong\txdouble\txshort\txbyte\txchar\txdate\txfloat\txts\txbool\txl256
@@ -2331,11 +2304,8 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            assertException(
-                    "UPDATE up SET ts = 1",
-                    14,
-                    "Designated timestamp column cannot be updated"
-            );
+            assertQuery("UPDATE up SET ts = 1")
+                    .fails(14, "Designated timestamp column cannot be updated");
         });
     }
 
@@ -2503,11 +2473,8 @@ public class UpdateTest extends AbstractCairoTest {
                     "t2"
             );
 
-            assertException(
-                    "UPDATE up SET symCol = 'VTJ' JOIN t2 ON up.x = t2.x",
-                    29,
-                    "FROM, WHERE or EOF expected"
-            );
+            assertQuery("UPDATE up SET symCol = 'VTJ' JOIN t2 ON up.x = t2.x")
+                    .fails(29, "FROM, WHERE or EOF expected");
         });
     }
 
@@ -3105,11 +3072,8 @@ public class UpdateTest extends AbstractCairoTest {
                     "t2"
             );
 
-            assertException(
-                    "UPDATE up SET symCol = 'VTJ' FROM t2 CROSS JOIN up ON up.x = t2.x",
-                    37,
-                    "JOIN is not supported on UPDATE statement"
-            );
+            assertQuery("UPDATE up SET symCol = 'VTJ' FROM t2 CROSS JOIN up ON up.x = t2.x")
+                    .fails(37, "JOIN is not supported on UPDATE statement");
         });
     }
 
@@ -3134,11 +3098,8 @@ public class UpdateTest extends AbstractCairoTest {
                     "up"
             );
 
-            assertException(
-                    "UPDATE up SET symCol = 'ABC' LATEST ON ts PARTITION BY symCol",
-                    29,
-                    "FROM, WHERE or EOF expected"
-            );
+            assertQuery("UPDATE up SET symCol = 'ABC' LATEST ON ts PARTITION BY symCol")
+                    .fails(29, "FROM, WHERE or EOF expected");
         });
     }
 
@@ -3181,11 +3142,8 @@ public class UpdateTest extends AbstractCairoTest {
                     "t2"
             );
 
-            assertException(
-                    "UPDATE up SET symCol = (select symCol2 from t2 where x = 4)",
-                    24,
-                    "query is not allowed here"
-            );
+            assertQuery("UPDATE up SET symCol = (select symCol2 from t2 where x = 4)")
+                    .fails(24, "query is not allowed here");
         });
     }
 
@@ -3261,13 +3219,16 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("update metrics set adjusted_ts = ts + 2_000_000"); // +2 seconds in microseconds
 
-            assertQueryNoLeakCheck("""
+            assertQuery("select * from metrics")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tts\tvalue\tadjusted_ts
                             1\t2024-01-01T00:00:00.000000Z\t10.0\t2024-01-01T00:00:02.000000Z
                             2\t2024-01-01T00:00:00.500000Z\t20.0\t2024-01-01T00:00:02.500000Z
                             3\t2024-01-01T00:00:01.000000Z\t30.0\t2024-01-01T00:00:03.000000Z
-                            """,
-                    "select * from metrics", "ts", true, true);
+                            """);
         });
     }
 
@@ -3287,13 +3248,16 @@ public class UpdateTest extends AbstractCairoTest {
             // +2 seconds in microseconds
             update("update metrics set adjusted_ts_ns = ts + 2_000_000");
 
-            assertQueryNoLeakCheck("""
+            assertQuery("select * from metrics")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tts\tvalue\tadjusted_ts_ns
                             1\t2024-01-01T00:00:00.000000Z\t10.0\t2024-01-01T00:00:02.000000000Z
                             2\t2024-01-01T00:00:00.500000Z\t20.0\t2024-01-01T00:00:02.500000000Z
                             3\t2024-01-01T00:00:01.000000Z\t30.0\t2024-01-01T00:00:03.000000000Z
-                            """,
-                    "select * from metrics", "ts", true, true);
+                            """);
         });
     }
 
@@ -3313,13 +3277,16 @@ public class UpdateTest extends AbstractCairoTest {
             // +2 seconds in nanoseconds
             update("update metrics set adjusted_ts = ts_ns + 2_000_000_000");
 
-            assertQueryNoLeakCheck("""
+            assertQuery("select * from metrics")
+                    .noLeakCheck()
+                    .timestamp("ts_ns")
+                    .expectSize()
+                    .returns("""
                             id\tts_ns\tvalue\tadjusted_ts
                             1\t2024-01-01T00:00:00.000000000Z\t10.0\t2024-01-01T00:00:02.000000Z
                             2\t2024-01-01T00:00:00.500000000Z\t20.0\t2024-01-01T00:00:02.500000Z
                             3\t2024-01-01T00:00:01.000000000Z\t30.0\t2024-01-01T00:00:03.000000Z
-                            """,
-                    "select * from metrics", "ts_ns", true, true);
+                            """);
         });
     }
 
@@ -3337,13 +3304,16 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("update metrics set adjusted_ts = ts + 2_000_000_000"); // +2 seconds in nanoseconds
 
-            assertQueryNoLeakCheck("""
+            assertQuery("select * from metrics")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tts\tvalue\tadjusted_ts
                             1\t2024-01-01T00:00:00.000000000Z\t10.0\t2024-01-01T00:00:02.000000000Z
                             2\t2024-01-01T00:00:00.500000000Z\t20.0\t2024-01-01T00:00:02.500000000Z
                             3\t2024-01-01T00:00:01.000000000Z\t30.0\t2024-01-01T00:00:03.000000000Z
-                            """,
-                    "select * from metrics", "ts", true, true);
+                            """);
         });
     }
 
@@ -3366,15 +3336,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             Assert.assertEquals(3, result);
 
-            assertQueryNoLeakCheck("""
+            assertQuery("select * from sensors")
+                    .noLeakCheck()
+                    .timestamp("ts_nano")
+                    .expectSize()
+                    .returns("""
                             sensor_id\tts_nano\treading\tstatus
                             1\t2022-01-01T00:00:00.000000000Z\t25.5\tcalibrated
                             2\t2022-01-01T00:00:00.001111111Z\t26.0\tcalibrated
                             3\t2022-01-01T00:00:00.999999999Z\t27.0\tcalibrated
                             4\t2022-01-01T00:00:01.000000000Z\t28.0\tinactive
                             5\t2022-01-01T00:00:01.000000123Z\t29.0\tactive
-                            """,
-                    "select * from sensors", "ts_nano", true, true);
+                            """);
         });
     }
 
@@ -3394,13 +3367,16 @@ public class UpdateTest extends AbstractCairoTest {
             update("update events set type = 'precise' " +
                     "where ts_nano != ts_micro::timestamp_ns");
 
-            assertQueryNoLeakCheck("""
+            assertQuery("select * from events")
+                    .noLeakCheck()
+                    .timestamp("ts_nano")
+                    .expectSize()
+                    .returns("""
                             id\tts_nano\tts_micro\ttype
                             1\t2020-01-01T00:00:00.123456000Z\t2020-01-01T00:00:00.123456Z\tA
                             2\t2020-01-01T00:00:00.123456789Z\t2020-01-01T00:00:00.123456Z\tprecise
                             3\t2020-01-01T00:00:00.124456000Z\t2020-01-01T00:00:00.124456Z\tC
-                            """,
-                    "select * from events", "ts_nano", true, true);
+                            """);
         });
     }
 
@@ -3422,14 +3398,16 @@ public class UpdateTest extends AbstractCairoTest {
 
             Assert.assertEquals(2, result);
 
-            assertQueryNoLeakCheck("""
+            assertQuery("select * from logs")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tts_nano\tmessage\tlevel
                             1\t2023-01-01T00:00:00.000000000Z\tStarted\tINFO
                             2\t2023-01-01T00:00:05.000000000Z\tError occurred\tUNKNOWN
                             3\t2023-01-01T00:00:01.000000000Z\tProcessing\tDEBUG
                             4\t2023-01-01T00:00:05.000000000Z\tWarning issued\tUNKNOWN
-                            """,
-                    "select * from logs", null, true, true);
+                            """);
         });
     }
 
@@ -3450,15 +3428,18 @@ public class UpdateTest extends AbstractCairoTest {
             update("update events set status = 'processed' " +
                     "where ts_nano between " + baseNanos + " and " + (baseNanos + 600_000_000L));
 
-            assertQueryNoLeakCheck("""
+            assertQuery("select * from events")
+                    .noLeakCheck()
+                    .timestamp("ts_nano")
+                    .expectSize()
+                    .returns("""
                             id\tts_nano\tstatus\tvalue
                             1\t2020-01-01T00:00:00.000000000Z\tprocessed\t100.0
                             2\t2020-01-01T00:00:00.123456789Z\tprocessed\t200.0
                             3\t2020-01-01T00:00:00.500000000Z\tprocessed\t300.0
                             4\t2020-01-01T00:00:01.000000000Z\tpending\t400.0
                             5\t2020-01-01T00:00:01.500000123Z\tfailed\t500.0
-                            """,
-                    "select * from events", "ts_nano", true, true);
+                            """);
         });
     }
 
@@ -3576,11 +3557,8 @@ public class UpdateTest extends AbstractCairoTest {
                             " timestamp(ts) partition by DAY"
             );
 
-            assertException(
-                    "UPDATE up SET x = 1",
-                    0,
-                    "could not open read-write"
-            );
+            assertQuery("UPDATE up SET x = 1")
+                    .fails(0, "could not open read-write");
 
             if (closeWriter) {
                 engine.releaseInactive();
@@ -3681,18 +3659,14 @@ public class UpdateTest extends AbstractCairoTest {
                     "up"
             );
 
-            assertQuery(
-                    """
+            assertQuery("select distinct symCol from up order by symCol")
+                    .expectSize()
+                    .returns("""
                             symCol
                             
                             ABC
                             VTJ
-                            """,
-                    "select distinct symCol from up order by symCol",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             assertSql(
                     """

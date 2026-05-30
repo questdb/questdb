@@ -684,13 +684,21 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     11\t11\t11\t2022-06-04T15:59:59.083333326Z
                     12\t12\t12\t2022-06-04T23:59:58.999999992Z
                     """;
-            assertQuery(expected, tableName, null, "ts", true, true);
+            assertQuery(tableName)
+                    .ddl(null)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
             renameDetachedToAttachable(tableName, timestampDay);
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
                     "could not attach partition [table=tabTimeTravel2, detachStatus=ATTACH_ERR_PARTITION_EXISTS"
             );
-            assertQuery(expected, tableName, null, "ts", true, true);
+            assertQuery(tableName)
+                    .ddl(null)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -2503,8 +2511,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                 writer.commit();
             }
-            assertQuery(
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? """
+            assertQuery(tableName)
+                    .ddl(null)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? """
                             l\ti\tts
                             2802\t2802\t2022-06-01T00:00:00.000000Z
                             137\t137\t2022-06-01T09:59:59.999999Z
@@ -2531,10 +2542,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             10\t10\t2022-06-04T07:59:59.166666660Z
                             11\t11\t2022-06-04T15:59:59.083333326Z
                             12\t12\t2022-06-04T23:59:58.999999992Z
-                            """,
-                    tableName,
-                    null, "ts", true, true
-            );
+                            """);
 
             dropCurrentVersionOfPartition(tableName, timestampDay);
             renameDetachedToAttachable(tableName, timestampDay);
@@ -2821,7 +2829,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     private void assertContent(String expected, String tableName) throws Exception {
         engine.clear();
         expected = replaceTimestampSuffix1(expected, timestampType.getTypeName());
-        assertQuery(expected, tableName, null, "ts", true, true);
+        assertQuery(tableName)
+                .ddl(null)
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertFailedAttachBecauseOfMetadata(

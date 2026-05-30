@@ -109,18 +109,16 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("insert into balances values (1, 'a', 1)");
             execute("insert into balances values (2, 'b', 2)");
             execute("insert into balances values (3, 'c', 3)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from table_columns('balances')")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             ccy\tSYMBOL\tfalse\t256\ttrue\t128\t4\tfalse\tfalse\t\t
                             balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "select * from table_columns('balances')",
-                    null,
-                    null,
-                    false
-            );
+                            """);
         });
     }
 
@@ -128,11 +126,8 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowColumnsWithFunctionAndMissingTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertException(
-                    "select * from table_columns('balances2')",
-                    28,
-                    "table does not exist"
-            );
+            assertQuery("select * from table_columns('balances2')")
+                    .fails(28, "table does not exist");
         });
     }
 
@@ -140,11 +135,8 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowColumnsWithMissingTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertException(
-                    "show columns from balances2",
-                    18,
-                    "table does not exist"
-            );
+            assertQuery("show columns from balances2")
+                    .fails(18, "table does not exist");
         });
     }
 
@@ -154,35 +146,30 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create table balances (cust_id int, ccx symbol, ccy symbol, balance double)");
             execute("insert into balances values (1, 'foo', 'bar', 1)");
             execute("insert into balances values (2, 'foo', null, 2)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("show columns from balances")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             ccx\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\t\t
                             ccy\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
                             balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "show columns from balances",
-                    null,
-                    null,
-                    false
-            );
+                            """);
         });
     }
 
     @Test
     public void testShowStandardConformingStrings() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                """
+        assertMemoryLeak(() -> assertQuery("show standard_conforming_strings")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         standard_conforming_strings
                         on
-                        """,
-                "show standard_conforming_strings",
-                null,
-                null,
-                false,
-                true
-        ));
+                        """));
     }
 
     @Test
@@ -264,33 +251,24 @@ public class ShowTablesTest extends AbstractCairoTest {
 
     @Test
     public void testShowTimeZone() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                "TimeZone\nUTC\n",
-                "show time zone",
-                null,
-                false,
-                true
-        ));
+        assertMemoryLeak(() -> assertQuery("show time zone")
+                .noRandomAccess()
+                .expectSize()
+                .returns("TimeZone\nUTC\n"));
     }
 
     @Test
     public void testShowTimeZoneWrongSyntax() throws Exception {
-        assertMemoryLeak(() -> assertException(
-                "show time",
-                9,
-                "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'server_version_num', 'search_path', 'datestyle', or 'time zone'"
-        ));
+        assertMemoryLeak(() -> assertQuery("show time")
+                .fails(9, "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'server_version_num', 'search_path', 'datestyle', or 'time zone'"));
     }
 
     @Test
     public void testSqlSyntax1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertException(
-                    "show",
-                    4,
-                    "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'server_version_num', 'search_path', 'datestyle', or 'time zone'"
-            );
+            assertQuery("show")
+                    .fails(4, "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'server_version_num', 'search_path', 'datestyle', or 'time zone'");
         });
     }
 
@@ -298,11 +276,8 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testSqlSyntax2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertException(
-                    "show columns balances",
-                    13,
-                    "expected 'from'"
-            );
+            assertQuery("show columns balances")
+                    .fails(13, "expected 'from'");
         });
     }
 
@@ -310,11 +285,8 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testSqlSyntax3() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertException(
-                    "show columns from balances where",
-                    27,
-                    "unexpected token [where]"
-            );
+            assertQuery("show columns from balances where")
+                    .fails(27, "unexpected token [where]");
         });
     }
 

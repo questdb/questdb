@@ -256,13 +256,16 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             execute("CREATE TABLE tabb ( bx int, bid int );");
             execute("INSERT INTO tabb values (3,1), (4,2)");
 
-            assertQueryNoLeakCheck("""
+            assertQuery("SELECT sum(ax), sum(bx), sum(ax+10), sum(bx+10) " +
+                            "FROM taba " +
+                            "join tabb on aid = bid")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             sum\tsum1\tsum2\tsum3
                             3\t7\t23\t27
-                            """,
-                    "SELECT sum(ax), sum(bx), sum(ax+10), sum(bx+10) " +
-                            "FROM taba " +
-                            "join tabb on aid = bid", null, false, false, true);
+                            """);
         });
     }
 
@@ -273,9 +276,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             execute("CREATE TABLE tabb ( x int, bid int );");
         });
 
-        assertException("SELECT sum(tabc.x*1),sum(x), sum(ax+10), sum(bx+10) " +
+        assertQuery("SELECT sum(tabc.x*1),sum(x), sum(ax+10), sum(bx+10) " +
                 "FROM taba " +
-                "join tabb on aid = bid", 11, "Invalid table name or alias");
+                "join tabb on aid = bid")
+                .fails(11, "Invalid table name or alias");
     }
 
     @Test
@@ -283,9 +287,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE taba ( x int, aid int );");
             execute("CREATE TABLE tabb ( x int, bid int );");
-            assertException("SELECT sum(taba.k*1),sum(x), sum(ax+10), sum(bx+10) " +
+            assertQuery("SELECT sum(taba.k*1),sum(x), sum(ax+10), sum(bx+10) " +
                     "FROM taba " +
-                    "join tabb on aid = bid", 11, "Invalid column: taba.k");
+                    "join tabb on aid = bid")
+                    .fails(11, "Invalid column: taba.k");
         });
     }
 
@@ -294,9 +299,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("  CREATE TABLE taba ( x int, aid int );");
             execute("  CREATE TABLE tabb ( x int, bid int );");
-            assertException("SELECT sum(x*1),sum(x), sum(ax+10), sum(bx+10) " +
+            assertQuery("SELECT sum(x*1),sum(x), sum(ax+10), sum(bx+10) " +
                     "FROM taba " +
-                    "join tabb on aid = bid", 11, "Ambiguous column [name=x]");
+                    "join tabb on aid = bid")
+                    .fails(11, "Ambiguous column [name=x]");
         });
     }
 
@@ -304,11 +310,9 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     public void testRewriteAggregateOnOrderBySumBadQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE telemetry (created timestamp)");
-            assertExceptionNoLeakCheck(
-                    "SELECT telemetry.created FROM telemetry ORDER BY SUM(1, 1 IN (telemetry.created), 1);",
-                    49,
-                    "there is no matching function `SUM` with the argument types: (INT, BOOLEAN, INT)"
-            );
+            assertQuery("SELECT telemetry.created FROM telemetry ORDER BY SUM(1, 1 IN (telemetry.created), 1);")
+                    .noLeakCheck()
+                    .fails(49, "there is no matching function `SUM` with the argument types: (INT, BOOLEAN, INT)");
         });
     }
 
@@ -656,13 +660,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             String query,
             String ddl
     ) throws Exception {
-        assertQuery(
-                expected,
-                query,
-                ddl,
-                null,
-                false,
-                true
-        );
+        assertQuery(query)
+                .ddl(ddl)
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 }

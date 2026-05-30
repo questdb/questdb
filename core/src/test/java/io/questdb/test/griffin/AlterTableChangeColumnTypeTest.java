@@ -852,22 +852,38 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try {
                 execute("create table x (arr double[]);");
-                assertException("alter table x alter column arr type uuid", 36, "incompatible column type change [existing=DOUBLE[], new=UUID]", sqlExecutionContext);
-                assertException("alter table x alter column arr type int", 36, "incompatible column type change [existing=DOUBLE[], new=INT]", sqlExecutionContext);
-                assertException("alter table x alter column arr type ipv4", 36, "incompatible column type change [existing=DOUBLE[], new=IPv4]", sqlExecutionContext);
-                assertException("alter table x alter column arr type long", 36, "incompatible column type change [existing=DOUBLE[], new=LONG]", sqlExecutionContext);
-                assertException("alter table x alter column arr type short", 36, "incompatible column type change [existing=DOUBLE[], new=SHORT]", sqlExecutionContext);
-                assertException("alter table x alter column arr type byte", 36, "incompatible column type change [existing=DOUBLE[], new=BYTE]", sqlExecutionContext);
-                assertException("alter table x alter column arr type double", 36, "incompatible column type change [existing=DOUBLE[], new=DOUBLE]", sqlExecutionContext);
-                assertException("alter table x alter column arr type float", 36, "incompatible column type change [existing=DOUBLE[], new=FLOAT]", sqlExecutionContext);
-                assertException("alter table x alter column arr type char", 36, "incompatible column type change [existing=DOUBLE[], new=CHAR]", sqlExecutionContext);
-                assertException("alter table x alter column arr type boolean", 36, "incompatible column type change [existing=DOUBLE[], new=BOOLEAN]", sqlExecutionContext);
-                assertException("alter table x alter column arr type timestamp", 36, "incompatible column type change [existing=DOUBLE[], new=TIMESTAMP]", sqlExecutionContext);
-                assertException("alter table x alter column arr type date", 36, "incompatible column type change [existing=DOUBLE[], new=DATE]", sqlExecutionContext);
-                assertException("alter table x alter column arr type symbol", 36, "incompatible column type change [existing=DOUBLE[], new=SYMBOL]", sqlExecutionContext);
-                assertException("alter table x alter column arr type string", 36, "incompatible column type change [existing=DOUBLE[], new=STRING]", sqlExecutionContext);
-                assertException("alter table x alter column arr type varchar", 36, "incompatible column type change [existing=DOUBLE[], new=VARCHAR]", sqlExecutionContext);
-                assertException("alter table x alter column arr type binary", 36, "incompatible column type change [existing=DOUBLE[], new=BINARY]", sqlExecutionContext);
+                assertQuery("alter table x alter column arr type uuid")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=UUID]");
+                assertQuery("alter table x alter column arr type int")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=INT]");
+                assertQuery("alter table x alter column arr type ipv4")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=IPv4]");
+                assertQuery("alter table x alter column arr type long")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=LONG]");
+                assertQuery("alter table x alter column arr type short")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=SHORT]");
+                assertQuery("alter table x alter column arr type byte")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=BYTE]");
+                assertQuery("alter table x alter column arr type double")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=DOUBLE]");
+                assertQuery("alter table x alter column arr type float")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=FLOAT]");
+                assertQuery("alter table x alter column arr type char")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=CHAR]");
+                assertQuery("alter table x alter column arr type boolean")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=BOOLEAN]");
+                assertQuery("alter table x alter column arr type timestamp")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=TIMESTAMP]");
+                assertQuery("alter table x alter column arr type date")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=DATE]");
+                assertQuery("alter table x alter column arr type symbol")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=SYMBOL]");
+                assertQuery("alter table x alter column arr type string")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=STRING]");
+                assertQuery("alter table x alter column arr type varchar")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=VARCHAR]");
+                assertQuery("alter table x alter column arr type binary")
+                        .fails(36, "incompatible column type change [existing=DOUBLE[], new=BINARY]");
             } finally {
                 execute("drop table if exists x;");
             }
@@ -902,22 +918,38 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                                 ")"
                 );
 
-                assertException("alter table x alter column guid type DOUBLE[]", 44, "incompatible column type change [existing=UUID, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column rint type DOUBLE[]", 44, "incompatible column type change [existing=INT, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column ip type DOUBLE[]", 42, "incompatible column type change [existing=IPv4, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column i64 type DOUBLE[]", 43, "incompatible column type change [existing=LONG, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column i16 type DOUBLE[]", 43, "incompatible column type change [existing=SHORT, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column i8 type DOUBLE[]", 42, "incompatible column type change [existing=BYTE, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column f64 type DOUBLE[]", 43, "incompatible column type change [existing=DOUBLE, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column f32 type DOUBLE[]", 43, "incompatible column type change [existing=FLOAT, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column ch type DOUBLE[]", 42, "incompatible column type change [existing=CHAR, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column b type DOUBLE[]", 41, "incompatible column type change [existing=BOOLEAN, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column ts type DOUBLE[]", 42, "incompatible column type change [existing=TIMESTAMP, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column dt type DOUBLE[]", 42, "incompatible column type change [existing=DATE, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column sym type DOUBLE[]", 43, "incompatible column type change [existing=SYMBOL, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column str type DOUBLE[]", 43, "incompatible column type change [existing=STRING, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column var type DOUBLE[]", 43, "incompatible column type change [existing=VARCHAR, new=DOUBLE[]]", sqlExecutionContext);
-                assertException("alter table x alter column bin type DOUBLE[]", 43, "incompatible column type change [existing=BINARY, new=DOUBLE[]]", sqlExecutionContext);
+                assertQuery("alter table x alter column guid type DOUBLE[]")
+                        .fails(44, "incompatible column type change [existing=UUID, new=DOUBLE[]]");
+                assertQuery("alter table x alter column rint type DOUBLE[]")
+                        .fails(44, "incompatible column type change [existing=INT, new=DOUBLE[]]");
+                assertQuery("alter table x alter column ip type DOUBLE[]")
+                        .fails(42, "incompatible column type change [existing=IPv4, new=DOUBLE[]]");
+                assertQuery("alter table x alter column i64 type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=LONG, new=DOUBLE[]]");
+                assertQuery("alter table x alter column i16 type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=SHORT, new=DOUBLE[]]");
+                assertQuery("alter table x alter column i8 type DOUBLE[]")
+                        .fails(42, "incompatible column type change [existing=BYTE, new=DOUBLE[]]");
+                assertQuery("alter table x alter column f64 type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=DOUBLE, new=DOUBLE[]]");
+                assertQuery("alter table x alter column f32 type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=FLOAT, new=DOUBLE[]]");
+                assertQuery("alter table x alter column ch type DOUBLE[]")
+                        .fails(42, "incompatible column type change [existing=CHAR, new=DOUBLE[]]");
+                assertQuery("alter table x alter column b type DOUBLE[]")
+                        .fails(41, "incompatible column type change [existing=BOOLEAN, new=DOUBLE[]]");
+                assertQuery("alter table x alter column ts type DOUBLE[]")
+                        .fails(42, "incompatible column type change [existing=TIMESTAMP, new=DOUBLE[]]");
+                assertQuery("alter table x alter column dt type DOUBLE[]")
+                        .fails(42, "incompatible column type change [existing=DATE, new=DOUBLE[]]");
+                assertQuery("alter table x alter column sym type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=SYMBOL, new=DOUBLE[]]");
+                assertQuery("alter table x alter column str type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=STRING, new=DOUBLE[]]");
+                assertQuery("alter table x alter column var type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=VARCHAR, new=DOUBLE[]]");
+                assertQuery("alter table x alter column bin type DOUBLE[]")
+                        .fails(43, "incompatible column type change [existing=BINARY, new=DOUBLE[]]");
 
             } finally {
                 execute("drop table if exists x;");
@@ -1138,10 +1170,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("alter table y alter column converted type int", sqlExecutionContext);
             drainWalQueue();
 
-            assertQuery("""
+            assertQuery("select * from y")
+                    .expectSize()
+                    .returns("""
                     converted\tcasted\toriginal
                     1316134911\t1316134911\t9999999999999
-                    """, "select * from y", null, true, true);
+                    """);
 
         });
     }

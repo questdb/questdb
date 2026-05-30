@@ -295,18 +295,16 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
     @Test
     public void setMaxUncommittedRowsMissingEquals() throws Exception {
-        assertException("ALTER TABLE X SET PARAM maxUncommittedRows 100",
-                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
-                43,
-                "'=' expected");
+        assertQuery("ALTER TABLE X SET PARAM maxUncommittedRows 100")
+                .ddl("CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH")
+                .fails(43, "'=' expected");
     }
 
     @Test
     public void setMaxUncommittedRowsNegativeValue() throws Exception {
-        assertException("ALTER TABLE X SET PARAM maxUncommittedRows = -1",
-                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
-                24,
-                "invalid value [value=-,parameter=maxUncommittedRows]");
+        assertQuery("ALTER TABLE X SET PARAM maxUncommittedRows = -1")
+                .ddl("CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH")
+                .fails(24, "invalid value [value=-,parameter=maxUncommittedRows]");
     }
 
     @Test
@@ -330,34 +328,30 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
     @Test
     public void setO3MaxLagWrongSetSyntax() throws Exception {
-        assertException("ALTER TABLE X SET o3MaxLag = 111ms",
-                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
-                18,
-                "'param', 'ttl' or 'type' expected");
+        assertQuery("ALTER TABLE X SET o3MaxLag = 111ms")
+                .ddl("CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH")
+                .fails(18, "'param', 'ttl' or 'type' expected");
     }
 
     @Test
     public void setO3MaxLagWrongSetSyntax2() throws Exception {
-        assertException("ALTER TABLE X PARAM o3MaxLag = 111ms",
-                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
-                14,
-                SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
+        assertQuery("ALTER TABLE X PARAM o3MaxLag = 111ms")
+                .ddl("CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH")
+                .fails(14, SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
     }
 
     @Test
     public void setO3MaxLagWrongTimeQualifier() throws Exception {
-        assertException("ALTER TABLE X SET PARAM o3MaxLag = 111days",
-                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
-                27,
-                "interval qualifier");
+        assertQuery("ALTER TABLE X SET PARAM o3MaxLag = 111days")
+                .ddl("CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH")
+                .fails(27, "interval qualifier");
     }
 
     @Test
     public void setO3MaxLagWrongTimeQualifier2() throws Exception {
-        assertException("ALTER TABLE X SET PARAM o3MaxLag = 111ml",
-                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
-                29,
-                "interval qualifier");
+        assertQuery("ALTER TABLE X SET PARAM o3MaxLag = 111ml")
+                .ddl("CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH")
+                .fails(29, "interval qualifier");
     }
 
     @Test
