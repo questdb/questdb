@@ -56,38 +56,38 @@ public class CastDecimalToStrFunctionFactoryTest extends AbstractCairoTest {
     public void testCastDecimalNullToStr() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            """
+                    assertQuery("with data as (select cast(null as decimal(10,2)) d) select cast(d as string) from data")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     cast
-                                    
-                                    """,
-                            "with data as (select cast(null as decimal(10,2)) d) select cast(d as string) from data"
-                    );
 
-                    assertSql(
-                            """
-                                    cast
-                                    
-                                    """,
-                            "with data as (select cast(null as decimal(30,2)) d) select cast(d as string) from data"
-                    );
+                                    """);
 
-                    assertSql(
-                            """
+                    assertQuery("with data as (select cast(null as decimal(30,2)) d) select cast(d as string) from data")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     cast
-                                    
-                                    """,
-                            "with data as (select cast(null as decimal(60,2)) d) select cast(d as string) from data"
-                    );
+
+                                    """);
+
+                    assertQuery("with data as (select cast(null as decimal(60,2)) d) select cast(d as string) from data")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    cast
+
+                                    """);
 
                     // Also test constant null
-                    assertSql(
-                            """
+                    assertQuery("select cast(cast(null as decimal(10,2)) as string)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     cast
-                                    
-                                    """,
-                            "select cast(cast(null as decimal(10,2)) as string)"
-                    );
+
+                                    """);
                 }
         );
     }
@@ -97,55 +97,55 @@ public class CastDecimalToStrFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     // Basic decimal to string conversions
-                    assertSql(
-                            """
+                    assertQuery("select cast(123.45m as string)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     cast
                                     123.45
-                                    """,
-                            "select cast(123.45m as string)"
-                    );
+                                    """);
 
-                    assertSql(
-                            """
+                    assertQuery("select cast(-123.45m as string)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     cast
                                     -123.45
-                                    """,
-                            "select cast(-123.45m as string)"
-                    );
+                                    """);
 
                     // Zero with decimal places
-                    assertSql(
-                            """
+                    assertQuery("select cast(0.00m as string)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     cast
                                     0.00
-                                    """,
-                            "select cast(0.00m as string)"
-                    );
+                                    """);
 
                     // Different decimal types
-                    assertSql(
-                            """
+                    assertQuery("select cast(99m as string)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     cast
                                     99
-                                    """,
-                            "select cast(99m as string)"
-                    );
+                                    """);
 
-                    assertSql(
-                            """
+                    assertQuery("select cast(12345.67m as string)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     cast
                                     12345.67
-                                    """,
-                            "select cast(12345.67m as string)"
-                    );
+                                    """);
 
-                    assertSql(
-                            """
+                    assertQuery("select cast(123456789.123456m as string)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     cast
                                     123456789.123456
-                                    """,
-                            "select cast(123456789.123456m as string)"
-                    );
+                                    """);
                 }
         );
     }

@@ -54,8 +54,10 @@ public class CastDecimalToDecimalFunctionFactoryTest extends BaseFunctionFactory
     }
 
     @Test
-    public void testConstantCast() throws SqlException {
-        assertSql("cast\n123.450\n", "SELECT cast(cast(123.45 as DECIMAL(5, 2)) as DECIMAL(6, 3))");
+    public void testConstantCast() throws Exception {
+        assertQuery("SELECT cast(cast(123.45 as DECIMAL(5, 2)) as DECIMAL(6, 3))")
+                .expectSize()
+                .returns("cast\n123.450\n");
     }
 
     @Test

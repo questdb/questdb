@@ -34,37 +34,37 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     // Basic decimal to double conversions
-                    assertSql(
-                            "cast\n" +
-                                    "123.45\n",
-                            "select cast(123.45m as double)"
-                    );
+                    assertQuery("select cast(123.45m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "123.45\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "-123.45\n",
-                            "select cast(-123.45m as double)"
-                    );
+                    assertQuery("select cast(-123.45m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "-123.45\n");
 
                     // Zero with decimal places
-                    assertSql(
-                            "cast\n" +
-                                    "0.0\n",
-                            "select cast(0.00m as double)"
-                    );
+                    assertQuery("select cast(0.00m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "0.0\n");
 
                     // Different decimal types
-                    assertSql(
-                            "cast\n" +
-                                    "99.0\n",
-                            "select cast(99m as double)"
-                    );
+                    assertQuery("select cast(99m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "99.0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "12345.67\n",
-                            "select cast(12345.67m as double)"
-                    );
+                    assertQuery("select cast(12345.67m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "12345.67\n");
                 }
         );
     }
@@ -207,23 +207,23 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     public void testCastFromDecimal128() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "1.2345678901234567E19\n",
-                            "select cast(cast(12345678901234567890m as DECIMAL(20)) as double)"
-                    );
+                    assertQuery("select cast(cast(12345678901234567890m as DECIMAL(20)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "1.2345678901234567E19\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "-1.2345678901234567E19\n",
-                            "select cast(cast(-12345678901234567890m as DECIMAL(20)) as double)"
-                    );
+                    assertQuery("select cast(cast(-12345678901234567890m as DECIMAL(20)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "-1.2345678901234567E19\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "null\n",
-                            "select cast(cast(null as DECIMAL(20)) as double)"
-                    );
+                    assertQuery("select cast(cast(null as DECIMAL(20)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "null\n");
                 }
         );
     }
@@ -232,23 +232,23 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     public void testCastFromDecimal16() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "9999.0\n",
-                            "select cast(cast(9999m as DECIMAL(4)) as double)"
-                    );
+                    assertQuery("select cast(cast(9999m as DECIMAL(4)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "9999.0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "-9999.0\n",
-                            "select cast(cast(-9999m as DECIMAL(4)) as double)"
-                    );
+                    assertQuery("select cast(cast(-9999m as DECIMAL(4)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "-9999.0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "null\n",
-                            "select cast(cast(null as DECIMAL(4)) as double)"
-                    );
+                    assertQuery("select cast(cast(null as DECIMAL(4)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "null\n");
                 }
         );
     }
@@ -257,23 +257,23 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     public void testCastFromDecimal256() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "1.2345678901234567E19\n",
-                            "select cast(cast(12345678901234567890m as DECIMAL(40)) as double)"
-                    );
+                    assertQuery("select cast(cast(12345678901234567890m as DECIMAL(40)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "1.2345678901234567E19\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "-1.2345678901234567E19\n",
-                            "select cast(cast(-12345678901234567890m as DECIMAL(40)) as double)"
-                    );
+                    assertQuery("select cast(cast(-12345678901234567890m as DECIMAL(40)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "-1.2345678901234567E19\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "null\n",
-                            "select cast(cast(null as DECIMAL(40)) as double)"
-                    );
+                    assertQuery("select cast(cast(null as DECIMAL(40)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "null\n");
                 }
         );
     }
@@ -282,23 +282,23 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     public void testCastFromDecimal32() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "9.99999999E8\n",
-                            "select cast(cast(999999999m as DECIMAL(9)) as double)"
-                    );
+                    assertQuery("select cast(cast(999999999m as DECIMAL(9)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "9.99999999E8\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "-9.99999999E8\n",
-                            "select cast(cast(-999999999m as DECIMAL(9)) as double)"
-                    );
+                    assertQuery("select cast(cast(-999999999m as DECIMAL(9)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "-9.99999999E8\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "null\n",
-                            "select cast(cast(null as DECIMAL(9)) as double)"
-                    );
+                    assertQuery("select cast(cast(null as DECIMAL(9)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "null\n");
                 }
         );
     }
@@ -307,23 +307,23 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     public void testCastFromDecimal64() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "1.0E18\n",
-                            "select cast(cast(999999999999999999m as DECIMAL(18)) as double)"
-                    );
+                    assertQuery("select cast(cast(999999999999999999m as DECIMAL(18)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "1.0E18\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "-1.0E18\n",
-                            "select cast(cast(-999999999999999999m as DECIMAL(18)) as double)"
-                    );
+                    assertQuery("select cast(cast(-999999999999999999m as DECIMAL(18)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "-1.0E18\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "null\n",
-                            "select cast(cast(null as DECIMAL(18)) as double)"
-                    );
+                    assertQuery("select cast(cast(null as DECIMAL(18)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "null\n");
                 }
         );
     }
@@ -332,29 +332,29 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     public void testCastFromDecimal8() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "99.0\n",
-                            "select cast(cast(99m as DECIMAL(2)) as double)"
-                    );
+                    assertQuery("select cast(cast(99m as DECIMAL(2)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "99.0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "-99.0\n",
-                            "select cast(cast(-99m as DECIMAL(2)) as double)"
-                    );
+                    assertQuery("select cast(cast(-99m as DECIMAL(2)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "-99.0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "0.0\n",
-                            "select cast(cast(0m as DECIMAL(2)) as double)"
-                    );
+                    assertQuery("select cast(cast(0m as DECIMAL(2)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "0.0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "null\n",
-                            "select cast(cast(null as DECIMAL(2)) as double)"
-                    );
+                    assertQuery("select cast(cast(null as DECIMAL(2)) as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "null\n");
                 }
         );
     }
@@ -364,18 +364,18 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     // Very large values
-                    assertSql(
-                            "cast\n" +
-                                    "1.234567890123456E15\n",
-                            "select cast(1234567890123456m as double)"
-                    );
+                    assertQuery("select cast(1234567890123456m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "1.234567890123456E15\n");
 
                     // Very small values
-                    assertSql(
-                            "cast\n" +
-                                    "1.2345E-10\n",
-                            "select cast(0.00000000012345m as double)"
-                    );
+                    assertQuery("select cast(0.00000000012345m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "1.2345E-10\n");
                 }
         );
     }
@@ -384,23 +384,23 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     public void testCastNegativeValues() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "-1.0\n",
-                            "select cast(-1m as double)"
-                    );
+                    assertQuery("select cast(-1m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "-1.0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "-123.0\n",
-                            "select cast(-123m as double)"
-                    );
+                    assertQuery("select cast(-123m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "-123.0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "-9.99999999E8\n",
-                            "select cast(-999999999m as double)"
-                    );
+                    assertQuery("select cast(-999999999m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "-9.99999999E8\n");
                 }
         );
     }
@@ -410,11 +410,11 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     // High precision decimal that may lose precision when cast to double
-                    assertSql(
-                            "cast\n" +
-                                    "1.2345678912345679E8\n",
-                            "select cast(123456789.123456789m as double)"
-                    );
+                    assertQuery("select cast(123456789.123456789m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "1.2345678912345679E8\n");
                 }
         );
     }
@@ -423,18 +423,19 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     public void testCastRuntimeScaledDecimal16() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "value\tdouble_value\n" +
-                                    "99.50\t99.5\n" +
-                                    "-99.50\t-99.5\n" +
-                                    "12.99\t12.99\n" +
-                                    "\tnull\n",
-                            "WITH data AS (SELECT cast(99.5m as DECIMAL(4,2)) value " +
+                    assertQuery("WITH data AS (SELECT cast(99.5m as DECIMAL(4,2)) value " +
                                     "UNION ALL SELECT cast(-99.5m as DECIMAL(4,2)) " +
                                     "UNION ALL SELECT cast(12.99m as DECIMAL(4,2)) " +
                                     "UNION ALL SELECT cast(null as DECIMAL(4,2))) " +
-                                    "SELECT value, cast(value as double) as double_value FROM data"
-                    );
+                                    "SELECT value, cast(value as double) as double_value FROM data")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("value\tdouble_value\n" +
+                                    "99.50\t99.5\n" +
+                                    "-99.50\t-99.5\n" +
+                                    "12.99\t12.99\n" +
+                                    "\tnull\n");
                 }
         );
     }
@@ -443,18 +444,19 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     public void testCastRuntimeScaledDecimal32() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "value\tdouble_value\n" +
-                                    "999999.999\t999999.999\n" +
-                                    "-999999.999\t-999999.999\n" +
-                                    "123456.789\t123456.789\n" +
-                                    "\tnull\n",
-                            "WITH data AS (SELECT cast(999999.999m as DECIMAL(9,3)) value " +
+                    assertQuery("WITH data AS (SELECT cast(999999.999m as DECIMAL(9,3)) value " +
                                     "UNION ALL SELECT cast(-999999.999m as DECIMAL(9,3)) " +
                                     "UNION ALL SELECT cast(123456.789m as DECIMAL(9,3)) " +
                                     "UNION ALL SELECT cast(null as DECIMAL(9, 3))) " +
-                                    "SELECT value, cast(value as double) as double_value FROM data"
-                    );
+                                    "SELECT value, cast(value as double) as double_value FROM data")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("value\tdouble_value\n" +
+                                    "999999.999\t999999.999\n" +
+                                    "-999999.999\t-999999.999\n" +
+                                    "123456.789\t123456.789\n" +
+                                    "\tnull\n");
                 }
         );
     }
@@ -463,18 +465,19 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     public void testCastRuntimeScaledDecimal64() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "value\tdouble_value\n" +
-                                    "999999999999.999999\t1.0E12\n" +
-                                    "-999999999999.999999\t-1.0E12\n" +
-                                    "123456789012.345678\t1.2345678901234567E11\n" +
-                                    "\tnull\n",
-                            "WITH data AS (SELECT cast(999999999999.999999m as DECIMAL(18,6)) value " +
+                    assertQuery("WITH data AS (SELECT cast(999999999999.999999m as DECIMAL(18,6)) value " +
                                     "UNION ALL SELECT cast(-999999999999.999999m as DECIMAL(18,6)) " +
                                     "UNION ALL SELECT cast(123456789012.345678m as DECIMAL(18,6)) " +
                                     "UNION ALL SELECT cast(null as DECIMAL(18, 6))) " +
-                                    "SELECT value, cast(value as double) as double_value FROM data"
-                    );
+                                    "SELECT value, cast(value as double) as double_value FROM data")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("value\tdouble_value\n" +
+                                    "999999999999.999999\t1.0E12\n" +
+                                    "-999999999999.999999\t-1.0E12\n" +
+                                    "123456789012.345678\t1.2345678901234567E11\n" +
+                                    "\tnull\n");
                 }
         );
     }
@@ -483,18 +486,19 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     public void testCastRuntimeScaledDecimal8() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "value\tdouble_value\n" +
-                                    "9.9\t9.9\n" +
-                                    "-9.9\t-9.9\n" +
-                                    "0.5\t0.5\n" +
-                                    "\tnull\n",
-                            "WITH data AS (SELECT cast(9.9m as DECIMAL(2,1)) value " +
+                    assertQuery("WITH data AS (SELECT cast(9.9m as DECIMAL(2,1)) value " +
                                     "UNION ALL SELECT cast(-9.9m as DECIMAL(2,1)) " +
                                     "UNION ALL SELECT cast(0.5m as DECIMAL(2,1)) " +
                                     "UNION ALL SELECT cast(null as DECIMAL(2,1))) " +
-                                    "SELECT value, cast(value as double) as double_value FROM data"
-                    );
+                                    "SELECT value, cast(value as double) as double_value FROM data")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("value\tdouble_value\n" +
+                                    "9.9\t9.9\n" +
+                                    "-9.9\t-9.9\n" +
+                                    "0.5\t0.5\n" +
+                                    "\tnull\n");
                 }
         );
     }
@@ -503,18 +507,19 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     public void testCastRuntimeUnscaledDecimal8() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "value\tdouble_value\n" +
-                                    "99\t99.0\n" +
-                                    "-99\t-99.0\n" +
-                                    "0\t0.0\n" +
-                                    "\tnull\n",
-                            "WITH data AS (SELECT cast(99m as DECIMAL(2)) value " +
+                    assertQuery("WITH data AS (SELECT cast(99m as DECIMAL(2)) value " +
                                     "UNION ALL SELECT cast(-99m as DECIMAL(2)) " +
                                     "UNION ALL SELECT cast(0m as DECIMAL(2)) " +
                                     "UNION ALL SELECT cast(null as DECIMAL(2))) " +
-                                    "SELECT value, cast(value as double) as double_value FROM data"
-                    );
+                                    "SELECT value, cast(value as double) as double_value FROM data")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("value\tdouble_value\n" +
+                                    "99\t99.0\n" +
+                                    "-99\t-99.0\n" +
+                                    "0\t0.0\n" +
+                                    "\tnull\n");
                 }
         );
     }
@@ -523,29 +528,29 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
     public void testCastZeroValues() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    assertSql(
-                            "cast\n" +
-                                    "0.0\n",
-                            "select cast(0m as double)"
-                    );
+                    assertQuery("select cast(0m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "0.0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "0.0\n",
-                            "select cast(0.0m as double)"
-                    );
+                    assertQuery("select cast(0.0m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "0.0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "0.0\n",
-                            "select cast(0.00m as double)"
-                    );
+                    assertQuery("select cast(0.00m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "0.0\n");
 
-                    assertSql(
-                            "cast\n" +
-                                    "0.0\n",
-                            "select cast(0.000m as double)"
-                    );
+                    assertQuery("select cast(0.000m as double)")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("cast\n" +
+                                    "0.0\n");
                 }
         );
     }
