@@ -150,13 +150,17 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
                 "select least('2020-09-10T00:00:00.000Z'::date, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000789Z'::timestamp_ns, null)"
         );
         assertSqlWithTypes(
-                "least\n" +
-                        "1970-01-01T00:00:00.123456789Z:TIMESTAMP_NS\n",
+                """
+                        least
+                        1970-01-01T00:00:00.123456789Z:TIMESTAMP_NS
+                        """,
                 "select least('2020-09-10T00:00:00.000Z'::date, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000789Z'::timestamp_ns, null, 123456789L)"
         );
         assertSqlWithTypes(
-                "least\n" +
-                        "2020-09-10T00:00:00.000000Z:TIMESTAMP\n",
+                """
+                        least
+                        2020-09-10T00:00:00.000000Z:TIMESTAMP
+                        """,
                 "select least('2020-09-10T00:00:00.000Z'::date, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000Z'::timestamp, null, 123456789000000000L)"
         );
     }
@@ -179,27 +183,29 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
             execute("create table x as (select rnd_int() a, rnd_int() b from long_sequence(20))");
 
             assertSqlWithTypes(
-                    "least\n" +
-                            "-1148479920:INT\n" +
-                            "-727724771:INT\n" +
-                            "-948263339:INT\n" +
-                            "592859671:INT\n" +
-                            "-847531048:INT\n" +
-                            "-2041844972:INT\n" +
-                            "-1575378703:INT\n" +
-                            "806715481:INT\n" +
-                            "1569490116:INT\n" +
-                            "-409854405:INT\n" +
-                            "1530831067:INT\n" +
-                            "-1532328444:INT\n" +
-                            "-1849627000:INT\n" +
-                            "-1432278050:INT\n" +
-                            "-1792928964:INT\n" +
-                            "-1844391305:INT\n" +
-                            "-1153445279:INT\n" +
-                            "-1715058769:INT\n" +
-                            "-1125169127:INT\n" +
-                            "-1975183723:INT\n",
+                    """
+                            least
+                            -1148479920:INT
+                            -727724771:INT
+                            -948263339:INT
+                            592859671:INT
+                            -847531048:INT
+                            -2041844972:INT
+                            -1575378703:INT
+                            806715481:INT
+                            1569490116:INT
+                            -409854405:INT
+                            1530831067:INT
+                            -1532328444:INT
+                            -1849627000:INT
+                            -1432278050:INT
+                            -1792928964:INT
+                            -1844391305:INT
+                            -1153445279:INT
+                            -1715058769:INT
+                            -1125169127:INT
+                            -1975183723:INT
+                            """,
                     "select least(a, b) from x"
             );
         });
@@ -224,11 +230,13 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
 
             assertQuery("select least(price, 247), least(amount, 123.2) from x")
                     .expectSize()
-                    .returns("least\tleast1\n" +
-                            "245.0\t123.2\n" +
-                            "245.0\t123.2\n" +
-                            "247.0\t123.1\n" +
-                            "247.0\t123.0\n");
+                    .returns("""
+                            least\tleast1
+                            245.0\t123.2
+                            245.0\t123.2
+                            247.0\t123.1
+                            247.0\t123.0
+                            """);
         });
     }
 
