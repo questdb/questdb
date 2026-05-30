@@ -419,6 +419,23 @@ pub trait SimdEncodable: NativeType {
                     ))
                 }
             }
+            Encoding::ByteStreamSplit => {
+                // Emit K separate byte-streams, where stream k holds the k-th
+                // little-endian byte of every non-null value. This is a pure
+                // transpose of the Plain layout: it isolates the low-entropy
+                // high bytes (sign/exponent of floats) from the noisy mantissa
+                // bytes so a downstream compressor squeezes each stream on its
+                // own. Decoding reverses the transpose. See the matching reader
+                // path in parquet_read::decode.
+                let n = size_of::<Self>();
+                buffer.reserve(n * non_null_count);
+                for k in 0..n {
+                    for x in slice.iter().filter(|x| !x.is_null()) {
+                        buffer.push(x.to_bytes().as_ref()[k]);
+                    }
+                }
+                Ok(buffer)
+            }
             other => Err(fmt_err!(Unsupported, "unsupported encoding {other:?}")),
         }
     }

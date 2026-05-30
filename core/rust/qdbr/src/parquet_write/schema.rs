@@ -577,6 +577,12 @@ fn validate_encoding(data_type: ColumnType, encoding: Encoding) -> Encoding {
                 | ColumnTypeTag::GeoInt
                 | ColumnTypeTag::GeoLong
         ),
+        Encoding::ByteStreamSplit => {
+            matches!(
+                data_type.tag(),
+                ColumnTypeTag::Float | ColumnTypeTag::Double
+            )
+        }
         _ => false,
     };
     if valid {
@@ -1117,12 +1123,17 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_encoding_byte_stream_split_falls_back() {
-        // ByteStreamSplit is not supported for any type, should fall back
+    fn test_validate_encoding_byte_stream_split() {
+        // ByteStreamSplit is valid for floating-point columns.
         assert_eq!(
             validate_encoding(col_type(ColumnTypeTag::Float), Encoding::ByteStreamSplit),
-            Encoding::Plain
+            Encoding::ByteStreamSplit
         );
+        assert_eq!(
+            validate_encoding(col_type(ColumnTypeTag::Double), Encoding::ByteStreamSplit),
+            Encoding::ByteStreamSplit
+        );
+        // Non-floating types fall back to their default encoding.
         assert_eq!(
             validate_encoding(col_type(ColumnTypeTag::Int), Encoding::ByteStreamSplit),
             Encoding::Plain

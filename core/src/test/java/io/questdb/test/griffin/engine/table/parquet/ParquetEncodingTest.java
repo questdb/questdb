@@ -68,10 +68,13 @@ public class ParquetEncodingTest {
     };
 
     @Test
-    public void testByteStreamSplitRejectedForAllTypes() {
+    public void testByteStreamSplitOnlyForFloatAndDouble() {
         for (int colType : COLUMN_TYPES) {
-            Assert.assertFalse(
-                    "BYTE_STREAM_SPLIT should be rejected for " + ColumnType.nameOf(colType),
+            int tag = ColumnType.tagOf(colType);
+            boolean expected = tag == ColumnType.FLOAT || tag == ColumnType.DOUBLE;
+            Assert.assertEquals(
+                    "BYTE_STREAM_SPLIT for " + ColumnType.nameOf(colType),
+                    expected,
                     ParquetEncoding.isValidForColumnType(ENCODING_BYTE_STREAM_SPLIT, colType)
             );
         }
@@ -186,6 +189,7 @@ public class ParquetEncodingTest {
                     || tag == ColumnType.GEOSHORT
                     || tag == ColumnType.GEOINT
                     || tag == ColumnType.GEOLONG;
+            case ENCODING_BYTE_STREAM_SPLIT -> tag == ColumnType.FLOAT || tag == ColumnType.DOUBLE;
             default -> false;
         };
     }

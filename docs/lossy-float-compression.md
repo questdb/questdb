@@ -265,8 +265,18 @@ Self-contained and useful on its own, independent of any lossy work:
   `(DeltaBinaryPacked, Timestamp)` (`encode.rs:503-523`), so this was a default
   change only. Covered by Rust unit tests in `schema.rs` and a Java round-trip
   test `PartitionEncoderTest.testDesignatedTimestampDefaultsToDeltaBinaryPacked`.
-- **PR1b:** implement `BYTE_STREAM_SPLIT` for `Double`/`Float`. It is currently
-  *declared*
+- **PR1b (done):** implement `BYTE_STREAM_SPLIT` for `Double`/`Float`, both
+  encoder and decoder. Encoder transposes the Plain little-endian bytes into K
+  per-byte streams (`encoders/numeric.rs` `encode_data`, threaded through
+  `encoders/plain/primitive.rs` and dispatched in `encode.rs`); `validate_encoding`
+  accepts it for floating types only. Decoder un-transposes the page back to the
+  contiguous layout and reuses the existing `PlainPrimitiveDecoder`
+  (`parquet_read/decode.rs` `byte_stream_split_to_plain`). Tests: schema
+  validation, a self round-trip through our own decoder (Double + Float with NaN
+  nulls), and an independent `arrow`-reader round-trip that confirms the bytes are
+  spec-compliant rather than merely symmetric with our decoder.
+
+  It was previously *declared*
   (config id 5 parses) but **not implemented**: `validate_encoding` has no arm
   for it and the dispatch in `encode.rs` only matches PLAIN/RleDictionary, so it
   silently falls back to PLAIN (`schema.rs:1057` test confirms). BYTE_STREAM_SPLIT

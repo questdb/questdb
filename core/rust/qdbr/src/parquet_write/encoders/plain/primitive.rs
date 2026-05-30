@@ -38,6 +38,54 @@ pub fn encode_simd<T>(
 where
     T: SimdEncodable,
 {
+    encode_simd_with::<T>(
+        columns,
+        first_partition_start,
+        last_partition_end,
+        primitive_type,
+        options,
+        bloom_set,
+        Encoding::Plain,
+    )
+}
+
+/// Encode a SIMD-encodable floating-point type as BYTE_STREAM_SPLIT pages.
+/// Shares the Plain page layout (def levels, statistics, bloom) and only
+/// transposes the value bytes into per-byte streams.
+pub fn encode_byte_stream_split<T>(
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    primitive_type: &PrimitiveType,
+    options: WriteOptions,
+    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+) -> ParquetResult<Vec<Page>>
+where
+    T: SimdEncodable,
+{
+    encode_simd_with::<T>(
+        columns,
+        first_partition_start,
+        last_partition_end,
+        primitive_type,
+        options,
+        bloom_set,
+        Encoding::ByteStreamSplit,
+    )
+}
+
+fn encode_simd_with<T>(
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    primitive_type: &PrimitiveType,
+    options: WriteOptions,
+    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+    encoding: Encoding,
+) -> ParquetResult<Vec<Page>>
+where
+    T: SimdEncodable,
+{
     let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
     encode_column_chunk(
         columns,
@@ -54,6 +102,7 @@ where
                 options,
                 primitive_type.clone(),
                 bloom,
+                encoding,
             )
         },
     )
@@ -190,6 +239,7 @@ pub fn encode_boolean(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn simd_segments_to_page<T: SimdEncodable>(
     columns: &[Column],
     first_partition_start: usize,
@@ -198,6 +248,7 @@ fn simd_segments_to_page<T: SimdEncodable>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     bloom_hashes: Option<&mut HashSet<u64>>,
+    encoding: Encoding,
 ) -> ParquetResult<Page> {
     assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
 
@@ -210,7 +261,7 @@ fn simd_segments_to_page<T: SimdEncodable>(
     match views.next() {
         None => {
             // Single view: use SIMD-accelerated path (fused def levels + stats + bloom).
-            simd_single_view_page(first, options, primitive_type, bloom_hashes)
+            simd_single_view_page(first, options, primitive_type, bloom_hashes, encoding)
         }
         Some(second) => {
             // Multiple views: scalar single-pass fallback.
@@ -221,6 +272,7 @@ fn simd_segments_to_page<T: SimdEncodable>(
                 options,
                 primitive_type,
                 bloom_hashes,
+                encoding,
             )
         }
     }
@@ -232,6 +284,7 @@ fn simd_single_view_page<T: SimdEncodable>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     bloom_hashes: Option<&mut HashSet<u64>>,
+    encoding: Encoding,
 ) -> ParquetResult<Page> {
     let num_rows = view.num_rows();
     let mut buffer = Vec::new();
@@ -266,7 +319,7 @@ fn simd_single_view_page<T: SimdEncodable>(
     let definition_levels_byte_length = buffer.len();
     let null_count = view.adjusted_column_top + result.null_count;
 
-    let buffer = T::encode_data(view.slice, result.null_count, Encoding::Plain, buffer)?;
+    let buffer = T::encode_data(view.slice, result.null_count, encoding, buffer)?;
 
     let statistics = if options.write_statistics {
         Some(build_statistics(
@@ -286,13 +339,14 @@ fn simd_single_view_page<T: SimdEncodable>(
         statistics,
         primitive_type,
         options,
-        Encoding::Plain,
+        encoding,
         false,
     )
     .map(Page::Data)
 }
 
 /// Scalar fallback for multi-partition pages.
+#[allow(clippy::too_many_arguments)]
 fn simd_multi_view_page<'a, T: SimdEncodable>(
     first: PartitionChunkView<'a, T>,
     remaining: impl Iterator<Item = PartitionChunkView<'a, T>>,
@@ -300,6 +354,7 @@ fn simd_multi_view_page<'a, T: SimdEncodable>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    encoding: Encoding,
 ) -> ParquetResult<Page> {
     let num_rows = window.row_count;
     let mut validity = FlatValidity::new();
@@ -331,7 +386,8 @@ fn simd_multi_view_page<'a, T: SimdEncodable>(
     let null_count = def_levels.null_count;
     let definition_levels_byte_length = def_levels.definition_levels_byte_length;
 
-    // Pass 2: append present values, updating stats/bloom.
+    // Pass 2: update stats/bloom over the present values, and (for Plain) append
+    // them contiguously.
     for view in &views {
         for &value in view.slice {
             if !value.is_null() {
@@ -341,7 +397,25 @@ fn simd_multi_view_page<'a, T: SimdEncodable>(
                 if let Some(ref mut h) = bloom_hashes {
                     h.insert(hash_native(value));
                 }
-                buffer.extend_from_slice(value.to_bytes().as_ref());
+                if encoding == Encoding::Plain {
+                    buffer.extend_from_slice(value.to_bytes().as_ref());
+                }
+            }
+        }
+    }
+
+    // BYTE_STREAM_SPLIT writes K per-byte streams instead of contiguous values:
+    // stream k holds the k-th little-endian byte of every non-null value, across
+    // all views in order. Decoding reverses this transpose.
+    if encoding == Encoding::ByteStreamSplit {
+        let n = size_of::<T>();
+        for k in 0..n {
+            for view in &views {
+                for &value in view.slice {
+                    if !value.is_null() {
+                        buffer.push(value.to_bytes().as_ref()[k]);
+                    }
+                }
             }
         }
     }
@@ -364,7 +438,7 @@ fn simd_multi_view_page<'a, T: SimdEncodable>(
         stats,
         primitive_type,
         options,
-        Encoding::Plain,
+        encoding,
         false,
     )
     .map(Page::Data)

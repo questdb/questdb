@@ -1039,6 +1039,84 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_byte_stream_split_double_arrow_roundtrip() {
+        // Encode a Double column with BYTE_STREAM_SPLIT and read it back with the
+        // independent arrow/parquet reader. This confirms the encoder emits
+        // spec-compliant bytes, not merely a layout that is symmetric with our
+        // own decoder.
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        // Values span a few exponents so the high (exponent) bytes actually vary
+        // across the streams, exercising the transpose rather than constant bytes.
+        let col_data: Vec<f64> = (0..1000).map(|i| i as f64 * 0.1 + 1.0).collect();
+        // encoding=5 (byte_stream_split), compression=0 (global default).
+        let bss_config = schema::ParquetEncodingConfig::new(5, 0, 0).raw();
+
+        let col = Column::from_raw_data(
+            0,
+            "bss_double",
+            ColumnTypeTag::Double.into_type().code(),
+            0,
+            1000,
+            col_data.as_ptr() as *const u8,
+            col_data.len() * size_of::<f64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            bss_config,
+        )
+        .unwrap();
+
+        let partition = Partition { table: "t".to_string(), columns: vec![col] };
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+
+        // Metadata: the column chunk must advertise BYTE_STREAM_SPLIT (thrift id 9).
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+        let encs = metadata.row_groups[0].columns()[0].column_encoding();
+        assert!(
+            encs.iter().any(|e| e.0 == 9),
+            "expected BYTE_STREAM_SPLIT (9), got {:?}",
+            encs
+        );
+
+        // Data: the independent arrow reader must recover the original values.
+        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+        let mut idx = 0usize;
+        for batch in reader.flatten() {
+            let arr = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Float64Array>()
+                .expect("downcast");
+            for i in 0..arr.len() {
+                assert!(
+                    (arr.value(i) - (idx as f64 * 0.1 + 1.0)).abs() < 1e-12,
+                    "value mismatch at row {idx}: got {}",
+                    arr.value(i)
+                );
+                idx += 1;
+            }
+        }
+        assert_eq!(idx, 1000, "expected 1000 rows back");
+    }
+
     /// Helper: pack RleDictionary encoding config (encoding=2, explicit flag set)
     pub(crate) fn rle_dict_config() -> i32 {
         2 | (1 << 24)

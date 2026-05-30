@@ -610,6 +610,14 @@ fn encode_float_dispatch(
             options,
             bloom_set,
         ),
+        (Encoding::ByteStreamSplit, Float) => plain::encode_byte_stream_split::<f32>(
+            columns,
+            first_partition_start,
+            last_partition_end,
+            pt,
+            options,
+            bloom_set,
+        ),
         _ => unsupported(encoding, column_tag, "Float"),
     }
 }
@@ -636,6 +644,14 @@ fn encode_double_dispatch(
             bloom_set,
         ),
         (Encoding::RleDictionary, Double) => rle_dictionary::encode_simd::<f64>(
+            columns,
+            first_partition_start,
+            last_partition_end,
+            pt,
+            options,
+            bloom_set,
+        ),
+        (Encoding::ByteStreamSplit, Double) => plain::encode_byte_stream_split::<f64>(
             columns,
             first_partition_start,
             last_partition_end,

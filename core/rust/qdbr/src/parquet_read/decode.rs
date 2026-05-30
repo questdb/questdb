@@ -1390,6 +1390,32 @@ fn decode_int96_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     }
 }
 
+/// Reverse a BYTE_STREAM_SPLIT data page back into the contiguous little-endian
+/// value layout that the Plain decoder expects. The page holds `elem_size`
+/// byte-streams laid out back to back, where stream k contains the k-th byte of
+/// every value; this interleaves them: out[j*elem_size + k] = data[k*n + j],
+/// with n the number of values. The reconstructed buffer is then handed to the
+/// ordinary Plain decoder, so null handling and filtering stay shared.
+fn byte_stream_split_to_plain(data: &[u8], elem_size: usize) -> ParquetResult<Vec<u8>> {
+    if elem_size == 0 || !data.len().is_multiple_of(elem_size) {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "BYTE_STREAM_SPLIT page length {} is not a multiple of element size {}",
+            data.len(),
+            elem_size
+        ));
+    }
+    let n = data.len() / elem_size;
+    let mut out = vec![0u8; data.len()];
+    for k in 0..elem_size {
+        let stream = &data[k * n..(k + 1) * n];
+        for (j, &b) in stream.iter().enumerate() {
+            out[j * elem_size + k] = b;
+        }
+    }
+    Ok(out)
+}
+
 fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -1409,6 +1435,17 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 page,
                 mode,
                 &mut PlainPrimitiveDecoder::<f64>::new(values_buffer, bufs, f64::NAN),
+            )?;
+            Ok(true)
+        }
+        (Encoding::ByteStreamSplit, _, ColumnTypeTag::Double) => {
+            clear_aux_buffers(bufs);
+
+            let reconstructed = byte_stream_split_to_plain(values_buffer, size_of::<f64>())?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<f64>::new(&reconstructed, bufs, f64::NAN),
             )?;
             Ok(true)
         }
@@ -1490,6 +1527,15 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 page,
                 mode,
                 &mut PlainPrimitiveDecoder::<f32>::new(values_buffer, bufs, f32::NAN),
+            )?;
+            Ok(true)
+        }
+        (Encoding::ByteStreamSplit, _, PhysicalType::Float, ColumnTypeTag::Float) => {
+            let reconstructed = byte_stream_split_to_plain(values_buffer, size_of::<f32>())?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<f32>::new(&reconstructed, bufs, f32::NAN),
             )?;
             Ok(true)
         }
@@ -2638,6 +2684,63 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_decode_byte_stream_split_double_and_float() {
+        // Explicit BYTE_STREAM_SPLIT config: encoding id 5 with the explicit
+        // flag (bit 24) set. Round-trips Double and Float through our own
+        // encoder and decoder, including NaN nulls placed at every other row.
+        const BSS_CONFIG: i32 = 5 | (1 << 24);
+
+        #[cfg(miri)]
+        let (row_count, row_group_size, data_page_size) = (100, 10, 10);
+        #[cfg(not(miri))]
+        let (row_count, row_group_size, data_page_size) = (10000, 1000, 1000);
+        let version = Version::V2;
+
+        let expected_buffs: Vec<(ColumnBuffers, ColumnType)> = vec![
+            (
+                create_col_data_buff::<f64, 8, _>(row_count, f64::NAN.to_le_bytes(), |d: f64| {
+                    d.to_le_bytes()
+                }),
+                ColumnTypeTag::Double.into_type(),
+            ),
+            (
+                create_col_data_buff::<f32, 4, _>(row_count, f32::NAN.to_le_bytes(), |d: f32| {
+                    d.to_le_bytes()
+                }),
+                ColumnTypeTag::Float.into_type(),
+            ),
+        ];
+
+        let columns = vec![
+            create_fix_column_with_config(
+                0,
+                row_count,
+                "double_col",
+                expected_buffs[0].0.data_vec.as_ref(),
+                ColumnTypeTag::Double.into_type(),
+                BSS_CONFIG,
+            ),
+            create_fix_column_with_config(
+                1,
+                row_count,
+                "float_col",
+                expected_buffs[1].0.data_vec.as_ref(),
+                ColumnTypeTag::Float.into_type(),
+                BSS_CONFIG,
+            ),
+        ];
+
+        assert_columns(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            columns,
+            &expected_buffs,
+        );
+    }
+
     fn assert_columns(
         row_count: usize,
         row_group_size: usize,
@@ -3307,6 +3410,33 @@ mod tests {
             false,
             false,
             0,
+        )
+        .unwrap()
+    }
+
+    fn create_fix_column_with_config(
+        id: i32,
+        row_count: usize,
+        name: &'static str,
+        primary_data: &[u8],
+        col_type: ColumnType,
+        parquet_encoding_config: i32,
+    ) -> Column {
+        Column::from_raw_data(
+            id,
+            name,
+            col_type.code(),
+            0,
+            row_count,
+            primary_data.as_ptr(),
+            primary_data.len(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            parquet_encoding_config,
         )
         .unwrap()
     }
