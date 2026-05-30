@@ -167,79 +167,59 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("CREATE TABLE t (x DOUBLE, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (1, 'A', 1_000_000), (2, 'A', 2_000_000), (3, 'B', 3_000_000)");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT max(avg(x) OVER ()) - min(avg(x) OVER ()) FROM t GROUP BY category",
-                    7,
-                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
-            );
+            assertQuery("SELECT max(avg(x) OVER ()) - min(avg(x) OVER ()) FROM t GROUP BY category")
+                    .noLeakCheck()
+                    .fails(7, "Aggregate over window function cannot be combined with other terms. Use a sub-query.");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT max(avg(x) OVER ()) + 1 FROM t GROUP BY category",
-                    7,
-                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
-            );
+            assertQuery("SELECT max(avg(x) OVER ()) + 1 FROM t GROUP BY category")
+                    .noLeakCheck()
+                    .fails(7, "Aggregate over window function cannot be combined with other terms. Use a sub-query.");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT max(avg(x) OVER ()) + sum(x) FROM t GROUP BY category",
-                    7,
-                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
-            );
+            assertQuery("SELECT max(avg(x) OVER ()) + sum(x) FROM t GROUP BY category")
+                    .noLeakCheck()
+                    .fails(7, "Aggregate over window function cannot be combined with other terms. Use a sub-query.");
 
             // Implicit GROUP BY: sibling aggregates trigger group-by-mode and the guard fires.
-            assertExceptionNoLeakCheck(
-                    "SELECT max(avg(x) OVER ()) - min(avg(x) OVER ()) FROM t",
-                    7,
-                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
-            );
+            assertQuery("SELECT max(avg(x) OVER ()) - min(avg(x) OVER ()) FROM t")
+                    .noLeakCheck()
+                    .fails(7, "Aggregate over window function cannot be combined with other terms. Use a sub-query.");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT category, CASE WHEN category='A' THEN max(avg(x) OVER ()) ELSE 0 END FROM t GROUP BY category",
-                    45,
-                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
-            );
+            assertQuery("SELECT category, CASE WHEN category='A' THEN max(avg(x) OVER ()) ELSE 0 END FROM t GROUP BY category")
+                    .noLeakCheck()
+                    .fails(45, "Aggregate over window function cannot be combined with other terms. Use a sub-query.");
 
             // SAMPLE BY: implicit grouping via the SAMPLE BY clause; the guard fires on aggregate-over-window in expression.
-            assertExceptionNoLeakCheck(
-                    "SELECT ts, max(avg(x) OVER ()) + 1 FROM t SAMPLE BY 1h",
-                    11,
-                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
-            );
+            assertQuery("SELECT ts, max(avg(x) OVER ()) + 1 FROM t SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .fails(11, "Aggregate over window function cannot be combined with other terms. Use a sub-query.");
 
             // Bare aggregate-of-window at the column root must still compile.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT category, max(avg(x) OVER ()) FROM t GROUP BY category ORDER BY category")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             category\tmax
                             A\t2.0
                             B\t2.0
-                            """,
-                    "SELECT category, max(avg(x) OVER ()) FROM t GROUP BY category ORDER BY category",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT max(avg(x) OVER ()), min(avg(x) OVER ()) FROM t GROUP BY category ORDER BY category")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             max\tmin
                             2.0\t2.0
                             2.0\t2.0
-                            """,
-                    "SELECT max(avg(x) OVER ()), min(avg(x) OVER ()) FROM t GROUP BY category ORDER BY category",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT max(x) + sum(x) - max(x) AS sum FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum
                             6.0
-                            """,
-                    "SELECT max(x) + sum(x) - max(x) AS sum FROM t",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -256,25 +236,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ('2024-01-03', 90.0)
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tp\tcase
-                            2024-01-01T00:00:00.000000Z\t100.0\tnull
-                            2024-01-02T00:00:00.000000Z\t110.0\t110.0
-                            2024-01-03T00:00:00.000000Z\t90.0\t-90.0
-                            """,
-                    """
+            assertQuery("""
                             SELECT ts, price AS p,
                                 CASE
                                     WHEN price > lag(price) OVER (ORDER BY ts) THEN p
                                     WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
                                 END
                             FROM trades
-                            """,
-                    "ts",
-                    false,
-                    true
-            );
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tp\tcase
+                            2024-01-01T00:00:00.000000Z\t100.0\tnull
+                            2024-01-02T00:00:00.000000Z\t110.0\t110.0
+                            2024-01-03T00:00:00.000000Z\t90.0\t-90.0
+                            """);
         });
     }
 
@@ -293,25 +272,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             // Both price and p should be usable in the CASE branches
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tp\tcase
-                            2024-01-01T00:00:00.000000Z\t100.0\tnull
-                            2024-01-02T00:00:00.000000Z\t110.0\t110.0
-                            2024-01-03T00:00:00.000000Z\t90.0\t-90.0
-                            """,
-                    """
+            assertQuery("""
                             SELECT ts, price AS p,
                                 CASE
                                     WHEN price > lag(price) OVER (ORDER BY ts) THEN price
                                     WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
                                 END
                             FROM trades
-                            """,
-                    "ts",
-                    false,
-                    true
-            );
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tp\tcase
+                            2024-01-01T00:00:00.000000Z\t100.0\tnull
+                            2024-01-02T00:00:00.000000Z\t110.0\t110.0
+                            2024-01-03T00:00:00.000000Z\t90.0\t-90.0
+                            """);
         });
     }
 
@@ -330,8 +308,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(6, 4, 1.0, 2.0), (7, 4, 3.0, 6.0)");       // partition 4: two valid pairs
 
             // covar_pop: all-NULL → NULL, no valid pair → NULL, single pair → 0.0, two pairs → finite
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, covar_pop(y, x) over (partition by i) cp from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tcp
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -340,16 +321,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t3\t0.0
                             1970-01-01T00:00:00.000006Z\t4\t2.0
                             1970-01-01T00:00:00.000007Z\t4\t2.0
-                            """),
-                    "select ts, i, covar_pop(y, x) over (partition by i) cp from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
 
             // covar_samp: single pair → NULL (n-1 = 0), two pairs → finite
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, covar_samp(y, x) over (partition by i) cs from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tcs
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -358,16 +337,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t3\tnull
                             1970-01-01T00:00:00.000006Z\t4\t4.0
                             1970-01-01T00:00:00.000007Z\t4\t4.0
-                            """),
-                    "select ts, i, covar_samp(y, x) over (partition by i) cs from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
 
             // corr: single pair → NULL, two pairs → 1.0 (perfect linear)
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, corr(y, x) over (partition by i) cr from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tcr
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -376,12 +353,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t3\tnull
                             1970-01-01T00:00:00.000006Z\t4\t1.0
                             1970-01-01T00:00:00.000007Z\t4\t1.0
-                            """),
-                    "select ts, i, corr(y, x) over (partition by i) cr from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -400,33 +372,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000000Z\t2\t1.5\t4\t4\t4\t4\t2\t1
                     """, timestampType.getTypeName());
 
-            assertQueryNoLeakCheck(
-                    noDtsResult,
-                    "SELECT T1.ts, T1.val, avg(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
+            assertQuery("SELECT T1.ts, T1.val, avg(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
                             "count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
                             "count(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts), count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
                             "max(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
                             "min(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts) " +
                             "FROM nodts_tab AS T1 " +
-                            "CROSS JOIN nodts_tab AS T2",
-                    null,
-                    true,
-                    true
-            );
+                            "CROSS JOIN nodts_tab AS T2")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(noDtsResult);
 
-            assertQueryNoLeakCheck(
-                    noDtsResult,
-                    "SELECT T1.ts, T1.val, avg(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts desc), " +
+            assertQuery("SELECT T1.ts, T1.val, avg(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts desc), " +
                             "count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
                             "count(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts), count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
                             "max(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts desc), " +
                             "min(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts desc) " +
                             "FROM nodts_tab AS T1 " +
-                            "CROSS JOIN nodts_tab AS T2",
-                    null,
-                    true,
-                    true
-            );
+                            "CROSS JOIN nodts_tab AS T2")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(noDtsResult);
         });
     }
 
@@ -439,42 +405,40 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (0, 2)");
             execute("insert into tab values (0, 2)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("SELECT ts, val, avg(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
+                            "count(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
+                            "max(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
+                            "min(val) OVER (PARTITION BY 1=1 ORDER BY ts) " +
+                            "FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg\tcount\tmax\tmin
                             1970-01-01T00:00:00.000000Z\t1\t1.0\t1\t1\t1
                             1970-01-01T00:00:00.000000Z\t1\t1.0\t2\t1\t1
                             1970-01-01T00:00:00.000000Z\t2\t1.3333333333333333\t3\t2\t1
                             1970-01-01T00:00:00.000000Z\t2\t1.5\t4\t2\t1
-                            """, timestampType.getTypeName()),
-                    "SELECT ts, val, avg(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
-                            "count(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
-                            "max(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
-                            "min(val) OVER (PARTITION BY 1=1 ORDER BY ts) " +
-                            "FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """, timestampType.getTypeName()));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("SELECT ts, val, avg(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
+                            "count(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
+                            "max(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
+                            "min(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC) " +
+                            "FROM tab " +
+                            "ORDER BY ts DESC")
+                    .timestamp("ts###desc")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg\tcount\tmax\tmin
                             1970-01-01T00:00:00.000000Z\t2\t2.0\t1\t2\t2
                             1970-01-01T00:00:00.000000Z\t2\t2.0\t2\t2\t2
                             1970-01-01T00:00:00.000000Z\t1\t1.6666666666666667\t3\t2\t1
                             1970-01-01T00:00:00.000000Z\t1\t1.5\t4\t2\t1
-                            """, timestampType.getTypeName()),
-                    "SELECT ts, val, avg(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
-                            "count(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
-                            "max(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
-                            "min(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC) " +
-                            "FROM tab " +
-                            "ORDER BY ts DESC",
-                    "ts###desc",
-                    false,
-                    true
-            );
+                            """, timestampType.getTypeName()));
         });
     }
 
@@ -493,25 +457,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ('2024-01-03', 90.0)
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tcase
-                            2024-01-01T00:00:00.000000Z\tnull
-                            2024-01-02T00:00:00.000000Z\t110.0
-                            2024-01-03T00:00:00.000000Z\t-90.0
-                            """,
-                    """
+            assertQuery("""
                             SELECT ts,
                                 CASE
                                     WHEN price > lag(price) OVER (ORDER BY ts) THEN price
                                     WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
                                 END
                             FROM trades
-                            """,
-                    "ts",
-                    false,
-                    true
-            );
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tcase
+                            2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-02T00:00:00.000000Z\t110.0
+                            2024-01-03T00:00:00.000000Z\t-90.0
+                            """);
         });
     }
 
@@ -521,18 +484,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0, 2.0), (2, null, 3.0), (3, 4.0, 5.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, corr(y, x) over (order by ts rows between current row and current row) cr from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tcr
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\tnull
-                            """),
-                    "select ts, corr(y, x) over (order by ts rows between current row and current row) cr from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -592,12 +554,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select corr(y, x) over (order by ts rows between 1 following and 2 following) from tab",
-                    -1,
-                    "frame start supports UNBOUNDED PRECEDING",
-                    sqlExecutionContext
-            );
+            assertQuery("select corr(y, x) over (order by ts rows between 1 following and 2 following) from tab")
+                    .noLeakCheck()
+                    .failsWith("frame start supports UNBOUNDED PRECEDING");
         });
     }
 
@@ -606,12 +565,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select corr(y, x) over (order by ts groups between 1 preceding and current row) from tab",
-                    -1,
-                    "function not implemented for given window parameters",
-                    sqlExecutionContext
-            );
+            assertQuery("select corr(y, x) over (order by ts groups between 1 preceding and current row) from tab")
+                    .noLeakCheck()
+                    .failsWith("function not implemented for given window parameters");
         });
     }
 
@@ -620,12 +576,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, x double, y double)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select corr(y, x) over (order by ts range between 1 microsecond preceding and current row) from nodts",
-                    -1,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select corr(y, x) over (order by ts range between 1 microsecond preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .failsWith("RANGE is supported only for queries ordered by designated timestamp");
         });
     }
 
@@ -638,20 +591,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 5.0, 1.0), (2, 1, 5.0, 2.0), (3, 1, 5.0, 3.0), (4, 2, 1.0, 7.0), (5, 2, 2.0, 8.0)");
 
             // partition 1: x is constant → corr = NULL; partition 2: x varies → corr is finite
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, corr(y, x) over (partition by i) cr from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tcr
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
                             1970-01-01T00:00:00.000003Z\t1\tnull
                             1970-01-01T00:00:00.000004Z\t2\t1.0
                             1970-01-01T00:00:00.000005Z\t2\t1.0
-                            """),
-                    "select ts, i, corr(y, x) over (partition by i) cr from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
 
             // running frame (Welford path)
             assertQuery("select max(case when cr is null and cr_ref is null then 0.0 when cr is null or cr_ref is null then 1.0 else abs(cr - cr_ref) end) max_diff " +
@@ -715,18 +666,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0, 2.0), (2, null, 3.0), (3, 4.0, null)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, covar_pop(y, x) over (order by ts rows between current row and current row) cv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tcv
                             1970-01-01T00:00:00.000001Z\t0.0
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\tnull
-                            """),
-                    "select ts, covar_pop(y, x) over (order by ts rows between current row and current row) cv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -1032,12 +982,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select covar_pop(y, x) over (order by ts rows between 1 following and 2 following) from tab",
-                    -1,
-                    "frame start supports UNBOUNDED PRECEDING",
-                    sqlExecutionContext
-            );
+            assertQuery("select covar_pop(y, x) over (order by ts rows between 1 following and 2 following) from tab")
+                    .noLeakCheck()
+                    .failsWith("frame start supports UNBOUNDED PRECEDING");
         });
     }
 
@@ -1046,12 +993,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select covar_pop(y, x) over (order by ts groups between 1 preceding and current row) from tab",
-                    -1,
-                    "function not implemented for given window parameters",
-                    sqlExecutionContext
-            );
+            assertQuery("select covar_pop(y, x) over (order by ts groups between 1 preceding and current row) from tab")
+                    .noLeakCheck()
+                    .failsWith("function not implemented for given window parameters");
         });
     }
 
@@ -1060,12 +1004,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, x double, y double)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select covar_pop(y, x) over (order by ts range between 1 microsecond preceding and current row) from nodts",
-                    -1,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select covar_pop(y, x) over (order by ts range between 1 microsecond preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .failsWith("RANGE is supported only for queries ordered by designated timestamp");
         });
     }
 
@@ -1075,18 +1016,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.0, 2.0), (2, null, 3.0), (3, 4.0, null)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, covar_samp(y, x) over (order by ts rows between current row and current row) cv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tcv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\tnull
-                            """),
-                    "select ts, covar_samp(y, x) over (order by ts rows between current row and current row) cv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -1264,12 +1204,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select covar_samp(y, x) over (order by ts rows between 1 following and 2 following) from tab",
-                    -1,
-                    "frame start supports UNBOUNDED PRECEDING",
-                    sqlExecutionContext
-            );
+            assertQuery("select covar_samp(y, x) over (order by ts rows between 1 following and 2 following) from tab")
+                    .noLeakCheck()
+                    .failsWith("frame start supports UNBOUNDED PRECEDING");
         });
     }
 
@@ -1278,12 +1215,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select covar_samp(y, x) over (order by ts groups between 1 preceding and current row) from tab",
-                    -1,
-                    "function not implemented for given window parameters",
-                    sqlExecutionContext
-            );
+            assertQuery("select covar_samp(y, x) over (order by ts groups between 1 preceding and current row) from tab")
+                    .noLeakCheck()
+                    .failsWith("function not implemented for given window parameters");
         });
     }
 
@@ -1292,12 +1226,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, x double, y double)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select covar_samp(y, x) over (order by ts range between 1 microsecond preceding and current row) from nodts",
-                    -1,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select covar_samp(y, x) over (order by ts range between 1 microsecond preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .failsWith("RANGE is supported only for queries ordered by designated timestamp");
         });
     }
 
@@ -1428,16 +1359,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
                 String func = FRAME_FUNCTIONS.get(i);
                 for (String column : FRAME_FUNCTIONS_PARAMETER_COLUMN_NAME[i]) {
-                    assertExceptionNoLeakCheck(
-                            "select #FUNCT_NAME over (partition by i rows between 10 following and 20 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            73,
-                            "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only"
-                    );
-                    assertExceptionNoLeakCheck(
-                            "select #FUNCT_NAME over (partition by i rows between current row and 10 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            89,
-                            "frame end supports _number_ PRECEDING and CURRENT ROW only"
-                    );
+                    assertQuery("select #FUNCT_NAME over (partition by i rows between 10 following and 20 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(73, "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
+                    assertQuery("select #FUNCT_NAME over (partition by i rows between current row and 10 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(89, "frame end supports _number_ PRECEDING and CURRENT ROW only");
                 }
             }
         });
@@ -1452,16 +1379,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //trigger removal of rows below lo boundary AND resize of buffer
             execute("insert into tab select (100000+x)::timestamp, x/4, case when x % 30 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(90000)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_value_ignore_nulls\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.189996Z\t22499\t89996\t89995.5\t179991.0\t89995\t89996\t89995\t89996\t2\t2\t2\t2\t2\t89996\t89995
-                            1970-01-01T00:00:00.189997Z\t22499\t89997\t89996.5\t179993.0\t89996\t89997\t89996\t89997\t2\t2\t2\t2\t2\t89997\t89996
-                            1970-01-01T00:00:00.189998Z\t22499\t89998\t89997.5\t179995.0\t89997\t89998\t89997\t89998\t2\t2\t2\t2\t2\t89998\t89997
-                            1970-01-01T00:00:00.189999Z\t22499\t89999\t89998.5\t179997.0\t89998\t89999\t89998\t89999\t2\t2\t2\t2\t2\t89999\t89998
-                            1970-01-01T00:00:00.190000Z\t22500\tnull\t89999.0\t89999.0\t89999\tnull\t89999\t89999\t2\t1\t2\t2\t2\t89999\t89999
-                            """),
-                    "select * from (" +
+            assertQuery("select * from (" +
                             "select ts, i, j, " +
                             "avg(j) over (order by ts range between 1 microsecond preceding and current row), " +
                             "sum(j) over (order by ts range between 1 microsecond preceding and current row), " +
@@ -1477,23 +1395,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (order by ts range between 1 microsecond preceding and current row), " +
                             "min(j) over (order by ts range between 1 microsecond preceding and current row) " +
                             "from tab) " +
-                            " limit -5",
-                    "ts",
-                    false,
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            " limit -5")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_value_ignore_nulls\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.189996Z\t22499\t89996\t89495.68769389865\t8.654233E7\t88996\t89995\t88996\t89995\t1000\t967\t1000\t1000\t1000\t89995\t88996
-                            1970-01-01T00:00:00.189997Z\t22499\t89997\t89496.72182006204\t8.654333E7\t88997\t89996\t88997\t89996\t1000\t967\t1000\t1000\t1000\t89996\t88997
-                            1970-01-01T00:00:00.189998Z\t22499\t89998\t89497.75594622544\t8.654433E7\t88998\t89997\t88998\t89997\t1000\t967\t1000\t1000\t1000\t89997\t88998
-                            1970-01-01T00:00:00.189999Z\t22499\t89999\t89498.79007238883\t8.654533E7\t88999\t89998\t88999\t89998\t1000\t967\t1000\t1000\t1000\t89998\t88999
-                            1970-01-01T00:00:00.190000Z\t22500\tnull\t89499.82419855222\t8.654633E7\t89000\t89999\t89000\t89999\t1000\t967\t1000\t1000\t1000\t89999\t89000
-                            """),
-                    "select * from (" +
+                            1970-01-01T00:00:00.189996Z\t22499\t89996\t89995.5\t179991.0\t89995\t89996\t89995\t89996\t2\t2\t2\t2\t2\t89996\t89995
+                            1970-01-01T00:00:00.189997Z\t22499\t89997\t89996.5\t179993.0\t89996\t89997\t89996\t89997\t2\t2\t2\t2\t2\t89997\t89996
+                            1970-01-01T00:00:00.189998Z\t22499\t89998\t89997.5\t179995.0\t89997\t89998\t89997\t89998\t2\t2\t2\t2\t2\t89998\t89997
+                            1970-01-01T00:00:00.189999Z\t22499\t89999\t89998.5\t179997.0\t89998\t89999\t89998\t89999\t2\t2\t2\t2\t2\t89999\t89998
+                            1970-01-01T00:00:00.190000Z\t22500\tnull\t89999.0\t89999.0\t89999\tnull\t89999\t89999\t2\t1\t2\t2\t2\t89999\t89999
+                            """));
+
+            assertQuery("select * from (" +
                             "select ts, i, j, " +
                             "avg(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
                             "sum(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
@@ -1509,23 +1425,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
                             "min(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding) " +
                             "from tab) " +
-                            " limit -5",
-                    "ts",
-                    false,
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            " limit -5")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_value_ignore_nulls\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.189996Z\t22499\t89996\t20000.250009374882\t5.33346667E8\t1\t40000\t1\t40000\t40000\t26667\t40000\t40000\t40000\t40000\t1
-                            1970-01-01T00:00:00.189997Z\t22499\t89997\t20000.250009374882\t5.33346667E8\t1\t40000\t1\t40000\t40000\t26667\t40000\t40000\t40000\t40000\t1
-                            1970-01-01T00:00:00.189998Z\t22499\t89998\t20000.250009374882\t5.33346667E8\t1\t40000\t1\t40000\t40000\t26667\t40000\t40000\t40000\t40000\t1
-                            1970-01-01T00:00:00.189999Z\t22499\t89999\t20000.250009374882\t5.33346667E8\t1\t40000\t1\t40000\t40000\t26667\t40000\t40000\t40000\t40000\t1
-                            1970-01-01T00:00:00.190000Z\t22500\tnull\t20000.250009374882\t5.33346667E8\t1\t40000\t1\t40000\t40000\t26667\t40000\t40000\t40000\t40000\t1
-                            """),
-                    "select * from (" +
+                            1970-01-01T00:00:00.189996Z\t22499\t89996\t89495.68769389865\t8.654233E7\t88996\t89995\t88996\t89995\t1000\t967\t1000\t1000\t1000\t89995\t88996
+                            1970-01-01T00:00:00.189997Z\t22499\t89997\t89496.72182006204\t8.654333E7\t88997\t89996\t88997\t89996\t1000\t967\t1000\t1000\t1000\t89996\t88997
+                            1970-01-01T00:00:00.189998Z\t22499\t89998\t89497.75594622544\t8.654433E7\t88998\t89997\t88998\t89997\t1000\t967\t1000\t1000\t1000\t89997\t88998
+                            1970-01-01T00:00:00.189999Z\t22499\t89999\t89498.79007238883\t8.654533E7\t88999\t89998\t88999\t89998\t1000\t967\t1000\t1000\t1000\t89998\t88999
+                            1970-01-01T00:00:00.190000Z\t22500\tnull\t89499.82419855222\t8.654633E7\t89000\t89999\t89000\t89999\t1000\t967\t1000\t1000\t1000\t89999\t89000
+                            """));
+
+            assertQuery("select * from (" +
                             "select ts, i, j, " +
                             "avg(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
                             "sum(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
@@ -1541,27 +1455,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
                             "min(j) over (order by ts range between 1 day preceding and 100 millisecond preceding) " +
                             "from tab) " +
-                            " limit -5",
-                    "ts",
-                    false,
-                    true,
-                    false
-            );
+                            " limit -5")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_value_ignore_nulls\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:00.189996Z\t22499\t89996\t20000.250009374882\t5.33346667E8\t1\t40000\t1\t40000\t40000\t26667\t40000\t40000\t40000\t40000\t1
+                            1970-01-01T00:00:00.189997Z\t22499\t89997\t20000.250009374882\t5.33346667E8\t1\t40000\t1\t40000\t40000\t26667\t40000\t40000\t40000\t40000\t1
+                            1970-01-01T00:00:00.189998Z\t22499\t89998\t20000.250009374882\t5.33346667E8\t1\t40000\t1\t40000\t40000\t26667\t40000\t40000\t40000\t40000\t1
+                            1970-01-01T00:00:00.189999Z\t22499\t89999\t20000.250009374882\t5.33346667E8\t1\t40000\t1\t40000\t40000\t26667\t40000\t40000\t40000\t40000\t1
+                            1970-01-01T00:00:00.190000Z\t22500\tnull\t20000.250009374882\t5.33346667E8\t1\t40000\t1\t40000\t40000\t26667\t40000\t40000\t40000\t40000\t1
+                            """));
 
             execute("truncate table tab");
             // trigger buffer resize
             execute("insert into tab select (100000+x)::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(90000)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_value_ignore_nulls\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.189996Z\t22499\t89996\t89496.0\t5.9783328E7\t88996\t89996\t88996\t89996\t1001\t668\t1001\t1001\t1001\t89996\t88996
-                            1970-01-01T00:00:00.189997Z\t22499\tnull\t89496.74962518741\t5.9694332E7\t88997\tnull\t88997\t89996\t1001\t667\t1001\t1001\t1001\t89996\t88997
-                            1970-01-01T00:00:00.189998Z\t22499\t89998\t89498.25037481259\t5.9695333E7\tnull\t89998\t88999\t89998\t1001\t667\t1001\t1001\t1001\t89998\t88999
-                            1970-01-01T00:00:00.189999Z\t22499\t89999\t89499.0\t5.9785332E7\t88999\t89999\t88999\t89999\t1001\t668\t1001\t1001\t1001\t89999\t88999
-                            1970-01-01T00:00:00.190000Z\t22500\tnull\t89499.74962518741\t5.9696333E7\t89000\tnull\t89000\t89999\t1001\t667\t1001\t1001\t1001\t89999\t89000
-                            """),
-                    "select * from (" +
+            assertQuery("select * from (" +
                             "select ts, i, j, " +
                             "avg(j) over (order by ts range between 1 millisecond preceding and current row), " +
                             "sum(j) over (order by ts range between 1 millisecond preceding and current row), " +
@@ -1577,12 +1489,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (order by ts range between 1 millisecond preceding and current row), " +
                             "min(j) over (order by ts range between 1 millisecond preceding and current row) " +
                             "from tab) " +
-                            " limit -5",
-                    "ts",
-                    false,
-                    true,
-                    false
-            );
+                            " limit -5")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tfirst_value_ignore_nulls\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:00.189996Z\t22499\t89996\t89496.0\t5.9783328E7\t88996\t89996\t88996\t89996\t1001\t668\t1001\t1001\t1001\t89996\t88996
+                            1970-01-01T00:00:00.189997Z\t22499\tnull\t89496.74962518741\t5.9694332E7\t88997\tnull\t88997\t89996\t1001\t667\t1001\t1001\t1001\t89996\t88997
+                            1970-01-01T00:00:00.189998Z\t22499\t89998\t89498.25037481259\t5.9695333E7\tnull\t89998\t88999\t89998\t1001\t667\t1001\t1001\t1001\t89998\t88999
+                            1970-01-01T00:00:00.189999Z\t22499\t89999\t89499.0\t5.9785332E7\t88999\t89999\t88999\t89999\t1001\t668\t1001\t1001\t1001\t89999\t88999
+                            1970-01-01T00:00:00.190000Z\t22500\tnull\t89499.74962518741\t5.9696333E7\t89000\tnull\t89000\t89999\t1001\t667\t1001\t1001\t1001\t89999\t89000
+                            """));
         });
     }
 
@@ -1630,9 +1549,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     ts\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
                     1970-01-01T00:00:00.460000Z\t419999.5\t2.2400253333E10\t380000\t380000\tnull\t459999\t80001\t53334\t80001\t80001\t80001\t459999\t380000
                     """);
-            assertQueryNoLeakCheck(
-                    expected2,
-                    "select * from (" +
+            assertQuery("select * from (" +
                             "select * from " +
                             "(select ts, " +
                             "avg(j) over (order by ts rows between 80000 preceding and current row), " +
@@ -1649,12 +1566,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (order by ts rows between 80000 preceding and current row), " +
                             "min(j) over (order by ts rows between 80000 preceding and current row) " +
                             "from tab) " +
-                            "limit -1) ",
-                    "ts",
-                    false,
-                    true,
-                    false
-            );
+                            "limit -1) ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected2);
         });
     }
 
@@ -1689,9 +1606,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:01.100000Z\t49980.066958378644\t3.815028491E9\t2073\t2073\t46392\t46392\t80001\t76331\t80001\t80001\t80001\t100000\t3
                     """);
 
-            assertQueryNoLeakCheck(
-                    expected2,
-                    "select * from (" +
+            assertQuery("select * from (" +
                             "select * from (select ts, " +
                             "avg(j) over (order by ts rows between 80000 preceding and current row), " +
                             "sum(j) over (order by ts rows between 80000 preceding and current row), " +
@@ -1706,12 +1621,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by ts rows between 80000 preceding and current row), " +
                             "max(j) over (order by ts rows between 80000 preceding and current row), " +
                             "min(j) over (order by ts rows between 80000 preceding and current row) " +
-                            "from tab) limit -1)",
-                    "ts",
-                    false,
-                    true,
-                    false
-            );
+                            "from tab) limit -1)")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected2);
         });
     }
 
@@ -1757,9 +1672,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.459998Z\t2\t419998.0\t5.600253332E9\t379998\t379998\t459998\t459998\t20001\t13334\t20001\t20001\t20001\t459998\t379998
                     1970-01-01T00:00:00.459999Z\t3\t420001.0\t5.600293334E9\tnull\t380003\t459999\t459999\t20001\t13334\t20001\t20001\t20001\t459999\t380003
                     """);
-            assertQueryNoLeakCheck(
-                    expected2,
-                    "select * from " +
+            assertQuery("select * from " +
                             "(select * from (select ts, i, " +
                             "avg(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
                             "sum(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
@@ -1777,12 +1690,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab" +
                             ") " +
                             "limit -4) " +
-                            "order by i",
-                    null,
-                    true,
-                    true,
-                    false
-            );
+                            "order by i")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected2);
         });
     }
 
@@ -1867,9 +1778,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:01.099988Z\t20\t505.3122460824144\t1741306.0\t37\t37\t15\t15\t3767\t3446\t3767\t3443\t3767\t1000\t1
                     """);
 
-            assertQueryNoLeakCheck(
-                    expected2,
-                    "select last(ts) as ts, " +
+            assertQuery("select last(ts) as ts, " +
                             "i, " +
                             "last(avg) as avg, " +
                             "last(sum) as sum, " +
@@ -1902,12 +1811,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "    min(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) min " +
                             "    from tab ) " +
                             "  limit -100 )" +
-                            "order by i",
-                    null,
-                    true,
-                    true,
-                    false
-            );
+                            "order by i")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected2);
         });
     }
 
@@ -1948,9 +1855,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.459998Z\t2\t299998.0\t1.6000093332E10\t139998\t139998\t459998\t459998\t80001\t53334\t80001\t80001\t80001\t459998\t139998
                     1970-01-01T00:00:00.459999Z\t3\t300001.0\t1.6000253334E10\tnull\t140003\t459999\t459999\t80001\t53334\t80001\t80001\t80001\t459999\t140003
                     """);
-            assertQueryNoLeakCheck(
-                    expected2,
-                    "select * from (" +
+            assertQuery("select * from (" +
                             "select * from (select ts, i, " +
                             "avg(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
                             "sum(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
@@ -1966,12 +1871,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
                             "min(j) over (partition by i order by ts rows between 80000 preceding and current row) " +
                             "from tab) limit -4) " +
-                            "order by i",
-                    null,
-                    true,
-                    true,
-                    false
-            );
+                            "order by i")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected2);
         });
     }
 
@@ -1983,21 +1886,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "'k' || (x%5) ::symbol, x*2::double, 'k' || x  from long_sequence(10)");
 
             // tests when frame doesn't end on current row and time gaps between values are bigger than hi bound
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:01.000000Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:02.000000Z\t0\t2\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1970-01-01T00:00:03.000000Z\t0\tnull\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1
-                            1970-01-01T00:00:04.000000Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:05.000000Z\t1\t0\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
-                            1970-01-01T00:00:06.000000Z\t1\tnull\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
-                            1970-01-01T00:00:07.000000Z\t1\t2\t2.0\t4.0\t4\t4\tnull\t0\t3\t2\t3\t3\t3\t4\t0
-                            1970-01-01T00:00:08.000000Z\t2\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:09.000000Z\t2\tnull\t3.0\t3.0\t3\t3\t3\t3\t1\t1\t1\t1\t1\t3\t3
-                            1970-01-01T00:00:10.000000Z\t2\t0\t3.0\t3.0\t3\t3\tnull\t3\t2\t1\t2\t2\t2\t3\t3
-                            """),
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
                             "sum(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
                             "first_value(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
@@ -2011,27 +1900,26 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
                             "max(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
                             "min(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) " +
-                            "from tab_big",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab_big")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:10.000000Z\t2\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:09.000000Z\t2\tnull\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
-                            1970-01-01T00:00:08.000000Z\t2\t3\t0.0\t0.0\t0\t0\tnull\t0\t2\t1\t2\t2\t2\t0\t0
-                            1970-01-01T00:00:07.000000Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:06.000000Z\t1\tnull\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            1970-01-01T00:00:05.000000Z\t1\t0\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2
-                            1970-01-01T00:00:04.000000Z\t1\t4\t1.0\t2.0\t2\t2\t0\t0\t3\t2\t3\t3\t3\t2\t0
-                            1970-01-01T00:00:03.000000Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:02.000000Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:01.000000Z\t0\t1\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:01.000000Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:02.000000Z\t0\t2\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                            1970-01-01T00:00:03.000000Z\t0\tnull\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1
+                            1970-01-01T00:00:04.000000Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:05.000000Z\t1\t0\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
+                            1970-01-01T00:00:06.000000Z\t1\tnull\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
+                            1970-01-01T00:00:07.000000Z\t1\t2\t2.0\t4.0\t4\t4\tnull\t0\t3\t2\t3\t3\t3\t4\t0
+                            1970-01-01T00:00:08.000000Z\t2\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:09.000000Z\t2\tnull\t3.0\t3.0\t3\t3\t3\t3\t1\t1\t1\t1\t1\t3\t3
+                            1970-01-01T00:00:10.000000Z\t2\t0\t3.0\t3.0\t3\t3\tnull\t3\t2\t1\t2\t2\t2\t3\t3
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "sum(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
@@ -2045,27 +1933,26 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "max(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "min(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) " +
-                            "from tab_big order by ts desc",
-                    "ts###DESC",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab_big order by ts desc")
+                    .timestampDesc(""ts"")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:01.000000Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:02.000000Z\t0\t2\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1970-01-01T00:00:03.000000Z\t0\tnull\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1
-                            1970-01-01T00:00:04.000000Z\t1\t4\t1.5\t3.0\t1\t1\tnull\t2\t3\t2\t3\t3\t3\t2\t1
-                            1970-01-01T00:00:05.000000Z\t1\t0\t2.3333333333333335\t7.0\t1\t1\t4\t4\t4\t3\t4\t4\t4\t4\t1
-                            1970-01-01T00:00:06.000000Z\t1\tnull\t1.75\t7.0\t1\t1\t0\t0\t5\t4\t5\t5\t5\t4\t0
-                            1970-01-01T00:00:07.000000Z\t1\t2\t1.75\t7.0\t1\t1\tnull\t0\t6\t4\t6\t6\t6\t4\t0
-                            1970-01-01T00:00:08.000000Z\t2\t3\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
-                            1970-01-01T00:00:09.000000Z\t2\tnull\t2.0\t12.0\t1\t1\t3\t3\t8\t6\t8\t8\t8\t4\t0
-                            1970-01-01T00:00:10.000000Z\t2\t0\t2.0\t12.0\t1\t1\tnull\t3\t9\t6\t9\t9\t9\t4\t0
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:10.000000Z\t2\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:09.000000Z\t2\tnull\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
+                            1970-01-01T00:00:08.000000Z\t2\t3\t0.0\t0.0\t0\t0\tnull\t0\t2\t1\t2\t2\t2\t0\t0
+                            1970-01-01T00:00:07.000000Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:06.000000Z\t1\tnull\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
+                            1970-01-01T00:00:05.000000Z\t1\t0\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2
+                            1970-01-01T00:00:04.000000Z\t1\t4\t1.0\t2.0\t2\t2\t0\t0\t3\t2\t3\t3\t3\t2\t0
+                            1970-01-01T00:00:03.000000Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:02.000000Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:01.000000Z\t0\t1\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (order by ts range between unbounded preceding and 1 preceding), " +
                             "sum(j) over (order by ts range between unbounded preceding and 1 preceding), " +
                             "first_value(j) over (order by ts range between unbounded preceding and 1 preceding), " +
@@ -2079,27 +1966,26 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by ts range between unbounded preceding and 1 preceding), " +
                             "max(j) over (order by ts range between unbounded preceding and 1 preceding), " +
                             "min(j) over (order by ts range between unbounded preceding and 1 preceding) " +
-                            "from tab_big",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab_big")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:10.000000Z\t2\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:09.000000Z\t2\tnull\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
-                            1970-01-01T00:00:08.000000Z\t2\t3\t0.0\t0.0\t0\t0\tnull\t0\t2\t1\t2\t2\t2\t0\t0
-                            1970-01-01T00:00:07.000000Z\t1\t2\t1.5\t3.0\t0\t0\t3\t3\t3\t2\t3\t3\t3\t3\t0
-                            1970-01-01T00:00:06.000000Z\t1\tnull\t1.6666666666666667\t5.0\t0\t0\t2\t2\t4\t3\t4\t4\t4\t3\t0
-                            1970-01-01T00:00:05.000000Z\t1\t0\t1.6666666666666667\t5.0\t0\t0\tnull\t2\t5\t3\t5\t5\t5\t3\t0
-                            1970-01-01T00:00:04.000000Z\t1\t4\t1.25\t5.0\t0\t0\t0\t0\t6\t4\t6\t6\t6\t3\t0
-                            1970-01-01T00:00:03.000000Z\t0\tnull\t1.8\t9.0\t0\t0\t4\t4\t7\t5\t7\t7\t7\t4\t0
-                            1970-01-01T00:00:02.000000Z\t0\t2\t1.8\t9.0\t0\t0\tnull\t4\t8\t5\t8\t8\t8\t4\t0
-                            1970-01-01T00:00:01.000000Z\t0\t1\t1.8333333333333333\t11.0\t0\t0\t2\t2\t9\t6\t9\t9\t9\t4\t0
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:01.000000Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:02.000000Z\t0\t2\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                            1970-01-01T00:00:03.000000Z\t0\tnull\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1
+                            1970-01-01T00:00:04.000000Z\t1\t4\t1.5\t3.0\t1\t1\tnull\t2\t3\t2\t3\t3\t3\t2\t1
+                            1970-01-01T00:00:05.000000Z\t1\t0\t2.3333333333333335\t7.0\t1\t1\t4\t4\t4\t3\t4\t4\t4\t4\t1
+                            1970-01-01T00:00:06.000000Z\t1\tnull\t1.75\t7.0\t1\t1\t0\t0\t5\t4\t5\t5\t5\t4\t0
+                            1970-01-01T00:00:07.000000Z\t1\t2\t1.75\t7.0\t1\t1\tnull\t0\t6\t4\t6\t6\t6\t4\t0
+                            1970-01-01T00:00:08.000000Z\t2\t3\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
+                            1970-01-01T00:00:09.000000Z\t2\tnull\t2.0\t12.0\t1\t1\t3\t3\t8\t6\t8\t8\t8\t4\t0
+                            1970-01-01T00:00:10.000000Z\t2\t0\t2.0\t12.0\t1\t1\tnull\t3\t9\t6\t9\t9\t9\t4\t0
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
                             "sum(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
                             "first_value(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
@@ -2113,29 +1999,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by ts desc range between unbounded preceding and 1 preceding), " +
                             "max(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
                             "min(j) over (order by ts desc range between unbounded preceding and 1 preceding) " +
-                            "from tab_big order by ts desc",
-                    "ts###DESC",
-                    false,
-                    true
-            );
+                            "from tab_big order by ts desc")
+                    .timestampDesc(""ts"")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:10.000000Z\t2\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:09.000000Z\t2\tnull\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
+                            1970-01-01T00:00:08.000000Z\t2\t3\t0.0\t0.0\t0\t0\tnull\t0\t2\t1\t2\t2\t2\t0\t0
+                            1970-01-01T00:00:07.000000Z\t1\t2\t1.5\t3.0\t0\t0\t3\t3\t3\t2\t3\t3\t3\t3\t0
+                            1970-01-01T00:00:06.000000Z\t1\tnull\t1.6666666666666667\t5.0\t0\t0\t2\t2\t4\t3\t4\t4\t4\t3\t0
+                            1970-01-01T00:00:05.000000Z\t1\t0\t1.6666666666666667\t5.0\t0\t0\tnull\t2\t5\t3\t5\t5\t5\t3\t0
+                            1970-01-01T00:00:04.000000Z\t1\t4\t1.25\t5.0\t0\t0\t0\t0\t6\t4\t6\t6\t6\t3\t0
+                            1970-01-01T00:00:03.000000Z\t0\tnull\t1.8\t9.0\t0\t0\t4\t4\t7\t5\t7\t7\t7\t4\t0
+                            1970-01-01T00:00:02.000000Z\t0\t2\t1.8\t9.0\t0\t0\tnull\t4\t8\t5\t8\t8\t8\t4\t0
+                            1970-01-01T00:00:01.000000Z\t0\t1\t1.8333333333333333\t11.0\t0\t0\t2\t2\t9\t6\t9\t9\t9\t4\t0
+                            """));
 
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, 'k' || (x%5) ::symbol, x::double, " +
                     "'k' || x  from long_sequence(7)");
 
             // tests for between X preceding and [Y preceding | current row]
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
-                            1970-01-01T00:00:00.000002Z\t0\t2\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
-                            1970-01-01T00:00:00.000004Z\t1\t4\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
-                            1970-01-01T00:00:00.000005Z\t1\t0\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
-                            1970-01-01T00:00:00.000007Z\t1\t2\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
-                            """),
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (), " +
                             "sum(j) over (), " +
                             "first_value(j) over (), " +
@@ -2149,24 +2037,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (), " +
                             "max(j) over (), " +
                             "min(j) over () " +
-                            "from tab",
-                    "ts",
-                    true, // query is using cached window factory
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.5\t3.0\t1\t1\tnull\t2\t3\t2\t3\t3\t3\t2\t1
-                            1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1\t1\tnull\t2\t3\t2\t3\t3\t3\t2\t1
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.5\t3.0\t1\t1\tnull\t2\t3\t2\t3\t3\t3\t2\t1
-                            1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t6.0\t4\t4\t2\t2\t4\t3\t4\t4\t4\t4\t0
-                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t6.0\t4\t4\t2\t2\t4\t3\t4\t4\t4\t4\t0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t6.0\t4\t4\t2\t2\t4\t3\t4\t4\t4\t4\t0
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t6.0\t4\t4\t2\t2\t4\t3\t4\t4\t4\t4\t0
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
+                            1970-01-01T00:00:00.000002Z\t0\t2\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
+                            1970-01-01T00:00:00.000004Z\t1\t4\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
+                            1970-01-01T00:00:00.000005Z\t1\t0\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
+                            1970-01-01T00:00:00.000007Z\t1\t2\t1.8\t9.0\t1\t1\t2\t2\t7\t5\t7\t7\t7\t4\t0
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i), " +
                             "sum(j) over (partition by i), " +
                             "first_value(j) over (partition by i), " +
@@ -2180,16 +2066,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i), " +
                             "max(j) over (partition by i), " +
                             "min(j) over (partition by i) " +
-                            "from tab",
-                    "ts",
-                    true,//query is using cached window factory
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.5\t3.0\t1\t1\tnull\t2\t3\t2\t3\t3\t3\t2\t1
+                            1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1\t1\tnull\t2\t3\t2\t3\t3\t3\t2\t1
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.5\t3.0\t1\t1\tnull\t2\t3\t2\t3\t3\t3\t2\t1
+                            1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t6.0\t4\t4\t2\t2\t4\t3\t4\t4\t4\t4\t0
+                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t6.0\t4\t4\t2\t2\t4\t3\t4\t4\t4\t4\t0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t6.0\t4\t4\t2\t2\t4\t3\t4\t4\t4\t4\t0
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t6.0\t4\t4\t2\t2\t4\t3\t4\t4\t4\t4\t0
+                            """));
 
             // separate test for first_value() only to use it with non-caching factory
             // this variant doesn't need to scan whole partition (while sum() or avg() do)
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, j, first_value(j) over (partition by i) " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tfirst_value
                             1970-01-01T00:00:00.000001Z\t0\t1\t1
                             1970-01-01T00:00:00.000002Z\t0\t2\t1
@@ -2198,26 +2098,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t1\t0\t4
                             1970-01-01T00:00:00.000006Z\t1\tnull\t4
                             1970-01-01T00:00:00.000007Z\t1\t2\t4
-                            """),
-                    "select ts, i, j, first_value(j) over (partition by i) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
-                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t0.0\t0.0\t0\t0\tnull\t0\t2\t1\t2\t2\t2\t0\t0
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2
-                            """),
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
                             "sum(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
@@ -2231,24 +2114,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
                             "max(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
                             "min(j) over (partition by i order by ts range between 1 microsecond preceding and current row) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                            1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
+                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t0.0\t0.0\t0\t0\tnull\t0\t2\t1\t2\t2\t2\t0\t0
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
                             "sum(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
                             "first_value(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
@@ -2262,24 +2144,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
                             "max(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
                             "min(j) over (partition by i order by ts rows between 4 preceding and 2 preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
                             1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
                             1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
                             1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
                             1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "sum(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "first_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
@@ -2293,24 +2174,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "max(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "min(j) over (partition by i order by ts rows between 20 preceding and 10 preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
                             1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
                             "sum(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
                             "first_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
@@ -2324,24 +2204,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
                             "max(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
                             "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding) " +
-                            "from tab order by ts desc",
-                    "ts###DESC",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab order by ts desc")
+                    .timestampDesc(""ts"")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t1\t2
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t1\t2
-                            1970-01-01T00:00:00.000005Z\t1\t0\t1.0\t2.0\t2\t2\t0\t0\t3\t2\t3\t3\t3\t1\t0
-                            1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t6.0\t2\t2\t4\t4\t4\t3\t4\t4\t4\t1\t0
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\t0\tnull
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t0\t2
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.5\t3.0\tnull\t2\t1\t1\t3\t2\t3\t3\t3\t0\t1
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
+                            1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
                             "sum(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
@@ -2355,24 +2234,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
                             "max(i) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
                             "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) " +
-                            "from tab order by ts desc",
-                    "ts###DESC",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab order by ts desc")
+                    .timestampDesc(""ts"")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t1\t2
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t1\t2
+                            1970-01-01T00:00:00.000005Z\t1\t0\t1.0\t2.0\t2\t2\t0\t0\t3\t2\t3\t3\t3\t1\t0
+                            1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t6.0\t2\t2\t4\t4\t4\t3\t4\t4\t4\t1\t0
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\t0\tnull
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t0\t2
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.5\t3.0\tnull\t2\t1\t1\t3\t2\t3\t3\t3\t0\t1
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
                             "sum(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
@@ -2387,24 +2265,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
                             "min(j) over (partition by i order by ts desc range between 0 preceding and current row) " +
                             "from tab " +
-                            "order by ts desc",
-                    "ts###DESC",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "order by ts desc")
+                    .timestampDesc(""ts"")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
                             1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
                             "sum(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
@@ -2418,24 +2295,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts asc range between 0 preceding and current row), " +
                             "max(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
                             "min(j) over (partition by i order by ts asc range between 0 preceding and current row) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
                             1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.5\t3.0\t1\t1\tnull\t2\t3\t2\t3\t3\t3\t2\t1
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
                             1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
-                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t4.0\t4\t4\tnull\t0\t3\t2\t3\t3\t3\t4\t0
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t6.0\t4\t4\t2\t2\t4\t3\t4\t4\t4\t4\t0
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
                             "sum(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
                             "first_value(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
@@ -2449,24 +2325,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts asc range between unbounded preceding and current row), " +
                             "max(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
                             "min(j) over (partition by i order by ts asc range between unbounded preceding and current row) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2
-                            1970-01-01T00:00:00.000005Z\t1\t0\t1.0\t2.0\t2\t2\t0\t0\t3\t2\t3\t3\t3\t2\t0
-                            1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t6.0\t2\t2\t4\t4\t4\t3\t4\t4\t4\t4\t0
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.5\t3.0\tnull\t2\t1\t1\t3\t2\t3\t3\t3\t2\t1
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                            1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.5\t3.0\t1\t1\tnull\t2\t3\t2\t3\t3\t3\t2\t1
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
+                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t4.0\t4\t4\tnull\t0\t3\t2\t3\t3\t3\t4\t0
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t6.0\t4\t4\t2\t2\t4\t3\t4\t4\t4\t4\t0
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "sum(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
@@ -2480,24 +2355,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "max(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "min(j) over (partition by i order by ts desc range between unbounded preceding and current row) " +
-                            "from tab order by ts desc",
-                    "ts###DESC",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab order by ts desc")
+                    .timestampDesc(""ts"")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0\t2\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1
-                            1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000005Z\t1\t0\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4\t4\tnull\t0\t3\t2\t3\t3\t3\t4\t0
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2
+                            1970-01-01T00:00:00.000005Z\t1\t0\t1.0\t2.0\t2\t2\t0\t0\t3\t2\t3\t3\t3\t2\t0
+                            1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t6.0\t2\t2\t4\t4\t4\t3\t4\t4\t4\t4\t0
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.5\t3.0\tnull\t2\t1\t1\t3\t2\t3\t3\t3\t2\t1
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
                             "sum(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
                             "first_value(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
@@ -2511,24 +2385,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
                             "max(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
                             "min(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2
-                            1970-01-01T00:00:00.000004Z\t1\t4\t1.0\t2.0\t2\t2\t0\t0\t3\t2\t3\t3\t3\t2\t0
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0\t2\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1
+                            1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000005Z\t1\t0\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4\t4\tnull\t0\t3\t2\t3\t3\t3\t4\t0
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "sum(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
@@ -2543,25 +2416,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "min(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) " +
                             "from tab " +
-                            "order by ts desc",
-                    "ts###DESC",
-                    false,
-                    true
-            );
+                            "order by ts desc")
+                    .timestampDesc(""ts"")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
+                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2
+                            1970-01-01T00:00:00.000004Z\t1\t4\t1.0\t2.0\t2\t2\t0\t0\t3\t2\t3\t3\t3\t2\t0
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2
+                            """));
 
             // all nulls because values never enter the frame
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            """),
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
                             "sum(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
                             "first_value(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
@@ -2575,24 +2447,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
                             "max(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
                             "min(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
                             1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
                             "sum(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
                             "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
@@ -2607,11 +2478,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
                             "min(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding) " +
                             "from tab " +
-                            "order by ts desc",
-                    "ts###DESC",
-                    false,
-                    true
-            );
+                            "order by ts desc")
+                    .timestampDesc(""ts"")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            """));
 
             // with duplicate timestamp values (but still unique within partition)
 
@@ -2619,8 +2500,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into dups select (x/2)::timestamp, x%2, case when x % 3 = 0 THEN NULL ELSE x%5 END, 'k' || (x%5) ::symbol, x*2::double," +
                     " 'k' || x from long_sequence(10)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select * from dups")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\ts\td\tc
                             1970-01-01T00:00:00.000000Z\t1\t1\tk1\t2.0\tk1
                             1970-01-01T00:00:00.000001Z\t0\t2\tk2\t4.0\tk2
@@ -2632,12 +2516,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t0\t3\tk3\t16.0\tk8
                             1970-01-01T00:00:00.000004Z\t1\tnull\tk4\t18.0\tk9
                             1970-01-01T00:00:00.000005Z\t0\t0\tk0\t20.0\tk10
-                            """),
-                    "select * from dups",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
 
             String dupResult = replaceTimestampSuffix("""
                     ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
@@ -2653,9 +2532,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000005Z\t0\t0\t2.25\t9.0\t2\t2\t0\t0\t5\t4\t5\t5\t5\t4\t0
                     """);
 
-            assertQueryNoLeakCheck(
-                    dupResult,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
                             "sum(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
@@ -2669,15 +2546,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
                             "max(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
                             "min(j) over (partition by i order by ts range between 4 microseconds preceding and current row) " +
-                            "from dups",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from dups")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(dupResult);
 
-            assertQueryNoLeakCheck(
-                    dupResult,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
                             "sum(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
@@ -2692,15 +2568,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
                             "min(j) over (partition by i order by ts range between 4 microseconds preceding and current row) " +
                             "from dups " +
-                            "order by ts",
-                    "ts",
-                    false,
-                    true
-            );
+                            "order by ts")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(dupResult);
 
-            assertQueryNoLeakCheck(
-                    dupResult,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "sum(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
@@ -2715,11 +2590,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "min(j) over (partition by i order by ts range between unbounded preceding and current row) " +
                             "from dups " +
-                            "order by ts",
-                    "ts",
-                    false,
-                    true
-            );
+                            "order by ts")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(dupResult);
 
             String dupResult2 = replaceTimestampSuffix("""
                     ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
@@ -2735,9 +2611,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t3.0\tnull\t2\t1\t1\t5\t3\t5\t5\t5\t2\t0
                     """);
 
-            assertQueryNoLeakCheck(
-                    dupResult2,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
                             "sum(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
@@ -2752,15 +2626,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
                             "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) " +
                             "from dups " +
-                            "order by ts desc",
-                    "ts###DESC",
-                    false,
-                    true
-            );
+                            "order by ts desc")
+                    .timestampDesc(""ts"")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(dupResult2);
 
-            assertQueryNoLeakCheck(
-                    dupResult2,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "sum(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
@@ -2775,11 +2648,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "min(j) over (partition by i order by ts desc range between unbounded preceding and current row) " +
                             "from dups " +
-                            "order by ts desc",
-                    "ts###DESC",
-                    false,
-                    true
-            );
+                            "order by ts desc")
+                    .timestampDesc(""ts"")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(dupResult2);
 
             // with duplicate timestamp values (including ts duplicates within partition)
             executeWithRewriteTimestamp("create table dups2(ts #TIMESTAMP, i long, j long, n long, s symbol, d double, c VARCHAR) timestamp(ts) partition by year", timestampType.getTypeName());
@@ -2803,21 +2677,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\t1\tnull\t9\tk4\t18.0\tk9
                             """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            1970-01-01T00:00:00.000001Z\t0\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
-                            1970-01-01T00:00:00.000001Z\t0\tnull\t4.0\t4.0\t4\t4\tnull\t4\t2\t1\t2\t2\t2\t4\t4
-                            1970-01-01T00:00:00.000002Z\t0\t3\t3.0\t3.0\t3\t3\t3\t3\t1\t1\t1\t1\t1\t3\t3
-                            1970-01-01T00:00:00.000002Z\t0\t0\t1.5\t3.0\t3\t3\t0\t0\t2\t2\t2\t2\t2\t3\t0
-                            1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1970-01-01T00:00:00.000000Z\t1\tnull\t1.0\t1.0\t1\t1\tnull\t1\t2\t1\t2\t2\t2\t1\t1
-                            1970-01-01T00:00:00.000001Z\t1\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
-                            1970-01-01T00:00:00.000001Z\t1\t2\t1.0\t2.0\t0\t0\t2\t2\t2\t2\t2\t2\t2\t2\t0
-                            1970-01-01T00:00:00.000002Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            """),
-                    "select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
+            assertQuery("select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts range between 0 preceding and current row) as avg, " +
@@ -2835,27 +2695,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (partition by i order by ts range between 0 preceding and current row) as min, " +
                             "from dups2 " +
                             "limit 10) " +
-                            "order by i, n",
-                    null,
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "order by i, n")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000002Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000001Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            1970-01-01T00:00:00.000001Z\t1\t0\t1.0\t2.0\t2\t2\t0\t0\t2\t2\t2\t2\t2\t2\t0
-                            1970-01-01T00:00:00.000000Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\tnull\t1\t1\t1\t2\t1\t2\t2\t2\t1\t1
-                            1970-01-01T00:00:00.000002Z\t0\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
-                            1970-01-01T00:00:00.000002Z\t0\t3\t1.5\t3.0\t0\t0\t3\t3\t2\t2\t2\t2\t2\t3\t0
-                            1970-01-01T00:00:00.000001Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000001Z\t0\t4\t4.0\t4.0\tnull\t4\t4\t4\t2\t1\t2\t2\t2\t4\t4
                             1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            """),
-                    "select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min from ( " +
+                            1970-01-01T00:00:00.000001Z\t0\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
+                            1970-01-01T00:00:00.000001Z\t0\tnull\t4.0\t4.0\t4\t4\tnull\t4\t2\t1\t2\t2\t2\t4\t4
+                            1970-01-01T00:00:00.000002Z\t0\t3\t3.0\t3.0\t3\t3\t3\t3\t1\t1\t1\t1\t1\t3\t3
+                            1970-01-01T00:00:00.000002Z\t0\t0\t1.5\t3.0\t3\t3\t0\t0\t2\t2\t2\t2\t2\t3\t0
+                            1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                            1970-01-01T00:00:00.000000Z\t1\tnull\t1.0\t1.0\t1\t1\tnull\t1\t2\t1\t2\t2\t2\t1\t1
+                            1970-01-01T00:00:00.000001Z\t1\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
+                            1970-01-01T00:00:00.000001Z\t1\t2\t1.0\t2.0\t0\t0\t2\t2\t2\t2\t2\t2\t2\t2\t0
+                            1970-01-01T00:00:00.000002Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            """));
+
+            assertQuery("select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts desc range between 0 preceding and current row) as avg, " +
                             "sum(j) over (partition by i order by ts desc range between 0 preceding and current row) as sum, " +
@@ -2873,27 +2730,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from dups2 " +
                             "order by ts " +
                             "desc limit 10) " +
-                            "order by i desc, n desc",
-                    null,
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "order by i desc, n desc")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:00.000002Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000001Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
+                            1970-01-01T00:00:00.000001Z\t1\t0\t1.0\t2.0\t2\t2\t0\t0\t2\t2\t2\t2\t2\t2\t0
+                            1970-01-01T00:00:00.000000Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\tnull\t1\t1\t1\t2\t1\t2\t2\t2\t1\t1
+                            1970-01-01T00:00:00.000002Z\t0\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
+                            1970-01-01T00:00:00.000002Z\t0\t3\t1.5\t3.0\t0\t0\t3\t3\t2\t2\t2\t2\t2\t3\t0
+                            1970-01-01T00:00:00.000001Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000001Z\t0\t4\t4.0\t4.0\tnull\t4\t4\t4\t2\t1\t2\t2\t2\t4\t4
                             1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            1970-01-01T00:00:00.000001Z\t0\t4\t3.0\t6.0\t2\t2\t4\t4\t2\t2\t2\t2\t2\t4\t2
-                            1970-01-01T00:00:00.000001Z\t0\tnull\t3.0\t6.0\t2\t2\tnull\t4\t3\t2\t3\t3\t3\t4\t2
-                            1970-01-01T00:00:00.000002Z\t0\t3\t3.5\t7.0\t4\t4\t3\t3\t3\t2\t3\t3\t3\t4\t3
-                            1970-01-01T00:00:00.000002Z\t0\t0\t2.3333333333333335\t7.0\t4\t4\t0\t0\t4\t3\t4\t4\t4\t4\t0
-                            1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1970-01-01T00:00:00.000000Z\t1\tnull\t1.0\t1.0\t1\t1\tnull\t1\t2\t1\t2\t2\t2\t1\t1
-                            1970-01-01T00:00:00.000001Z\t1\t0\t0.5\t1.0\t1\t1\t0\t0\t3\t2\t3\t3\t3\t1\t0
-                            1970-01-01T00:00:00.000001Z\t1\t2\t1.0\t3.0\t1\t1\t2\t2\t4\t3\t4\t4\t4\t2\t0
-                            1970-01-01T00:00:00.000002Z\t1\tnull\t1.0\t2.0\t0\t0\tnull\t2\t3\t2\t3\t3\t3\t2\t0
-                            """),
-                    "select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
+                            """));
+
+            assertQuery("select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j,n, " +
                             "avg(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as avg, " +
@@ -2911,27 +2765,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as min " +
                             "from dups2 " +
                             "limit 10" +
-                            ") order by i, n",
-                    null,
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            ") order by i, n")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000002Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000001Z\t1\t2\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2
-                            1970-01-01T00:00:00.000001Z\t1\t0\t1.0\t2.0\tnull\t2\t0\t0\t3\t2\t3\t3\t3\t2\t0
-                            1970-01-01T00:00:00.000000Z\t1\tnull\t1.0\t2.0\t2\t2\tnull\t0\t3\t2\t3\t3\t3\t2\t0
-                            1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t3.0\t2\t2\t1\t1\t4\t3\t4\t4\t4\t2\t0
-                            1970-01-01T00:00:00.000002Z\t0\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
-                            1970-01-01T00:00:00.000002Z\t0\t3\t1.5\t3.0\t0\t0\t3\t3\t2\t2\t2\t2\t2\t3\t0
-                            1970-01-01T00:00:00.000001Z\t0\tnull\t1.5\t3.0\t0\t0\tnull\t3\t3\t2\t3\t3\t3\t3\t0
-                            1970-01-01T00:00:00.000001Z\t0\t4\t2.3333333333333335\t7.0\t0\t0\t4\t4\t4\t3\t4\t4\t4\t4\t0
-                            1970-01-01T00:00:00.000000Z\t0\t2\t3.0\t6.0\tnull\t4\t2\t2\t3\t2\t3\t3\t3\t4\t2
-                            """),
-                    "select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
+                            1970-01-01T00:00:00.000000Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
+                            1970-01-01T00:00:00.000001Z\t0\t4\t3.0\t6.0\t2\t2\t4\t4\t2\t2\t2\t2\t2\t4\t2
+                            1970-01-01T00:00:00.000001Z\t0\tnull\t3.0\t6.0\t2\t2\tnull\t4\t3\t2\t3\t3\t3\t4\t2
+                            1970-01-01T00:00:00.000002Z\t0\t3\t3.5\t7.0\t4\t4\t3\t3\t3\t2\t3\t3\t3\t4\t3
+                            1970-01-01T00:00:00.000002Z\t0\t0\t2.3333333333333335\t7.0\t4\t4\t0\t0\t4\t3\t4\t4\t4\t4\t0
+                            1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                            1970-01-01T00:00:00.000000Z\t1\tnull\t1.0\t1.0\t1\t1\tnull\t1\t2\t1\t2\t2\t2\t1\t1
+                            1970-01-01T00:00:00.000001Z\t1\t0\t0.5\t1.0\t1\t1\t0\t0\t3\t2\t3\t3\t3\t1\t0
+                            1970-01-01T00:00:00.000001Z\t1\t2\t1.0\t3.0\t1\t1\t2\t2\t4\t3\t4\t4\t4\t2\t0
+                            1970-01-01T00:00:00.000002Z\t1\tnull\t1.0\t2.0\t0\t0\tnull\t2\t3\t2\t3\t3\t3\t2\t0
+                            """));
+
+            assertQuery("select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j,n, " +
                             "avg(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as avg, " +
@@ -2950,11 +2801,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from dups2 " +
                             "order by ts " +
                             "desc limit 10" +
-                            ") order by i desc, n desc",
-                    null,
-                    true,
-                    true
-            );
+                            ") order by i desc, n desc")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:00.000002Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000001Z\t1\t2\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2
+                            1970-01-01T00:00:00.000001Z\t1\t0\t1.0\t2.0\tnull\t2\t0\t0\t3\t2\t3\t3\t3\t2\t0
+                            1970-01-01T00:00:00.000000Z\t1\tnull\t1.0\t2.0\t2\t2\tnull\t0\t3\t2\t3\t3\t3\t2\t0
+                            1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t3.0\t2\t2\t1\t1\t4\t3\t4\t4\t4\t2\t0
+                            1970-01-01T00:00:00.000002Z\t0\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
+                            1970-01-01T00:00:00.000002Z\t0\t3\t1.5\t3.0\t0\t0\t3\t3\t2\t2\t2\t2\t2\t3\t0
+                            1970-01-01T00:00:00.000001Z\t0\tnull\t1.5\t3.0\t0\t0\tnull\t3\t3\t2\t3\t3\t3\t3\t0
+                            1970-01-01T00:00:00.000001Z\t0\t4\t2.3333333333333335\t7.0\t0\t0\t4\t4\t4\t3\t4\t4\t4\t4\t0
+                            1970-01-01T00:00:00.000000Z\t0\t2\t3.0\t6.0\tnull\t4\t2\t2\t3\t2\t3\t3\t3\t4\t2
+                            """));
 
             String dupResult3 = replaceTimestampSuffix("""
                     ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
@@ -2970,9 +2832,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000002Z\t1\tnull\t1.0\t3.0\t1\t1\tnull\t2\t5\t3\t5\t5\t5\t2\t0
                     """);
 
-            assertQueryNoLeakCheck(
-                    dupResult3,
-                    "select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
+            assertQuery("select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts range between 4 microseconds preceding and current row) avg, " +
@@ -2991,15 +2851,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from dups2 " +
                             "order by ts " +
                             "limit 10" +
-                            ") order by i, n",
-                    null,
-                    true,
-                    true
-            );
+                            ") order by i, n")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(dupResult3);
 
-            assertQueryNoLeakCheck(
-                    dupResult3,
-                    "select ts, i, j,avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
+            assertQuery("select ts, i, j,avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts range between unbounded preceding and current row) avg, " +
@@ -3018,27 +2875,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from dups2 " +
                             "order by ts " +
                             "limit 10" +
-                            ") order by i, n",
-                    null,
-                    true,
-                    true
-            );
+                            ") order by i, n")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(dupResult3);
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000000Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000001Z\t0\t4\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            1970-01-01T00:00:00.000001Z\t0\tnull\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            1970-01-01T00:00:00.000002Z\t0\t3\t3.0\t6.0\t2\t2\tnull\t4\t3\t2\t3\t3\t3\t4\t2
-                            1970-01-01T00:00:00.000002Z\t0\t0\t3.0\t6.0\t2\t2\tnull\t4\t3\t2\t3\t3\t3\t4\t2
-                            1970-01-01T00:00:00.000000Z\t1\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000000Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000001Z\t1\t0\t1.0\t1.0\t1\t1\tnull\t1\t2\t1\t2\t2\t2\t1\t1
-                            1970-01-01T00:00:00.000001Z\t1\t2\t1.0\t1.0\t1\t1\tnull\t1\t2\t1\t2\t2\t2\t1\t1
-                            1970-01-01T00:00:00.000002Z\t1\tnull\t1.0\t3.0\t1\t1\t2\t2\t4\t3\t4\t4\t4\t2\t0
-                            """),
-                    "select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min from ( " +
+            assertQuery("select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) avg, " +
                             "sum(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) sum, " +
@@ -3056,11 +2898,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from dups2 " +
                             "order by ts " +
                             "limit 10" +
-                            ") order by i, n",
-                    null,
-                    true,
-                    true
-            );
+                            ") order by i, n")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:00.000000Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000001Z\t0\t4\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
+                            1970-01-01T00:00:00.000001Z\t0\tnull\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
+                            1970-01-01T00:00:00.000002Z\t0\t3\t3.0\t6.0\t2\t2\tnull\t4\t3\t2\t3\t3\t3\t4\t2
+                            1970-01-01T00:00:00.000002Z\t0\t0\t3.0\t6.0\t2\t2\tnull\t4\t3\t2\t3\t3\t3\t4\t2
+                            1970-01-01T00:00:00.000000Z\t1\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000000Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000001Z\t1\t0\t1.0\t1.0\t1\t1\tnull\t1\t2\t1\t2\t2\t2\t1\t1
+                            1970-01-01T00:00:00.000001Z\t1\t2\t1.0\t1.0\t1\t1\tnull\t1\t2\t1\t2\t2\t2\t1\t1
+                            1970-01-01T00:00:00.000002Z\t1\tnull\t1.0\t3.0\t1\t1\t2\t2\t4\t3\t4\t4\t4\t2\t0
+                            """));
 
             String dupResult4 = replaceTimestampSuffix("""
                     ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
@@ -3076,9 +2929,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000000Z\t0\t2\t2.25\t9.0\t0\t0\t2\t2\t5\t4\t5\t5\t5\t4\t0
                     """);
 
-            assertQueryNoLeakCheck(
-                    dupResult4,
-                    "select ts,i,j,avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
+            assertQuery("select ts,i,j,avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) avg, " +
@@ -3097,15 +2948,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from dups2 " +
                             "order by ts desc " +
                             "limit 10" +
-                            ") order by i desc, n desc",
-                    null,
-                    true,
-                    true
-            );
+                            ") order by i desc, n desc")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(dupResult4);
 
-            assertQueryNoLeakCheck(
-                    dupResult4,
-                    "select ts,i,j,avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
+            assertQuery("select ts,i,j,avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts desc range between unbounded preceding and current row) avg, " +
@@ -3124,27 +2972,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from dups2 " +
                             "order by ts desc " +
                             "limit 10" +
-                            ") order by i desc, n desc",
-                    null,
-                    true,
-                    true
-            );
+                            ") order by i desc, n desc")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(dupResult4);
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000002Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000001Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000001Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000000Z\t1\tnull\t1.0\t2.0\tnull\t2\t0\t0\t3\t2\t3\t3\t3\t2\t0
-                            1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t2.0\tnull\t2\t0\t0\t3\t2\t3\t3\t3\t2\t0
-                            1970-01-01T00:00:00.000002Z\t0\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000001Z\t0\tnull\t1.5\t3.0\t0\t0\t3\t3\t2\t2\t2\t2\t2\t3\t0
-                            1970-01-01T00:00:00.000001Z\t0\t4\t1.5\t3.0\t0\t0\t3\t3\t2\t2\t2\t2\t2\t3\t0
-                            1970-01-01T00:00:00.000000Z\t0\t2\t2.3333333333333335\t7.0\t0\t0\t4\t4\t4\t3\t4\t4\t4\t4\t0
-                            """),
-                    "select ts,i,j,avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
+            assertQuery("select ts,i,j,avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
                             "from ( " +
                             "select ts, i, j, n, " +
                             "avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) avg, " +
@@ -3163,19 +2996,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from dups2 " +
                             "order by ts desc " +
                             "limit 10" +
-                            ") order by i desc, n desc",
-                    null,
-                    true,
-                    true
-            );
+                            ") order by i desc, n desc")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:00.000002Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000001Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000001Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000000Z\t1\tnull\t1.0\t2.0\tnull\t2\t0\t0\t3\t2\t3\t3\t3\t2\t0
+                            1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t2.0\tnull\t2\t0\t0\t3\t2\t3\t3\t3\t2\t0
+                            1970-01-01T00:00:00.000002Z\t0\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0\t3\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000001Z\t0\tnull\t1.5\t3.0\t0\t0\t3\t3\t2\t2\t2\t2\t2\t3\t0
+                            1970-01-01T00:00:00.000001Z\t0\t4\t1.5\t3.0\t0\t0\t3\t3\t2\t2\t2\t2\t2\t3\t0
+                            1970-01-01T00:00:00.000000Z\t0\t2\t2.3333333333333335\t7.0\t0\t0\t4\t4\t4\t3\t4\t4\t4\t4\t0
+                            """));
 
             // table without designated timestamp
             executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR)", timestampType.getTypeName());
             execute("insert into nodts select (x/2)::timestamp, x%2, case when x % 3 = 0 THEN NULL ELSE x%5 END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(10)");
             // timestamp ascending order is declared using timestamp(ts) clause
-            assertQueryNoLeakCheck(
-                    dupResult,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
                             "sum(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
@@ -3189,15 +3031,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
                             "max(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
                             "min(j) over (partition by i order by ts range between 4 microseconds preceding and current row) " +
-                            "from nodts timestamp(ts)",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from nodts timestamp(ts)")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(dupResult);
 
-            assertQueryNoLeakCheck(
-                    dupResult,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "sum(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "first_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
@@ -3211,24 +3052,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "max(j) over (partition by i order by ts range between unbounded preceding and current row), " +
                             "min(j) over (partition by i order by ts range between unbounded preceding and current row) " +
-                            "from nodts timestamp(ts)",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from nodts timestamp(ts)")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(dupResult);
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
-                            """),
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
                             "sum(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
                             "first_value(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
@@ -3242,11 +3073,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
                             "max(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
                             "min(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                            1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
+                            """));
         });
     }
 
@@ -3262,68 +3103,48 @@ public class WindowFunctionTest extends AbstractCairoTest {
             for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
                 String func = FRAME_FUNCTIONS.get(i);
                 for (String column : FRAME_FUNCTIONS_PARAMETER_COLUMN_NAME[i]) {
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (order by ts range between 4 preceding and current row) from nodts".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            61,
-                            "RANGE is supported only for queries ordered by designated timestamp"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (order by ts range between 4 preceding and current row) from nodts".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(61, "RANGE is supported only for queries ordered by designated timestamp");
 
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts range between 4 preceding and current row) from nodts".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            76,
-                            "RANGE is supported only for queries ordered by designated timestamp"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts range between 4 preceding and current row) from nodts".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(76, "RANGE is supported only for queries ordered by designated timestamp");
 
                     // while it's possible to declare ascending designated timestamp order, it's not possible to declare descending order
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts desc range between 4 preceding and current row) from nodts timestamp(ts)".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            76,
-                            "RANGE is supported only for queries ordered by designated timestamp"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts desc range between 4 preceding and current row) from nodts timestamp(ts)".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(76, "RANGE is supported only for queries ordered by designated timestamp");
 
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by j desc range between unbounded preceding and 10 microsecond preceding) ".replace("#FUNCT_NAME", func).replace("#COLUMN", column) +
-                                    "from tab order by ts desc",
-                            76,
-                            "RANGE is supported only for queries ordered by designated timestamp"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by j desc range between unbounded preceding and 10 microsecond preceding) ".replace("#FUNCT_NAME", func).replace("#COLUMN", column) +
+                                    "from tab order by ts desc")
+                            .noLeakCheck()
+                            .fails(76, "RANGE is supported only for queries ordered by designated timestamp");
 
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by j range 10 microsecond preceding) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            76,
-                            "RANGE is supported only for queries ordered by designated timestamp"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by j range 10 microsecond preceding) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(76, "RANGE is supported only for queries ordered by designated timestamp");
 
                     // order by column_number doesn't work with in over clause so 1 is treated as integer constant
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by 1 range 10 microsecond preceding) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            76,
-                            "RANGE is supported only for queries ordered by designated timestamp"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by 1 range 10 microsecond preceding) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(76, "RANGE is supported only for queries ordered by designated timestamp");
 
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts+i range 10 microsecond preceding) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            78,
-                            "RANGE is supported only for queries ordered by designated timestamp"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts+i range 10 microsecond preceding) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(78, "RANGE is supported only for queries ordered by designated timestamp");
 
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by otherTs range 10 microsecond preceding) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            76,
-                            "RANGE is supported only for queries ordered by designated timestamp"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by otherTs range 10 microsecond preceding) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(76, "RANGE is supported only for queries ordered by designated timestamp");
 
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts range 10 microsecond preceding) from tab timestamp(otherTs)".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            76,
-                            "RANGE is supported only for queries ordered by designated timestamp"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts range 10 microsecond preceding) from tab timestamp(otherTs)".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(76, "RANGE is supported only for queries ordered by designated timestamp");
 
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by otherTs desc range 10 microsecond preceding) from tab timestamp(otherTs)".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            76,
-                            "RANGE is supported only for queries ordered by designated timestamp"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by otherTs desc range 10 microsecond preceding) from tab timestamp(otherTs)".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(76, "RANGE is supported only for queries ordered by designated timestamp");
                 }
             }
         });
@@ -3374,52 +3195,35 @@ public class WindowFunctionTest extends AbstractCairoTest {
             for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
                 String func = FRAME_FUNCTIONS.get(i);
                 for (String column : FRAME_FUNCTIONS_PARAMETER_COLUMN_NAME[i]) {
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts rows between 10 following and 20 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            95,
-                            "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only"
-                    );
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts rows between 10 preceding and 1 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            111,
-                            "frame end supports _number_ PRECEDING and CURRENT ROW only"
-                    );
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts rows between 10 preceding and unbounded following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            119, "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts rows between 10 following and 20 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(95, "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts rows between 10 preceding and 1 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(111, "frame end supports _number_ PRECEDING and CURRENT ROW only");
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts rows between 10 preceding and unbounded following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(119, "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
 
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts groups between 10 following and 20 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            97,
-                            "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only"
-                    );
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts groups between 10 preceding and 1 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            113,
-                            "frame end supports _number_ PRECEDING and CURRENT ROW only"
-                    );
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts groups between 10 preceding and unbounded following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            121,
-                            "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts groups between 10 following and 20 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(97, "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts groups between 10 preceding and 1 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(113, "frame end supports _number_ PRECEDING and CURRENT ROW only");
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts groups between 10 preceding and unbounded following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(121, "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
 
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts range between 10 following and 20 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            96,
-                            "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only"
-                    );
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts range between 10 preceding and 1 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            112,
-                            "frame end supports _number_ PRECEDING and CURRENT ROW only"
-                    );
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts range between 10 preceding and unbounded following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            120,
-                            "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts range between 10 following and 20 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(96, "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts range between 10 preceding and 1 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(112, "frame end supports _number_ PRECEDING and CURRENT ROW only");
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts range between 10 preceding and unbounded following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(120, "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
                 }
             }
         });
@@ -3431,21 +3235,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("create table  cpu ( hostname symbol, usage_system double )");
             execute("insert into cpu select rnd_symbol('A', 'B', 'C'), x from long_sequence(1000)");
 
-            assertQueryNoLeakCheck(
-                    """
-                            hostname\tusage_system\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tmax\tmin
-                            A\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1.0\t1.0
-                            A\t2.0\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2.0\t1.0
-                            B\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t3.0\t3.0
-                            C\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t4.0\t4.0
-                            C\t5.0\t4.5\t9.0\t4.0\t4.0\t5.0\t5.0\t2\t2\t5.0\t4.0
-                            C\t6.0\t5.0\t15.0\t4.0\t4.0\t6.0\t6.0\t3\t3\t6.0\t4.0
-                            C\t7.0\t5.5\t22.0\t4.0\t4.0\t7.0\t7.0\t4\t4\t7.0\t4.0
-                            B\t8.0\t5.5\t11.0\t3.0\t3.0\t8.0\t8.0\t2\t2\t8.0\t3.0
-                            A\t9.0\t4.0\t12.0\t1.0\t1.0\t9.0\t9.0\t3\t3\t9.0\t1.0
-                            B\t10.0\t7.0\t21.0\t3.0\t3.0\t10.0\t10.0\t3\t3\t10.0\t3.0
-                            """,
-                    "select hostname, usage_system, " +
+            assertQuery("select hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
                             "sum(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
                             "first_value(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
@@ -3457,11 +3247,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
                             "min(usage_system) over(partition by hostname rows between 50 preceding and current row) " +
                             "from cpu " +
-                            "limit 10",
-                    null,
-                    false,
-                    true
-            );
+                            "limit 10")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            hostname\tusage_system\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tmax\tmin
+                            A\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1.0\t1.0
+                            A\t2.0\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2.0\t1.0
+                            B\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1\t1\t3.0\t3.0
+                            C\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t1\t1\t4.0\t4.0
+                            C\t5.0\t4.5\t9.0\t4.0\t4.0\t5.0\t5.0\t2\t2\t5.0\t4.0
+                            C\t6.0\t5.0\t15.0\t4.0\t4.0\t6.0\t6.0\t3\t3\t6.0\t4.0
+                            C\t7.0\t5.5\t22.0\t4.0\t4.0\t7.0\t7.0\t4\t4\t7.0\t4.0
+                            B\t8.0\t5.5\t11.0\t3.0\t3.0\t8.0\t8.0\t2\t2\t8.0\t3.0
+                            A\t9.0\t4.0\t12.0\t1.0\t1.0\t9.0\t9.0\t3\t3\t9.0\t1.0
+                            B\t10.0\t7.0\t21.0\t3.0\t3.0\t10.0\t10.0\t3\t3\t10.0\t3.0
+                            """);
         });
     }
 
@@ -3473,14 +3275,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into x values ('aaa', 1);");
             execute("insert into x values ('aaa', 2);");
 
-            assertQueryNoLeakCheck(
-                    """
-                            sym\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tmax\tmin
-                            aaa\t1.5\t3.0\tnull\t1\t2\t2\t2\t3\t2\t1
-                            aaa\t1.5\t3.0\tnull\t1\t2\t2\t2\t3\t2\t1
-                            aaa\t1.5\t3.0\tnull\t1\t2\t2\t2\t3\t2\t1
-                            """,
-                    "SELECT sym, " +
+            assertQuery("SELECT sym, " +
                             "avg(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
                             "sum(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
                             "first_value(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
@@ -3491,11 +3286,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(sym) OVER(PARTITION BY sym LIKE '%aaa%'), " +
                             "max(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
                             "min(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
-                            "FROM x",
-                    null,
-                    true, // cached window factory
-                    true
-            );
+                            "FROM x")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            sym\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tmax\tmin
+                            aaa\t1.5\t3.0\tnull\t1\t2\t2\t2\t3\t2\t1
+                            aaa\t1.5\t3.0\tnull\t1\t2\t2\t2\t3\t2\t1
+                            aaa\t1.5\t3.0\tnull\t1\t2\t2\t2\t3\t2\t1
+                            """);
         });
     }
 
@@ -3507,14 +3306,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into x values ('aaa', 1, '2023-11-09T01:00:00.000000');");
             execute("insert into x values ('aaa', 2, '2023-11-09T02:00:00.000000');");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\tsym\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tmax\tmin
-                            2023-11-09T00:00:00.000000Z\taaa\tnull\tnull\tnull\tnull\tnull\tnull\t0\t1\tnull\tnull
-                            2023-11-09T01:00:00.000000Z\taaa\t1.0\t1.0\tnull\t1\t1\t1\t1\t2\t1\t1
-                            2023-11-09T02:00:00.000000Z\taaa\t1.5\t3.0\tnull\t1\t2\t2\t2\t3\t2\t1
-                            """),
-                    "SELECT ts, sym, " +
+            assertQuery("SELECT ts, sym, " +
                             "avg(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
                             "sum(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
                             "first_value(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
@@ -3525,11 +3317,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(sym) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
                             "max(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
                             "min(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
-                            "FROM x",
-                    "ts",
-                    false,
-                    true
-            );
+                            "FROM x")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\tsym\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tmax\tmin
+                            2023-11-09T00:00:00.000000Z\taaa\tnull\tnull\tnull\tnull\tnull\tnull\t0\t1\tnull\tnull
+                            2023-11-09T01:00:00.000000Z\taaa\t1.0\t1.0\tnull\t1\t1\t1\t1\t2\t1\t1
+                            2023-11-09T02:00:00.000000Z\taaa\t1.5\t3.0\tnull\t1\t2\t2\t2\t3\t2\t1
+                            """));
         });
     }
 
@@ -3542,11 +3340,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
                 String func = FRAME_FUNCTIONS.get(i);
                 for (String column : FRAME_FUNCTIONS_PARAMETER_COLUMN_NAME[i]) {
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts groups unbounded preceding) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            17,
-                            "function not implemented for given window parameters"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts groups unbounded preceding) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(17, "function not implemented for given window parameters");
                 }
             }
         });
@@ -3572,18 +3368,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000007Z\t1\t2
                             """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1.0\t1.0
-                            1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2.0\t1.0
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t2.0\t6.0\t1\t1\tnull\t2\t3\t3\t3\t3\t3.0\t1.0
-                            1970-01-01T00:00:00.000004Z\t1\t4\t2.5\t10.0\t1\t1\t4\t4\t4\t4\t4\t4\t4.0\t1.0
-                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t10.0\t1\t1\t0\t0\t5\t5\t5\t5\t4.0\t0.0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t1.8333333333333333\t11.0\t1\t1\tnull\t0\t6\t6\t6\t6\t4.0\t0.0
-                            1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\t13.0\t1\t1\t2\t2\t7\t7\t7\t7\t4.0\t0.0
-                            """),
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(d) over (order by ts rows unbounded preceding)," +
                             "sum(d) over (order by ts rows unbounded preceding), " +
                             "first_value(j) over (order by ts rows unbounded preceding), " +
@@ -3596,24 +3381,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by ts rows unbounded preceding), " +
                             "max(d) over (order by ts rows unbounded preceding), " +
                             "min(d) over (order by ts rows unbounded preceding) " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\tnull\t1\t1\t1\t2\t2\t2\t2\t1\t1
-                            1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\tnull\t1\t2\t2\t3\t3\t3\t3\t2\t1
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\t1\tnull\tnull\t1\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000004Z\t1\t4\t1.8\t9.0\tnull\t1\t4\t4\t7\t7\t7\t7\t4\t0
-                            1970-01-01T00:00:00.000005Z\t1\t0\t1.0\t3.0\tnull\t1\t0\t0\t5\t5\t5\t5\t2\t0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t1.5\t3.0\tnull\t1\tnull\t2\t4\t4\t4\t4\t2\t1
-                            1970-01-01T00:00:00.000007Z\t1\t2\t1.25\t5.0\tnull\t1\t2\t2\t6\t6\t6\t6\t2\t0
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1.0\t1.0
+                            1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2.0\t1.0
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t2.0\t6.0\t1\t1\tnull\t2\t3\t3\t3\t3\t3.0\t1.0
+                            1970-01-01T00:00:00.000004Z\t1\t4\t2.5\t10.0\t1\t1\t4\t4\t4\t4\t4\t4\t4.0\t1.0
+                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t10.0\t1\t1\t0\t0\t5\t5\t5\t5\t4.0\t0.0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t1.8333333333333333\t11.0\t1\t1\tnull\t0\t6\t6\t6\t6\t4.0\t0.0
+                            1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\t13.0\t1\t1\t2\t2\t7\t7\t7\t7\t4.0\t0.0
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (order by i, j rows unbounded preceding), " +
                             "sum(j) over (order by i, j rows unbounded preceding), " +
                             "first_value(j) over (order by i, j rows unbounded preceding), " +
@@ -3626,24 +3409,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by i, j rows unbounded preceding), " +
                             "max(j) over (order by i, j rows unbounded preceding), " +
                             "min(j) over (order by i, j rows unbounded preceding) " +
-                            "from tab",
-                    "ts",
-                    true,//cached window factory
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1.0\t1.0
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t2.0\t2.0
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t3.0\tnull\tnull\tnull\tnull\t1\t1\t1\t1\t3.0\t3.0
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t4.0\t4.0
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t0.0\t0.0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t1.0\tnull\tnull\tnull\tnull\t1\t1\t1\t1\t1.0\t1.0
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t2.0\t2.0
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\tnull\t1\t1\t1\t2\t2\t2\t2\t1\t1
+                            1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\tnull\t1\t2\t2\t3\t3\t3\t3\t2\t1
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\t1\tnull\tnull\t1\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000004Z\t1\t4\t1.8\t9.0\tnull\t1\t4\t4\t7\t7\t7\t7\t4\t0
+                            1970-01-01T00:00:00.000005Z\t1\t0\t1.0\t3.0\tnull\t1\t0\t0\t5\t5\t5\t5\t2\t0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t1.5\t3.0\tnull\t1\tnull\t2\t4\t4\t4\t4\t2\t1
+                            1970-01-01T00:00:00.000007Z\t1\t2\t1.25\t5.0\tnull\t1\t2\t2\t6\t6\t6\t6\t2\t0
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(d) over (order by ts rows current row), " +
                             "sum(d) over (order by ts rows current row), " +
                             "first_value(j) over (order by ts rows current row), " +
@@ -3656,14 +3437,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by ts rows current row), " +
                             "max(d) over (order by ts rows current row), " +
                             "min(d) over (order by ts rows current row) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin
                             1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t2.0\t2.0
@@ -3672,8 +3451,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t0.0\t0.0
                             1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t1.0\tnull\tnull\tnull\tnull\t1\t1\t1\t1\t1.0\t1.0
                             1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t2.0\t2.0
-                            """),
-                    "select ts, i, j, " +
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(d) over (order by ts desc rows current row), " +
                             "sum(d) over (order by ts desc rows current row), " +
                             "first_value(j) over (order by ts desc rows current row), " +
@@ -3686,11 +3466,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by ts desc rows current row), " +
                             "max(d) over (order by ts desc rows current row), " +
                             "min(d) over (order by ts desc rows current row) " +
-                            "from tab",
-                    "ts",
-                    true, // cached window factory
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1.0\t1.0
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t2.0\t2.0
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t3.0\tnull\tnull\tnull\tnull\t1\t1\t1\t1\t3.0\t3.0
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t4.0\t4.0
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t0.0\t0.0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t1.0\tnull\tnull\tnull\tnull\t1\t1\t1\t1\t1.0\t1.0
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t2.0\t2.0
+                            """));
 
             assertQuery("tab")
                     .timestamp("ts")
@@ -3707,18 +3496,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tk2\tk7
                     """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0\t2\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1.0\t1.0
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2.0\t1.0
-                            1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t6.0\t1\t1\tnull\t2\t3\t3\t3\t3\t3.0\t1.0
-                            1970-01-01T00:00:00.000005Z\t1\t0\t2.5\t10.0\t1\t1\t4\t4\t4\t4\t4\t4\t4.0\t1.0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t10.0\t1\t1\t0\t0\t5\t5\t5\t5\t4.0\t0.0
-                            1970-01-01T00:00:00.000007Z\t1\t2\t1.8333333333333333\t11.0\t1\t1\tnull\t0\t6\t6\t6\t6\t4.0\t0.0
-                            """),
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "sum(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "first_value(j) over (order by ts rows between unbounded preceding and 1 preceding), " +
@@ -3731,24 +3509,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "max(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
                             "min(d) over (order by ts rows between unbounded preceding and 1 preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin
                             1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1.0\t1.0
-                            1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2.0\t1.0
-                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t6.0\t1\t1\tnull\t2\t3\t3\t3\t3\t3.0\t1.0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t3.0\t9.0\t2\t2\t4\t4\t3\t3\t3\t3\t4.0\t2.0
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.3333333333333335\t7.0\tnull\t4\t0\t0\t3\t3\t3\t3\t4.0\t0.0
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000002Z\t0\t2\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1.0\t1.0
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2.0\t1.0
+                            1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t6.0\t1\t1\tnull\t2\t3\t3\t3\t3\t3.0\t1.0
+                            1970-01-01T00:00:00.000005Z\t1\t0\t2.5\t10.0\t1\t1\t4\t4\t4\t4\t4\t4\t4.0\t1.0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t10.0\t1\t1\t0\t0\t5\t5\t5\t5\t4.0\t0.0
+                            1970-01-01T00:00:00.000007Z\t1\t2\t1.8333333333333333\t11.0\t1\t1\tnull\t0\t6\t6\t6\t6\t4.0\t0.0
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(d) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "sum(d) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "first_value(j) over (order by ts rows between 4 preceding and 2 preceding), " +
@@ -3761,24 +3538,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "max(d) over (order by ts rows between 4 preceding and 2 preceding), " +
                             "min(d) over (order by ts rows between 4 preceding and 2 preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\t2.3333333333333335\t7.0\t0\t0\tnull\t4\t3\t3\t3\t3\t4.0\t0.0
-                            1970-01-01T00:00:00.000002Z\t0\t2\t1.6666666666666667\t5.0\tnull\t0\t4\t4\t3\t3\t3\t3\t4.0\t0.0
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.0\t3.0\t2\t2\t0\t0\t3\t3\t3\t3\t2.0\t0.0
-                            1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t2\t2\tnull\t2\t2\t2\t2\t2\t2.0\t1.0
-                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t2.0\t2.0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1.0\t1.0
+                            1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2.0\t1.0
+                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t6.0\t1\t1\tnull\t2\t3\t3\t3\t3\t3.0\t1.0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t3.0\t9.0\t2\t2\t4\t4\t3\t3\t3\t3\t4.0\t2.0
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.3333333333333335\t7.0\tnull\t4\t0\t0\t3\t3\t3\t3\t4.0\t0.0
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "sum(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "first_value(j) over (order by ts desc rows between 4 preceding and 2 preceding), " +
@@ -3791,24 +3567,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "max(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "min(d) over (order by ts desc rows between 4 preceding and 2 preceding) " +
-                            "from tab",
-                    "ts",
-                    true, //c ached window factory
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
-                            1970-01-01T00:00:00.000002Z\t0\t2\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
-                            1970-01-01T00:00:00.000004Z\t1\t4\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
-                            1970-01-01T00:00:00.000005Z\t1\t0\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
-                            1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t2.3333333333333335\t7.0\t0\t0\tnull\t4\t3\t3\t3\t3\t4.0\t0.0
+                            1970-01-01T00:00:00.000002Z\t0\t2\t1.6666666666666667\t5.0\tnull\t0\t4\t4\t3\t3\t3\t3\t4.0\t0.0
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.0\t3.0\t2\t2\t0\t0\t3\t3\t3\t3\t2.0\t0.0
+                            1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t2\t2\tnull\t2\t2\t2\t2\t2\t2.0\t1.0
+                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t2.0\t2.0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(d) over (order by i rows between unbounded preceding and unbounded following), " +
                             "sum(d) over (order by i rows between unbounded preceding and unbounded following), " +
                             "first_value(j) over (order by i rows between unbounded preceding and unbounded following), " +
@@ -3821,24 +3595,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by i rows between unbounded preceding and unbounded following), " +
                             "max(d) over (order by i rows between unbounded preceding and unbounded following), " +
                             "min(d) over (order by i rows between unbounded preceding and unbounded following) " +
-                            "from tab",
-                    "ts",
-                    true, // cached window factory
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3.0\t1.0
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3.0\t1.0
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3.0\t1.0
-                            1970-01-01T00:00:00.000004Z\t1\t4\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4.0\t0.0
-                            1970-01-01T00:00:00.000005Z\t1\t0\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4.0\t0.0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4.0\t0.0
-                            1970-01-01T00:00:00.000007Z\t1\t2\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4.0\t0.0
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
+                            1970-01-01T00:00:00.000002Z\t0\t2\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
+                            1970-01-01T00:00:00.000004Z\t1\t4\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
+                            1970-01-01T00:00:00.000005Z\t1\t0\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
+                            1970-01-01T00:00:00.000007Z\t1\t2\t1.8571428571428572\t13.0\t1\t1\t4\t4\t7\t7\t7\t7\t4.0\t0.0
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(d) over (partition by i rows between unbounded preceding and unbounded following), " +
                             "sum(d) over (partition by i rows between unbounded preceding and unbounded following), " +
                             "first_value(d) over (partition by i rows between unbounded preceding and unbounded following), " +
@@ -3851,11 +3623,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i rows between unbounded preceding and unbounded following), " +
                             "max(d) over (partition by i rows between unbounded preceding and unbounded following), " +
                             "min(d) over (partition by i rows between unbounded preceding and unbounded following) " +
-                            "from tab",
-                    "ts",
-                    true,//cached window factory
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin
+                            1970-01-01T00:00:00.000001Z\t0\t1\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3.0\t1.0
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3.0\t1.0
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t2.0\t6.0\t1.0\t1.0\t3.0\t3.0\t3\t3\t3\t3\t3.0\t1.0
+                            1970-01-01T00:00:00.000004Z\t1\t4\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4.0\t0.0
+                            1970-01-01T00:00:00.000005Z\t1\t0\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4.0\t0.0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4.0\t0.0
+                            1970-01-01T00:00:00.000007Z\t1\t2\t1.75\t7.0\t4.0\t4.0\t2.0\t2.0\t4\t4\t4\t4\t4.0\t0.0
+                            """));
 
             String rowsResult1 = replaceTimestampSuffix("""
                     ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin
@@ -3868,9 +3649,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t6.0\t4\t4\t2\t2\t4\t4\t4\t4\t4\t0
                     """);
 
-            assertQueryNoLeakCheck(
-                    rowsResult1,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows unbounded preceding), " +
                             "sum(j) over (partition by i order by ts rows unbounded preceding), " +
                             "first_value(j) over (partition by i order by ts rows unbounded preceding), " +
@@ -3883,15 +3662,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows unbounded preceding), " +
                             "max(j) over (partition by i order by ts rows unbounded preceding), " +
                             "min(j) over (partition by i order by ts rows unbounded preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(rowsResult1);
 
-            assertQueryNoLeakCheck(
-                    rowsResult1,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows unbounded preceding), " +
                             "sum(j) over (partition by i order by ts rows unbounded preceding), " +
                             "first_value(j) over (partition by i order by ts rows unbounded preceding), " +
@@ -3904,15 +3682,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows unbounded preceding), " +
                             "max(j) over (partition by i order by ts rows unbounded preceding), " +
                             "min(j) over (partition by i order by ts rows unbounded preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(rowsResult1);
 
-            assertQueryNoLeakCheck(
-                    rowsResult1,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i rows unbounded preceding), " +
                             "sum(j) over (partition by i rows unbounded preceding), " +
                             "first_value(j) over (partition by i rows unbounded preceding), " +
@@ -3925,15 +3702,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i rows unbounded preceding), " +
                             "max(j) over (partition by i rows unbounded preceding), " +
                             "min(j) over (partition by i rows unbounded preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(rowsResult1);
 
-            assertQueryNoLeakCheck(
-                    rowsResult1,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i rows between unbounded preceding and current row), " +
                             "sum(j) over (partition by i rows between unbounded preceding and current row), " +
                             "first_value(j) over (partition by i rows between unbounded preceding and current row), " +
@@ -3946,15 +3722,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i rows between unbounded preceding and current row), " +
                             "max(j) over (partition by i rows between unbounded preceding and current row), " +
                             "min(j) over (partition by i rows between unbounded preceding and current row) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(rowsResult1);
 
-            assertQueryNoLeakCheck(
-                    rowsResult1,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 10 preceding and current row), " +
                             "sum(j) over (partition by i order by ts rows between 10 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 10 preceding and current row), " +
@@ -3967,15 +3742,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows between 10 preceding and current row), " +
                             "max(j) over (partition by i order by ts rows between 10 preceding and current row), " +
                             "min(j) over (partition by i order by ts rows between 10 preceding and current row) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(rowsResult1);
 
-            assertQueryNoLeakCheck(
-                    rowsResult1,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 3 preceding and current row), " +
                             "sum(j) over (partition by i order by ts rows between 3 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 3 preceding and current row), " +
@@ -3988,24 +3762,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows between 3 preceding and current row), " +
                             "max(j) over (partition by i order by ts rows between 3 preceding and current row), " +
                             "min(j) over (partition by i order by ts rows between 3 preceding and current row) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(rowsResult1);
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
-                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t0.0\t0.0\t0\t0\tnull\t0\t2\t1\t2\t2\t2\t0\t0
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2
-                            """),
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
@@ -4019,24 +3783,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "max(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "min(j) over (partition by i order by ts rows between 1 preceding and current row) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
                             1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
                             1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1
-                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.5\t3.0\t1\t1\tnull\t2\t3\t2\t3\t3\t3\t2\t1
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2
                             1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
                             1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t4.0\t4\t4\tnull\t0\t3\t2\t3\t3\t3\t4\t0
-                            1970-01-01T00:00:00.000007Z\t1\t2\t1.0\t2.0\t0\t0\t2\t2\t3\t2\t3\t3\t3\t2\t0
-                            """),
-                    "select ts, i, j, " +
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t0.0\t0.0\t0\t0\tnull\t0\t2\t1\t2\t2\t2\t0\t0
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2
+                            """));
+
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 2 preceding and current row), " +
                             "sum(j) over (partition by i order by ts rows between 2 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 2 preceding and current row), " +
@@ -4050,11 +3813,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows between 2 preceding and current row), " +
                             "max(j) over (partition by i order by ts rows between 2 preceding and current row), " +
                             "min(j) over (partition by i order by ts rows between 2 preceding and current row) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                            1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t1.5\t3.0\t1\t1\tnull\t2\t3\t2\t3\t3\t3\t2\t1
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
+                            1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t2.0\t4.0\t4\t4\tnull\t0\t3\t2\t3\t3\t3\t4\t0
+                            1970-01-01T00:00:00.000007Z\t1\t2\t1.0\t2.0\t0\t0\t2\t2\t3\t2\t3\t3\t3\t2\t0
+                            """));
 
             String result2 = replaceTimestampSuffix("""
                     ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
@@ -4067,9 +3840,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000007Z\t1\t2\t0.0\t0.0\t0\t0\tnull\t0\t2\t1\t2\t2\t2\t0\t0
                     """);
 
-            assertQueryNoLeakCheck(
-                    result2,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
                             "sum(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
                             "first_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
@@ -4083,15 +3854,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
                             "max(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
                             "min(j) over (partition by i order by ts rows between 2 preceding and 1 preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(result2);
 
-            assertQueryNoLeakCheck(
-                    result2,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
                             "sum(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
                             "first_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
@@ -4105,15 +3875,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
                             "max(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
                             "min(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(result2);
 
-            assertQueryNoLeakCheck(
-                    result2,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
                             "sum(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
                             "first_value(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
@@ -4127,25 +3896,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
                             "max(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
                             "min(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(result2);
 
             // partitions are smaller than 10 elements so avg is all nulls
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
-                            """),
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "sum(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "first_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
@@ -4159,11 +3918,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "max(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
                             "min(j) over (partition by i order by ts rows between 20 preceding and 10 preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull
+                            """));
 
             String result3 = replaceTimestampSuffix("""
                     ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
@@ -4176,9 +3945,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0
                     """);
 
-            assertQueryNoLeakCheck(
-                    result3,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
                             "sum(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
                             "first_value(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
@@ -4192,15 +3959,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
                             "max(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
                             "min(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(result3);
 
-            assertQueryNoLeakCheck(
-                    result3,
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
                             "sum(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
                             "first_value(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
@@ -4214,25 +3980,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
                             "max(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
                             "min(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(result3);
 
             // here avg returns j as double because it processes current row only
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
-                            """),
-                    "select ts, i, j, " +
+            assertQuery("select ts, i, j, " +
                             "avg(j) over (partition by i order by ts rows current row), " +
                             "sum(j) over (partition by i order by ts rows current row), " +
                             "first_value(j) over (partition by i order by ts rows current row), " +
@@ -4246,25 +4002,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts rows current row), " +
                             "max(j) over (partition by i order by ts rows current row), " +
                             "min(j) over (partition by i order by ts rows current row) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0\t0\t0\t0\t1\t1\t1\t1\t1\t0\t0
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
+                            """));
 
             // test with dependencies not included on column list + column reorder + sort
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            avg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\tts\ti\tj
-                            1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1970-01-01T00:00:00.000001Z\t0\t1
-                            1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1\t1970-01-01T00:00:00.000002Z\t0\t2
-                            2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2\t1970-01-01T00:00:00.000003Z\t0\tnull
-                            4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4\t1970-01-01T00:00:00.000004Z\t1\t4
-                            2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0\t1970-01-01T00:00:00.000005Z\t1\t0
-                            0.0\t0.0\t0\t0\tnull\t0\t2\t1\t2\t2\t2\t0\t0\t1970-01-01T00:00:00.000006Z\t1\tnull
-                            2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2\t1970-01-01T00:00:00.000007Z\t1\t2
-                            """),
-                    "select avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+            assertQuery("select avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "first_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
@@ -4278,24 +4033,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "min(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "ts, i, j " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            avg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\tts\ti\tj
+                            1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1970-01-01T00:00:00.000001Z\t0\t1
+                            1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1\t1970-01-01T00:00:00.000002Z\t0\t2
+                            2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2\t1970-01-01T00:00:00.000003Z\t0\tnull
+                            4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4\t1970-01-01T00:00:00.000004Z\t1\t4
+                            2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0\t1970-01-01T00:00:00.000005Z\t1\t0
+                            0.0\t0.0\t0\t0\tnull\t0\t2\t1\t2\t2\t2\t0\t0\t1970-01-01T00:00:00.000006Z\t1\tnull
+                            2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2\t1970-01-01T00:00:00.000007Z\t1\t2
+                            """));
 
-            assertQueryNoLeakCheck(
-                    """
-                            avg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\ti\tj
-                            1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t0\t1
-                            1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1\t0\t2
-                            2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2\t0\tnull
-                            4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4\t1\t4
-                            2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0\t1\t0
-                            0.0\t0.0\t0\t0\tnull\t0\t2\t1\t2\t2\t2\t0\t0\t1\tnull
-                            2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2\t1\t2
-                            """,
-                    "select avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+            assertQuery("select avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "first_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
@@ -4309,11 +4063,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "min(j) over (partition by i order by ts rows between 1 preceding and current row), " +
                             "i, j " +
-                            "from tab",
-                    null,
-                    false,
-                    true
-            );
+                            "from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            avg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\ti\tj
+                            1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t0\t1
+                            1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1\t0\t2
+                            2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2\t0\tnull
+                            4.0\t4.0\t4\t4\t4\t4\t1\t1\t1\t1\t1\t4\t4\t1\t4
+                            2.0\t4.0\t4\t4\t0\t0\t2\t2\t2\t2\t2\t4\t0\t1\t0
+                            0.0\t0.0\t0\t0\tnull\t0\t2\t1\t2\t2\t2\t0\t0\t1\tnull
+                            2.0\t2.0\tnull\t2\t2\t2\t2\t1\t2\t2\t2\t2\t2\t1\t2
+                            """);
 
             String result4 = """
                     avg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin
@@ -4325,9 +4088,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     2.0\t2.0\t2\t2\tnull\t2\t2\t1\t2\t2\t2\t2\t2
                     2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
                     """;
-            assertQueryNoLeakCheck(
-                    result4,
-                    "select avg(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+            assertQuery("select avg(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "sum(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "first_value(j) ignore nulls over (partition by i order by ts desc rows between 1 preceding and current row), " +
@@ -4340,15 +4101,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "max(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "min(j) over (partition by i order by ts desc rows between 1 preceding and current row) " +
-                            "from tab",
-                    null,
-                    true, // cached window factory
-                    true
-            );
+                            "from tab")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(result4);
 
-            assertQueryNoLeakCheck(
-                    result4,
-                    "select avg(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+            assertQuery("select avg(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "sum(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "first_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "first_value(j) ignore nulls over (partition by i order by ts desc rows between 1 preceding and current row), " +
@@ -4362,24 +4120,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
                             "min(j) over (partition by i order by ts desc rows between 1 preceding and current row) " +
                             "from tab " +
-                            "order by ts",
-                    null,
-                    true, // cached window factory
-                    true
-            );
+                            "order by ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(result4);
 
-            assertQueryNoLeakCheck(
-                    """
-                            avg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\ti\tj
-                            null\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull\t0\tnull
-                            1.0\t1.0\tnull\t1\t1\t1\t2\t1\t2\t2\t2\t1\t1\t0\t1
-                            1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1\t0\t2
-                            null\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull\t1\tnull
-                            0.0\t0.0\tnull\t0\t0\t0\t2\t1\t2\t2\t2\t0\t0\t1\t0
-                            1.0\t2.0\t0\t0\t2\t2\t2\t2\t2\t2\t2\t2\t0\t1\t2
-                            3.0\t6.0\t2\t2\t4\t4\t2\t2\t2\t2\t2\t4\t2\t1\t4
-                            """,
-                    "select avg(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+            assertQuery("select avg(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
                             "sum(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
                             "first_value(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
                             "first_value(j) ignore nulls over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
@@ -4394,32 +4140,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
                             "i, j " +
                             "from tab " +
-                            "order by i, j",
-                    null,
-                    true,
-                    true
-            );
+                            "order by i, j")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            avg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\ti\tj
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull\t0\tnull
+                            1.0\t1.0\tnull\t1\t1\t1\t2\t1\t2\t2\t2\t1\t1\t0\t1
+                            1.5\t3.0\t1\t1\t2\t2\t2\t2\t2\t2\t2\t2\t1\t0\t2
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t0\t1\t1\t1\tnull\tnull\t1\tnull
+                            0.0\t0.0\tnull\t0\t0\t0\t2\t1\t2\t2\t2\t0\t0\t1\t0
+                            1.0\t2.0\t0\t0\t2\t2\t2\t2\t2\t2\t2\t2\t0\t1\t2
+                            3.0\t6.0\t2\t2\t4\t4\t2\t2\t2\t2\t2\t4\t2\t1\t4
+                            """);
 
             executeWithRewriteTimestamp("create table tab1 (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab1 select x::timestamp, x/13, case when x < 6 THEN NULL ELSE 1.0 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(12)");
 
-            assertQueryNoLeakCheck(
-                    """
-                            avg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\ti\tj
-                            null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t0\t1
-                            null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t0\t1
-                            null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t0\t1
-                            1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t0\t1
-                            1.0\t2.0\t1\t1\t1\t1\t2\t2\t2\t2\t2\t1\t1\t0\t1
-                            1.0\t3.0\t1\t1\t1\t1\t3\t3\t3\t3\t3\t1\t1\t0\t1
-                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\t0\t1
-                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\t0\tnull
-                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\t0\tnull
-                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\t0\tnull
-                            1.0\t3.0\t1\t1\tnull\t1\t4\t3\t4\t4\t4\t1\t1\t0\tnull
-                            1.0\t2.0\t1\t1\tnull\t1\t4\t2\t4\t4\t4\t1\t1\t0\tnull
-                            """,
-                    "select avg(j) over (partition by i order by ts desc rows between 6 preceding and 3 preceding), " +
+            assertQuery("select avg(j) over (partition by i order by ts desc rows between 6 preceding and 3 preceding), " +
                             "sum(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
                             "first_value(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
                             "first_value(j) ignore nulls over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
@@ -4434,29 +4172,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
                             "i, j " +
                             "from tab1 " +
-                            "order by ts desc",
-                    null,
-                    false,
-                    true
-            );
+                            "order by ts desc")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            avg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\ti\tj
+                            null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t0\t1
+                            null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t0\t1
+                            null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t0\t1
+                            1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t0\t1
+                            1.0\t2.0\t1\t1\t1\t1\t2\t2\t2\t2\t2\t1\t1\t0\t1
+                            1.0\t3.0\t1\t1\t1\t1\t3\t3\t3\t3\t3\t1\t1\t0\t1
+                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\t0\t1
+                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\t0\tnull
+                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\t0\tnull
+                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\t0\tnull
+                            1.0\t3.0\t1\t1\tnull\t1\t4\t3\t4\t4\t4\t1\t1\t0\tnull
+                            1.0\t2.0\t1\t1\tnull\t1\t4\t2\t4\t4\t4\t1\t1\t0\tnull
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            avg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\tj
-                            null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t1
-                            null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t1
-                            null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t1
-                            1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1.0\t2.0\t1\t1\t1\t1\t2\t2\t2\t2\t2\t1\t1\t1
-                            1.0\t3.0\t1\t1\t1\t1\t3\t3\t3\t3\t3\t1\t1\t1
-                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\t1
-                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\tnull
-                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\tnull
-                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\tnull
-                            1.0\t3.0\t1\t1\tnull\t1\t4\t3\t4\t4\t4\t1\t1\tnull
-                            1.0\t2.0\t1\t1\tnull\t1\t4\t2\t4\t4\t4\t1\t1\tnull
-                            """,
-                    "select avg(j) over (order by ts desc rows between 6 preceding and 3 preceding), " +
+            assertQuery("select avg(j) over (order by ts desc rows between 6 preceding and 3 preceding), " +
                             "sum(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
                             "first_value(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
                             "first_value(j) ignore nulls over (order by ts  desc rows between 6 preceding and 3 preceding), " +
@@ -4471,29 +4207,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
                             "j " +
                             "from tab1 " +
-                            "order by ts desc",
-                    null,
-                    false,
-                    true
-            );
+                            "order by ts desc")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            avg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\tj
+                            null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t1
+                            null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t1
+                            null\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\t1
+                            1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                            1.0\t2.0\t1\t1\t1\t1\t2\t2\t2\t2\t2\t1\t1\t1
+                            1.0\t3.0\t1\t1\t1\t1\t3\t3\t3\t3\t3\t1\t1\t1
+                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\t1
+                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\tnull
+                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\tnull
+                            1.0\t4.0\t1\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\tnull
+                            1.0\t3.0\t1\t1\tnull\t1\t4\t3\t4\t4\t4\t1\t1\tnull
+                            1.0\t2.0\t1\t1\tnull\t1\t4\t2\t4\t4\t4\t1\t1\tnull
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            avg\tsum\tfirst_value\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\tj
-                            1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
-                            1.0\t2.0\t1\t1\t1\t2\t2\t2\t2\t2\t1\t1\t1
-                            1.0\t3.0\t1\t1\t1\t3\t3\t3\t3\t3\t1\t1\t1
-                            1.0\t4.0\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\t1
-                            1.0\t5.0\t1\t1\t1\t5\t5\t5\t5\t5\t1\t1\t1
-                            1.0\t6.0\t1\t1\t1\t6\t6\t6\t6\t6\t1\t1\t1
-                            1.0\t7.0\t1\t1\t1\t7\t7\t7\t7\t7\t1\t1\t1
-                            1.0\t7.0\t1\tnull\t1\t8\t7\t8\t8\t8\t1\t1\tnull
-                            1.0\t7.0\t1\tnull\t1\t9\t7\t9\t9\t9\t1\t1\tnull
-                            1.0\t7.0\t1\tnull\t1\t10\t7\t10\t10\t10\t1\t1\tnull
-                            1.0\t7.0\t1\tnull\t1\t11\t7\t11\t11\t11\t1\t1\tnull
-                            1.0\t7.0\t1\tnull\t1\t12\t7\t12\t12\t12\t1\t1\tnull
-                            """,
-                    "select avg(j) over (order by ts desc rows between unbounded preceding and current row), " +
+            assertQuery("select avg(j) over (order by ts desc rows between unbounded preceding and current row), " +
                             "sum(j) over (order by ts  desc rows between unbounded preceding and current row), " +
                             "first_value(j) over (order by ts  desc rows between unbounded preceding and current row), " +
                             "last_value(j) over (order by ts  desc rows between unbounded preceding and current row), " +
@@ -4507,11 +4241,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (order by ts  desc rows between unbounded preceding and current row), " +
                             "j " +
                             "from tab1 " +
-                            "order by ts desc",
-                    null,
-                    false,
-                    true
-            );
+                            "order by ts desc")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            avg\tsum\tfirst_value\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\tj
+                            1.0\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                            1.0\t2.0\t1\t1\t1\t2\t2\t2\t2\t2\t1\t1\t1
+                            1.0\t3.0\t1\t1\t1\t3\t3\t3\t3\t3\t1\t1\t1
+                            1.0\t4.0\t1\t1\t1\t4\t4\t4\t4\t4\t1\t1\t1
+                            1.0\t5.0\t1\t1\t1\t5\t5\t5\t5\t5\t1\t1\t1
+                            1.0\t6.0\t1\t1\t1\t6\t6\t6\t6\t6\t1\t1\t1
+                            1.0\t7.0\t1\t1\t1\t7\t7\t7\t7\t7\t1\t1\t1
+                            1.0\t7.0\t1\tnull\t1\t8\t7\t8\t8\t8\t1\t1\tnull
+                            1.0\t7.0\t1\tnull\t1\t9\t7\t9\t9\t9\t1\t1\tnull
+                            1.0\t7.0\t1\tnull\t1\t10\t7\t10\t10\t10\t1\t1\tnull
+                            1.0\t7.0\t1\tnull\t1\t11\t7\t11\t11\t11\t1\t1\tnull
+                            1.0\t7.0\t1\tnull\t1\t12\t7\t12\t12\t12\t1\t1\tnull
+                            """);
         });
     }
 
@@ -4523,11 +4271,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
                 String func = FRAME_FUNCTIONS.get(i);
                 for (String column : FRAME_FUNCTIONS_PARAMETER_COLUMN_NAME[i]) {
-                    assertExceptionNoLeakCheck(
-                            "select ts, i, j, #FUNCT_NAME over (partition by i order by ts range between 22 following and 3 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column),
-                            96,
-                            "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only"
-                    );
+                    assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by ts range between 22 following and 3 following) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column))
+                            .noLeakCheck()
+                            .fails(96, "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
                 }
             }
         });
@@ -4547,16 +4293,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
             execute("INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT " +
+            assertQuery("SELECT " +
                             "    timestamp, " +
                             "    price, " +
                             "    lag('timestamp') OVER (ORDER BY timestamp) AS previous_price " +
                             "FROM trades " +
-                            "LIMIT 10;",
-                    0,
-                    "inconvertible value: `timestamp` [STRING -> DOUBLE]"
-            );
+                            "LIMIT 10;")
+                    .noLeakCheck()
+                    .fails(0, "inconvertible value: `timestamp` [STRING -> DOUBLE]");
         });
     }
 
@@ -4629,19 +4373,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (40, 4, 3000000)");
 
             // Inline window: ORDER BY y, but y is not in SELECT
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER (ORDER BY y) as sum_x FROM t")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum_x
                             10\t10.0
                             20\t30.0
                             30\t60.0
                             40\t100.0
-                            """,
-                    "SELECT x, sum(x) OVER (ORDER BY y) as sum_x FROM t",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4652,20 +4393,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x%5 from long_sequence(5)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, ksum(val) over (order by ts rows current row) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tksum
                             1970-01-01T00:00:00.000001Z\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t2.0\t2.0
                             1970-01-01T00:00:00.000003Z\t3.0\t3.0
                             1970-01-01T00:00:00.000004Z\t4.0\t4.0
                             1970-01-01T00:00:00.000005Z\t0.0\t0.0
-                            """),
-                    "select ts, val, ksum(val) over (order by ts rows current row) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -4678,17 +4418,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (2000000::timestamp, 2.0)");
 
             // Frame "between 1 preceding and 2 preceding" is empty (hi < lo)
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, ksum(val) over (order by ts rows between 1 preceding and 2 preceding) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tksum
                             1970-01-01T00:00:01.000000Z\t1.0\tnull
                             1970-01-01T00:00:02.000000Z\t2.0\tnull
-                            """),
-                    "select ts, val, ksum(val) over (order by ts rows between 1 preceding and 2 preceding) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -4703,18 +4442,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Partition 1 has all NULLs -> ksum should be NaN
             // Partition 2 has a value -> ksum should be 10
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, ksum(val) over (partition by i) from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tksum
                             1970-01-01T00:00:01.000000Z\t1\tnull\tnull
                             1970-01-01T00:00:02.000000Z\t1\tnull\tnull
                             1970-01-01T00:00:03.000000Z\t2\t10.0\t10.0
-                            """),
-                    "select ts, i, val, ksum(val) over (partition by i) from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -4728,20 +4465,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(2_000_000::timestamp, 'A', 30.0), " +
                     "(3_000_000::timestamp, 'B', 200.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, sym, val, ksum(val) over (partition by sym order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tsym\tval\tksum_val\tavg_all
                             1970-01-01T00:00:01.000000Z\tA\t10.0\t10.0\t85.0
                             1970-01-01T00:00:02.000000Z\tB\t100.0\t100.0\t85.0
                             1970-01-01T00:00:02.000000Z\tA\t30.0\t40.0\t85.0
                             1970-01-01T00:00:03.000000Z\tB\t200.0\t300.0\t85.0
-                            """),
-                    "select ts, sym, val, ksum(val) over (partition by sym order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -4770,8 +4505,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //   4s: 2s out of 1s range, current NULL, frameSize=0 -> NaN
             //   6s: 4s was NULL, 2s out of range -> 30
             // avg(val) over () counts non-null values: (20+10+30)/3 = 20.0
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, sym, val, ksum(val) over (partition by sym order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tsym\tval\tksum_val\tavg_all
                             1970-01-01T00:00:01.000000Z\tA\tnull\tnull\t20.0
                             1970-01-01T00:00:02.000000Z\tB\t20.0\t20.0\t20.0
@@ -4779,13 +4518,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:04.000000Z\tB\tnull\tnull\t20.0
                             1970-01-01T00:00:05.000000Z\tA\tnull\tnull\t20.0
                             1970-01-01T00:00:06.000000Z\tB\t30.0\t30.0\t20.0
-                            """),
-                    "select ts, sym, val, ksum(val) over (partition by sym order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -4808,20 +4541,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Partition 2 at t=3s: 10 -> 10
             // Partition 1 at t=4s: NULL + 2 + 3 = 5
             // Partition 2 at t=5s: 10 + 20 = 30
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, ksum(val) over (partition by i order by ts range between 10 second preceding and current row) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tksum
                             1970-01-01T00:00:01.000000Z\t1\tnull\tnull
                             1970-01-01T00:00:02.000000Z\t1\t2.0\t2.0
                             1970-01-01T00:00:03.000000Z\t2\t10.0\t10.0
                             1970-01-01T00:00:04.000000Z\t1\t3.0\t5.0
                             1970-01-01T00:00:05.000000Z\t2\t20.0\t30.0
-                            """),
-                    "select ts, i, val, ksum(val) over (partition by i order by ts range between 10 second preceding and current row) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -4841,8 +4573,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //   ts=1: range [-1,1] -> [1] = 1
             //   ts=3: range [1,3] -> [1,3] = 4
             //   ts=5: range [3,5] -> [3,5] = 8
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, ksum(val) over (partition by i order by ts range between 2 microseconds preceding and current row) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tksum
                             1970-01-01T00:00:00.000001Z\t1\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t0\t2.0\t2.0
@@ -4850,12 +4586,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t0\t4.0\t6.0
                             1970-01-01T00:00:00.000005Z\t1\t5.0\t8.0
                             1970-01-01T00:00:00.000006Z\t0\t6.0\t10.0
-                            """),
-                    "select ts, i, val, ksum(val) over (partition by i order by ts range between 2 microseconds preceding and current row) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -4870,16 +4601,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Range of 100 seconds should include all rows, triggering buffer expansion
             // Sum of 1..40 = 40*41/2 = 820
             // Last row timestamp: 40 * 1000000 microseconds = 40 seconds
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, ksum(val) over (partition by i order by ts range between 100 second preceding and current row) from tab limit -1")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tksum
                             1970-01-01T00:00:40.000000Z\t1\t40.0\t820.0
-                            """),
-                    "select ts, i, val, ksum(val) over (partition by i order by ts range between 100 second preceding and current row) from tab limit -1",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -4934,19 +4664,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // At t=2s: no rows >= 2s before -> NaN
             // At t=3s: t=1s is 2s before (included) -> 1.0
             // At t=4s: t=1s is 3s before, t=2s is 2s before -> 1.0 + 2.0 = 3.0
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, ksum(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tksum
                             1970-01-01T00:00:01.000000Z\t1\t1.0\tnull
                             1970-01-01T00:00:02.000000Z\t1\t2.0\tnull
                             1970-01-01T00:00:03.000000Z\t1\t3.0\t1.0
                             1970-01-01T00:00:04.000000Z\t1\t4.0\t3.0
-                            """),
-                    "select ts, i, val, ksum(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -4963,18 +4692,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // At t=1s: window=[NULL] -> NaN
             // At t=2s: window=[NULL, NULL] -> NaN
             // At t=3s: window=[NULL, 3.0] -> 3.0
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, ksum(val) over (partition by i order by ts rows between 1 preceding and current row) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tksum
                             1970-01-01T00:00:01.000000Z\t1\tnull\tnull
                             1970-01-01T00:00:02.000000Z\t1\tnull\tnull
                             1970-01-01T00:00:03.000000Z\t1\t3.0\t3.0
-                            """),
-                    "select ts, i, val, ksum(val) over (partition by i order by ts rows between 1 preceding and current row) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5030,8 +4758,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //   row 3: [1,3] = 4
             //   row 5: [3,5] = 8
             //   row 7: [5,7] = 12
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, ksum(val) over (partition by i order by ts rows between 1 preceding and current row) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tksum
                             1970-01-01T00:00:00.000001Z\t1\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t0\t2.0\t2.0
@@ -5041,12 +4773,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000006Z\t0\t6.0\t10.0
                             1970-01-01T00:00:00.000007Z\t1\t7.0\t12.0
                             1970-01-01T00:00:00.000008Z\t0\t8.0\t14.0
-                            """),
-                    "select ts, i, val, ksum(val) over (partition by i order by ts rows between 1 preceding and current row) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5059,8 +4786,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // i=0: values 2,4,6 -> cumulative: 2, 6, 12
             // i=1: values 1,3,5 -> cumulative: 1, 4, 9
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, ksum(val) over (partition by i order by ts rows unbounded preceding) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tksum
                             1970-01-01T00:00:00.000001Z\t1\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t0\t2.0\t2.0
@@ -5068,12 +4799,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t0\t4.0\t6.0
                             1970-01-01T00:00:00.000005Z\t1\t5.0\t9.0
                             1970-01-01T00:00:00.000006Z\t0\t6.0\t12.0
-                            """),
-                    "select ts, i, val, ksum(val) over (partition by i order by ts rows unbounded preceding) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5091,19 +4817,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into precision_tab values (3::timestamp, NULL)");
             execute("insert into precision_tab values (4::timestamp, 3.3)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, ksum(val) over (order by ts rows unbounded preceding) from precision_tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tksum
                             1970-01-01T00:00:00.000001Z\t1.1\t1.1
                             1970-01-01T00:00:00.000002Z\t2.2\t3.3000000000000003
                             1970-01-01T00:00:00.000003Z\tnull\t3.3000000000000003
                             1970-01-01T00:00:00.000004Z\t3.3\t6.6
-                            """),
-                    "select ts, val, ksum(val) over (order by ts rows unbounded preceding) from precision_tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5117,20 +4842,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(3_000_000::timestamp, 'A', 30.0), " +
                     "(4_000_000::timestamp, 'B', 40.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, sym, val, ksum(val) over (order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tsym\tval\tksum_val\tavg_all
                             1970-01-01T00:00:01.000000Z\tA\t10.0\t10.0\t25.0
                             1970-01-01T00:00:02.000000Z\tB\t20.0\t30.0\t25.0
                             1970-01-01T00:00:03.000000Z\tA\t30.0\t50.0\t25.0
                             1970-01-01T00:00:04.000000Z\tB\t40.0\t70.0\t25.0
-                            """),
-                    "select ts, sym, val, ksum(val) over (order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5155,21 +4878,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //   4s, val=NULL -> 3s still in range           -> 20
             //   5s, val=30  -> 3s out of range, NULL gap    -> 30
             // avg(val) over () counts non-null only: (10+20+30)/3 = 20.0
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, ksum(val) over (order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tksum_val\tavg_all
                             1970-01-01T00:00:01.000000Z\t10.0\t10.0\t20.0
                             1970-01-01T00:00:02.000000Z\tnull\t10.0\t20.0
                             1970-01-01T00:00:03.000000Z\t20.0\t20.0\t20.0
                             1970-01-01T00:00:04.000000Z\tnull\t20.0\t20.0
                             1970-01-01T00:00:05.000000Z\t30.0\t30.0\t20.0
-                            """),
-                    "select ts, val, ksum(val) over (order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5186,20 +4907,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // ts=3: range [1,3] -> [1,2,3] = 6
             // ts=4: range [2,4] -> [2,3,4] = 9
             // ts=5: range [3,5] -> [3,4,5] = 12
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, ksum(val) over (order by ts range between 2 microseconds preceding and current row) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tksum
                             1970-01-01T00:00:00.000001Z\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t2.0\t3.0
                             1970-01-01T00:00:00.000003Z\t3.0\t6.0
                             1970-01-01T00:00:00.000004Z\t4.0\t9.0
                             1970-01-01T00:00:00.000005Z\t5.0\t12.0
-                            """),
-                    "select ts, val, ksum(val) over (order by ts range between 2 microseconds preceding and current row) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5214,16 +4934,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Range of 100 seconds should include all rows, triggering buffer expansion
             // Sum of 1..40 = 40*41/2 = 820
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, ksum(val) over (order by ts range between 100 second preceding and current row) from tab limit -1")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tksum
                             1970-01-01T00:00:40.000000Z\t40.0\t820.0
-                            """),
-                    "select ts, val, ksum(val) over (order by ts range between 100 second preceding and current row) from tab limit -1",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5278,19 +4997,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // At t=2s: no rows >= 2s before -> NaN
             // At t=3s: t=1s is 2s before (included) -> 1.0
             // At t=4s: t=1s is 3s before, t=2s is 2s before -> 1.0 + 2.0 = 3.0
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, ksum(val) over (order by ts range between unbounded preceding and 2 second preceding) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tksum
                             1970-01-01T00:00:01.000000Z\t1.0\tnull
                             1970-01-01T00:00:02.000000Z\t2.0\tnull
                             1970-01-01T00:00:03.000000Z\t3.0\t1.0
                             1970-01-01T00:00:04.000000Z\t4.0\t3.0
-                            """),
-                    "select ts, val, ksum(val) over (order by ts range between unbounded preceding and 2 second preceding) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5308,8 +5026,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // row 4: [1,2,3] = 6
             // row 5: [2,3,4] = 9
             // row 6: [3,4,5] = 12
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, ksum(val) over (order by ts rows between 3 preceding and 1 preceding) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tksum
                             1970-01-01T00:00:00.000001Z\t1.0\tnull
                             1970-01-01T00:00:00.000002Z\t2.0\t1.0
@@ -5317,12 +5039,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t4.0\t6.0
                             1970-01-01T00:00:00.000005Z\t5.0\t9.0
                             1970-01-01T00:00:00.000006Z\t6.0\t12.0
-                            """),
-                    "select ts, val, ksum(val) over (order by ts rows between 3 preceding and 1 preceding) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5369,8 +5086,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // i=0: values 2,4,6 -> sum=12
             // i=1: values 1,3,5 -> sum=9
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, ksum(val) over (partition by i rows between unbounded preceding and unbounded following) from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tksum
                             1970-01-01T00:00:00.000001Z\t1\t1.0\t9.0
                             1970-01-01T00:00:00.000002Z\t0\t2.0\t12.0
@@ -5378,12 +5098,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t0\t4.0\t12.0
                             1970-01-01T00:00:00.000005Z\t1\t5.0\t9.0
                             1970-01-01T00:00:00.000006Z\t0\t6.0\t12.0
-                            """),
-                    "select ts, i, val, ksum(val) over (partition by i rows between unbounded preceding and unbounded following) from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5396,18 +5111,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (2000000::timestamp, 2.0)");
             execute("insert into tab values (3000000::timestamp, 3.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, ksum(val) over () from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tksum
                             1970-01-01T00:00:01.000000Z\t1.0\t6.0
                             1970-01-01T00:00:02.000000Z\t2.0\t6.0
                             1970-01-01T00:00:03.000000Z\t3.0\t6.0
-                            """),
-                    "select ts, val, ksum(val) over () from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5421,8 +5134,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // i=0: j values are 1,2,3 -> sum=6
             // i=1: j values are 4,0,1,2 -> sum=7
             // i=2: j values are 3,4,0 -> sum=7
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, j, ksum(j) over (partition by i) from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tksum
                             1970-01-01T00:00:00.000001Z\t0\t1.0\t6.0
                             1970-01-01T00:00:00.000002Z\t0\t2.0\t6.0
@@ -5434,16 +5150,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000008Z\t2\t3.0\t7.0
                             1970-01-01T00:00:00.000009Z\t2\t4.0\t7.0
                             1970-01-01T00:00:00.000010Z\t2\t0.0\t7.0
-                            """),
-                    "select ts, i, j, ksum(j) over (partition by i) from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
 
             // Test ksum() over unbounded preceding
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, j, ksum(j) over (order by ts rows unbounded preceding) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tksum
                             1970-01-01T00:00:00.000001Z\t0\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t0\t2.0\t3.0
@@ -5455,16 +5170,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000008Z\t2\t3.0\t16.0
                             1970-01-01T00:00:00.000009Z\t2\t4.0\t20.0
                             1970-01-01T00:00:00.000010Z\t2\t0.0\t20.0
-                            """),
-                    "select ts, i, j, ksum(j) over (order by ts rows unbounded preceding) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Test ksum() over sliding window
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, j, ksum(j) over (order by ts rows between 2 preceding and current row) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tksum
                             1970-01-01T00:00:00.000001Z\t0\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t0\t2.0\t3.0
@@ -5476,16 +5190,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000008Z\t2\t3.0\t6.0
                             1970-01-01T00:00:00.000009Z\t2\t4.0\t9.0
                             1970-01-01T00:00:00.000010Z\t2\t0.0\t7.0
-                            """),
-                    "select ts, i, j, ksum(j) over (order by ts rows between 2 preceding and current row) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Test ksum() over () - whole result set
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, j, ksum(j) over () from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tj\tksum
                             1970-01-01T00:00:00.000001Z\t0\t1.0\t20.0
                             1970-01-01T00:00:00.000002Z\t0\t2.0\t20.0
@@ -5497,12 +5209,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000008Z\t2\t3.0\t20.0
                             1970-01-01T00:00:00.000009Z\t2\t4.0\t20.0
                             1970-01-01T00:00:00.000010Z\t2\t0.0\t20.0
-                            """),
-                    "select ts, i, j, ksum(j) over () from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5521,8 +5228,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Test partitioned with NULLs
             // i=1: values 1, NULL, 3 -> sum=4
             // i=2: values NULL, 5, NULL -> sum=5
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, ksum(val) over (partition by i) from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tksum
                             1970-01-01T00:00:00.000001Z\t1\t1.0\t4.0
                             1970-01-01T00:00:00.000002Z\t1\tnull\t4.0
@@ -5530,12 +5240,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull\t5.0
                             1970-01-01T00:00:00.000005Z\t2\t5.0\t5.0
                             1970-01-01T00:00:00.000006Z\t2\tnull\t5.0
-                            """),
-                    "select ts, i, val, ksum(val) over (partition by i) from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
 
             // Test sliding window with NULLs
             // Window is "1 preceding and current row":
@@ -5545,8 +5250,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Row 4: val=null, window=[3.0, null] -> 3.0
             // Row 5: val=5.0, window=[null, 5.0] -> 5.0
             // Row 6: val=null, window=[5.0, null] -> 5.0
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, ksum(val) over (order by ts rows between 1 preceding and current row) from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tksum
                             1970-01-01T00:00:00.000001Z\t1\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t1\tnull\t1.0
@@ -5554,71 +5263,48 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull\t3.0
                             1970-01-01T00:00:00.000005Z\t2\t5.0\t5.0
                             1970-01-01T00:00:00.000006Z\t2\tnull\t5.0
-                            """),
-                    "select ts, i, val, ksum(val) over (order by ts rows between 1 preceding and current row) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
     @Test
     public void testLagException() throws Exception {
         executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
-        assertExceptionNoLeakCheck(
-                "select lag() over () from tab",
-                7,
-                "function `lag` requires arguments"
-        );
+        assertQuery("select lag() over () from tab")
+                .noLeakCheck()
+                .fails(7, "function `lag` requires arguments");
 
-        assertExceptionNoLeakCheck(
-                "select lag(d, -1) over () from tab",
-                14,
-                "offset must be a positive integer"
-        );
+        assertQuery("select lag(d, -1) over () from tab")
+                .noLeakCheck()
+                .fails(14, "offset must be a positive integer");
 
-        assertExceptionNoLeakCheck(
-                "select lag(d, 1, s) over () from tab",
-                17,
-                "default value must be can cast to double"
-        );
+        assertQuery("select lag(d, 1, s) over () from tab")
+                .noLeakCheck()
+                .fails(17, "default value must be can cast to double");
 
-        assertExceptionNoLeakCheck(
-                "select lag(d, 1, d + 1, d) over () from tab",
-                24,
-                "too many arguments"
-        );
+        assertQuery("select lag(d, 1, d + 1, d) over () from tab")
+                .noLeakCheck()
+                .fails(24, "too many arguments");
 
-        assertExceptionNoLeakCheck(
-                "select lag(d, i, d + 1) over () from tab",
-                14,
-                "offset must be a constant"
-        );
+        assertQuery("select lag(d, i, d + 1) over () from tab")
+                .noLeakCheck()
+                .fails(14, "offset must be a constant");
 
-        assertExceptionNoLeakCheck(
-                "select lag(d, 1, sum(d)) over () from tab",
-                17,
-                "default value can not be a window function"
-        );
+        assertQuery("select lag(d, 1, sum(d)) over () from tab")
+                .noLeakCheck()
+                .fails(17, "default value can not be a window function");
 
-        assertExceptionNoLeakCheck(
-                "select lag(d, 1) ignore over () from tab",
-                24,
-                "'nulls' expected after 'ignore'"
-        );
+        assertQuery("select lag(d, 1) ignore over () from tab")
+                .noLeakCheck()
+                .fails(24, "'nulls' expected after 'ignore'");
 
-        assertExceptionNoLeakCheck(
-                "select lag(d, 1) respect over () from tab",
-                25,
-                "'nulls' expected after 'respect'"
-        );
+        assertQuery("select lag(d, 1) respect over () from tab")
+                .noLeakCheck()
+                .fails(25, "'nulls' expected after 'respect'");
 
-        assertExceptionNoLeakCheck(
-                "select lag(d, 1) ignore null over () from tab",
-                24,
-                "'nulls' expected, not 'null'"
-        );
+        assertQuery("select lag(d, 1) ignore null over () from tab")
+                .noLeakCheck()
+                .fails(24, "'nulls' expected, not 'null'");
     }
 
     @Test
@@ -5628,18 +5314,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::" + timestampType.getTypeName() + ", x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, " +
                     "case when x::double % 3 = 0 THEN NULL ELSE x::double%5 END, 'k' || (x%5) ::symbol, 'k' || x, x::date from long_sequence(7)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
-                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2\tnull\t2\tnull\t2\tnull\t1970-01-01T00:00:00.002Z\t
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\t1\t4\t1\tnull\t1\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\t4\t2\t4\t2\t4\t2\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0\tnull\t0\t2\t0\tnull\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t4\t2\t4\tnull\t4\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t2\t0\t2\t0\t2\t0\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\tnull\tnull\t0\tnull\tnull\t\t1970-01-01T00:00:00.006Z
-                            """),
-                    "select ts, i, j, d, " +
+            assertQuery("select ts, i, j, d, " +
                             "lead(j) over (), " +
                             "lag(j) over (), " +
                             "lead(j) ignore nulls over (), " +
@@ -5648,24 +5323,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(j) respect nulls over (), " +
                             "lead(m) respect nulls over (), " +
                             "lag(m) respect nulls over (), " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+                            "from tab ")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\tnull\t2.0\tnull\t1970-01-01T00:00:00.002Z\t
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\t1.0\t4.0\t1.0\tnull\t1.0\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\t4.0\t2.0\t4.0\t2.0\t4.0\t2.0\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0.0\tnull\t0.0\t2.0\t0.0\tnull\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t4.0\t2.0\t4.0\tnull\t4.0\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\tnull\tnull\t0.0\tnull\tnull\t\t1970-01-01T00:00:00.006Z
-                            """),
-                    "select ts, i, j, d, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2\tnull\t2\tnull\t2\tnull\t1970-01-01T00:00:00.002Z\t
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\t1\t4\t1\tnull\t1\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\t4\t2\t4\t2\t4\t2\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0\tnull\t0\t2\t0\tnull\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t4\t2\t4\tnull\t4\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t2\t0\t2\t0\t2\t0\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\tnull\tnull\t0\tnull\tnull\t\t1970-01-01T00:00:00.006Z
+                            """));
+
+            assertQuery("select ts, i, j, d, " +
                             "lead(d) over (), " +
                             "lag(d) over (), " +
                             "lead(d) ignore nulls over (), " +
@@ -5674,24 +5347,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(d) respect nulls over (), " +
                             "lead(m) respect nulls over (), " +
                             "lag(m) respect nulls over (), " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+                            "from tab ")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.002Z\t
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.006Z
-                            """),
-                    "select ts, i, j, d, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\tnull\t2.0\tnull\t1970-01-01T00:00:00.002Z\t
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\t1.0\t4.0\t1.0\tnull\t1.0\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\t4.0\t2.0\t4.0\t2.0\t4.0\t2.0\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0.0\tnull\t0.0\t2.0\t0.0\tnull\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t4.0\t2.0\t4.0\tnull\t4.0\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\tnull\tnull\t0.0\tnull\tnull\t\t1970-01-01T00:00:00.006Z
+                            """));
+
+            assertQuery("select ts, i, j, d, " +
                             "lead(ts) over (), " +
                             "lag(ts) over (), " +
                             "lead(ts) ignore nulls over (), " +
@@ -5700,24 +5371,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(ts) respect nulls over (), " +
                             "lead(m) respect nulls over (), " +
                             "lag(m) respect nulls over (), " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    true
-            );
+                            "from tab ")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.002Z\t
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.006Z
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
-                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1\t1\t1\t1\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4\t4\t4\t4\t4\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0\t0\t0\t0\t0\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z
-                            """),
-                    "select ts, i, j, d, " +
+            assertQuery("select ts, i, j, d, " +
                             "lead(j, 0) over (), " +
                             "lag(j, 0) over (), " +
                             "lead(j, 0) ignore nulls over (), " +
@@ -5742,24 +5411,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(m, 0) ignore nulls over (), " +
                             "lead(m, 0) respect nulls over (), " +
                             "lag(m, 0) respect nulls over (), " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+                            "from tab ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t4\tnull\t0\tnull\t4\tnull\t4.0\tnull\t0.0\tnull\t4.0\tnull\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.004Z\t\t1970-01-01T00:00:00.004Z\t\t1970-01-01T00:00:00.004Z\t
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t0\tnull\t2\tnull\t0\tnull\t0.0\tnull\t2.0\tnull\t0.0\tnull\t1970-01-01T00:00:00.000005Z\t\t1970-01-01T00:00:00.000005Z\t\t1970-01-01T00:00:00.000005Z\t\t1970-01-01T00:00:00.005Z\t\t1970-01-01T00:00:00.005Z\t\t1970-01-01T00:00:00.005Z\t
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\t2\tnull\tnull\tnull\tnull\tnull\t2.0\tnull\tnull\tnull\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.006Z\t\t1970-01-01T00:00:00.006Z\t\t1970-01-01T00:00:00.006Z\t
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2\t1\tnull\tnull\t2\t1\t2.0\t1.0\tnull\tnull\t2.0\t1.0\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2\tnull\t1\tnull\t2\tnull\t2.0\tnull\t1.0\tnull\t2.0\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.002Z\t\t1970-01-01T00:00:00.002Z\t\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\t2\tnull\tnull\tnull\tnull\tnull\t2.0\tnull\tnull\t\t1970-01-01T00:00:00.000003Z\t\t1970-01-01T00:00:00.000003Z\t\t1970-01-01T00:00:00.000003Z\t\t1970-01-01T00:00:00.003Z\t\t1970-01-01T00:00:00.003Z\t\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t4\tnull\t2\tnull\t4\tnull\t4.0\tnull\t2.0\tnull\t4.0\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.004Z\t\t1970-01-01T00:00:00.004Z\t\t1970-01-01T00:00:00.004Z
-                            """),
-                    "select ts, i, j, d, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1\t1\t1\t1\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4\t4\t4\t4\t4\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0\t0\t0\t0\t0\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z
+                            """));
+
+            assertQuery("select ts, i, j, d, " +
                             "lead(j, 3) over (), " +
                             "lag(j, 3) over (), " +
                             "lead(j, 3) ignore nulls over (), " +
@@ -5784,24 +5452,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(m, 3) ignore nulls over (), " +
                             "lead(m, 3) respect nulls over (), " +
                             "lag(m, 3) respect nulls over (), " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+                            "from tab ")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\t2\t4\t2\tnull\t2\tnull\t2.0\t4.0\t2.0\tnull\t2.0\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t4\t3\t0\t3\t4\t3\t4.0\t3.0\t0.0\t3.0\t4.0\t3.0\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\t0\t1\t0\t1\t0\t1\t0.0\t1.0\t0.0\t1.0\t0.0\t1.0\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\t2\t2\t1\tnull\t2\tnull\t2.0\t2.0\t1.0\tnull\t2.0\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2\tnull\t1\t2\t2\tnull\t2.0\tnull\t1.0\t2.0\t2.0\tnull\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\t4\tnull\t4\tnull\t4\tnull\t4.0\tnull\t4.0\tnull\t4.0\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t3\t0\t3\t4\t3\t0\t3.0\t0.0\t3.0\t4.0\t3.0\t0.0\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
-                            """),
-                    "select ts, i, j, d, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t4\tnull\t0\tnull\t4\tnull\t4.0\tnull\t0.0\tnull\t4.0\tnull\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.004Z\t\t1970-01-01T00:00:00.004Z\t\t1970-01-01T00:00:00.004Z\t
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t0\tnull\t2\tnull\t0\tnull\t0.0\tnull\t2.0\tnull\t0.0\tnull\t1970-01-01T00:00:00.000005Z\t\t1970-01-01T00:00:00.000005Z\t\t1970-01-01T00:00:00.000005Z\t\t1970-01-01T00:00:00.005Z\t\t1970-01-01T00:00:00.005Z\t\t1970-01-01T00:00:00.005Z\t
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\t2\tnull\tnull\tnull\tnull\tnull\t2.0\tnull\tnull\tnull\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.006Z\t\t1970-01-01T00:00:00.006Z\t\t1970-01-01T00:00:00.006Z\t
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2\t1\tnull\tnull\t2\t1\t2.0\t1.0\tnull\tnull\t2.0\t1.0\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2\tnull\t1\tnull\t2\tnull\t2.0\tnull\t1.0\tnull\t2.0\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.002Z\t\t1970-01-01T00:00:00.002Z\t\t1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\t2\tnull\tnull\tnull\tnull\tnull\t2.0\tnull\tnull\t\t1970-01-01T00:00:00.000003Z\t\t1970-01-01T00:00:00.000003Z\t\t1970-01-01T00:00:00.000003Z\t\t1970-01-01T00:00:00.003Z\t\t1970-01-01T00:00:00.003Z\t\t1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t4\tnull\t2\tnull\t4\tnull\t4.0\tnull\t2.0\tnull\t4.0\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.004Z\t\t1970-01-01T00:00:00.004Z\t\t1970-01-01T00:00:00.004Z
+                            """));
+
+            assertQuery("select ts, i, j, d, " +
                             "lead(j, 2, j + 1) over (), " +
                             "lag(j, 2, j + 1) over (), " +
                             "lead(j, 2, j + 1) ignore nulls over (), " +
@@ -5826,24 +5492,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(m, 2, m) ignore nulls over (), " +
                             "lead(m, 2, m) respect nulls over (), " +
                             "lag(m, 2, m) respect nulls over (), " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+                            "from tab ")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2\tnull\t2\t4\t2\tnull\tnull\t2.0\t2.0\t4.0\t2.0\tnull\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3\t4\t3\t0\t3\t4\t4.0\t3.0\t3.0\t0.0\t3.0\t4.0\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\t1\t0\t1\t0\t1\t0\t0.0\t1.0\t1.0\t0.0\t1.0\t0.0\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2\tnull\t1\t2\t2\tnull\tnull\t2.0\t1.0\t2.0\t2.0\tnull\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.006Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2\t2\t1\tnull\t2\t2.0\tnull\t2.0\t1.0\tnull\t2.0\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.007Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t4\tnull\t4\tnull\t4\tnull\tnull\t4.0\t4.0\tnull\t4.0\tnull\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0\t3\t4\t3\t0\t3\t3.0\t0.0\t4.0\t3.0\t0.0\t3.0\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z
-                            """),
-                    "select ts, i, j, d, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\t2\t4\t2\tnull\t2\tnull\t2.0\t4.0\t2.0\tnull\t2.0\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t4\t3\t0\t3\t4\t3\t4.0\t3.0\t0.0\t3.0\t4.0\t3.0\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\t0\t1\t0\t1\t0\t1\t0.0\t1.0\t0.0\t1.0\t0.0\t1.0\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\t2\t2\t1\tnull\t2\tnull\t2.0\t2.0\t1.0\tnull\t2.0\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2\tnull\t1\t2\t2\tnull\t2.0\tnull\t1.0\t2.0\t2.0\tnull\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\t4\tnull\t4\tnull\t4\tnull\t4.0\tnull\t4.0\tnull\t4.0\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t3\t0\t3\t4\t3\t0\t3.0\t0.0\t3.0\t4.0\t3.0\t0.0\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
+                            """));
+
+            assertQuery("select ts, i, j, d, " +
                             "lead(j, 2, j + 1) over (order by ts desc), " +
                             "lag(j, 2, j + 1) over (order by ts desc), " +
                             "lead(j, 2, j + 1) ignore nulls over (order by ts desc), " +
@@ -5868,24 +5532,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(m, 2, m) ignore nulls over (order by ts desc), " +
                             "lead(m, 2, m) respect nulls over (order by ts desc), " +
                             "lag(m, 2, m) respect nulls over (order by ts desc), " +
-                            "from tab order by ts asc",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+                            "from tab order by ts asc")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4\t4\t4\t4\t4\t4\t4\t4\t4\t4\t4\t4\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z
-                            """),
-                    "select ts, i, j, d, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2\tnull\t2\t4\t2\tnull\tnull\t2.0\t2.0\t4.0\t2.0\tnull\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3\t4\t3\t0\t3\t4\t4.0\t3.0\t3.0\t0.0\t3.0\t4.0\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\t1\t0\t1\t0\t1\t0\t0.0\t1.0\t1.0\t0.0\t1.0\t0.0\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2\tnull\t1\t2\t2\tnull\tnull\t2.0\t1.0\t2.0\t2.0\tnull\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.006Z
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2\t2\t1\tnull\t2\t2.0\tnull\t2.0\t1.0\tnull\t2.0\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.007Z
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t4\tnull\t4\tnull\t4\tnull\tnull\t4.0\t4.0\tnull\t4.0\tnull\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0\t3\t4\t3\t0\t3\t3.0\t0.0\t4.0\t3.0\t0.0\t3.0\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z
+                            """));
+
+            assertQuery("select ts, i, j, d, " +
                             "lead(j, 0) over (order by ts desc), " +
                             "lag(j, 0) over (order by ts desc), " +
                             "lead(j, 0) ignore nulls over (order by ts desc), " +
@@ -5910,14 +5572,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(m, 0) ignore nulls over (order by ts desc), " +
                             "lead(m, 0) respect nulls over (order by ts desc), " +
                             "lag(m, 0) respect nulls over (order by ts desc), " +
-                            "from tab order by ts asc",
-                    "ts",
-                    true,
-                    true
-            );
+                            "from tab order by ts asc")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4\t4\t4\t4\t4\t4\t4\t4\t4\t4\t4\t4\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t2\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, j, d, " +
+                            "lag(j) over (), " +
+                            "lag(j) ignore nulls over (), " +
+                            "lag(j) respect nulls over (), " +
+                            "lag(d) over (), " +
+                            "lag(ts) over (), " +
+                            "lag(m) over () " +
+                            "from tab ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\tlag3\tlag4
                             1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\t\t
                             1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t1\t1\t1\t1.0\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.001Z
@@ -5926,22 +5608,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t4\t4\t4\t4.0\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.004Z
                             1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t0\t0\t0\t0.0\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.005Z
                             1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t0\tnull\tnull\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.006Z
-                            """),
-                    "select ts, i, j, d, " +
-                            "lag(j) over (), " +
-                            "lag(j) ignore nulls over (), " +
-                            "lag(j) respect nulls over (), " +
-                            "lag(d) over (), " +
-                            "lag(ts) over (), " +
-                            "lag(m) over () " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, j, d, " +
+                            "lag(j, 3) over (), " +
+                            "lag(j, 3) ignore nulls over (), " +
+                            "lag(j, 3) respect nulls over (), " +
+                            "lag(d, 3) over (), " +
+                            "lag(ts, 3) over (), " +
+                            "lag(m, 3) over () " +
+                            "from tab ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\tlag3\tlag4
                             1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\t\t
                             1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\t\t
@@ -5950,22 +5631,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2\t1\t2\t2.0\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.002Z
                             1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\t2\tnull\tnull\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.003Z
                             1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4\t2\t4\t4.0\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.004Z
-                            """),
-                    "select ts, i, j, d, " +
-                            "lag(j, 3) over (), " +
-                            "lag(j, 3) ignore nulls over (), " +
-                            "lag(j, 3) respect nulls over (), " +
-                            "lag(d, 3) over (), " +
-                            "lag(ts, 3) over (), " +
-                            "lag(m, 3) over () " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, j, d, " +
+                            "lag(j, 2, j + 1) over (), " +
+                            "lag(j, 2, j + 1) ignore nulls over (), " +
+                            "lag(j, 2, j + 1) respect nulls over (), " +
+                            "lag(d, 2, d + 1) over (), " +
+                            "lag(ts, 2, ts + 10) over (), " +
+                            "lag(m, 2, m) over () " +
+                            "from tab ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\tlag3\tlag4
                             1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2\t2\t2\t2.0\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.001Z
                             1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3\t3\t3\t3.0\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.002Z
@@ -5974,19 +5654,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2\tnull\tnull\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.003Z
                             1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t4\t4\t4\t4.0\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.004Z
                             1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0\t4\t0\t0.0\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.005Z
-                            """),
-                    "select ts, i, j, d, " +
-                            "lag(j, 2, j + 1) over (), " +
-                            "lag(j, 2, j + 1) ignore nulls over (), " +
-                            "lag(j, 2, j + 1) respect nulls over (), " +
-                            "lag(d, 2, d + 1) over (), " +
-                            "lag(ts, 2, ts + 10) over (), " +
-                            "lag(m, 2, m) over () " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -5998,18 +5666,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::" + timestampType.getTypeName() + ", x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, " +
                     "case when x::double % 3 = 0 THEN NULL ELSE x::double%5 END, 'k' || (x%5) ::symbol, 'k' || x, x::date from long_sequence(7)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
-                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2\tnull\t2\tnull\t2\tnull\t2.0\tnull\t2.0\tnull\t2.0\tnull\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.002Z\t\t1970-01-01T00:00:00.002Z\t\t1970-01-01T00:00:00.002Z\t
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\t1\tnull\t1\tnull\t1\tnull\t1.0\tnull\t1.0\tnull\t1.0\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\t2\tnull\t2\tnull\t2\tnull\t2.0\tnull\t2.0\tnull\t2.0\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.002Z\t\t1970-01-01T00:00:00.002Z\t\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0\tnull\t0\tnull\t0\tnull\t0.0\tnull\t0.0\tnull\t0.0\tnull\t1970-01-01T00:00:00.000005Z\t\t1970-01-01T00:00:00.000005Z\t\t1970-01-01T00:00:00.000005Z\t\t1970-01-01T00:00:00.005Z\t\t1970-01-01T00:00:00.005Z\t\t1970-01-01T00:00:00.005Z\t
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t4\t2\t4\tnull\t4\tnull\t4.0\t2.0\t4.0\tnull\t4.0\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t2\t0\t2\t0\t2\t0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\tnull\tnull\t0\tnull\tnull\tnull\tnull\tnull\t0.0\tnull\tnull\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.006Z\t\t1970-01-01T00:00:00.006Z\t\t1970-01-01T00:00:00.006Z
-                            """),
-                    "select ts, i, j, d, " +
+            assertQuery("select ts, i, j, d, " +
                             "lead(j) over (partition by i), " +
                             "lag(j) over (partition by i), " +
                             "lead(j) ignore nulls over (partition by i), " +
@@ -6034,24 +5691,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(m) ignore nulls over (partition by i), " +
                             "lead(m) respect nulls over (partition by i), " +
                             "lag(m) respect nulls over (partition by i), " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    true
-            );
+                            "from tab ")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2\tnull\t2\tnull\t2\tnull\t2.0\tnull\t2.0\tnull\t2.0\tnull\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.002Z\t\t1970-01-01T00:00:00.002Z\t\t1970-01-01T00:00:00.002Z\t
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\t1\tnull\t1\tnull\t1\tnull\t1.0\tnull\t1.0\tnull\t1.0\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\t2\tnull\t2\tnull\t2\tnull\t2.0\tnull\t2.0\tnull\t2.0\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.002Z\t\t1970-01-01T00:00:00.002Z\t\t1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0\tnull\t0\tnull\t0\tnull\t0.0\tnull\t0.0\tnull\t0.0\tnull\t1970-01-01T00:00:00.000005Z\t\t1970-01-01T00:00:00.000005Z\t\t1970-01-01T00:00:00.000005Z\t\t1970-01-01T00:00:00.005Z\t\t1970-01-01T00:00:00.005Z\t\t1970-01-01T00:00:00.005Z\t
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t4\t2\t4\tnull\t4\tnull\t4.0\t2.0\t4.0\tnull\t4.0\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t2\t0\t2\t0\t2\t0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\tnull\tnull\t0\tnull\tnull\tnull\tnull\tnull\t0.0\tnull\tnull\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.000006Z\t\t1970-01-01T00:00:00.006Z\t\t1970-01-01T00:00:00.006Z\t\t1970-01-01T00:00:00.006Z
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
-                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead1\tlag1\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead2\tlag2\tlead_ignore_nulls4\tlag_ignore_nulls4\tlead_ignore_nulls5\tlag_ignore_nulls5\tlead3\tlag3\tlead_ignore_nulls6\tlag_ignore_nulls6\tlead_ignore_nulls7\tlag_ignore_nulls7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1\t1\t1\t1\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4\t4\t4\t4\t4\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0\t0\t0\t0\t0\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z
-                            """),
-                    "select ts, i, j, d, " +
+            assertQuery("select ts, i, j, d, " +
                             "lead(j, 0) over (partition by i), " +
                             "lag(j, 0) over (partition by i), " +
                             "lead(j, 0) ignore nulls over (partition by i), " +
@@ -6076,24 +5731,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(m, 0) ignore nulls over (partition by i), " +
                             "lead(m, 0) ignore nulls over (partition by i), " +
                             "lag(m, 0) ignore nulls over (partition by i), " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead1\tlag1\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead2\tlag2\tlead_ignore_nulls4\tlag_ignore_nulls4\tlead_ignore_nulls5\tlag_ignore_nulls5\tlead3\tlag3\tlead_ignore_nulls6\tlag_ignore_nulls6\tlead_ignore_nulls7\tlag_ignore_nulls7
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1\t1\t1\t1\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4\t4\t4\t4\t4\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0\t0\t0\t0\t0\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
-                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2\tnull\tnull\tnull\t2\tnull\t2.0\tnull\tnull\tnull\t2.0\tnull\t1970-01-01T00:00:00.000007Z\t\t1970-01-01T00:00:00.000007Z\t\t1970-01-01T00:00:00.000007Z\t\t1970-01-01T00:00:00.007Z\t\t1970-01-01T00:00:00.007Z\t\t1970-01-01T00:00:00.007Z\t
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t4\tnull\tnull\tnull\t4\tnull\t4.0\tnull\tnull\tnull\t4.0\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.004Z\t\t1970-01-01T00:00:00.004Z\t\t1970-01-01T00:00:00.004Z
-                            """),
-                    "select ts, i, j, d, " +
+            assertQuery("select ts, i, j, d, " +
                             "lead(j, 3) over (partition by i), " +
                             "lag(j, 3) over (partition by i), " +
                             "lead(j, 3) ignore nulls over (partition by i), " +
@@ -6118,24 +5772,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(m, 3) ignore nulls over (partition by i), " +
                             "lead(m, 3) respect nulls over (partition by i), " +
                             "lag(m, 3) respect nulls over (partition by i), " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+                            "from tab ")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\t2\t2\t2\tnull\t2\tnull\t2.0\t2.0\t2.0\tnull\t2.0\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3\t3\t3\t3\t3\t3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\t1\tnull\t1\tnull\t1\tnull\t1.0\tnull\t1.0\tnull\t1.0\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\t5\t2\t5\tnull\t5\tnull\t5.0\t2.0\t5.0\tnull\t5.0\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2\t1\t1\t1\t2\t1\t2.0\t1.0\t1.0\t1.0\t2.0\t1.0\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\t4\tnull\t4\tnull\t4\tnull\t4.0\tnull\t4.0\tnull\t4.0\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t3\t0\t3\t4\t3\t0\t3.0\t0.0\t3.0\t4.0\t3.0\t0.0\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
-                            """),
-                    "select ts, i, j, d, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2\tnull\tnull\tnull\t2\tnull\t2.0\tnull\tnull\tnull\t2.0\tnull\t1970-01-01T00:00:00.000007Z\t\t1970-01-01T00:00:00.000007Z\t\t1970-01-01T00:00:00.000007Z\t\t1970-01-01T00:00:00.007Z\t\t1970-01-01T00:00:00.007Z\t\t1970-01-01T00:00:00.007Z\t
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\t\t\t
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t4\tnull\tnull\tnull\t4\tnull\t4.0\tnull\tnull\tnull\t4.0\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.004Z\t\t1970-01-01T00:00:00.004Z\t\t1970-01-01T00:00:00.004Z
+                            """));
+
+            assertQuery("select ts, i, j, d, " +
                             "lead(j, 2, j + 1) over (partition by i), " +
                             "lag(j, 2, j + 1) over (partition by i), " +
                             "lead(j, 2, j + 1) ignore nulls over (partition by i), " +
@@ -6160,24 +5812,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(m, 2, m) ignore nulls over (partition by i), " +
                             "lead(m, 2, m) respect nulls over (partition by i), " +
                             "lag(m, 2, m) respect nulls over (partition by i), " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+                            "from tab ")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2\tnull\t2\t2\t2\tnull\tnull\t2.0\t2.0\t2.0\t2.0\tnull\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\t2\t2\t2\tnull\t2\tnull\t2.0\t2.0\t2.0\tnull\t2.0\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
                             1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3\t3\t3\t3\t3\t3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\t1\tnull\t1\tnull\t1\tnull\tnull\t1.0\t1.0\tnull\t1.0\tnull\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t5\tnull\t5\t2\t5\tnull\tnull\t5.0\t5.0\t2.0\t5.0\tnull\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1\t2\t1\t1\t1\t2\t2.0\t1.0\t1.0\t1.0\t1.0\t2.0\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t4\tnull\t4\tnull\t4\tnull\tnull\t4.0\t4.0\tnull\t4.0\tnull\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0\t3\t4\t3\t0\t3\t3.0\t0.0\t4.0\t3.0\t0.0\t3.0\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z
-                            """),
-                    "select ts, i, j, d, " +
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\t1\tnull\t1\tnull\t1\tnull\t1.0\tnull\t1.0\tnull\t1.0\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\t5\t2\t5\tnull\t5\tnull\t5.0\t2.0\t5.0\tnull\t5.0\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2\t1\t1\t1\t2\t1\t2.0\t1.0\t1.0\t1.0\t2.0\t1.0\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\t4\tnull\t4\tnull\t4\tnull\t4.0\tnull\t4.0\tnull\t4.0\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t3\t0\t3\t4\t3\t0\t3.0\t0.0\t3.0\t4.0\t3.0\t0.0\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z
+                            """));
+
+            assertQuery("select ts, i, j, d, " +
                             "lead(j, 2, j + 1) over (partition by i order by ts desc), " +
                             "lag(j, 2, j + 1) over (partition by i order by ts desc), " +
                             "lead(j, 2, j + 1) ignore nulls over (partition by i order by ts desc), " +
@@ -6202,24 +5852,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(m, 2, m) ignore nulls over (partition by i order by ts desc), " +
                             "lead(m, 2, m) respect nulls over (partition by i order by ts desc), " +
                             "lag(m, 2, m) respect nulls over (partition by i order by ts desc), " +
-                            "from tab order by ts asc",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+                            "from tab order by ts asc")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
-                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1\t1\t1\t1\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z
-                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z
-                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z
-                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4\t4\t4\t4\t4\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z
-                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0\t0\t0\t0\t0\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z
-                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z
-                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z
-                            """),
-                    "select ts, i, j, d, " +
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2\tnull\t2\t2\t2\tnull\tnull\t2.0\t2.0\t2.0\t2.0\tnull\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3\t3\t3\t3\t3\t3\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.000012Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z\t1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\t1\tnull\t1\tnull\t1\tnull\tnull\t1.0\t1.0\tnull\t1.0\tnull\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z\t1970-01-01T00:00:00.001Z\t1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t5\tnull\t5\t2\t5\tnull\tnull\t5.0\t5.0\t2.0\t5.0\tnull\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1\t2\t1\t1\t1\t2\t2.0\t1.0\t1.0\t1.0\t1.0\t2.0\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.000015Z\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t4\tnull\t4\tnull\t4\tnull\tnull\t4.0\t4.0\tnull\t4.0\tnull\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000016Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z\t1970-01-01T00:00:00.004Z\t1970-01-01T00:00:00.006Z
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0\t3\t4\t3\t0\t3\t3.0\t0.0\t4.0\t3.0\t0.0\t3.0\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000017Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z\t1970-01-01T00:00:00.005Z\t1970-01-01T00:00:00.007Z
+                            """));
+
+            assertQuery("select ts, i, j, d, " +
                             "lead(j, 0) over (partition by i order by ts desc), " +
                             "lag(j, 0) over (partition by i order by ts desc), " +
                             "lead(j, 0) ignore nulls over (partition by i order by ts desc), " +
@@ -6244,14 +5892,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(m, 0) ignore nulls over (partition by i order by ts desc), " +
                             "lead(m, 0) respect nulls over (partition by i order by ts desc), " +
                             "lag(m, 0) respect nulls over (partition by i order by ts desc), " +
-                            "from tab order by ts asc",
-                    "ts",
-                    true,
-                    true
-            );
+                            "from tab order by ts asc")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead3\tlag3\tlead4\tlag4\tlead_ignore_nulls2\tlag_ignore_nulls2\tlead5\tlag5\tlead6\tlag6\tlead_ignore_nulls3\tlag_ignore_nulls3\tlead7\tlag7
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1\t1\t1\t1\t1\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z\t1\t1970-01-01T00:00:00.001Z
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z\t2\t1970-01-01T00:00:00.002Z
+                            1970-01-01T00:00:00.000003Z\t0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z\t3\t1970-01-01T00:00:00.003Z
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4\t4\t4\t4\t4\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z\t4\t1970-01-01T00:00:00.004Z
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0\t0\t0\t0\t0\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z\t5\t1970-01-01T00:00:00.005Z
+                            1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.000006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z\t6\t1970-01-01T00:00:00.006Z
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2\t2\t2\t2\t2\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.000007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z\t7\t1970-01-01T00:00:00.007Z
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, j, d, " +
+                            "lag(j) over (partition by i), " +
+                            "lag(j) ignore nulls over (partition by i), " +
+                            "lag(j) respect nulls over (partition by i), " +
+                            "lag(d) over (partition by i), " +
+                            "lag(ts) over (partition by i), " +
+                            "lag(m) over (partition by i) " +
+                            "from tab ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\tlag3\tlag4
                             1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\t\t
                             1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t1\t1\t1\t1.0\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.001Z
@@ -6260,22 +5928,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t4\t4\t4\t4.0\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.004Z
                             1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t0\t0\t0\t0.0\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.005Z
                             1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t0\tnull\tnull\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.006Z
-                            """),
-                    "select ts, i, j, d, " +
-                            "lag(j) over (partition by i), " +
-                            "lag(j) ignore nulls over (partition by i), " +
-                            "lag(j) respect nulls over (partition by i), " +
-                            "lag(d) over (partition by i), " +
-                            "lag(ts) over (partition by i), " +
-                            "lag(m) over (partition by i) " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, j, d, " +
+                            "lag(j, 3) over (partition by i), " +
+                            "lag(j, 3) ignore nulls over (partition by i), " +
+                            "lag(j, 3) respect nulls over (partition by i), " +
+                            "lag(d, 3) over (partition by i), " +
+                            "lag(ts, 3) over (partition by i), " +
+                            "lag(m, 3) over (partition by i) " +
+                            "from tab ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\tlag3\tlag4
                             1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\t\t
                             1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\t\t
@@ -6284,22 +5951,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\tnull\tnull\tnull\t\t
                             1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\t\t
                             1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4\tnull\t4\t4.0\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.004Z
-                            """),
-                    "select ts, i, j, d, " +
-                            "lag(j, 3) over (partition by i), " +
-                            "lag(j, 3) ignore nulls over (partition by i), " +
-                            "lag(j, 3) respect nulls over (partition by i), " +
-                            "lag(d, 3) over (partition by i), " +
-                            "lag(ts, 3) over (partition by i), " +
-                            "lag(m, 3) over (partition by i) " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, j, d, " +
+                            "lag(j, 2, j + 1) over (partition by i), " +
+                            "lag(j, 2, j + 1) ignore nulls over (partition by i), " +
+                            "lag(j, 2, j + 1) respect nulls over (partition by i), " +
+                            "lag(d, 2, d + 1) over (partition by i), " +
+                            "lag(ts, 2, ts + 1) over (partition by i), " +
+                            "lag(m, 2, m) over (partition by i) " +
+                            "from tab ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\tlag3\tlag4
                             1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2\t2\t2\t2.0\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.001Z
                             1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3\t3\t3\t3.0\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.002Z
@@ -6308,90 +5974,56 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1\t1\t1\t1.0\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.005Z
                             1970-01-01T00:00:00.000006Z\t1\tnull\tnull\t4\t4\t4\t4.0\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.004Z
                             1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0\t4\t0\t0.0\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.005Z
-                            """),
-                    "select ts, i, j, d, " +
-                            "lag(j, 2, j + 1) over (partition by i), " +
-                            "lag(j, 2, j + 1) ignore nulls over (partition by i), " +
-                            "lag(j, 2, j + 1) respect nulls over (partition by i), " +
-                            "lag(d, 2, d + 1) over (partition by i), " +
-                            "lag(ts, 2, ts + 1) over (partition by i), " +
-                            "lag(m, 2, m) over (partition by i) " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
     @Test
     public void testLeadException() throws Exception {
         executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
-        assertExceptionNoLeakCheck(
-                "select lead() over () from tab",
-                7,
-                "function `lead` requires arguments"
-        );
+        assertQuery("select lead() over () from tab")
+                .noLeakCheck()
+                .fails(7, "function `lead` requires arguments");
 
-        assertExceptionNoLeakCheck(
-                "select lead(d, -1) over () from tab",
-                15,
-                "offset must be a positive integer"
-        );
+        assertQuery("select lead(d, -1) over () from tab")
+                .noLeakCheck()
+                .fails(15, "offset must be a positive integer");
 
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1, s) over () from tab",
-                18,
-                "default value must be can cast to double"
-        );
+        assertQuery("select lead(d, 1, s) over () from tab")
+                .noLeakCheck()
+                .fails(18, "default value must be can cast to double");
 
-        assertExceptionNoLeakCheck(
-                "select lead(j, 1, s) over () from tab",
-                18,
-                "default value must be can cast to long"
-        );
+        assertQuery("select lead(j, 1, s) over () from tab")
+                .noLeakCheck()
+                .fails(18, "default value must be can cast to long");
 
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1, d + 1, d) over () from tab",
-                25,
-                "too many arguments"
-        );
+        assertQuery("select lead(d, 1, d + 1, d) over () from tab")
+                .noLeakCheck()
+                .fails(25, "too many arguments");
 
-        assertExceptionNoLeakCheck(
-                "select lead(d, i, d + 1) over () from tab",
-                15,
-                "offset must be a constant"
-        );
+        assertQuery("select lead(d, i, d + 1) over () from tab")
+                .noLeakCheck()
+                .fails(15, "offset must be a constant");
 
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1, sum(d)) over () from tab",
-                18,
-                "default value can not be a window function"
-        );
+        assertQuery("select lead(d, 1, sum(d)) over () from tab")
+                .noLeakCheck()
+                .fails(18, "default value can not be a window function");
 
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1, sum(d)) over () from tab",
-                18,
-                "default value can not be a window function"
-        );
+        assertQuery("select lead(d, 1, sum(d)) over () from tab")
+                .noLeakCheck()
+                .fails(18, "default value can not be a window function");
 
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1) ignore over () from tab",
-                25,
-                "'nulls' expected after 'ignore'"
-        );
+        assertQuery("select lead(d, 1) ignore over () from tab")
+                .noLeakCheck()
+                .fails(25, "'nulls' expected after 'ignore'");
 
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1) respect over () from tab",
-                26,
-                "'nulls' expected after 'respect'"
-        );
+        assertQuery("select lead(d, 1) respect over () from tab")
+                .noLeakCheck()
+                .fails(26, "'nulls' expected after 'respect'");
 
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1) ignore null over () from tab",
-                25,
-                "'nulls' expected, not 'null'"
-        );
+        assertQuery("select lead(d, 1) ignore null over () from tab")
+                .noLeakCheck()
+                .fails(25, "'nulls' expected, not 'null'");
     }
 
     @Test
@@ -6564,35 +6196,29 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "from long_sequence(10000)");
 
             // Verify max() correctly handles nulls in large dataset
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT grp, " +
+                            "count(other_ts) as non_null_count, " +
+                            "max(other_ts) as max_other_ts " +
+                            "FROM tab GROUP BY grp ORDER BY grp")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             grp\tnon_null_count\tmax_other_ts
                             A\t3334\t2021-01-01T22:00:00.000000Z
                             B\t3333\t2021-01-01T23:00:00.000000Z
-                            """,
-                    "SELECT grp, " +
-                            "count(other_ts) as non_null_count, " +
-                            "max(other_ts) as max_other_ts " +
-                            "FROM tab GROUP BY grp ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // Test window function with nulls
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT DISTINCT grp, max_window_ts FROM (" +
+                            "SELECT grp, max(other_ts) OVER (PARTITION BY grp) as max_window_ts FROM tab" +
+                            ") ORDER BY grp")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             grp\tmax_window_ts
                             A\t2021-01-01T22:00:00.000000Z
                             B\t2021-01-01T23:00:00.000000Z
-                            """,
-                    "SELECT DISTINCT grp, max_window_ts FROM (" +
-                            "SELECT grp, max(other_ts) OVER (PARTITION BY grp) as max_window_ts FROM tab" +
-                            ") ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6610,35 +6236,29 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "from long_sequence(10000)");
 
             // Verify max() correctly handles nulls in large dataset
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT grp, " +
+                            "count(other_ts) as non_null_count, " +
+                            "max(other_ts) as max_other_ts " +
+                            "FROM tab GROUP BY grp ORDER BY grp")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             grp\tnon_null_count\tmax_other_ts
                             A\t3334\t2021-01-01T22:00:00.000000000Z
                             B\t3333\t2021-01-01T23:00:00.000000000Z
-                            """,
-                    "SELECT grp, " +
-                            "count(other_ts) as non_null_count, " +
-                            "max(other_ts) as max_other_ts " +
-                            "FROM tab GROUP BY grp ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // Test window function with nulls
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT DISTINCT grp, max_window_ts FROM (" +
+                            "SELECT grp, max(other_ts) OVER (PARTITION BY grp) as max_window_ts FROM tab" +
+                            ") ORDER BY grp")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             grp\tmax_window_ts
                             A\t2021-01-01T22:00:00.000000000Z
                             B\t2021-01-01T23:00:00.000000000Z
-                            """,
-                    "SELECT DISTINCT grp, max_window_ts FROM (" +
-                            "SELECT grp, max(other_ts) OVER (PARTITION BY grp) as max_window_ts FROM tab" +
-                            ") ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6654,8 +6274,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-06T00:00:00.000000Z', null, 6, 'A')");
 
             // Test max() on non-designated timestamp column containing nulls
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, other_ts, val, grp, max(other_ts) OVER (PARTITION BY grp) as max_other_ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tother_ts\tval\tgrp\tmax_other_ts
                             2021-01-01T00:00:00.000000Z\t2021-01-01T12:00:00.000000Z\t1\tA\t2021-01-05T16:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t\t2\tA\t2021-01-05T16:00:00.000000Z
@@ -6663,16 +6286,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-04T00:00:00.000000Z\t\t4\tA\t2021-01-05T16:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t2021-01-05T16:00:00.000000Z\t5\tA\t2021-01-05T16:00:00.000000Z
                             2021-01-06T00:00:00.000000Z\t\t6\tA\t2021-01-05T16:00:00.000000Z
-                            """,
-                    "SELECT ts, other_ts, val, grp, max(other_ts) OVER (PARTITION BY grp) as max_other_ts FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             // Test with ORDER BY on non-designated timestamp with nulls
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, other_ts, val, grp, max(other_ts) OVER (PARTITION BY grp ORDER BY ts ROWS UNBOUNDED PRECEDING) as max_other_ts_running FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tother_ts\tval\tgrp\tmax_other_ts_running
                             2021-01-01T00:00:00.000000Z\t2021-01-01T12:00:00.000000Z\t1\tA\t2021-01-01T12:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t\t2\tA\t2021-01-01T12:00:00.000000Z
@@ -6680,12 +6302,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-04T00:00:00.000000Z\t\t4\tA\t2021-01-03T08:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t2021-01-05T16:00:00.000000Z\t5\tA\t2021-01-05T16:00:00.000000Z
                             2021-01-06T00:00:00.000000Z\t\t6\tA\t2021-01-05T16:00:00.000000Z
-                            """,
-                    "SELECT ts, other_ts, val, grp, max(other_ts) OVER (PARTITION BY grp ORDER BY ts ROWS UNBOUNDED PRECEDING) as max_other_ts_running FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6699,35 +6316,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', '2021-01-02T00:00:00.000000Z', 4, 'B')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', '2021-01-01T00:00:00.000000Z', 5, 'C')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, other_ts, val, grp, max(other_ts) OVER () as max_other_ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tother_ts\tval\tgrp\tmax_other_ts
                             2021-01-01T00:00:00.000000Z\t2021-01-05T00:00:00.000000Z\t1\tA\t2021-01-05T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2021-01-04T00:00:00.000000Z\t2\tB\t2021-01-05T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-05T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t2021-01-02T00:00:00.000000Z\t4\tB\t2021-01-05T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t2021-01-01T00:00:00.000000Z\t5\tC\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, other_ts, val, grp, max(other_ts) OVER () as max_other_ts FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, other_ts, val, grp, max(other_ts) OVER (PARTITION BY grp) as max_other_ts_by_grp FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tother_ts\tval\tgrp\tmax_other_ts_by_grp
                             2021-01-01T00:00:00.000000Z\t2021-01-05T00:00:00.000000Z\t1\tA\t2021-01-05T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2021-01-04T00:00:00.000000Z\t2\tB\t2021-01-04T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-05T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t2021-01-02T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t2021-01-01T00:00:00.000000Z\t5\tC\t2021-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT ts, other_ts, val, grp, max(other_ts) OVER (PARTITION BY grp) as max_other_ts_by_grp FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6875,20 +6488,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-05T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-05T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-05T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-05T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tC\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6907,20 +6518,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Test with wide time window that will cause deque to hold many max values simultaneously
             // With 10-second intervals and 1-hour window, each partition will have ~360 overlapping frames
-            assertQueryNoLeakCheck(
-                    """
-                            cnt\tpartitions
-                            50000\t100
-                            """,
-                    "SELECT count(*) as cnt, count(distinct grp)  as partitions FROM (" +
+            assertQuery("SELECT count(*) as cnt, count(distinct grp)  as partitions FROM (" +
                             "SELECT ts, val, grp, " +
                             "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) as max_ts_large_window " +
                             "FROM tab" +
-                            ")",
-                    null,
-                    false,
-                    true
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tpartitions
+                            50000\t100
+                            """);
         });
     }
 
@@ -6937,20 +6546,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "from long_sequence(50000)");
 
             // Test bounded range frame that exercises dequeMem overflow handling
-            assertQueryNoLeakCheck(
-                    """
-                            cnt\tmax_val
-                            50000\t50000
-                            """,
-                    "SELECT count(*) as cnt, max(val) as max_val FROM (" +
+            assertQuery("SELECT count(*) as cnt, max(val) as max_val FROM (" +
                             "SELECT ts, val, grp, " +
                             "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as max_ts_bounded " +
                             "FROM tab" +
-                            ")",
-                    null,
-                    false,
-                    true
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tmax_val
+                            50000\t50000
+                            """);
         });
     }
 
@@ -6971,8 +6578,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "('2021-01-01T12:00:05.000000Z', 8, 'A')");
 
             // Test precise boundary conditions in range frames
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, max(ts) OVER (ORDER BY ts RANGE BETWEEN '4' SECOND preceding AND '2' SECOND preceding) as max_ts_precise FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tmax_ts_precise
                             2021-01-01T12:00:00.000000Z\t1\t
                             2021-01-01T12:00:00.000000Z\t2\t
@@ -6982,12 +6593,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-01T12:00:03.000000Z\t6\t2021-01-01T12:00:01.000000Z
                             2021-01-01T12:00:04.000000Z\t7\t2021-01-01T12:00:02.000000Z
                             2021-01-01T12:00:05.000000Z\t8\t2021-01-01T12:00:03.000000Z
-                            """,
-                    "SELECT ts, val, max(ts) OVER (ORDER BY ts RANGE BETWEEN '4' SECOND preceding AND '2' SECOND preceding) as max_ts_precise FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7004,20 +6610,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "from long_sequence(25000)");
 
             // Test with many partitions to exercise Map operations in MaxMinOverPartitionRangeFrameFunction
-            assertQueryNoLeakCheck(
-                    """
-                            partition_count\ttotal_rows
-                            1000\t25000
-                            """,
-                    "SELECT count(distinct grp) as partition_count, count(*) as total_rows FROM (" +
+            assertQuery("SELECT count(distinct grp) as partition_count, count(*) as total_rows FROM (" +
                             "SELECT ts, val, grp, " +
                             "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '30' MINUTE PRECEDING AND CURRENT ROW) as max_ts " +
                             "FROM tab" +
-                            ")",
-                    null,
-                    false,
-                    true
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            partition_count\ttotal_rows
+                            1000\t25000
+                            """);
         });
     }
 
@@ -7028,11 +6632,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-01T12:00:00.000000Z', 1)");
 
             // This should fail because we're using RANGE with ORDER BY on a non-designated timestamp
-            assertExceptionNoLeakCheck(
-                    "SELECT ts, other_ts, val, max(ts) OVER (ORDER BY other_ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) FROM tab",
-                    49,
-                    "RANGE is supported only for queries ordered by designated timestamp"
-            );
+            assertQuery("SELECT ts, other_ts, val, max(ts) OVER (ORDER BY other_ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) FROM tab")
+                    .noLeakCheck()
+                    .fails(49, "RANGE is supported only for queries ordered by designated timestamp");
         });
     }
 
@@ -7048,8 +6650,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-01T05:00:00.000000Z', 6, 'A')");
 
             // Test range between x preceding and y preceding (bounded frame - not touching current row)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as max_ts_bounded FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_bounded
                             2021-01-01T00:00:00.000000Z\t1\tA\t
                             2021-01-01T01:00:00.000000Z\t2\tA\t2021-01-01T00:00:00.000000Z
@@ -7057,12 +6663,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-01T03:00:00.000000Z\t4\tA\t2021-01-01T02:00:00.000000Z
                             2021-01-01T04:00:00.000000Z\t5\tA\t2021-01-01T03:00:00.000000Z
                             2021-01-01T05:00:00.000000Z\t6\tA\t2021-01-01T04:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as max_ts_bounded FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7079,8 +6680,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-07T00:00:00.000000Z', 7, 'A')");
 
             // Test with day intervals to exercise larger time ranges
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN '3' DAY PRECEDING AND CURRENT ROW) as max_ts_3d FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_3d
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z
@@ -7089,12 +6694,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z
                             2021-01-06T00:00:00.000000Z\t6\tA\t2021-01-06T00:00:00.000000Z
                             2021-01-07T00:00:00.000000Z\t7\tA\t2021-01-07T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN '3' DAY PRECEDING AND CURRENT ROW) as max_ts_3d FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7109,20 +6709,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-01T00:00:00.000400Z', 5, 'A')");
 
             // Test with microsecond precision to exercise fine-grained time windows
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN 150 MICROSECOND PRECEDING AND CURRENT ROW) as max_ts_micro FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_micro
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-01T00:00:00.000100Z\t2\tA\t2021-01-01T00:00:00.000100Z
                             2021-01-01T00:00:00.000200Z\t3\tA\t2021-01-01T00:00:00.000200Z
                             2021-01-01T00:00:00.000300Z\t4\tA\t2021-01-01T00:00:00.000300Z
                             2021-01-01T00:00:00.000400Z\t5\tA\t2021-01-01T00:00:00.000400Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN 150 MICROSECOND PRECEDING AND CURRENT ROW) as max_ts_micro FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7138,8 +6737,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-02T06:00:00.000000Z', 6, 'B')");
 
             // Test partitioned range with specific bounds - this exercises the MaxMinOverPartitionRangeFrameFunction
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '6' HOUR PRECEDING AND CURRENT ROW) as max_ts_by_grp_6h FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_by_grp_6h
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-01T06:00:00.000000Z\t2\tB\t2021-01-01T06:00:00.000000Z
@@ -7147,12 +6750,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-01T18:00:00.000000Z\t4\tB\t2021-01-01T18:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t5\tA\t2021-01-02T00:00:00.000000Z
                             2021-01-02T06:00:00.000000Z\t6\tB\t2021-01-02T06:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '6' HOUR PRECEDING AND CURRENT ROW) as max_ts_by_grp_6h FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7168,8 +6766,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-01T05:00:00.000000Z', 6, 'B')");
 
             // Test partitioned range with bounded frame - this exercises the dequeMem path
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as max_ts_part_bounded FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_part_bounded
                             2021-01-01T00:00:00.000000Z\t1\tA\t
                             2021-01-01T01:00:00.000000Z\t2\tB\t
@@ -7177,12 +6779,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-01T03:00:00.000000Z\t4\tB\t2021-01-01T01:00:00.000000Z
                             2021-01-01T04:00:00.000000Z\t5\tA\t2021-01-01T02:00:00.000000Z
                             2021-01-01T05:00:00.000000Z\t6\tB\t2021-01-01T03:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as max_ts_part_bounded FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7198,8 +6795,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-02T06:00:00.000000Z', 6, 'A')");
 
             // Test range with 12 hours preceding to current row (not unbounded)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN '12' HOUR PRECEDING AND CURRENT ROW) as max_ts_12h FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_12h
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-01T06:00:00.000000Z\t2\tA\t2021-01-01T06:00:00.000000Z
@@ -7207,12 +6808,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-01T18:00:00.000000Z\t4\tA\t2021-01-01T18:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t5\tA\t2021-01-02T00:00:00.000000Z
                             2021-01-02T06:00:00.000000Z\t6\tA\t2021-01-02T06:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN '12' HOUR PRECEDING AND CURRENT ROW) as max_ts_12h FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7227,20 +6823,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
 
             // Test ROWS BETWEEN CURRENT ROW AND CURRENT ROW - exercises MaxMinOverCurrentRowFunction
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) as max_ts_current_only FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_current_only
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) as max_ts_current_only FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7255,24 +6850,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
 
             // Test multiple ROWS frame variations in one query to ensure different code paths work together
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, " +
+                            "max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as unbounded_to_current, " +
+                            "max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) as current_only, " +
+                            "max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as whole_partition " +
+                            "FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tunbounded_to_current\tcurrent_only\twhole_partition
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\t2021-01-01T00:00:00.000000Z\t2021-01-05T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z\t2021-01-02T00:00:00.000000Z\t2021-01-05T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z\t2021-01-03T00:00:00.000000Z\t2021-01-05T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z\t2021-01-04T00:00:00.000000Z\t2021-01-05T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z\t2021-01-05T00:00:00.000000Z\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, " +
-                            "max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as unbounded_to_current, " +
-                            "max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) as current_only, " +
-                            "max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as whole_partition " +
-                            "FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7287,20 +6880,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
 
             // Test ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW - exercises MaxMinOverUnboundedPartitionRowsFrameFunction
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as max_ts_unbounded_rows FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_unbounded_rows
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as max_ts_unbounded_rows FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7315,20 +6907,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
 
             // Test without PARTITION BY to exercise different code path
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as max_ts_no_partition FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_no_partition
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as max_ts_no_partition FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7343,20 +6934,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
 
             // Test ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING - exercises MaxMinOverPartitionFunction
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as max_ts_whole_partition FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_whole_partition
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-05T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-04T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-05T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as max_ts_whole_partition FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7373,8 +6962,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-07T00:00:00.000000Z', 7, 'C')");
             execute("insert into tab values ('2021-01-08T00:00:00.000000Z', 8, 'C')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_ts_complex FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_complex
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z
@@ -7384,12 +6977,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-06T00:00:00.000000Z\t6\tB\t2021-01-06T00:00:00.000000Z
                             2021-01-07T00:00:00.000000Z\t7\tC\t2021-01-07T00:00:00.000000Z
                             2021-01-08T00:00:00.000000Z\t8\tC\t2021-01-08T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_ts_complex FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7403,20 +6991,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 4, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 5, 'C')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-01T00:00:00.000000Z\t2\tB\t2021-01-03T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t4\tB\t2021-01-03T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t5\tC\t2021-01-03T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7425,13 +7011,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
 
-            assertQueryNoLeakCheck(
-                    "ts\tval\tgrp\tmax_ts\n",
-                    "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tval\tgrp\tmax_ts\n");
         });
     }
 
@@ -7462,22 +7046,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-02T00:00:00.000000Z\t10\t2021-01-03T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z
                             """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT t1.ts as t1_ts, t1.val as t1_val, t1.grp as t1_grp, t2.ts as t2_ts, t2.val as t2_val, " +
+                            "max(CASE WHEN t1.ts > t2.ts THEN t1.ts ELSE t2.ts END) OVER (PARTITION BY t1.grp) as max_ts " +
+                            "FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp ORDER BY t1.ts, t2.ts")
+                    .timestamp("t1_ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             t1_ts\tt1_val\tt1_grp\tt2_ts\tt2_val\tmax_ts
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-02T00:00:00.000000Z\t10\t2021-01-04T00:00:00.000000Z
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-03T00:00:00.000000Z\t20\t2021-01-03T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-02T00:00:00.000000Z\t10\t2021-01-04T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z
-                            """,
-                    "SELECT t1.ts as t1_ts, t1.val as t1_val, t1.grp as t1_grp, t2.ts as t2_ts, t2.val as t2_val, " +
-                            "max(CASE WHEN t1.ts > t2.ts THEN t1.ts ELSE t2.ts END) OVER (PARTITION BY t1.grp) as max_ts " +
-                            "FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp ORDER BY t1.ts, t2.ts",
-                    "t1_ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7487,16 +7069,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
             execute("insert into tab select timestamp_sequence(0, 1000000), x, rnd_symbol('A','B','C','D','E') from long_sequence(100000)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count(*) as cnt FROM (SELECT ts, max(ts) OVER (PARTITION BY grp) as max_ts FROM tab)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             cnt
                             100000
-                            """,
-                    "SELECT count(*) as cnt FROM (SELECT ts, max(ts) OVER (PARTITION BY grp) as max_ts FROM tab)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7512,8 +7092,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-02T06:00:00.000000Z', 6, 'A')");
             execute("insert into tab values ('2021-01-02T12:00:00.000000Z', 7, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, " +
+                            "max(ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_rows, " +
+                            "max(ts) OVER (ORDER BY ts RANGE BETWEEN '6' HOUR PRECEDING AND CURRENT ROW) as max_range " +
+                            "FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_rows\tmax_range
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z\t2021-01-01T00:00:00.000000Z
                             2021-01-01T06:00:00.000000Z\t2\tA\t2021-01-01T06:00:00.000000Z\t2021-01-01T06:00:00.000000Z
@@ -7522,15 +7109,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-02T00:00:00.000000Z\t5\tA\t2021-01-02T00:00:00.000000Z\t2021-01-02T00:00:00.000000Z
                             2021-01-02T06:00:00.000000Z\t6\tA\t2021-01-02T06:00:00.000000Z\t2021-01-02T06:00:00.000000Z
                             2021-01-02T12:00:00.000000Z\t7\tA\t2021-01-02T12:00:00.000000Z\t2021-01-02T12:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, " +
-                            "max(ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_rows, " +
-                            "max(ts) OVER (ORDER BY ts RANGE BETWEEN '6' HOUR PRECEDING AND CURRENT ROW) as max_range " +
-                            "FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7545,8 +7124,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A', 'X')");
             execute("insert into tab values ('2021-01-06T00:00:00.000000Z', 6, 'B', 'X')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp1, grp2, max(ts) OVER (PARTITION BY grp1, grp2) as max_ts_by_grps FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp1\tgrp2\tmax_ts_by_grps
                             2021-01-01T00:00:00.000000Z\t1\tA\tX\t2021-01-05T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tA\tY\t2021-01-02T00:00:00.000000Z
@@ -7554,12 +7136,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-04T00:00:00.000000Z\t4\tB\tY\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\tX\t2021-01-05T00:00:00.000000Z
                             2021-01-06T00:00:00.000000Z\t6\tB\tX\t2021-01-06T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp1, grp2, max(ts) OVER (PARTITION BY grp1, grp2) as max_ts_by_grps FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7573,20 +7150,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A', null)");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A', '2021-01-05T12:00:00.000000Z')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, other_ts, max(other_ts) OVER () as max_other_ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tother_ts\tmax_other_ts
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T12:00:00.000000Z\t2021-01-05T12:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tA\t\t2021-01-05T12:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T12:00:00.000000Z\t2021-01-05T12:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tA\t\t2021-01-05T12:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T12:00:00.000000Z\t2021-01-05T12:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, other_ts, max(other_ts) OVER () as max_other_ts FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7600,20 +7175,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 9, 'C')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (ORDER BY ts) as max_ts_cumulative FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_cumulative
                             2021-01-01T00:00:00.000000Z\t5\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t3\tB\t2021-01-02T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t7\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t2\tB\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t9\tC\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts) as max_ts_cumulative FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7627,20 +7201,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (ORDER BY ts DESC) as max_ts_desc FROM tab ORDER BY ts DESC")
+                    .timestamp("ts###desc")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_desc
                             2021-01-05T00:00:00.000000Z\t5\tC\t2021-01-05T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-05T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-05T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-05T00:00:00.000000Z
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts DESC) as max_ts_desc FROM tab ORDER BY ts DESC",
-                    "ts###desc",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7654,20 +7227,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp) as max_ts_by_grp FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_by_grp
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-04T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tC\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp) as max_ts_by_grp FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7682,8 +7253,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
             execute("insert into tab values ('2021-01-06T00:00:00.000000Z', 6, 'C')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts) as max_ts_running FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_running
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z
@@ -7691,12 +7266,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z
                             2021-01-06T00:00:00.000000Z\t6\tC\t2021-01-06T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts) as max_ts_running FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7710,20 +7280,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-02T12:00:00.000000Z', 4, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 5, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN '1' DAY PRECEDING AND CURRENT ROW) as max_ts_range FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_range
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-01T12:00:00.000000Z\t2\tA\t2021-01-01T12:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t3\tA\t2021-01-02T00:00:00.000000Z
                             2021-01-02T12:00:00.000000Z\t4\tA\t2021-01-02T12:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t5\tA\t2021-01-03T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts RANGE BETWEEN '1' DAY PRECEDING AND CURRENT ROW) as max_ts_range FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7737,20 +7306,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_ts_window FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_window
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_ts_window FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7764,20 +7332,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) as max_ts_preceding FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_preceding
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) as max_ts_preceding FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7787,16 +7354,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7810,18 +7375,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT DISTINCT grp, max_ts FROM (SELECT grp, max(ts) OVER (PARTITION BY grp) as max_ts FROM tab) ORDER BY grp")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             grp\tmax_ts
                             A\t2021-01-03T00:00:00.000000Z
                             B\t2021-01-04T00:00:00.000000Z
                             C\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT DISTINCT grp, max_ts FROM (SELECT grp, max(ts) OVER (PARTITION BY grp) as max_ts FROM tab) ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7835,20 +7397,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as max_ts_unbounded FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmax_ts_unbounded
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, max(ts) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as max_ts_unbounded FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7931,34 +7492,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "case when x % 2 = 0 then 'A' else 'B' end as grp " +
                     "from long_sequence(10000)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT grp, " +
+                            "count(other_ts) as non_null_count, " +
+                            "min(other_ts) as min_other_ts " +
+                            "FROM tab GROUP BY grp ORDER BY grp")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             grp\tnon_null_count\tmin_other_ts
                             A\t3334\t2021-01-01T02:00:00.000000Z
                             B\t3333\t2021-01-01T01:00:00.000000Z
-                            """,
-                    "SELECT grp, " +
-                            "count(other_ts) as non_null_count, " +
-                            "min(other_ts) as min_other_ts " +
-                            "FROM tab GROUP BY grp ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT DISTINCT grp, min_window_ts FROM (" +
+                            "SELECT grp, min(other_ts) OVER (PARTITION BY grp) as min_window_ts FROM tab" +
+                            ") ORDER BY grp")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             grp\tmin_window_ts
                             A\t2021-01-01T02:00:00.000000Z
                             B\t2021-01-01T01:00:00.000000Z
-                            """,
-                    "SELECT DISTINCT grp, min_window_ts FROM (" +
-                            "SELECT grp, min(other_ts) OVER (PARTITION BY grp) as min_window_ts FROM tab" +
-                            ") ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7973,8 +7528,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', '2021-01-05T16:00:00.000000Z', 5, 'A')");
             execute("insert into tab values ('2021-01-06T00:00:00.000000Z', null, 6, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, other_ts, val, grp, min(other_ts) OVER (PARTITION BY grp) as min_other_ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tother_ts\tval\tgrp\tmin_other_ts
                             2021-01-01T00:00:00.000000Z\t2021-01-01T12:00:00.000000Z\t1\tA\t2021-01-01T12:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t\t2\tA\t2021-01-01T12:00:00.000000Z
@@ -7982,15 +7540,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-04T00:00:00.000000Z\t\t4\tA\t2021-01-01T12:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t2021-01-05T16:00:00.000000Z\t5\tA\t2021-01-01T12:00:00.000000Z
                             2021-01-06T00:00:00.000000Z\t\t6\tA\t2021-01-01T12:00:00.000000Z
-                            """,
-                    "SELECT ts, other_ts, val, grp, min(other_ts) OVER (PARTITION BY grp) as min_other_ts FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, other_ts, val, grp, min(other_ts) OVER (PARTITION BY grp ORDER BY ts ROWS UNBOUNDED PRECEDING) as min_other_ts_running FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tother_ts\tval\tgrp\tmin_other_ts_running
                             2021-01-01T00:00:00.000000Z\t2021-01-01T12:00:00.000000Z\t1\tA\t2021-01-01T12:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t\t2\tA\t2021-01-01T12:00:00.000000Z
@@ -7998,12 +7555,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-04T00:00:00.000000Z\t\t4\tA\t2021-01-01T12:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t2021-01-05T16:00:00.000000Z\t5\tA\t2021-01-01T12:00:00.000000Z
                             2021-01-06T00:00:00.000000Z\t\t6\tA\t2021-01-01T12:00:00.000000Z
-                            """,
-                    "SELECT ts, other_ts, val, grp, min(other_ts) OVER (PARTITION BY grp ORDER BY ts ROWS UNBOUNDED PRECEDING) as min_other_ts_running FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8017,35 +7569,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', '2021-01-02T00:00:00.000000Z', 4, 'B')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', '2021-01-01T00:00:00.000000Z', 5, 'C')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, other_ts, val, grp, min(other_ts) OVER () as min_other_ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tother_ts\tval\tgrp\tmin_other_ts
                             2021-01-01T00:00:00.000000Z\t2021-01-05T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2021-01-04T00:00:00.000000Z\t2\tB\t2021-01-01T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t2021-01-02T00:00:00.000000Z\t4\tB\t2021-01-01T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t2021-01-01T00:00:00.000000Z\t5\tC\t2021-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT ts, other_ts, val, grp, min(other_ts) OVER () as min_other_ts FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, other_ts, val, grp, min(other_ts) OVER (PARTITION BY grp) as min_other_ts_by_grp FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tother_ts\tval\tgrp\tmin_other_ts_by_grp
                             2021-01-01T00:00:00.000000Z\t2021-01-05T00:00:00.000000Z\t1\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2021-01-04T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t2021-01-02T00:00:00.000000Z\t4\tB\t2021-01-02T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t2021-01-01T00:00:00.000000Z\t5\tC\t2021-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT ts, other_ts, val, grp, min(other_ts) OVER (PARTITION BY grp) as min_other_ts_by_grp FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8059,20 +7607,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, min(ts) OVER () as min_ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmin_ts
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-01T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-01T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tC\t2021-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, min(ts) OVER () as min_ts FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8087,20 +7633,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "'grp_' || ((x-1) % 100) as grp " +
                     "from long_sequence(50000)");
 
-            assertQueryNoLeakCheck(
-                    """
-                            cnt\tpartitions
-                            50000\t100
-                            """,
-                    "SELECT count(*) as cnt, count(distinct grp)  as partitions FROM (" +
+            assertQuery("SELECT count(*) as cnt, count(distinct grp)  as partitions FROM (" +
                             "SELECT ts, val, grp, " +
                             "min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) as min_ts_large_window " +
                             "FROM tab" +
-                            ")",
-                    null,
-                    false,
-                    true
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tpartitions
+                            50000\t100
+                            """);
         });
     }
 
@@ -8115,20 +7659,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "case when x % 5 = 0 then 'A' else 'B' end as grp " +
                     "from long_sequence(50000)");
 
-            assertQueryNoLeakCheck(
-                    """
-                            cnt\tmax_val
-                            50000\t50000
-                            """,
-                    "SELECT count(*) as cnt, max(val) as max_val FROM (" +
+            assertQuery("SELECT count(*) as cnt, max(val) as max_val FROM (" +
                             "SELECT ts, val, grp, " +
                             "min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as min_ts_bounded " +
                             "FROM tab" +
-                            ")",
-                    null,
-                    false,
-                    true
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tmax_val
+                            50000\t50000
+                            """);
         });
     }
 
@@ -8147,8 +7689,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "('2021-01-01T12:00:04.000000Z', 7, 'A'), " +
                     "('2021-01-01T12:00:05.000000Z', 8, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, min(ts) OVER (ORDER BY ts RANGE BETWEEN '4' SECOND preceding AND '2' SECOND preceding) as min_ts_precise FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tmin_ts_precise
                             2021-01-01T12:00:00.000000Z\t1\t
                             2021-01-01T12:00:00.000000Z\t2\t
@@ -8158,12 +7704,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-01T12:00:03.000000Z\t6\t2021-01-01T12:00:00.000000Z
                             2021-01-01T12:00:04.000000Z\t7\t2021-01-01T12:00:00.000000Z
                             2021-01-01T12:00:05.000000Z\t8\t2021-01-01T12:00:01.000000Z
-                            """,
-                    "SELECT ts, val, min(ts) OVER (ORDER BY ts RANGE BETWEEN '4' SECOND preceding AND '2' SECOND preceding) as min_ts_precise FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8178,20 +7719,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "'grp_' || (x % 1000) as grp " +
                     "from long_sequence(25000)");
 
-            assertQueryNoLeakCheck(
-                    """
-                            partition_count\ttotal_rows
-                            1000\t25000
-                            """,
-                    "SELECT count(distinct grp) as partition_count, count(*) as total_rows FROM (" +
+            assertQuery("SELECT count(distinct grp) as partition_count, count(*) as total_rows FROM (" +
                             "SELECT ts, val, grp, " +
                             "min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '30' MINUTE PRECEDING AND CURRENT ROW) as min_ts " +
                             "FROM tab" +
-                            ")",
-                    null,
-                    false,
-                    true
-            );
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            partition_count\ttotal_rows
+                            1000\t25000
+                            """);
         });
     }
 
@@ -8201,11 +7740,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("create table tab (ts timestamp, other_ts timestamp, val int) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-01T12:00:00.000000Z', 1)");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT ts, other_ts, val, min(ts) OVER (ORDER BY other_ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) FROM tab",
-                    49,
-                    "RANGE is supported only for queries ordered by designated timestamp"
-            );
+            assertQuery("SELECT ts, other_ts, val, min(ts) OVER (ORDER BY other_ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) FROM tab")
+                    .noLeakCheck()
+                    .fails(49, "RANGE is supported only for queries ordered by designated timestamp");
         });
     }
 
@@ -8220,8 +7757,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-01T04:00:00.000000Z', 5, 'A')");
             execute("insert into tab values ('2021-01-01T05:00:00.000000Z', 6, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, min(ts) OVER (ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as min_ts_bounded FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmin_ts_bounded
                             2021-01-01T00:00:00.000000Z\t1\tA\t
                             2021-01-01T01:00:00.000000Z\t2\tA\t2021-01-01T00:00:00.000000Z
@@ -8229,12 +7770,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-01T03:00:00.000000Z\t4\tA\t2021-01-01T01:00:00.000000Z
                             2021-01-01T04:00:00.000000Z\t5\tA\t2021-01-01T02:00:00.000000Z
                             2021-01-01T05:00:00.000000Z\t6\tA\t2021-01-01T03:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, min(ts) OVER (ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as min_ts_bounded FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8249,8 +7785,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 5, 'A')");
             execute("insert into tab values ('2021-01-02T06:00:00.000000Z', 6, 'B')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '6' HOUR PRECEDING AND CURRENT ROW) as min_ts_by_grp_6h FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmin_ts_by_grp_6h
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-01T06:00:00.000000Z\t2\tB\t2021-01-01T06:00:00.000000Z
@@ -8258,12 +7798,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-01T18:00:00.000000Z\t4\tB\t2021-01-01T18:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t5\tA\t2021-01-02T00:00:00.000000Z
                             2021-01-02T06:00:00.000000Z\t6\tB\t2021-01-02T06:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '6' HOUR PRECEDING AND CURRENT ROW) as min_ts_by_grp_6h FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8277,20 +7812,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'A')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) as min_ts_current_only FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmin_ts_current_only
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tA\t2021-01-02T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) as min_ts_current_only FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8304,20 +7838,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as min_ts_unbounded_rows FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmin_ts_unbounded_rows
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-02T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as min_ts_unbounded_rows FROM tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8331,20 +7864,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'A')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as min_ts_whole_partition FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmin_ts_whole_partition
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-02T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as min_ts_whole_partition FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8358,20 +7889,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-04T00:00:00.000000Z', 4, 'B')");
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp) as min_ts_by_grp FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tval\tgrp\tmin_ts_by_grp
                             2021-01-01T00:00:00.000000Z\t1\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-02T00:00:00.000000Z\t2\tB\t2021-01-02T00:00:00.000000Z
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-01T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tB\t2021-01-02T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tC\t2021-01-05T00:00:00.000000Z
-                            """,
-                    "SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp) as min_ts_by_grp FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8385,23 +7914,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (4, 'B', 3000000)");
 
             // Two different named windows - use ORDER BY x (in SELECT)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, category, " +
+                            "sum(x) OVER w1 as sum1, " +
+                            "sum(x) OVER w2 as sum2 " +
+                            "FROM t " +
+                            "WINDOW w1 AS (ORDER BY x), w2 AS (PARTITION BY category ORDER BY x)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tcategory\tsum1\tsum2
                             1\tA\t1.0\t1.0
                             2\tB\t3.0\t2.0
                             3\tA\t6.0\t4.0
                             4\tB\t10.0\t6.0
-                            """,
-                    "SELECT x, category, " +
-                            "sum(x) OVER w1 as sum1, " +
-                            "sum(x) OVER w2 as sum2 " +
-                            "FROM t " +
-                            "WINDOW w1 AS (ORDER BY x), w2 AS (PARTITION BY category ORDER BY x)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8419,24 +7945,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // ws has partition by side, wt has no partition
             // If bug exists: both would show partitioned results
             // Correct: sum_ws partitions by side, sum_wt is global cumulative
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, side, " +
+                            "sum(x) OVER ws as sum_ws, " +
+                            "sum(x) OVER wt as sum_wt " +
+                            "FROM t " +
+                            "WINDOW ws AS (PARTITION BY side ORDER BY x), " +
+                            "wt AS (ORDER BY x)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tside\tsum_ws\tsum_wt
                             1\tsell\t1.0\t1.0
                             2\tbuy\t2.0\t3.0
                             3\tbuy\t5.0\t6.0
                             4\tsell\t5.0\t10.0
-                            """,
-                    "SELECT x, side, " +
-                            "sum(x) OVER ws as sum_ws, " +
-                            "sum(x) OVER wt as sum_wt " +
-                            "FROM t " +
-                            "WINDOW ws AS (PARTITION BY side ORDER BY x), " +
-                            "wt AS (ORDER BY x)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8449,51 +7972,43 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 30, 2000000)");
 
             // Basic named window - empty window (whole table as partition)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, y, row_number() OVER w as row_num " +
+                            "FROM t " +
+                            "WINDOW w AS ()")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\ty\trow_num
                             1\t10\t1
                             2\t20\t2
                             3\t30\t3
-                            """,
-                    "SELECT x, y, row_number() OVER w as row_num " +
-                            "FROM t " +
-                            "WINDOW w AS ()",
-                    null,
-                    false,  // window functions don't support random access
-                    true
-            );
+                            """);
 
             // Verify inline window works correctly (baseline)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, y, sum(y) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as sum " +
+                            "FROM t")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\ty\tsum
                             1\t10\t10.0
                             2\t20\t30.0
                             3\t30\t60.0
-                            """,
-                    "SELECT x, y, sum(y) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as sum " +
-                            "FROM t",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // Named window with ORDER BY using SELECT column
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, y, sum(y) OVER w as sum " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\ty\tsum
                             1\t10\t10.0
                             2\t20\t30.0
                             3\t30\t60.0
-                            """,
-                    "SELECT x, y, sum(y) OVER w as sum " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
-                    null,
-                    true,  // ORDER BY window functions support random access
-                    true
-            );
+                            """);
         });
     }
 
@@ -8505,19 +8020,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (2, 1000000)");
 
             // Window name is case-insensitive - use ORDER BY x
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER MyWindow as sum " +
+                            "FROM t " +
+                            "WINDOW mywindow AS (ORDER BY x)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum
                             1\t1.0
                             2\t3.0
-                            """,
-                    "SELECT x, sum(x) OVER MyWindow as sum " +
-                            "FROM t " +
-                            "WINDOW mywindow AS (ORDER BY x)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8530,20 +8042,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 2000000)");
 
             // Use named window for cumulative sum
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w as sum_cumulative " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum_cumulative
                             1\t1.0
                             2\t3.0
                             3\t6.0
-                            """,
-                    "SELECT x, sum(x) OVER w as sum_cumulative " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8557,19 +8066,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // sum(x) OVER w and sum(x) OVER (ORDER BY ts) should deduplicate
             // when w AS (ORDER BY ts), producing only one window computation
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w as sum1, sum(x) OVER (ORDER BY ts) as sum2 " +
+                            "FROM t WINDOW w AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum1\tsum2
                             1\t1.0\t1.0
                             2\t3.0\t3.0
                             3\t6.0\t6.0
-                            """,
-                    "SELECT x, sum(x) OVER w as sum1, sum(x) OVER (ORDER BY ts) as sum2 " +
-                            "FROM t WINDOW w AS (ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
             // Verify via plan that dedup happened: only one window function in the plan
             assertPlanNoLeakCheck(
@@ -8610,19 +8117,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             // Also verify results are different
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w1 as sum1, sum(x) OVER w2 as sum2 " +
+                            "FROM t WINDOW w1 AS (ORDER BY ts), w2 AS (PARTITION BY category ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum1\tsum2
                             1\t1.0\t1.0
                             2\t3.0\t3.0
                             3\t6.0\t3.0
-                            """,
-                    "SELECT x, sum(x) OVER w1 as sum1, sum(x) OVER w2 as sum2 " +
-                            "FROM t WINDOW w1 AS (ORDER BY ts), w2 AS (PARTITION BY category ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8633,11 +8138,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (1, 0)");
 
             // Duplicate window name
-            assertExceptionNoLeakCheck(
-                    "SELECT x, sum(x) OVER w FROM t WINDOW w AS (ORDER BY ts), w AS (ORDER BY ts DESC)",
-                    58,
-                    "duplicate window name"
-            );
+            assertQuery("SELECT x, sum(x) OVER w FROM t WINDOW w AS (ORDER BY ts), w AS (ORDER BY ts DESC)")
+                    .noLeakCheck()
+                    .fails(58, "duplicate window name");
         });
     }
 
@@ -8650,20 +8153,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 2000000)");
 
             // Empty window specification (whole table as one partition)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, row_number() OVER w as row_num " +
+                            "FROM t " +
+                            "WINDOW w AS ()")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\trow_num
                             1\t1
                             2\t2
                             3\t3
-                            """,
-                    "SELECT x, row_number() OVER w as row_num " +
-                            "FROM t " +
-                            "WINDOW w AS ()",
-                    null,
-                    false,  // row_number() without ORDER BY doesn't support random access
-                    true
-            );
+                            """);
         });
     }
 
@@ -8704,11 +8205,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (1, 0)");
 
             // SQL keyword as window name should fail
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) OVER select FROM t",
-                    19,
-                    "SQL keywords have to be enclosed in double quotes"
-            );
+            assertQuery("SELECT sum(x) OVER select FROM t")
+                    .noLeakCheck()
+                    .fails(19, "SQL keywords have to be enclosed in double quotes");
         });
     }
 
@@ -8738,11 +8237,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             // End of input after OVER - no name or '('
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) OVER",
-                    14,
-                    "'(' or window name expected after OVER"
-            );
+            assertQuery("SELECT sum(x) OVER")
+                    .noLeakCheck()
+                    .fails(14, "'(' or window name expected after OVER");
         });
     }
 
@@ -8752,19 +8249,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             // WINDOW AS (...) - missing window name
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) OVER w FROM t WINDOW AS (ORDER BY ts)",
-                    35,
-                    "window name expected after 'window'"
-            );
+            assertQuery("SELECT sum(x) OVER w FROM t WINDOW AS (ORDER BY ts)")
+                    .noLeakCheck()
+                    .fails(35, "window name expected after 'window'");
 
             // WINDOW w (...) without AS - lookahead sees w then (, not AS,
             // so it falls through to WINDOW JOIN path
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) OVER w FROM t WINDOW w (ORDER BY ts)",
-                    28,
-                    "'join' expected"
-            );
+            assertQuery("SELECT sum(x) OVER w FROM t WINDOW w (ORDER BY ts)")
+                    .noLeakCheck()
+                    .fails(28, "'join' expected");
         });
     }
 
@@ -8777,23 +8270,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 'B', 2000000)");
 
             // Two different named windows in the same query
-            assertQueryNoLeakCheck(
-                    """
-                            x\tcategory\tsum\tsum1
-                            1\tA\t1.0\t1.0
-                            2\tA\t3.0\t3.0
-                            3\tB\t6.0\t3.0
-                            """,
-                    "SELECT x, category, " +
+            assertQuery("SELECT x, category, " +
                             "sum(x) OVER w_global, " +
                             "sum(x) OVER w_part " +
                             "FROM t " +
                             "WINDOW w_global AS (ORDER BY ts), " +
-                            "w_part AS (PARTITION BY category ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            "w_part AS (PARTITION BY category ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            x\tcategory\tsum\tsum1
+                            1\tA\t1.0\t1.0
+                            2\tA\t3.0\t3.0
+                            3\tB\t6.0\t3.0
+                            """);
         });
     }
 
@@ -8805,17 +8296,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (2, 1000000)");
 
             // Window name that matches a column name - should work (different namespaces)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER x FROM t WINDOW x AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum
                             1\t1.0
                             2\t3.0
-                            """,
-                    "SELECT x, sum(x) OVER x FROM t WINDOW x AS (ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8849,18 +8338,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (1, 0)");
 
             // Number as window name should fail in OVER clause
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) OVER 42 FROM t",
-                    19,
-                    "identifier should start with a letter or '_'"
-            );
+            assertQuery("SELECT sum(x) OVER 42 FROM t")
+                    .noLeakCheck()
+                    .fails(19, "identifier should start with a letter or '_'");
 
             // Number as window name should fail in WINDOW clause
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) OVER w FROM t WINDOW 42 AS (ORDER BY ts)",
-                    35,
-                    "identifier should start with a letter or '_'"
-            );
+            assertQuery("SELECT sum(x) OVER w FROM t WINDOW 42 AS (ORDER BY ts)")
+                    .noLeakCheck()
+                    .fails(35, "identifier should start with a letter or '_'");
         });
     }
 
@@ -8875,21 +8360,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (40, 4, 3000000)");
 
             // ORDER BY y, but y is not in SELECT - this should work
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w as sum_x " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY y)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum_x
                             10\t10.0
                             20\t30.0
                             30\t60.0
                             40\t100.0
-                            """,
-                    "SELECT x, sum(x) OVER w as sum_x " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY y)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8904,21 +8386,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (4, 'B', 3000000)");
 
             // PARTITION BY category, but category is not in SELECT - this should work
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w as sum_x " +
+                            "FROM t " +
+                            "WINDOW w AS (PARTITION BY category ORDER BY x)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum_x
                             1\t1.0
                             2\t2.0
                             3\t4.0
                             4\t6.0
-                            """,
-                    "SELECT x, sum(x) OVER w as sum_x " +
-                            "FROM t " +
-                            "WINDOW w AS (PARTITION BY category ORDER BY x)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8930,17 +8409,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (2, 1000000)");
 
             // Quoted keyword as window name should work
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(x) OVER \"select\" FROM t WINDOW \"select\" AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum
                             1.0
                             3.0
-                            """,
-                    "SELECT sum(x) OVER \"select\" FROM t WINDOW \"select\" AS (ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -8985,21 +8462,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 3000000)");
 
             // rank() and dense_rank() with named window
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, rank() OVER w as r, dense_rank() OVER w as dr " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY x)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tr\tdr
                             1\t1\t1
                             1\t1\t1
                             2\t3\t2
                             3\t4\t3
-                            """,
-                    "SELECT x, rank() OVER w as r, dense_rank() OVER w as dr " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY x)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9012,20 +8486,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 2000000)");
 
             // Multiple functions using the same named window - use ORDER BY x (in SELECT)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w as sum, avg(x) OVER w as avg, count(*) OVER w as count " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY x)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum\tavg\tcount
                             1\t1.0\t1.0\t1
                             2\t3.0\t1.5\t2
                             3\t6.0\t2.0\t3
-                            """,
-                    "SELECT x, sum(x) OVER w as sum, avg(x) OVER w as avg, count(*) OVER w as count " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY x)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9039,21 +8510,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (4, 'B', 3000000)");
 
             // row_number() with named window - use ORDER BY x
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, category, row_number() OVER w as row_num " +
+                            "FROM t " +
+                            "WINDOW w AS (PARTITION BY category ORDER BY x)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tcategory\trow_num
                             1\tA\t1
                             2\tB\t1
                             3\tA\t2
                             4\tB\t2
-                            """,
-                    "SELECT x, category, row_number() OVER w as row_num " +
-                            "FROM t " +
-                            "WINDOW w AS (PARTITION BY category ORDER BY x)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9064,11 +8532,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (1, 0)");
 
             // Named window defined in outer query should not be visible in subquery
-            assertExceptionNoLeakCheck(
-                    "SELECT * FROM (SELECT sum(x) OVER w FROM t) WINDOW w AS (ORDER BY ts)",
-                    34,
-                    "window 'w' is not defined"
-            );
+            assertQuery("SELECT * FROM (SELECT sum(x) OVER w FROM t) WINDOW w AS (ORDER BY ts)")
+                    .noLeakCheck()
+                    .fails(34, "window 'w' is not defined");
         });
     }
 
@@ -9078,18 +8544,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             // Special character as window name in OVER clause
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) OVER @w FROM t",
-                    19,
-                    "identifier should start with a letter or '_'"
-            );
+            assertQuery("SELECT sum(x) OVER @w FROM t")
+                    .noLeakCheck()
+                    .fails(19, "identifier should start with a letter or '_'");
 
             // Special character as window name in WINDOW clause
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) OVER w FROM t WINDOW @w AS (ORDER BY ts)",
-                    35,
-                    "identifier should start with a letter or '_'"
-            );
+            assertQuery("SELECT sum(x) OVER w FROM t WINDOW @w AS (ORDER BY ts)")
+                    .noLeakCheck()
+                    .fails(35, "identifier should start with a letter or '_'");
         });
     }
 
@@ -9100,11 +8562,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (1, 0)");
 
             // Reference to undefined window name
-            assertExceptionNoLeakCheck(
-                    "SELECT x, sum(x) OVER undefined_window FROM t",
-                    22,
-                    "window 'undefined_window' is not defined"
-            );
+            assertQuery("SELECT x, sum(x) OVER undefined_window FROM t")
+                    .noLeakCheck()
+                    .fails(22, "window 'undefined_window' is not defined");
         });
     }
 
@@ -9169,19 +8629,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (20, 2, 1000000)");
             execute("insert into t values (30, 3, 2000000)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("WITH a AS (SELECT * FROM t) " +
+                            "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum_x
                             10\t10.0
                             20\t30.0
                             30\t60.0
-                            """,
-                    "WITH a AS (SELECT * FROM t) " +
-                            "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9195,20 +8653,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (30, 'A', 2000000)");
             execute("insert into t values (40, 'B', 3000000)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("WITH a AS (SELECT * FROM t) " +
+                            "SELECT x, category, sum(x) OVER w as sum_x FROM a WINDOW w AS (PARTITION BY category ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tcategory\tsum_x
                             10\tA\t10.0
                             20\tB\t20.0
                             30\tA\t40.0
                             40\tB\t60.0
-                            """,
-                    "WITH a AS (SELECT * FROM t) " +
-                            "SELECT x, category, sum(x) OVER w as sum_x FROM a WINDOW w AS (PARTITION BY category ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9222,18 +8678,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (30, 1, 2000000)");
             execute("insert into t values (40, 2, 3000000)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("WITH a AS (SELECT * FROM t WHERE y = 1) " +
+                            "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum_x
                             10\t10.0
                             30\t40.0
-                            """,
-                    "WITH a AS (SELECT * FROM t WHERE y = 1) " +
-                            "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)",
-                    null,
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -9246,19 +8699,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (20, 1000000)");
             execute("insert into t values (30, 2000000)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("WITH a AS (SELECT x, x * 2 as double_x, ts FROM t) " +
+                            "SELECT x, double_x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tdouble_x\tsum_x
                             10\t20\t10.0
                             20\t40\t30.0
                             30\t60\t60.0
-                            """,
-                    "WITH a AS (SELECT x, x * 2 as double_x, ts FROM t) " +
-                            "SELECT x, double_x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9274,19 +8725,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Row 1: no preceding rows, exclude self -> NaN
             // Row 2: preceding row is 1, exclude self -> 1
             // Row 3: preceding rows are 1,2, exclude self -> 3
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w as sum FROM t " +
+                            "WINDOW w AS (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum
                             1\tnull
                             2\t1.0
                             3\t3.0
-                            """,
-                    "SELECT x, sum(x) OVER w as sum FROM t " +
-                            "WINDOW w AS (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9301,22 +8750,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (5, 4000000)");
 
             // Named window with ROWS frame specification - use ORDER BY x (in SELECT)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w as sum " +
+                            "FROM t " +
+                            "WINDOW w AS (ORDER BY x ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum
                             1\t1.0
                             2\t3.0
                             3\t6.0
                             4\t9.0
                             5\t12.0
-                            """,
-                    "SELECT x, sum(x) OVER w as sum " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY x ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9330,15 +8776,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (4, 'B', 3000000)");
 
             // Window function combined with GROUP BY is not supported - must use sub-query
-            assertExceptionNoLeakCheck(
-                    "SELECT category, sum(x) as total, " +
+            assertQuery("SELECT category, sum(x) as total, " +
                             "sum(x) OVER w " +
                             "FROM t " +
                             "GROUP BY category " +
-                            "WINDOW w AS (ORDER BY category)",
-                    0,
-                    "Window function is not allowed in context of aggregation. Use sub-query."
-            );
+                            "WINDOW w AS (ORDER BY category)")
+                    .noLeakCheck()
+                    .fails(0, "Window function is not allowed in context of aggregation. Use sub-query.");
         });
     }
 
@@ -9351,20 +8795,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (20, 1000000)");
             execute("insert into t values (30, 2000000)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w as sum_x, count(*) OVER (ORDER BY ts) as count_x " +
+                            "FROM (SELECT * FROM t) " +
+                            "WINDOW w AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum_x\tcount_x
                             10\t10.0\t1
                             20\t30.0\t2
                             30\t60.0\t3
-                            """,
-                    "SELECT x, sum(x) OVER w as sum_x, count(*) OVER (ORDER BY ts) as count_x " +
-                            "FROM (SELECT * FROM t) " +
-                            "WINDOW w AS (ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9377,17 +8819,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 2000000)");
 
             // WINDOW clause with LIMIT
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(x) OVER w FROM t WINDOW w AS (ORDER BY ts) LIMIT 2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum
                             1.0
                             3.0
-                            """,
-                    "SELECT sum(x) OVER w FROM t WINDOW w AS (ORDER BY ts) LIMIT 2",
-                    null,
-                    false, // window functions don't support random access
-                    true   // expect size
-            );
+                            """);
         });
     }
 
@@ -9403,18 +8843,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t2 values (200, 1000000)");
 
             // Use first CTE with window function
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("WITH a AS (SELECT * FROM t1), b AS (SELECT * FROM t2) " +
+                            "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum_x
                             10\t10.0
                             20\t30.0
-                            """,
-                    "WITH a AS (SELECT * FROM t1), b AS (SELECT * FROM t2) " +
-                            "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9427,18 +8865,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (20, 2, 1000000)");
             execute("insert into t values (30, 3, 2000000)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w as sum_x FROM (SELECT * FROM (SELECT * FROM t)) WINDOW w AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum_x
                             10\t10.0
                             20\t30.0
                             30\t60.0
-                            """,
-                    "SELECT x, sum(x) OVER w as sum_x FROM (SELECT * FROM (SELECT * FROM t)) WINDOW w AS (ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9451,19 +8887,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 2000000)");
 
             // SQL standard: WINDOW clause comes before ORDER BY
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w as sum FROM t " +
+                            "WINDOW w AS (ORDER BY ts) ORDER BY ts DESC")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum
                             3\t6.0
                             2\t3.0
                             1\t1.0
-                            """,
-                    "SELECT x, sum(x) OVER w as sum FROM t " +
-                            "WINDOW w AS (ORDER BY ts) ORDER BY ts DESC",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9478,21 +8911,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Use ORDER BY x since x is in SELECT list
             // Note: ORDER BY columns not in SELECT list requires additional column propagation fix
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, y, category, sum(y) OVER w as sum " +
+                            "FROM t " +
+                            "WINDOW w AS (PARTITION BY category ORDER BY x)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\ty\tcategory\tsum
                             1\t10\tA\t10.0
                             2\t20\tB\t20.0
                             3\t30\tA\t40.0
                             4\t40\tB\t60.0
-                            """,
-                    "SELECT x, y, category, sum(y) OVER w as sum " +
-                            "FROM t " +
-                            "WINDOW w AS (PARTITION BY category ORDER BY x)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9539,35 +8969,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Row 2 (ts=1s, x=2): sum of rows within [1s-2s, 1s] = sum(1,2) = 3
             // Row 3 (ts=2s, x=3): sum of rows within [2s-2s, 2s] = sum(1,2,3) = 6
             // Row 4 (ts=4s, x=4): sum of rows within [4s-2s, 4s] = sum(3,4) = 7
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w FROM t " +
+                            "WINDOW w AS (ORDER BY ts RANGE BETWEEN '2' SECOND PRECEDING AND CURRENT ROW)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum
                             1\t1.0
                             2\t3.0
                             3\t6.0
                             4\t7.0
-                            """,
-                    "SELECT x, sum(x) OVER w FROM t " +
-                            "WINDOW w AS (ORDER BY ts RANGE BETWEEN '2' SECOND PRECEDING AND CURRENT ROW)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
             // Verify same result with inline window
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER (ORDER BY ts RANGE BETWEEN '2' SECOND PRECEDING AND CURRENT ROW) FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum
                             1\t1.0
                             2\t3.0
                             3\t6.0
                             4\t7.0
-                            """,
-                    "SELECT x, sum(x) OVER (ORDER BY ts RANGE BETWEEN '2' SECOND PRECEDING AND CURRENT ROW) FROM t",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9582,34 +9008,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Named window with ROWS frame (2 PRECEDING to CURRENT ROW)
             // Row 1: sum(1) = 1, Row 2: sum(1,2) = 3, Row 3: sum(1,2,3) = 6, Row 4: sum(2,3,4) = 9
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w FROM t WINDOW w AS (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum
                             1\t1.0
                             2\t3.0
                             3\t6.0
                             4\t9.0
-                            """,
-                    "SELECT x, sum(x) OVER w FROM t WINDOW w AS (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
             // Verify same result with inline window
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum
                             1\t1.0
                             2\t3.0
                             3\t6.0
                             4\t9.0
-                            """,
-                    "SELECT x, sum(x) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9622,18 +9044,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (20, 2, 1000000)");
             execute("insert into t values (30, 3, 2000000)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w as sum_x FROM (SELECT * FROM t) WINDOW w AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum_x
                             10\t10.0
                             20\t30.0
                             30\t60.0
-                            """,
-                    "SELECT x, sum(x) OVER w as sum_x FROM (SELECT * FROM t) WINDOW w AS (ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9645,17 +9065,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t1 values (10, 0)");
             execute("insert into t1 values (20, 1000000)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w as sum_x FROM (SELECT x, ts FROM t1) WINDOW w AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum_x
                             10\t10.0
                             20\t30.0
-                            """,
-                    "SELECT x, sum(x) OVER w as sum_x FROM (SELECT x, ts FROM t1) WINDOW w AS (ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9731,8 +9149,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t2 values (30, 2000000)");
 
             // Each SELECT in a UNION ALL has its own WINDOW clause
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w FROM t1 WINDOW w AS (ORDER BY ts) " +
+                            "UNION ALL " +
+                            "SELECT x, sum(x) OVER w FROM t2 WINDOW w AS (ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum
                             1\t1.0
                             2\t3.0
@@ -9740,14 +9163,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             10\t10.0
                             20\t30.0
                             30\t60.0
-                            """,
-                    "SELECT x, sum(x) OVER w FROM t1 WINDOW w AS (ORDER BY ts) " +
-                            "UNION ALL " +
-                            "SELECT x, sum(x) OVER w FROM t2 WINDOW w AS (ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -9847,119 +9263,89 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (1, 'A', 1_000_000), (2, 'A', 2_000_000), (3, 'B', 3_000_000)");
 
             // Window function nested inside arithmetic expression combined with GROUP BY
-            assertExceptionNoLeakCheck(
-                    "SELECT category, avg(x), (avg(x) - avg(x) OVER ()) AS diff FROM t GROUP BY category",
-                    35,
-                    "Window function is not allowed in context of aggregation. Use sub-query."
-            );
+            assertQuery("SELECT category, avg(x), (avg(x) - avg(x) OVER ()) AS diff FROM t GROUP BY category")
+                    .noLeakCheck()
+                    .fails(35, "Window function is not allowed in context of aggregation. Use sub-query.");
 
             // Deeper nesting
-            assertExceptionNoLeakCheck(
-                    "SELECT category, 1 + (2 + avg(x) OVER ()) FROM t GROUP BY category",
-                    26,
-                    "Window function is not allowed in context of aggregation. Use sub-query."
-            );
+            assertQuery("SELECT category, 1 + (2 + avg(x) OVER ()) FROM t GROUP BY category")
+                    .noLeakCheck()
+                    .fails(26, "Window function is not allowed in context of aggregation. Use sub-query.");
 
             // CASE expression (paramCount >= 3 branch)
-            assertExceptionNoLeakCheck(
-                    "SELECT category, CASE WHEN avg(x) > 0 THEN avg(x) OVER () END FROM t GROUP BY category",
-                    43,
-                    "Window function is not allowed in context of aggregation. Use sub-query."
-            );
+            assertQuery("SELECT category, CASE WHEN avg(x) > 0 THEN avg(x) OVER () END FROM t GROUP BY category")
+                    .noLeakCheck()
+                    .fails(43, "Window function is not allowed in context of aggregation. Use sub-query.");
 
             // Single-argument function wrapping a window function (paramCount == 1 branch)
-            assertExceptionNoLeakCheck(
-                    "SELECT category, abs(avg(x) OVER ()) FROM t GROUP BY category",
-                    21,
-                    "Window function is not allowed in context of aggregation. Use sub-query."
-            );
+            assertQuery("SELECT category, abs(avg(x) OVER ()) FROM t GROUP BY category")
+                    .noLeakCheck()
+                    .fails(21, "Window function is not allowed in context of aggregation. Use sub-query.");
 
             // Implicit GROUP BY: aggregate + nested window function without GROUP BY clause
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) + avg(x) OVER () FROM t",
-                    16,
-                    "Window function is not allowed in context of aggregation. Use sub-query."
-            );
+            assertQuery("SELECT sum(x) + avg(x) OVER () FROM t")
+                    .noLeakCheck()
+                    .fails(16, "Window function is not allowed in context of aggregation. Use sub-query.");
 
             // Pure window function name (row_number has no aggregate form) used without OVER
             // alongside an aggregate. Previously fell through to "empty window context" at
             // runtime; now rejected cleanly at compile time.
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) + row_number() FROM t",
-                    16,
-                    "Window function is not allowed in context of aggregation. Use sub-query."
-            );
+            assertQuery("SELECT sum(x) + row_number() FROM t")
+                    .noLeakCheck()
+                    .fails(16, "Window function is not allowed in context of aggregation. Use sub-query.");
 
             // SAMPLE BY: implicit grouping via the SAMPLE BY clause; the guard fires on bare window in expression.
-            assertExceptionNoLeakCheck(
-                    "SELECT ts, sum(x) - avg(x) OVER () FROM t SAMPLE BY 1h",
-                    20,
-                    "Window function is not allowed in context of aggregation. Use sub-query."
-            );
+            assertQuery("SELECT ts, sum(x) - avg(x) OVER () FROM t SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .fails(20, "Window function is not allowed in context of aggregation. Use sub-query.");
 
             // ORDER BY: moveOrderByFunctionsIntoOuterSelect lifts the expression into the
             // bottom-up column list, so the SELECT-list guard catches it with a precise position.
-            assertExceptionNoLeakCheck(
-                    "SELECT category, avg(x) FROM t GROUP BY category ORDER BY avg(x) - avg(x) OVER ()",
-                    67,
-                    "Window function is not allowed in context of aggregation. Use sub-query."
-            );
+            assertQuery("SELECT category, avg(x) FROM t GROUP BY category ORDER BY avg(x) - avg(x) OVER ()")
+                    .noLeakCheck()
+                    .fails(67, "Window function is not allowed in context of aggregation. Use sub-query.");
 
             // Mixed: an aggregate-wrapped window next to a bare window in the same expression.
-            assertExceptionNoLeakCheck(
-                    "SELECT category, max(avg(x) OVER ()) - avg(x) OVER () FROM t GROUP BY category",
-                    39,
-                    "Window function is not allowed in context of aggregation. Use sub-query."
-            );
+            assertQuery("SELECT category, max(avg(x) OVER ()) - avg(x) OVER () FROM t GROUP BY category")
+                    .noLeakCheck()
+                    .fails(39, "Window function is not allowed in context of aggregation. Use sub-query.");
 
             // GROUP BY ordinal resolving to a column with a window: validateGroupByExpression
             // catches this earlier than the SELECT-list guard.
-            assertExceptionNoLeakCheck(
-                    "SELECT x - avg(x) OVER () FROM t GROUP BY 1",
-                    42,
-                    "aggregate functions are not allowed in GROUP BY"
-            );
+            assertQuery("SELECT x - avg(x) OVER () FROM t GROUP BY 1")
+                    .noLeakCheck()
+                    .fails(42, "aggregate functions are not allowed in GROUP BY");
 
             // CTE source: the SELECT-list guard fires inside the outer model that consumes the CTE.
-            assertExceptionNoLeakCheck(
-                    "WITH cte AS (SELECT category, x FROM t) SELECT category, sum(x) + avg(x) OVER () FROM cte GROUP BY category",
-                    66,
-                    "Window function is not allowed in context of aggregation. Use sub-query."
-            );
+            assertQuery("WITH cte AS (SELECT category, x FROM t) SELECT category, sum(x) + avg(x) OVER () FROM cte GROUP BY category")
+                    .noLeakCheck()
+                    .fails(66, "Window function is not allowed in context of aggregation. Use sub-query.");
 
             // JOIN source: the guard fires on the joined model's SELECT list as well.
-            assertExceptionNoLeakCheck(
-                    "SELECT t.category, sum(t.x) + avg(s.x) OVER () FROM t JOIN t s ON t.category = s.category GROUP BY t.category",
-                    30,
-                    "Window function is not allowed in context of aggregation. Use sub-query."
-            );
+            assertQuery("SELECT t.category, sum(t.x) + avg(s.x) OVER () FROM t JOIN t s ON t.category = s.category GROUP BY t.category")
+                    .noLeakCheck()
+                    .fails(30, "Window function is not allowed in context of aggregation. Use sub-query.");
 
             // Sub-query workaround: the inner query exposes the window column, the outer aggregates it.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT category, max(w) FROM (SELECT category, avg(x) OVER () AS w FROM t) GROUP BY category ORDER BY category")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             category\tmax
                             A\t2.0
                             B\t2.0
-                            """,
-                    "SELECT category, max(w) FROM (SELECT category, avg(x) OVER () AS w FROM t) GROUP BY category ORDER BY category",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // Nested window function WITHOUT GROUP BY should still work
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT (x - avg(x) OVER ()) AS diff FROM t")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             diff
                             -1.0
                             0.0
                             1.0
-                            """,
-                    "SELECT (x - avg(x) OVER ()) AS diff FROM t",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -10114,8 +9500,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x/4, x%5, x*2::double, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
 
             // row_number()
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select row_number() over (partition by i order by ts desc) " +
+                            "from tab " +
+                            "order by ts asc")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             row_number
                             3
                             2
@@ -10124,17 +9514,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             3
                             2
                             1
-                            """,
-                    "select row_number() over (partition by i order by ts desc) " +
-                            "from tab " +
-                            "order by ts asc",
-                    null,
-                    true, // cached window factory
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select row_number() over (partition by i order by ts desc)" +
+                            "from tab " +
+                            "order by ts desc")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             row_number
                             1
                             2
@@ -10143,17 +9531,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1
                             2
                             3
-                            """,
-                    "select row_number() over (partition by i order by ts desc)" +
-                            "from tab " +
-                            "order by ts desc",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select row_number() over (partition by i order by ts asc) " +
+                            "from tab " +
+                            "order by ts asc")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             row_number
                             1
                             2
@@ -10162,17 +9548,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2
                             3
                             4
-                            """,
-                    "select row_number() over (partition by i order by ts asc) " +
-                            "from tab " +
-                            "order by ts asc",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select row_number() over (partition by i order by ts asc) " +
+                            "from tab " +
+                            "order by ts desc")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             row_number
                             4
                             3
@@ -10181,17 +9564,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             3
                             2
                             1
-                            """,
-                    "select row_number() over (partition by i order by ts asc) " +
-                            "from tab " +
-                            "order by ts desc",
-                    null,
-                    true, // cached window factory
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select row_number() over (partition by i order by i, j asc) " +
+                            "from tab " +
+                            "order by ts desc")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             row_number
                             3
                             2
@@ -10200,14 +9580,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             3
                             2
                             1
-                            """,
-                    "select row_number() over (partition by i order by i, j asc) " +
-                            "from tab " +
-                            "order by ts desc",
-                    null,
-                    true, // cached window factory
-                    true
-            );
+                            """);
 
             assertPlanNoLeakCheck(
                     "select row_number() over (partition by i order by ts asc), " +
@@ -10243,18 +9616,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
-                            row_number\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\tdense_rank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls
-                            1\t2.0\t6.0\t3\t3\t1\t1\t3\t3\t3\t3\t3\t3\t1\t1\t1\tnull\t2\tnull\t2
-                            2\t2.5\t5.0\t3\t3\t2\t2\t2\t2\t2\t2\t2\t3\t2\t2\t2\t1\t3\t1\t3
-                            3\t3.0\t3.0\t3\t3\t3\t3\t1\t1\t1\t1\t1\t3\t3\t3\t3\t2\tnull\t2\tnull
-                            1\t1.75\t7.0\t2\t2\t4\t4\t4\t4\t4\t4\t4\t4\t0\t4\t4\t2\tnull\t2\tnull
-                            2\t1.0\t3.0\t2\t2\t0\t0\t3\t3\t3\t3\t3\t2\t0\t1\t1\tnull\t1\tnull\t1
-                            3\t1.5\t3.0\t2\t2\t1\t1\t2\t2\t2\t2\t2\t2\t1\t2\t2\t0\t2\t0\t2
-                            4\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2\t3\t3\t1\t4\t1\t4
-                            """,
-                    "select row_number() over (partition by i order by ts asc), " +
+            assertQuery("select row_number() over (partition by i order by ts asc), " +
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
@@ -10275,24 +9637,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "   lag(j) ignore nulls over (partition by i order by j asc), " +
                             "   lead(j) ignore nulls over (partition by i order by j asc) " +
                             "from tab " +
-                            "order by ts asc",
-                    null,
-                    true, // cached window factory
-                    true
-            );
+                            "order by ts asc")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            row_number\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\tdense_rank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls
+                            1\t2.0\t6.0\t3\t3\t1\t1\t3\t3\t3\t3\t3\t3\t1\t1\t1\tnull\t2\tnull\t2
+                            2\t2.5\t5.0\t3\t3\t2\t2\t2\t2\t2\t2\t2\t3\t2\t2\t2\t1\t3\t1\t3
+                            3\t3.0\t3.0\t3\t3\t3\t3\t1\t1\t1\t1\t1\t3\t3\t3\t3\t2\tnull\t2\tnull
+                            1\t1.75\t7.0\t2\t2\t4\t4\t4\t4\t4\t4\t4\t4\t0\t4\t4\t2\tnull\t2\tnull
+                            2\t1.0\t3.0\t2\t2\t0\t0\t3\t3\t3\t3\t3\t2\t0\t1\t1\tnull\t1\tnull\t1
+                            3\t1.5\t3.0\t2\t2\t1\t1\t2\t2\t2\t2\t2\t2\t1\t2\t2\t0\t2\t0\t2
+                            4\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2\t3\t3\t1\t4\t1\t4
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            row_number\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\tdense_rank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls
-                            4\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2\t3\t3\t1\t4\t1\t4
-                            3\t1.5\t3.0\t2\t2\t1\t1\t2\t2\t2\t2\t2\t2\t1\t2\t2\t0\t2\t0\t2
-                            2\t1.0\t3.0\t2\t2\t0\t0\t3\t3\t3\t3\t3\t2\t0\t1\t1\tnull\t1\tnull\t1
-                            1\t1.75\t7.0\t2\t2\t4\t4\t4\t4\t4\t4\t4\t4\t0\t4\t4\t2\tnull\t2\tnull
-                            3\t3.0\t3.0\t3\t3\t3\t3\t1\t1\t1\t1\t1\t3\t3\t3\t3\t2\tnull\t2\tnull
-                            2\t2.5\t5.0\t3\t3\t2\t2\t2\t2\t2\t2\t2\t3\t2\t2\t2\t1\t3\t1\t3
-                            1\t2.0\t6.0\t3\t3\t1\t1\t3\t3\t3\t3\t3\t3\t1\t1\t1\tnull\t2\tnull\t2
-                            """,
-                    "select row_number() over (partition by i order by ts asc), " +
+            assertQuery("select row_number() over (partition by i order by ts asc), " +
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
@@ -10313,11 +9672,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "   lag(j) ignore nulls over (partition by i order by j asc), " +
                             "   lead(j) ignore nulls over (partition by i order by j asc) " +
                             "from tab " +
-                            "order by ts desc",
-                    null,
-                    true,
-                    true
-            );
+                            "order by ts desc")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            row_number\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\trank\tdense_rank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls
+                            4\t2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2\t3\t3\t1\t4\t1\t4
+                            3\t1.5\t3.0\t2\t2\t1\t1\t2\t2\t2\t2\t2\t2\t1\t2\t2\t0\t2\t0\t2
+                            2\t1.0\t3.0\t2\t2\t0\t0\t3\t3\t3\t3\t3\t2\t0\t1\t1\tnull\t1\tnull\t1
+                            1\t1.75\t7.0\t2\t2\t4\t4\t4\t4\t4\t4\t4\t4\t0\t4\t4\t2\tnull\t2\tnull
+                            3\t3.0\t3.0\t3\t3\t3\t3\t1\t1\t1\t1\t1\t3\t3\t3\t3\t2\tnull\t2\tnull
+                            2\t2.5\t5.0\t3\t3\t2\t2\t2\t2\t2\t2\t2\t3\t2\t2\t2\t1\t3\t1\t3
+                            1\t2.0\t6.0\t3\t3\t1\t1\t3\t3\t3\t3\t3\t3\t1\t1\t1\tnull\t2\tnull\t2
+                            """);
         });
     }
 
@@ -10333,30 +9700,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values ('A-2', '2024-01-01T00:00:01.000000Z')");
             execute("insert into t values ('B-1', '2024-01-01T00:00:02.000000Z')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sym, max(ts) OVER (PARTITION BY split_part(sym, '-', 1)) as max FROM t")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sym\tmax
                             A-1\t2024-01-01T00:00:01.000000Z
                             A-2\t2024-01-01T00:00:01.000000Z
                             B-1\t2024-01-01T00:00:02.000000Z
-                            """,
-                    "SELECT sym, max(ts) OVER (PARTITION BY split_part(sym, '-', 1)) as max FROM t",
-                    null,
-                    true,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT sym, max(ts) OVER (PARTITION BY split_part(sym, '-', 1), substring(sym, 1, 1)) as max FROM t")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sym\tmax
                             A-1\t2024-01-01T00:00:01.000000Z
                             A-2\t2024-01-01T00:00:01.000000Z
                             B-1\t2024-01-01T00:00:02.000000Z
-                            """,
-                    "SELECT sym, max(ts) OVER (PARTITION BY split_part(sym, '-', 1), substring(sym, 1, 1)) as max FROM t",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -10367,34 +9728,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select (x/4)::timestamp, x/2, 'k' || (x%2) ::symbol from long_sequence(12)");
 
             // rank()/dense_rank() over(partition by)
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\trank\tdense_rank
-                            1970-01-01T00:00:00.000000Z\t1\t1
-                            1970-01-01T00:00:00.000000Z\t1\t1
-                            1970-01-01T00:00:00.000000Z\t1\t1
-                            1970-01-01T00:00:00.000001Z\t1\t1
-                            1970-01-01T00:00:00.000001Z\t1\t1
-                            1970-01-01T00:00:00.000001Z\t1\t1
-                            1970-01-01T00:00:00.000001Z\t1\t1
-                            1970-01-01T00:00:00.000002Z\t1\t1
-                            1970-01-01T00:00:00.000002Z\t1\t1
-                            1970-01-01T00:00:00.000002Z\t1\t1
-                            1970-01-01T00:00:00.000002Z\t1\t1
-                            1970-01-01T00:00:00.000003Z\t1\t1
-                            """),
-                    "select ts, " +
+            assertQuery("select ts, " +
                             "rank() over (partition by s), " +
                             "dense_rank() over (partition by s) " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-
-            // rank()/dense_rank() over()
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\trank\tdense_rank
                             1970-01-01T00:00:00.000000Z\t1\t1
                             1970-01-01T00:00:00.000000Z\t1\t1
@@ -10408,19 +9750,43 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\t1\t1
                             1970-01-01T00:00:00.000002Z\t1\t1
                             1970-01-01T00:00:00.000003Z\t1\t1
-                            """),
-                    "select ts, " +
+                            """));
+
+            // rank()/dense_rank() over()
+            assertQuery("select ts, " +
                             "rank() over (), " +
                             "dense_rank() over () " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\trank\tdense_rank
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-01T00:00:00.000001Z\t1\t1
+                            1970-01-01T00:00:00.000001Z\t1\t1
+                            1970-01-01T00:00:00.000001Z\t1\t1
+                            1970-01-01T00:00:00.000001Z\t1\t1
+                            1970-01-01T00:00:00.000002Z\t1\t1
+                            1970-01-01T00:00:00.000002Z\t1\t1
+                            1970-01-01T00:00:00.000002Z\t1\t1
+                            1970-01-01T00:00:00.000002Z\t1\t1
+                            1970-01-01T00:00:00.000003Z\t1\t1
+                            """));
 
             // rank()/dense_rank() over(partition by xxx order by xxx)
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, s," +
+                            "rank() over (partition by s order by ts), " +
+                            "dense_rank() over (partition by s order by ts) " +
+                            "from tab ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ts\trank\tdense_rank
                             1970-01-01T00:00:00.000000Z\tk1\t1\t1
                             1970-01-01T00:00:00.000000Z\tk0\t1\t1
@@ -10434,18 +9800,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\tk0\t4\t3
                             1970-01-01T00:00:00.000002Z\tk1\t5\t3
                             1970-01-01T00:00:00.000003Z\tk0\t6\t4
-                            """),
-                    "select ts, s," +
+                            """));
+
+            assertQuery("select ts, s," +
                             "rank() over (partition by s order by ts), " +
                             "dense_rank() over (partition by s order by ts) " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab order by s, ts")
+                    .timestamp("")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ts\trank\tdense_rank
                             1970-01-01T00:00:00.000000Z\tk0\t1\t1
                             1970-01-01T00:00:00.000001Z\tk0\t2\t2
@@ -10459,18 +9823,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000001Z\tk1\t3\t2
                             1970-01-01T00:00:00.000002Z\tk1\t5\t3
                             1970-01-01T00:00:00.000002Z\tk1\t5\t3
-                            """),
-                    "select ts, s," +
-                            "rank() over (partition by s order by ts), " +
-                            "dense_rank() over (partition by s order by ts) " +
-                            "from tab order by s, ts",
-                    "",
-                    true,
-                    true
-            );
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, s," +
+                            "rank() over (partition by s order by ts), " +
+                            "rank() over (partition by s order by ts desc), " +
+                            "dense_rank() over (partition by s order by ts), " +
+                            "dense_rank() over (partition by s order by ts desc) " +
+                            "from tab order by s, ts")
+                    .timestamp("")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ts\trank\trank1\tdense_rank\tdense_rank1
                             1970-01-01T00:00:00.000000Z\tk0\t1\t6\t1\t4
                             1970-01-01T00:00:00.000001Z\tk0\t2\t4\t2\t3
@@ -10484,21 +9848,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000001Z\tk1\t3\t3\t2\t2
                             1970-01-01T00:00:00.000002Z\tk1\t5\t1\t3\t1
                             1970-01-01T00:00:00.000002Z\tk1\t5\t1\t3\t1
-                            """),
-                    "select ts, s," +
-                            "rank() over (partition by s order by ts), " +
-                            "rank() over (partition by s order by ts desc), " +
-                            "dense_rank() over (partition by s order by ts), " +
-                            "dense_rank() over (partition by s order by ts desc) " +
-                            "from tab order by s, ts",
-                    "",
-                    true,
-                    true
-            );
+                            """));
 
             // rank()/dense_rank() over(order by xxx)
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts," +
+                            "rank() over (order by ts), " +
+                            "dense_rank() over (order by ts) " +
+                            "from tab order by ts")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\trank\tdense_rank
                             1970-01-01T00:00:00.000000Z\t1\t1
                             1970-01-01T00:00:00.000000Z\t1\t1
@@ -10512,18 +9873,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\t8\t3
                             1970-01-01T00:00:00.000002Z\t8\t3
                             1970-01-01T00:00:00.000003Z\t12\t4
-                            """),
-                    "select ts," +
+                            """));
+
+            assertQuery("select ts, s," +
                             "rank() over (order by ts), " +
                             "dense_rank() over (order by ts) " +
-                            "from tab order by ts",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab order by s")
+                    .timestamp("")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ts\trank\tdense_rank
                             1970-01-01T00:00:00.000000Z\tk0\t1\t1
                             1970-01-01T00:00:00.000001Z\tk0\t4\t2
@@ -10537,18 +9896,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000001Z\tk1\t4\t2
                             1970-01-01T00:00:00.000002Z\tk1\t8\t3
                             1970-01-01T00:00:00.000002Z\tk1\t8\t3
-                            """),
-                    "select ts, s," +
+                            """));
+
+            assertQuery("select ts," +
                             "rank() over (order by ts), " +
                             "dense_rank() over (order by ts) " +
-                            "from tab order by s",
-                    "",
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\trank\tdense_rank
                             1970-01-01T00:00:00.000000Z\t1\t1
                             1970-01-01T00:00:00.000000Z\t1\t1
@@ -10562,18 +9920,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\t8\t3
                             1970-01-01T00:00:00.000002Z\t8\t3
                             1970-01-01T00:00:00.000003Z\t12\t4
-                            """),
-                    "select ts," +
-                            "rank() over (order by ts), " +
-                            "dense_rank() over (order by ts) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts," +
+                            "rank() over (order by ts), " +
+                            "dense_rank() over (order by ts), " +
+                            "rank() over (order by ts desc), " +
+                            "dense_rank() over (order by ts desc) " +
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\trank\tdense_rank\trank1\tdense_rank1
                             1970-01-01T00:00:00.000000Z\t1\t1\t10\t4
                             1970-01-01T00:00:00.000000Z\t1\t1\t10\t4
@@ -10587,20 +9945,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\t8\t3\t2\t2
                             1970-01-01T00:00:00.000002Z\t8\t3\t2\t2
                             1970-01-01T00:00:00.000003Z\t12\t4\t1\t1
-                            """),
-                    "select ts," +
-                            "rank() over (order by ts), " +
-                            "dense_rank() over (order by ts), " +
-                            "rank() over (order by ts desc), " +
-                            "dense_rank() over (order by ts desc) " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, s," +
+                            "rank() over (partition by concat(s,'foobar') order by ts desc)," +
+                            "dense_rank() over (partition by concat(s,'foobar') order by ts desc)" +
+                            "from tab order by s, ts")
+                    .timestamp("")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ts\trank\tdense_rank
                             1970-01-01T00:00:00.000000Z\tk0\t6\t4
                             1970-01-01T00:00:00.000001Z\tk0\t4\t3
@@ -10614,15 +9968,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000001Z\tk1\t3\t2
                             1970-01-01T00:00:00.000002Z\tk1\t1\t1
                             1970-01-01T00:00:00.000002Z\tk1\t1\t1
-                            """),
-                    "select ts, s," +
-                            "rank() over (partition by concat(s,'foobar') order by ts desc)," +
-                            "dense_rank() over (partition by concat(s,'foobar') order by ts desc)" +
-                            "from tab order by s, ts",
-                    "",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11386,20 +10732,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), (5, 1, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, ntile(3) over (order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tbucket
                             1970-01-01T00:00:00.000001Z\t10.0\t1
                             1970-01-01T00:00:00.000002Z\t20.0\t1
                             1970-01-01T00:00:00.000003Z\t30.0\t2
                             1970-01-01T00:00:00.000004Z\t40.0\t2
                             1970-01-01T00:00:00.000005Z\t50.0\t3
-                            """),
-                    "select ts, val, ntile(3) over (order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11409,20 +10753,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, ntile(2) over (partition by i order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tbucket
                             1970-01-01T00:00:00.000001Z\t1\t1
                             1970-01-01T00:00:00.000002Z\t1\t1
                             1970-01-01T00:00:00.000003Z\t1\t2
                             1970-01-01T00:00:00.000004Z\t2\t1
                             1970-01-01T00:00:00.000005Z\t2\t2
-                            """),
-                    "select ts, i, ntile(2) over (partition by i order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11432,18 +10774,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, ntile(1) over (order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tbucket
                             1970-01-01T00:00:00.000001Z\t1
                             1970-01-01T00:00:00.000002Z\t1
                             1970-01-01T00:00:00.000003Z\t1
-                            """),
-                    "select ts, ntile(1) over (order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11453,17 +10793,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, ntile(5) over (order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tbucket
                             1970-01-01T00:00:00.000001Z\t1
                             1970-01-01T00:00:00.000002Z\t2
-                            """),
-                    "select ts, ntile(5) over (order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11481,8 +10819,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     (6, 60.0), (7, 70.0), (8, 80.0), (9, 90.0), (10, 100.0)
                     """);
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, ntile(3) over (order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tbucket
                             1970-01-01T00:00:00.000001Z\t1
                             1970-01-01T00:00:00.000002Z\t1
@@ -11494,12 +10835,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000008Z\t3
                             1970-01-01T00:00:00.000009Z\t3
                             1970-01-01T00:00:00.000010Z\t3
-                            """),
-                    "select ts, ntile(3) over (order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11514,8 +10850,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     (6, 60.0), (7, 70.0), (8, 80.0), (9, 90.0), (10, 100.0)
                     """);
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, ntile(5) over (order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tbucket
                             1970-01-01T00:00:00.000001Z\t1
                             1970-01-01T00:00:00.000002Z\t1
@@ -11527,12 +10866,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000008Z\t4
                             1970-01-01T00:00:00.000009Z\t5
                             1970-01-01T00:00:00.000010Z\t5
-                            """),
-                    "select ts, ntile(5) over (order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11547,20 +10881,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)
                     """);
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, ntile(5) over (order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tbucket
                             1970-01-01T00:00:00.000001Z\t1
                             1970-01-01T00:00:00.000002Z\t2
                             1970-01-01T00:00:00.000003Z\t3
                             1970-01-01T00:00:00.000004Z\t4
                             1970-01-01T00:00:00.000005Z\t5
-                            """),
-                    "select ts, ntile(5) over (order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11569,12 +10901,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select ntile(0) over (order by ts) from tab",
-                    13,
-                    "bucket count must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select ntile(0) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(13, "bucket count must be a positive integer");
         });
     }
 
@@ -11583,28 +10912,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select ntile(4) over (order by ts rows between 1 preceding and current row) from tab",
-                    49,
-                    "ntile() does not support framing; remove the frame clause",
-                    sqlExecutionContext
-            );
+            assertQuery("select ntile(4) over (order by ts rows between 1 preceding and current row) from tab")
+                    .noLeakCheck()
+                    .fails(49, "ntile() does not support framing; remove the frame clause");
 
-            assertExceptionNoLeakCheck(
-                    "select ntile(4) over (order by ts range between 10 microseconds preceding and current row) from tab",
-                    64,
-                    "ntile() does not support framing; remove the frame clause",
-                    sqlExecutionContext
-            );
+            assertQuery("select ntile(4) over (order by ts range between 10 microseconds preceding and current row) from tab")
+                    .noLeakCheck()
+                    .fails(64, "ntile() does not support framing; remove the frame clause");
 
             // GROUPS framing: the error must not mention ROWS/RANGE specifically --
             // the message should cover every frame clause variant.
-            assertExceptionNoLeakCheck(
-                    "select ntile(4) over (order by ts groups between 1 preceding and current row) from tab",
-                    51,
-                    "ntile() does not support framing; remove the frame clause",
-                    sqlExecutionContext
-            );
+            assertQuery("select ntile(4) over (order by ts groups between 1 preceding and current row) from tab")
+                    .noLeakCheck()
+                    .fails(51, "ntile() does not support framing; remove the frame clause");
         });
     }
 
@@ -11614,18 +10934,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, cume_dist() over (order by ts) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tcd
                             1970-01-01T00:00:00.000001Z\t10.0\t0.3333333333333333
                             1970-01-01T00:00:00.000002Z\t20.0\t0.6666666666666666
                             1970-01-01T00:00:00.000003Z\t30.0\t1.0
-                            """),
-                    "select ts, val, cume_dist() over (order by ts) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11635,20 +10953,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1), (2, 1), (3, 2), (4, 2), (5, 3)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, cume_dist() over (order by val) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tcd
                             1970-01-01T00:00:00.000001Z\t1\t0.4
                             1970-01-01T00:00:00.000002Z\t1\t0.4
                             1970-01-01T00:00:00.000003Z\t2\t0.8
                             1970-01-01T00:00:00.000004Z\t2\t0.8
                             1970-01-01T00:00:00.000005Z\t3\t1.0
-                            """),
-                    "select ts, val, cume_dist() over (order by val) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11658,20 +10974,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, cume_dist() over (partition by i order by ts) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tcd
                             1970-01-01T00:00:00.000001Z\t1\t0.3333333333333333
                             1970-01-01T00:00:00.000002Z\t1\t0.6666666666666666
                             1970-01-01T00:00:00.000003Z\t1\t1.0
                             1970-01-01T00:00:00.000004Z\t2\t0.5
                             1970-01-01T00:00:00.000005Z\t2\t1.0
-                            """),
-                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11681,18 +10995,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, cume_dist() over () cd from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tcd
                             1970-01-01T00:00:00.000001Z\t1.0
                             1970-01-01T00:00:00.000002Z\t1.0
                             1970-01-01T00:00:00.000003Z\t1.0
-                            """),
-                    "select ts, cume_dist() over () cd from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11702,17 +11015,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, cume_dist() over (order by ts) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tcd
                             1970-01-01T00:00:00.000001Z\t0.5
                             1970-01-01T00:00:00.000002Z\t1.0
-                            """),
-                    "select ts, cume_dist() over (order by ts) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11727,32 +11038,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Every row shares the same ORDER BY key, so cume_dist = 1.0 for all rows.
             // Aggregation factory: no timestamp, no random access, size known.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(cd) min, max(cd) max, count(*) count from (" +
+                            "select cume_dist() over (order by val) cd from tab)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tcount
                             1.0\t1.0\t50000
-                            """,
-                    "select min(cd) min, max(cd) max, count(*) count from (" +
-                            "select cume_dist() over (order by val) cd from tab)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
             // Partitioned variant: many partitions, each with a single giant peer group.
             // Exercises CumeDistOverPartitionFunction's per-partition deferred slice growth.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(cd) min, max(cd) max, count(*) count from (" +
+                            "select cume_dist() over (partition by (x % 20) order by val) cd " +
+                            "from (select x, 1.0 val from long_sequence(50_000)))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tcount
                             1.0\t1.0\t50000
-                            """,
-                    "select min(cd) min, max(cd) max, count(*) count from (" +
-                            "select cume_dist() over (partition by (x % 20) order by val) cd " +
-                            "from (select x, 1.0 val from long_sequence(50_000)))",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -11766,17 +11073,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x % 1_000, rnd_double() from long_sequence(10_000)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(cd) > 0.0 min_cd, max(cd) max_cd, count(*) count from (" +
+                            "select cume_dist() over (partition by i order by val) cd from tab)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min_cd\tmax_cd\tcount
                             true\t1.0\t10000
-                            """,
-                    "select min(cd) > 0.0 min_cd, max(cd) max_cd, count(*) count from (" +
-                            "select cume_dist() over (partition by i order by val) cd from tab)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -11786,20 +11091,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\t30.0
                             1970-01-01T00:00:00.000004Z\t30.0
                             1970-01-01T00:00:00.000005Z\t30.0
-                            """),
-                    "select ts, nth_value(val, 3) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11809,18 +11113,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t10.0
                             1970-01-01T00:00:00.000002Z\t10.0
                             1970-01-01T00:00:00.000003Z\t10.0
-                            """),
-                    "select ts, nth_value(val, 1) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11830,20 +11133,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\t20.0
                             1970-01-01T00:00:00.000003Z\t1\t20.0
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\t50.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11853,20 +11155,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, " +
+                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
+                            "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv1\tnv2
                             1970-01-01T00:00:00.000001Z\t10.0\tnull
                             1970-01-01T00:00:00.000002Z\t20.0\tnull
-                            """),
-                    "select ts, " +
-                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11876,20 +11177,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (order by ts rows between 2 preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t10.0
                             1970-01-01T00:00:00.000002Z\t10.0
                             1970-01-01T00:00:00.000003Z\t10.0
                             1970-01-01T00:00:00.000004Z\t20.0
                             1970-01-01T00:00:00.000005Z\t30.0
-                            """),
-                    "select ts, nth_value(val, 1) over (order by ts rows between 2 preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11899,20 +11199,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i) nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t20.0
                             1970-01-01T00:00:00.000002Z\t1\t20.0
                             1970-01-01T00:00:00.000003Z\t1\t20.0
                             1970-01-01T00:00:00.000004Z\t2\t50.0
                             1970-01-01T00:00:00.000005Z\t2\t50.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i) nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11926,20 +11224,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over (order by ts range between unbounded preceding and unbounded following) nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t30.0
                             1970-01-01T00:00:00.000002Z\t30.0
                             1970-01-01T00:00:00.000003Z\t30.0
                             1970-01-01T00:00:00.000004Z\t30.0
                             1970-01-01T00:00:00.000005Z\t30.0
-                            """),
-                    "select ts, nth_value(val, 3) over (order by ts range between unbounded preceding and unbounded following) nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11953,20 +11249,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over (order by ts rows between unbounded preceding and unbounded following) nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t30.0
                             1970-01-01T00:00:00.000002Z\t30.0
                             1970-01-01T00:00:00.000003Z\t30.0
                             1970-01-01T00:00:00.000004Z\t30.0
                             1970-01-01T00:00:00.000005Z\t30.0
-                            """),
-                    "select ts, nth_value(val, 3) over (order by ts rows between unbounded preceding and unbounded following) nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -11978,21 +11272,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // n=2 resolves on row 2 (20.0); n=3 and n=10 never resolve (NULL everywhere) —
             // confirms the n>totalRows boundary lies exactly at n<=totalRows.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
-                            ts\tnv2\tnv3\tnv10
-                            1970-01-01T00:00:00.000001Z\tnull\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t20.0\tnull\tnull
-                            """),
-                    "select ts, " +
+            assertQuery("select ts, " +
                             "nth_value(val, 2) over (order by ts) nv2, " +
                             "nth_value(val, 3) over (order by ts) nv3, " +
                             "nth_value(val, 10) over (order by ts) nv10 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\tnv2\tnv3\tnv10
+                            1970-01-01T00:00:00.000001Z\tnull\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0\tnull\tnull
+                            """));
         });
     }
 
@@ -12001,12 +11294,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 0) over (order by ts) from tab",
-                    22,
-                    "n must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 0) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a positive integer");
         });
     }
 
@@ -12018,21 +11308,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // nth_value(val, 1) captures the NULL at row 1 and propagates it (default RESPECT NULLS).
             // nth_value(val, 2) picks up 20.0 at row 2 — confirms nv1's NULL output is not a trivial constant.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, " +
+                            "nth_value(val, 1) over (order by ts) nv1, " +
+                            "nth_value(val, 2) over (order by ts) nv2 " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv1\tnv2
                             1970-01-01T00:00:00.000001Z\tnull\tnull
                             1970-01-01T00:00:00.000002Z\tnull\t20.0
                             1970-01-01T00:00:00.000003Z\tnull\t20.0
-                            """),
-                    "select ts, " +
-                            "nth_value(val, 1) over (order by ts) nv1, " +
-                            "nth_value(val, 2) over (order by ts) nv2 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -12041,12 +11330,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 2) ignore nulls over (order by ts) from tab",
-                    25,
-                    "RESPECT/IGNORE NULLS is not supported for current window function",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 2) ignore nulls over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(25, "RESPECT/IGNORE NULLS is not supported for current window function");
         });
     }
 
@@ -12055,12 +11341,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 2) respect nulls over (order by ts) from tab",
-                    25,
-                    "RESPECT/IGNORE NULLS is not supported for current window function",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 2) respect nulls over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(25, "RESPECT/IGNORE NULLS is not supported for current window function");
         });
     }
 
@@ -12070,20 +11353,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\t20.0
                             1970-01-01T00:00:00.000003Z\t20.0
                             1970-01-01T00:00:00.000004Z\t20.0
                             1970-01-01T00:00:00.000005Z\t20.0
-                            """),
-                    "select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -12093,8 +11375,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0), (6, 2, 60.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts range between 2 microseconds preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\t20.0
@@ -12102,12 +11388,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\t50.0
                             1970-01-01T00:00:00.000006Z\t2\t50.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 2 microseconds preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -12127,8 +11408,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1::timestamp, 10.0), (2::timestamp, 20.0), (3::timestamp, 30.0), (4::timestamp, 40.0), (5::timestamp, 50.0), (10::timestamp, 100.0), (15::timestamp, 150.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
@@ -12137,12 +11422,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t20.0
                             1970-01-01T00:00:00.000010Z\t20.0
                             1970-01-01T00:00:00.000015Z\t100.0
-                            """),
-                    "select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -12157,8 +11437,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1::timestamp, 1, 10.0), (2::timestamp, 1, 20.0), (3::timestamp, 1, 30.0), (4::timestamp, 1, 40.0), (5::timestamp, 1, 50.0), (10::timestamp, 2, 100.0), (15::timestamp, 2, 150.0), (20::timestamp, 2, 200.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -12168,12 +11452,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000010Z\t2\tnull
                             1970-01-01T00:00:00.000015Z\t2\tnull
                             1970-01-01T00:00:00.000020Z\t2\t150.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -12183,20 +11462,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts range between 2 microseconds preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\t20.0
                             1970-01-01T00:00:00.000003Z\t1\t20.0
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\t50.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 2 microseconds preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -12230,8 +11508,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(5000000000, 1, 50.0), (5000000001, 2, 500.0), " +
                       "(6000000000, 1, 60.0), (6000000001, 2, 600.0)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts " +
+                            "range between unbounded preceding and 2 seconds preceding) nv " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\ti\tnv
                             1970-01-01T00:00:01.000000Z\t1\tnull
@@ -12261,15 +11546,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:05.000000001Z\t2\t200.0
                             1970-01-01T00:00:06.000000000Z\t1\t20.0
                             1970-01-01T00:00:06.000000001Z\t2\t200.0
-                            """,
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts " +
-                            "range between unbounded preceding and 2 seconds preceding) nv " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -12284,20 +11561,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select i, nth_value(val, 1) over (partition by i) nv from tab order by i, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             i\tnv
                             1\t10.0
                             1\t10.0
                             1\t10.0
                             2\t40.0
                             2\t40.0
-                            """,
-                    "select i, nth_value(val, 1) over (partition by i) nv from tab order by i, ts",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -12310,23 +11584,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, " +
+                            "nth_value(val, 1) over (partition by i order by ts rows between current row and current row) nv1, " +
+                            "nth_value(val, 2) over (partition by i order by ts rows between current row and current row) nv2 " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv1\tnv2
                             1970-01-01T00:00:00.000001Z\t1\t10.0\tnull
                             1970-01-01T00:00:00.000002Z\t1\t20.0\tnull
                             1970-01-01T00:00:00.000003Z\t1\t30.0\tnull
                             1970-01-01T00:00:00.000004Z\t2\t40.0\tnull
                             1970-01-01T00:00:00.000005Z\t2\t50.0\tnull
-                            """),
-                    "select ts, i, " +
-                            "nth_value(val, 1) over (partition by i order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts rows between current row and current row) nv2 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -12353,8 +11626,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //   ts=1s -> frame: {1s},      size=1, frameSize=1, n=2 -> null
             //   ts=2s -> frame: {1s, 2s},  size=2, frameSize=2, nth=row 2's val
             //   ts=5s -> row 1s AND row 2s age out, frame: {5s}, size=1, frameSize=1, n=2 -> null
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts range between 2 seconds preceding and current row) nv " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\ti\tnv
                             1970-01-01T00:00:01.000000Z\t1\tnull
@@ -12372,14 +11651,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:02.000000001Z\t2\t22.0
                             1970-01-01T00:00:05.000000000Z\t1\tnull
                             1970-01-01T00:00:05.000000001Z\t2\tnull
-                            """,
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts range between 2 seconds preceding and current row) nv " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -12396,20 +11668,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table nodts (ts #TIMESTAMP, i long, val double)", timestampType.getTypeName());
 
             // Non-partitioned path: NthValueDoubleWindowFunctionFactory.java ~line 289
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (order by val range between 1 preceding and current row) from nodts",
-                    40,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (order by val range between 1 preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .fails(40, "RANGE is supported only for queries ordered by designated timestamp");
 
             // Partitioned path: NthValueDoubleWindowFunctionFactory.java ~line 141
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (partition by i order by val range between 1 preceding and current row) from nodts",
-                    55,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (partition by i order by val range between 1 preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .fails(55, "RANGE is supported only for queries ordered by designated timestamp");
         });
     }
 
@@ -12434,8 +11700,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Variant 1: NthValueOverPartitionFunction (whole partition, no ORDER BY, default frame).
             // nth_value(val, 2) per partition: i=1 -> row 2 = null, i=2 -> row 2 = 20.0.
             // Without ORDER BY the result is constant per partition.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select i, nth_value(val, 2) over (partition by i) nv from tab")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             i\tnv
                             1\tnull
                             1\tnull
@@ -12443,17 +11711,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2\t20.0
                             2\t20.0
                             2\t20.0
-                            """,
-                    "select i, nth_value(val, 2) over (partition by i) nv from tab",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // Variant 2: NthValueOverUnboundedPartitionFrameFunction
             // (unbounded preceding to current row). nth_value(val, 2).
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -12461,20 +11728,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\t20.0
                             1970-01-01T00:00:00.000006Z\t2\t20.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Variant 3: NthValueOverPartitionRangeFrameFunction (bounded RANGE over
             // designated timestamp). Uses a 1-second window so the frame behaves
             // identically under both microsecond and nanosecond timestamp precision
             // (all partition rows fall within the frame). nth_value(val, 1) therefore
             // returns the first row's val per partition: 10.0 for i=1, null for i=2.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 1) over (partition by i order by ts range between 1 second preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t10.0
                             1970-01-01T00:00:00.000002Z\t1\t10.0
@@ -12482,17 +11748,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\tnull
                             1970-01-01T00:00:00.000006Z\t2\tnull
-                            """),
-                    "select ts, i, nth_value(val, 1) over (partition by i order by ts range between 1 second preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Variant 4: NthValueOverPartitionRowsFrameFunction (bounded ROWS).
             // nth_value(val, 1) with rows between 1 preceding and current row.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 1) over (partition by i order by ts rows between 1 preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t10.0
                             1970-01-01T00:00:00.000002Z\t1\t10.0
@@ -12500,18 +11765,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\tnull
                             1970-01-01T00:00:00.000006Z\t2\t20.0
-                            """),
-                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between 1 preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Variant 5: NthValueOverPartitionRowsFrameUnboundedFunction
             // (unbounded preceding to K preceding). Locks the n=1 value; emits from
             // count >= n + K = 2 onward. i=1 locks val@ts=1 = 10. i=2 locks val@ts=4 = null.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\t10.0
@@ -12519,12 +11783,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\tnull
                             1970-01-01T00:00:00.000006Z\t2\tnull
-                            """),
-                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -12544,19 +11803,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // cume_dist with symbol ORDER BY: symbols sort as a, a, b, c giving ranks
             // 1, 1, 3, 4 -> cume_dist 2/4, 2/4, 3/4, 4/4.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT s, cume_dist() OVER (ORDER BY s) cd FROM tab ORDER BY s")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             s\tcd
                             a\t0.5
                             a\t0.5
                             b\t0.75
                             c\t1.0
-                            """,
-                    "SELECT s, cume_dist() OVER (ORDER BY s) cd FROM tab ORDER BY s",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // Partitioned variant: one symbol per partition, ORDER BY another symbol.
             execute("CREATE TABLE tab2 (part SYMBOL, s SYMBOL, val DOUBLE)");
@@ -12566,19 +11822,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     ('p1', 'a', 2.0),
                     ('p2', 'y', 3.0),
                     ('p2', 'x', 4.0)""");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT part, s, cume_dist() OVER (PARTITION BY part ORDER BY s) cd FROM tab2 ORDER BY part, s")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             part\ts\tcd
                             p1\ta\t0.5
                             p1\tb\t1.0
                             p2\tx\t0.5
                             p2\ty\t1.0
-                            """,
-                    "SELECT part, s, cume_dist() OVER (PARTITION BY part ORDER BY s) cd FROM tab2 ORDER BY part, s",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -12589,48 +11842,38 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertQueryNoLeakCheck(
-                    "ts\tbucket\n",
-                    "select ts, ntile(3) over (order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    "ts\tbucket\n",
-                    "select ts, ntile(3) over (partition by i order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    "ts\tcd\n",
-                    "select ts, cume_dist() over (order by ts) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    "ts\tcd\n",
-                    "select ts, cume_dist() over (partition by i order by ts) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    "ts\tnv\n",
-                    "select ts, nth_value(val, 2) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    "ts\tnv\n",
-                    "select ts, nth_value(val, 2) over (partition by i order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+            assertQuery("select ts, ntile(3) over (order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tbucket\n");
+            assertQuery("select ts, ntile(3) over (partition by i order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tbucket\n");
+            assertQuery("select ts, cume_dist() over (order by ts) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tcd\n");
+            assertQuery("select ts, cume_dist() over (partition by i order by ts) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tcd\n");
+            assertQuery("select ts, nth_value(val, 2) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tnv\n");
+            assertQuery("select ts, nth_value(val, 2) over (partition by i order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tnv\n");
         });
     }
 
@@ -12652,37 +11895,35 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Frame = rows [3..1] preceding current row. At ts=1 the frame has no rows (nv
             // null). At ts=2..4 the frame grows up to 3 rows starting at row 1 (nv = 10.0).
             // At ts=5 the oldest in-frame row is row 2 (rows 2,3,4) so nv = 20.0.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (order by ts rows between 3 preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\t10.0
                             1970-01-01T00:00:00.000003Z\t10.0
                             1970-01-01T00:00:00.000004Z\t10.0
                             1970-01-01T00:00:00.000005Z\t20.0
-                            """),
-                    "select ts, nth_value(val, 1) over (order by ts rows between 3 preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Partitioned variant over the same frame. Single partition i=1, so the shape
             // matches the non-partitioned case above.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 1) over (partition by i order by ts rows between 3 preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\t10.0
                             1970-01-01T00:00:00.000003Z\t1\t10.0
                             1970-01-01T00:00:00.000004Z\t1\t10.0
                             1970-01-01T00:00:00.000005Z\t1\t20.0
-                            """),
-                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between 3 preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -12767,52 +12008,46 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Partitioned ROWS frame [3 preceding, current row], n=1 must equal first_value.
             // Aggregation factory: no timestamp, no random access, size known.
-            assertQueryNoLeakCheck(
-                    "mismatch\n0\n",
-                    "with w as (" +
+            assertQuery("with w as (" +
                             "  select ts, i, " +
                             "  nth_value(val, 1) over (partition by i order by ts rows between 3 preceding and current row) nv, " +
                             "  first_value(val) over (partition by i order by ts rows between 3 preceding and current row) fv " +
                             "  from tab" +
                             ") " +
                             "select count(*) mismatch from w " +
-                            "where (nv is null) != (fv is null) or (nv is not null and fv is not null and nv != fv)",
-                    null,
-                    false,
-                    true
-            );
+                            "where (nv is null) != (fv is null) or (nv is not null and fv is not null and nv != fv)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("mismatch\n0\n");
 
             // Non-partitioned ROWS frame [5 preceding, current row], n=1 must equal first_value.
-            assertQueryNoLeakCheck(
-                    "mismatch\n0\n",
-                    "with w as (" +
+            assertQuery("with w as (" +
                             "  select ts, " +
                             "  nth_value(val, 1) over (order by ts rows between 5 preceding and current row) nv, " +
                             "  first_value(val) over (order by ts rows between 5 preceding and current row) fv " +
                             "  from tab" +
                             ") " +
                             "select count(*) mismatch from w " +
-                            "where (nv is null) != (fv is null) or (nv is not null and fv is not null and nv != fv)",
-                    null,
-                    false,
-                    true
-            );
+                            "where (nv is null) != (fv is null) or (nv is not null and fv is not null and nv != fv)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("mismatch\n0\n");
 
             // Partitioned unbounded preceding to current row: until the n-th row arrives,
             // nth_value must stay NULL. After that it locks on the n-th seen value.
-            assertQueryNoLeakCheck(
-                    "mismatch\n0\n",
-                    "with w as (" +
+            assertQuery("with w as (" +
                             "  select ts, i, " +
                             "  nth_value(val, 3) over (partition by i order by ts rows between unbounded preceding and current row) nv, " +
                             "  row_number() over (partition by i order by ts) rn " +
                             "  from tab" +
                             ") " +
-                            "select count(*) mismatch from w where rn < 3 and nv is not null",
-                    null,
-                    false,
-                    true
-            );
+                            "select count(*) mismatch from w where rn < 3 and nv is not null")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("mismatch\n0\n");
         });
     }
 
@@ -12821,28 +12056,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select cume_dist() over (order by ts rows between 1 preceding and current row) from tab",
-                    52,
-                    "cume_dist() does not support framing; remove the frame clause",
-                    sqlExecutionContext
-            );
+            assertQuery("select cume_dist() over (order by ts rows between 1 preceding and current row) from tab")
+                    .noLeakCheck()
+                    .fails(52, "cume_dist() does not support framing; remove the frame clause");
 
-            assertExceptionNoLeakCheck(
-                    "select cume_dist() over (order by ts range between 10 microseconds preceding and current row) from tab",
-                    67,
-                    "cume_dist() does not support framing; remove the frame clause",
-                    sqlExecutionContext
-            );
+            assertQuery("select cume_dist() over (order by ts range between 10 microseconds preceding and current row) from tab")
+                    .noLeakCheck()
+                    .fails(67, "cume_dist() does not support framing; remove the frame clause");
 
             // GROUPS framing: the error must not mention ROWS/RANGE specifically --
             // the message should cover every frame clause variant.
-            assertExceptionNoLeakCheck(
-                    "select cume_dist() over (order by ts groups between 1 preceding and current row) from tab",
-                    54,
-                    "cume_dist() does not support framing; remove the frame clause",
-                    sqlExecutionContext
-            );
+            assertQuery("select cume_dist() over (order by ts groups between 1 preceding and current row) from tab")
+                    .noLeakCheck()
+                    .fails(54, "cume_dist() does not support framing; remove the frame clause");
         });
     }
 
@@ -12851,12 +12077,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i int) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select ntile(i) over (order by ts) from tab",
-                    13,
-                    "bucket count must be a constant",
-                    sqlExecutionContext
-            );
+            assertQuery("select ntile(i) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(13, "bucket count must be a constant");
         });
     }
 
@@ -12865,12 +12088,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select ntile(-5) over (order by ts) from tab",
-                    13,
-                    "bucket count must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select ntile(-5) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(13, "bucket count must be a positive integer");
         });
     }
 
@@ -12879,12 +12099,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select ntile(null) over (order by ts) from tab",
-                    13,
-                    "bucket count cannot be NULL",
-                    sqlExecutionContext
-            );
+            assertQuery("select ntile(null) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(13, "bucket count cannot be NULL");
         });
     }
 
@@ -12894,19 +12111,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, ntile(2) over () bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tbucket
                             1970-01-01T00:00:00.000001Z\t10.0\t1
                             1970-01-01T00:00:00.000002Z\t20.0\t1
                             1970-01-01T00:00:00.000003Z\t30.0\t2
                             1970-01-01T00:00:00.000004Z\t40.0\t2
-                            """),
-                    "select ts, val, ntile(2) over () bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -12915,12 +12130,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double, i int) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, i) over (order by ts) from tab",
-                    22,
-                    "n must be a constant",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, i) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a constant");
         });
     }
 
@@ -12929,12 +12141,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, -1) over (order by ts) from tab",
-                    22,
-                    "n must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, -1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a positive integer");
         });
     }
 
@@ -12943,12 +12152,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, null) over (order by ts) from tab",
-                    22,
-                    "n cannot be NULL",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, null) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n cannot be NULL");
         });
     }
 
@@ -12958,18 +12164,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, nth_value(val, 2L) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tnv
                             1970-01-01T00:00:00.000001Z\t10.0\tnull
                             1970-01-01T00:00:00.000002Z\t20.0\t20.0
                             1970-01-01T00:00:00.000003Z\t30.0\t20.0
-                            """),
-                    "select ts, val, nth_value(val, 2L) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -12978,20 +12183,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 5_000_000_000L) over (order by ts) from tab",
-                    22,
-                    "n must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 5_000_000_000L) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a positive integer");
 
             // Integer.MAX_VALUE + 1 -- one past the accepted boundary.
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 2_147_483_648L) over (order by ts) from tab",
-                    22,
-                    "n must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 2_147_483_648L) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a positive integer");
         });
     }
 
@@ -13001,19 +12200,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, ntile(2L) over (order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tbucket
                             1970-01-01T00:00:00.000001Z\t10.0\t1
                             1970-01-01T00:00:00.000002Z\t20.0\t1
                             1970-01-01T00:00:00.000003Z\t30.0\t2
                             1970-01-01T00:00:00.000004Z\t40.0\t2
-                            """),
-                    "select ts, val, ntile(2L) over (order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13022,20 +12219,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select ntile(5_000_000_000L) over (order by ts) from tab",
-                    13,
-                    "bucket count must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select ntile(5_000_000_000L) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(13, "bucket count must be a positive integer");
 
             // Integer.MAX_VALUE + 1 -- one past the accepted boundary.
-            assertExceptionNoLeakCheck(
-                    "select ntile(2_147_483_648L) over (order by ts) from tab",
-                    13,
-                    "bucket count must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select ntile(2_147_483_648L) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(13, "bucket count must be a positive integer");
         });
     }
 
@@ -13045,19 +12236,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 30), (3, 20), (4, 40)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, ntile(2) over (order by val desc) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tbucket
                             1970-01-01T00:00:00.000001Z\t10\t2
                             1970-01-01T00:00:00.000002Z\t30\t1
                             1970-01-01T00:00:00.000003Z\t20\t2
                             1970-01-01T00:00:00.000004Z\t40\t1
-                            """),
-                    "select ts, val, ntile(2) over (order by val desc) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13067,18 +12256,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, ntile(2_147_483_647) over (order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tbucket
                             1970-01-01T00:00:00.000001Z\t10.0\t1
                             1970-01-01T00:00:00.000002Z\t20.0\t2
                             1970-01-01T00:00:00.000003Z\t30.0\t3
-                            """),
-                    "select ts, val, ntile(2_147_483_647) over (order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13091,18 +12278,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, nth_value(val, 2_147_483_647) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tnv
                             1970-01-01T00:00:00.000001Z\t10.0\tnull
                             1970-01-01T00:00:00.000002Z\t20.0\tnull
                             1970-01-01T00:00:00.000003Z\t30.0\tnull
-                            """),
-                    "select ts, val, nth_value(val, 2_147_483_647) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13112,18 +12298,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 30), (3, 20)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, cume_dist() over (order by val desc) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tcd
                             1970-01-01T00:00:00.000001Z\t10\t1.0
                             1970-01-01T00:00:00.000002Z\t30\t0.3333333333333333
                             1970-01-01T00:00:00.000003Z\t20\t0.6666666666666666
-                            """),
-                    "select ts, val, cume_dist() over (order by val desc) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13133,18 +12317,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, a long, b long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 100), (2, 1, 200), (3, 2, 100)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, a, b, cume_dist() over (order by a, b) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ta\tb\tcd
                             1970-01-01T00:00:00.000001Z\t1\t100\t0.3333333333333333
                             1970-01-01T00:00:00.000002Z\t1\t200\t0.6666666666666666
                             1970-01-01T00:00:00.000003Z\t2\t100\t1.0
-                            """),
-                    "select ts, a, b, cume_dist() over (order by a, b) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13154,20 +12336,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 1), (5, 2, 1)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, val, cume_dist() over (partition by i order by val) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tval\tcd
                             1970-01-01T00:00:00.000001Z\t1\t1\t0.6666666666666666
                             1970-01-01T00:00:00.000002Z\t1\t1\t0.6666666666666666
                             1970-01-01T00:00:00.000003Z\t1\t2\t1.0
                             1970-01-01T00:00:00.000004Z\t2\t1\t1.0
                             1970-01-01T00:00:00.000005Z\t2\t1\t1.0
-                            """),
-                    "select ts, i, val, cume_dist() over (partition by i order by val) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13180,18 +12360,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 7), (2, 7), (3, 7)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, cume_dist() over (order by val) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tcd
                             1970-01-01T00:00:00.000001Z\t7\t1.0
                             1970-01-01T00:00:00.000002Z\t7\t1.0
                             1970-01-01T00:00:00.000003Z\t7\t1.0
-                            """),
-                    "select ts, val, cume_dist() over (order by val) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13205,8 +12383,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 1, 10.0), (2, 1, 2, 20.0), (3, 2, 1, 30.0), (4, 2, 2, 40.0), " +
                     "(5, 1, 1, 50.0), (6, 1, 2, 60.0), (7, 2, 1, 70.0), (8, 2, 2, 80.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, a, b, nth_value(val, 2) over (partition by a, b order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ta\tb\tnv
                             1970-01-01T00:00:00.000001Z\t1\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\t2\tnull
@@ -13216,12 +12398,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000006Z\t1\t2\t60.0
                             1970-01-01T00:00:00.000007Z\t2\t1\t70.0
                             1970-01-01T00:00:00.000008Z\t2\t2\t80.0
-                            """),
-                    "select ts, a, b, nth_value(val, 2) over (partition by a, b order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13233,36 +12410,32 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over () nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t30.0
                             1970-01-01T00:00:00.000002Z\t30.0
                             1970-01-01T00:00:00.000003Z\t30.0
                             1970-01-01T00:00:00.000004Z\t30.0
                             1970-01-01T00:00:00.000005Z\t30.0
-                            """),
-                    "select ts, nth_value(val, 3) over () nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
 
             // Edge: n > totalRows → NULL for every row (still exercises the class).
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 100) over () nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\tnull
                             1970-01-01T00:00:00.000004Z\tnull
                             1970-01-01T00:00:00.000005Z\tnull
-                            """),
-                    "select ts, nth_value(val, 100) over () nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13276,8 +12449,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), (5, 1, 50.0), " +
                     "(6, 2, 60.0), (7, 2, 70.0), (8, 2, 80.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -13287,13 +12465,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000006Z\t2\tnull
                             1970-01-01T00:00:00.000007Z\t2\tnull
                             1970-01-01T00:00:00.000008Z\t2\t70.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13303,8 +12475,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0), (6, 2, 60.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -13312,13 +12489,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\tnull
                             1970-01-01T00:00:00.000006Z\t2\t50.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13333,21 +12504,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 2) over (" +
+                            "order by ts rows between 5 preceding and 2 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\tnull
                             1970-01-01T00:00:00.000004Z\t20.0
                             1970-01-01T00:00:00.000005Z\t20.0
-                            """),
-                    "select ts, nth_value(val, 2) over (" +
-                            "order by ts rows between 5 preceding and 2 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13361,21 +12531,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 2) over (" +
+                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\tnull
                             1970-01-01T00:00:00.000004Z\t20.0
                             1970-01-01T00:00:00.000005Z\t20.0
-                            """),
-                    "select ts, nth_value(val, 2) over (" +
-                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13391,8 +12560,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(3, 2, 100.0), " +
                     "(4, 3, 100.0), (5, 3, 200.0), (6, 3, 300.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, cume_dist() over (partition by i) cd from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tcd
                             1970-01-01T00:00:00.000001Z\t1\t1.0
                             1970-01-01T00:00:00.000002Z\t1\t1.0
@@ -13400,12 +12573,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t3\t1.0
                             1970-01-01T00:00:00.000005Z\t3\t1.0
                             1970-01-01T00:00:00.000006Z\t3\t1.0
-                            """),
-                    "select ts, i, cume_dist() over (partition by i) cd from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13415,20 +12583,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 20), (4, 2, 30), (5, 2, 40)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, cume_dist() over (partition by i order by val) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tcd
                             1970-01-01T00:00:00.000001Z\t1\t0.3333333333333333
                             1970-01-01T00:00:00.000002Z\t1\t1.0
                             1970-01-01T00:00:00.000003Z\t1\t1.0
                             1970-01-01T00:00:00.000004Z\t2\t0.5
                             1970-01-01T00:00:00.000005Z\t2\t1.0
-                            """),
-                    "select ts, i, cume_dist() over (partition by i order by val) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13445,8 +12611,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     ? "insert into tab values (1000000, 10.0), (2000000, 20.0), (3000000, 30.0), (4000000, 40.0), (5000000, 50.0)"
                     : "insert into tab values (1000000000, 10.0), (2000000000, 20.0), (3000000000, 30.0), (4000000000, 40.0), (5000000000, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, nth_value(val, 2) over (" +
+                            "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\tnv
                             1970-01-01T00:00:01.000000Z\tnull
@@ -13462,13 +12633,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:03.000000000Z\t20.0
                             1970-01-01T00:00:04.000000000Z\t20.0
                             1970-01-01T00:00:05.000000000Z\t20.0
-                            """,
-                    "select ts, nth_value(val, 2) over (" +
-                            "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -13485,8 +12650,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     ? "insert into tab values (1000, 10.0), (1100, 20.0), (1200, 30.0), (3000, 40.0), (3100, 50.0)"
                     : "insert into tab values (1000000, 10.0), (1100000, 20.0), (1200000, 30.0), (3000000, 40.0), (3100000, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, nth_value(val, 3) over (" +
+                            "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\tnv
                             1970-01-01T00:00:00.001000Z\tnull
@@ -13502,13 +12672,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.001200000Z\tnull
                             1970-01-01T00:00:00.003000000Z\t30.0
                             1970-01-01T00:00:00.003100000Z\t30.0
-                            """,
-                    "select ts, nth_value(val, 3) over (" +
-                            "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -13527,8 +12691,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(1000000, 1, 10.0), (1100000, 2, 15.0), (1200000, 1, 20.0), (1300000, 2, 25.0), " +
                       "(1400000, 1, 30.0), (1500000, 2, 35.0), (3000000, 1, 40.0), (3100000, 2, 45.0)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\ti\tnv
                             1970-01-01T00:00:00.001000Z\t1\tnull
@@ -13550,13 +12719,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.001500000Z\t2\tnull
                             1970-01-01T00:00:00.003000000Z\t1\t30.0
                             1970-01-01T00:00:00.003100000Z\t2\t35.0
-                            """,
-                    "select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -13587,21 +12750,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 // cume_dist for partition 1: 20/21 for val=1 rows, 21/21=1.0 for val=2.
                 // cume_dist for partition 2: 15/16 for val=1 rows, 16/16=1.0 for val=2.
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery("select i, cd, count(*) cnt from (" +
+                                "select i, cume_dist() over (partition by i order by val) cd from tab" +
+                                ") group by i, cd order by i, cd")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
                                 i\tcd\tcnt
                                 1\t0.9523809523809523\t20
                                 1\t1.0\t1
                                 2\t0.9375\t15
                                 2\t1.0\t1
-                                """,
-                        "select i, cd, count(*) cnt from (" +
-                                "select i, cume_dist() over (partition by i order by val) cd from tab" +
-                                ") group by i, cd order by i, cd",
-                        null,
-                        true,
-                        true
-                );
+                                """);
             });
         } finally {
             node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 32);
@@ -13626,40 +12786,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 // frame always contains at least 2 rows and nth_value(val,2) locks onto row 2's
                 // value (2.0). Expected distribution: 49 occurrences of 2.0, 1 NaN (NaN sorts
                 // last in ascending order).
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery("select nv, count(*) cnt from (" +
+                                "select nth_value(val, 2) over (" +
+                                "order by ts range between 100 second preceding and current row) nv from tab" +
+                                ") group by nv order by nv")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
                                 nv\tcnt
                                 2.0\t49
                                 null\t1
-                                """,
-                        "select nv, count(*) cnt from (" +
-                                "select nth_value(val, 2) over (" +
-                                "order by ts range between 100 second preceding and current row) nv from tab" +
-                                ") group by nv order by nv",
-                        null,
-                        true,
-                        true
-                );
+                                """);
 
                 // Partitioned by i (x%2). Each partition has 25 rows; the 100-second frame holds
                 // the whole partition. First row per partition -> NaN. Subsequent rows -> row-2
                 // value: 4.0 for partition 0 (even x), 3.0 for partition 1 (odd x). Expected
                 // distribution: 24 occurrences of 3.0, 24 occurrences of 4.0, 2 NaN.
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery("select nv, count(*) cnt from (" +
+                                "select nth_value(val, 2) over (" +
+                                "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
+                                ") group by nv order by nv")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
                                 nv\tcnt
                                 3.0\t24
                                 4.0\t24
                                 null\t2
-                                """,
-                        "select nv, count(*) cnt from (" +
-                                "select nth_value(val, 2) over (" +
-                                "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
-                                ") group by nv order by nv",
-                        null,
-                        true,
-                        true
-                );
+                                """);
             });
         } finally {
             node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 1024 * 1024);
@@ -13689,21 +12843,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // 50th row at x=100, so nth_value(val,50) for any subsequent row equals row-50's val,
             // which is x=100 -> 100.0. Partition 1 (odd x) -> row-50 value = x=99 -> 99.0.
             // 49 NaNs per partition + 31 locked-value rows per partition = 98 NaNs and 62 hits.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select nv, count(*) cnt from (" +
+                            "select nth_value(val, 50) over (" +
+                            "partition by i order by ts range between 1000 second preceding and current row) nv from tab" +
+                            ") group by nv order by nv")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             nv\tcnt
                             99.0\t31
                             100.0\t31
                             null\t98
-                            """,
-                    "select nv, count(*) cnt from (" +
-                            "select nth_value(val, 50) over (" +
-                            "partition by i order by ts range between 1000 second preceding and current row) nv from tab" +
-                            ") group by nv order by nv",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -13724,21 +12875,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // NthValueOverPartitionRowsFrameUnboundedFunction captures the row-n value once seen
             // and emits it for every subsequent row where count >= n + bufferSize. With n=1 and
             // bufferSize=1, that threshold is reached on the second row of each partition.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 1) over (" +
+                            "partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\t10.0
                             1970-01-01T00:00:00.000003Z\t1\t10.0
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\t40.0
-                            """),
-                    "select ts, i, nth_value(val, 1) over (" +
-                            "partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13757,8 +12907,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), (5, 1, 50.0), " +
                     "(6, 2, 60.0), (7, 2, 70.0), (8, 2, 80.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between 2 preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\t20.0
@@ -13768,13 +12923,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000006Z\t2\tnull
                             1970-01-01T00:00:00.000007Z\t2\t70.0
                             1970-01-01T00:00:00.000008Z\t2\t70.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between 2 preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -13793,24 +12942,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, " +
+                            "nth_value(val, 3) over (order by ts rows between 2 preceding and current row) nv3, " +
+                            "nth_value(val, 5) over (order by ts rows between 2 preceding and current row) nv5, " +
+                            "nth_value(val, 1) over (order by ts rows between unbounded preceding and 2 preceding) nvlocked " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv3\tnv5\tnvlocked
                             1970-01-01T00:00:00.000001Z\tnull\tnull\tnull
                             1970-01-01T00:00:00.000002Z\tnull\tnull\tnull
                             1970-01-01T00:00:00.000003Z\t30.0\tnull\t10.0
                             1970-01-01T00:00:00.000004Z\t40.0\tnull\t10.0
                             1970-01-01T00:00:00.000005Z\t50.0\tnull\t10.0
-                            """),
-                    "select ts, " +
-                            "nth_value(val, 3) over (order by ts rows between 2 preceding and current row) nv3, " +
-                            "nth_value(val, 5) over (order by ts rows between 2 preceding and current row) nv5, " +
-                            "nth_value(val, 1) over (order by ts rows between unbounded preceding and 2 preceding) nvlocked " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14014,8 +13162,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0), (6, 60.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (" +
+                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
@@ -14023,13 +13176,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t10.0
                             1970-01-01T00:00:00.000005Z\t10.0
                             1970-01-01T00:00:00.000006Z\t10.0
-                            """),
-                    "select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14045,8 +13192,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // totalCount locks row 2's value (=20) once totalCount == n == 2; emitted once
             // totalCount >= n + bufferSize = 4.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 2) over (" +
+                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
@@ -14054,13 +13206,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t20.0
                             1970-01-01T00:00:00.000005Z\t20.0
                             1970-01-01T00:00:00.000006Z\t20.0
-                            """),
-                    "select ts, nth_value(val, 2) over (" +
-                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14074,8 +13220,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), (5, 1, 50.0), " +
                     "(6, 2, 100.0), (7, 2, 200.0), (8, 2, 300.0), (9, 2, 400.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between unbounded preceding and 2 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -14086,13 +13237,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000007Z\t2\tnull
                             1970-01-01T00:00:00.000008Z\t2\tnull
                             1970-01-01T00:00:00.000009Z\t2\t200.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between unbounded preceding and 2 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14109,21 +13254,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (" +
+                            "order by ts rows between 3 preceding and 2 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\t10.0
                             1970-01-01T00:00:00.000004Z\t10.0
                             1970-01-01T00:00:00.000005Z\t20.0
-                            """),
-                    "select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between 3 preceding and 2 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14139,8 +13283,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), " +
                     "(4, 2, 100.0), (5, 2, 200.0), (6, 2, 300.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\t20.0
@@ -14148,13 +13297,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\t200.0
                             1970-01-01T00:00:00.000006Z\t2\t200.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14169,8 +13312,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), " +
                     "(4, 2, 100.0), (5, 2, 200.0), (6, 2, 300.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between unbounded preceding and unbounded following) nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t20.0
                             1970-01-01T00:00:00.000002Z\t1\t20.0
@@ -14178,13 +13325,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t200.0
                             1970-01-01T00:00:00.000005Z\t2\t200.0
                             1970-01-01T00:00:00.000006Z\t2\t200.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between unbounded preceding and unbounded following) nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14197,21 +13338,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 2) over (" +
+                            "order by ts range between unbounded preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\t20.0
                             1970-01-01T00:00:00.000003Z\t20.0
                             1970-01-01T00:00:00.000004Z\t20.0
                             1970-01-01T00:00:00.000005Z\t20.0
-                            """),
-                    "select ts, nth_value(val, 2) over (" +
-                            "order by ts range between unbounded preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14224,21 +13364,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 2) over (" +
+                            "order by ts rows between unbounded preceding and unbounded following) nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t20.0
                             1970-01-01T00:00:00.000002Z\t20.0
                             1970-01-01T00:00:00.000003Z\t20.0
                             1970-01-01T00:00:00.000004Z\t20.0
                             1970-01-01T00:00:00.000005Z\t20.0
-                            """),
-                    "select ts, nth_value(val, 2) over (" +
-                            "order by ts rows between unbounded preceding and unbounded following) nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14247,12 +13385,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select ntile(3) ignore nulls over (order by ts) from tab",
-                    16,
-                    "RESPECT/IGNORE NULLS is not supported for current window function",
-                    sqlExecutionContext
-            );
+            assertQuery("select ntile(3) ignore nulls over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(16, "RESPECT/IGNORE NULLS is not supported for current window function");
         });
     }
 
@@ -14261,12 +13396,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select cume_dist() ignore nulls over (order by ts) from tab",
-                    19,
-                    "RESPECT/IGNORE NULLS is not supported for current window function",
-                    sqlExecutionContext
-            );
+            assertQuery("select cume_dist() ignore nulls over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(19, "RESPECT/IGNORE NULLS is not supported for current window function");
         });
     }
 
@@ -14275,12 +13407,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select ntile(3) respect nulls over (order by ts) from tab",
-                    16,
-                    "RESPECT/IGNORE NULLS is not supported for current window function",
-                    sqlExecutionContext
-            );
+            assertQuery("select ntile(3) respect nulls over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(16, "RESPECT/IGNORE NULLS is not supported for current window function");
         });
     }
 
@@ -14289,12 +13418,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select cume_dist() respect nulls over (order by ts) from tab",
-                    19,
-                    "RESPECT/IGNORE NULLS is not supported for current window function",
-                    sqlExecutionContext
-            );
+            assertQuery("select cume_dist() respect nulls over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(19, "RESPECT/IGNORE NULLS is not supported for current window function");
         });
     }
 
@@ -14306,27 +13432,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select ntile(3) over (order by ts " +
-                            "range between unbounded preceding and current row exclude current row) from tab",
-                    84,
-                    "ntile() does not support EXCLUDE clause",
-                    sqlExecutionContext
-            );
-            assertExceptionNoLeakCheck(
-                    "select ntile(3) over (order by ts " +
-                            "range between unbounded preceding and current row exclude group) from tab",
-                    84,
-                    "ntile() does not support EXCLUDE clause",
-                    sqlExecutionContext
-            );
-            assertExceptionNoLeakCheck(
-                    "select ntile(3) over (order by ts " +
-                            "range between unbounded preceding and current row exclude ties) from tab",
-                    84,
-                    "ntile() does not support EXCLUDE clause",
-                    sqlExecutionContext
-            );
+            assertQuery("select ntile(3) over (order by ts " +
+                            "range between unbounded preceding and current row exclude current row) from tab")
+                    .noLeakCheck()
+                    .fails(84, "ntile() does not support EXCLUDE clause");
+            assertQuery("select ntile(3) over (order by ts " +
+                            "range between unbounded preceding and current row exclude group) from tab")
+                    .noLeakCheck()
+                    .fails(84, "ntile() does not support EXCLUDE clause");
+            assertQuery("select ntile(3) over (order by ts " +
+                            "range between unbounded preceding and current row exclude ties) from tab")
+                    .noLeakCheck()
+                    .fails(84, "ntile() does not support EXCLUDE clause");
         });
     }
 
@@ -14338,27 +13455,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select cume_dist() over (order by ts " +
-                            "range between unbounded preceding and current row exclude current row) from tab",
-                    87,
-                    "cume_dist() does not support EXCLUDE clause",
-                    sqlExecutionContext
-            );
-            assertExceptionNoLeakCheck(
-                    "select cume_dist() over (order by ts " +
-                            "range between unbounded preceding and current row exclude group) from tab",
-                    87,
-                    "cume_dist() does not support EXCLUDE clause",
-                    sqlExecutionContext
-            );
-            assertExceptionNoLeakCheck(
-                    "select cume_dist() over (order by ts " +
-                            "range between unbounded preceding and current row exclude ties) from tab",
-                    87,
-                    "cume_dist() does not support EXCLUDE clause",
-                    sqlExecutionContext
-            );
+            assertQuery("select cume_dist() over (order by ts " +
+                            "range between unbounded preceding and current row exclude current row) from tab")
+                    .noLeakCheck()
+                    .fails(87, "cume_dist() does not support EXCLUDE clause");
+            assertQuery("select cume_dist() over (order by ts " +
+                            "range between unbounded preceding and current row exclude group) from tab")
+                    .noLeakCheck()
+                    .fails(87, "cume_dist() does not support EXCLUDE clause");
+            assertQuery("select cume_dist() over (order by ts " +
+                            "range between unbounded preceding and current row exclude ties) from tab")
+                    .noLeakCheck()
+                    .fails(87, "cume_dist() does not support EXCLUDE clause");
         });
     }
 
@@ -14370,19 +13478,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, nth_value(val, 2) over (order by ts " +
+                            "rows between 3 preceding and current row exclude no others) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tnv
                             1970-01-01T00:00:00.000001Z\t10.0\tnull
                             1970-01-01T00:00:00.000002Z\t20.0\t20.0
                             1970-01-01T00:00:00.000003Z\t30.0\t20.0
-                            """),
-                    "select ts, val, nth_value(val, 2) over (order by ts " +
-                            "rows between 3 preceding and current row exclude no others) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14394,18 +13501,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, nth_value(val, 1+1) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tnv
                             1970-01-01T00:00:00.000001Z\t10.0\tnull
                             1970-01-01T00:00:00.000002Z\t20.0\t20.0
                             1970-01-01T00:00:00.000003Z\t30.0\t20.0
-                            """),
-                    "select ts, val, nth_value(val, 1+1) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14416,19 +13522,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, ntile(1+1) over (order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tbucket
                             1970-01-01T00:00:00.000001Z\t10.0\t1
                             1970-01-01T00:00:00.000002Z\t20.0\t1
                             1970-01-01T00:00:00.000003Z\t30.0\t2
                             1970-01-01T00:00:00.000004Z\t40.0\t2
-                            """),
-                    "select ts, val, ntile(1+1) over (order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14440,13 +13544,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (order by ts " +
-                            "rows between 3 preceding and current row exclude group) from tab",
-                    84,
-                    "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (order by ts " +
+                            "rows between 3 preceding and current row exclude group) from tab")
+                    .noLeakCheck()
+                    .fails(84, "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported");
         });
     }
 
@@ -14455,13 +13556,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (order by ts " +
-                            "rows between 3 preceding and current row exclude ties) from tab",
-                    84,
-                    "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (order by ts " +
+                            "rows between 3 preceding and current row exclude ties) from tab")
+                    .noLeakCheck()
+                    .fails(84, "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported");
         });
     }
 
@@ -14472,13 +13570,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (order by ts " +
-                            "rows between current row and 1 following) from tab",
-                    74,
-                    "frame end supports _number_ PRECEDING and CURRENT ROW only",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (order by ts " +
+                            "rows between current row and 1 following) from tab")
+                    .noLeakCheck()
+                    .fails(74, "frame end supports _number_ PRECEDING and CURRENT ROW only");
         });
     }
 
@@ -14487,13 +13582,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (order by ts " +
-                            "groups between unbounded preceding and current row) from tab",
-                    7,
-                    "function not implemented for given window parameters",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (order by ts " +
+                            "groups between unbounded preceding and current row) from tab")
+                    .noLeakCheck()
+                    .fails(7, "function not implemented for given window parameters");
         });
     }
 
@@ -14505,19 +13597,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (" +
+                            "order by ts rows between 1 preceding and 2 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\tnull
-                            """),
-                    "select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between 1 preceding and 2 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14526,21 +13617,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertQueryNoLeakCheck(
-                    "ts\tcd\n",
-                    "select ts, cume_dist() over (order by ts) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("select ts, cume_dist() over (order by ts) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tcd\n");
 
-            assertQueryNoLeakCheck(
-                    "ts\ti\tcd\n",
-                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("select ts, i, cume_dist() over (partition by i order by ts) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\ti\tcd\n");
         });
     }
 
@@ -14553,20 +13640,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10.0), (2, 1, 20.0), " +
                     "(3, null, 30.0), (4, null, 40.0), (5, null, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, cume_dist() over (partition by i order by ts) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tcd
                             1970-01-01T00:00:00.000001Z\t1\t0.5
                             1970-01-01T00:00:00.000002Z\t1\t1.0
                             1970-01-01T00:00:00.000003Z\tnull\t0.3333333333333333
                             1970-01-01T00:00:00.000004Z\tnull\t0.6666666666666666
                             1970-01-01T00:00:00.000005Z\tnull\t1.0
-                            """),
-                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14577,20 +13662,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, null), (3, 20), (4, null), (5, 20)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, cume_dist() over (order by val) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tcd
                             1970-01-01T00:00:00.000001Z\t10\t0.6
                             1970-01-01T00:00:00.000002Z\tnull\t0.4
                             1970-01-01T00:00:00.000003Z\t20\t1.0
                             1970-01-01T00:00:00.000004Z\tnull\t0.4
                             1970-01-01T00:00:00.000005Z\t20\t1.0
-                            """),
-                    "select ts, val, cume_dist() over (order by val) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14600,27 +13683,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, cume_dist() over (order by ts) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tcd
                             1970-01-01T00:00:00.000001Z\t1.0
-                            """),
-                    "select ts, cume_dist() over (order by ts) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, cume_dist() over (partition by i order by ts) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tcd
                             1970-01-01T00:00:00.000001Z\t1\t1.0
-                            """),
-                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14629,21 +13708,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertQueryNoLeakCheck(
-                    "ts\tnv\n",
-                    "select ts, nth_value(val, 2) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+            assertQuery("select ts, nth_value(val, 2) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tnv\n");
 
-            assertQueryNoLeakCheck(
-                    "ts\ti\tnv\n",
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\ti\tnv\n");
         });
     }
 
@@ -14656,19 +13733,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10.0), (2, 1, 20.0), " +
                     "(3, null, 30.0), (4, null, 40.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\t20.0
                             1970-01-01T00:00:00.000003Z\tnull\tnull
                             1970-01-01T00:00:00.000004Z\tnull\t40.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14678,33 +13754,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
-                            ts\tnv1\tnv2
-                            1970-01-01T00:00:00.000001Z\t10.0\tnull
-                            """),
-                    "select ts, " +
+            assertQuery("select ts, " +
                             "nth_value(val, 1) over (order by ts) nv1, " +
                             "nth_value(val, 2) over (order by ts) nv2 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\tnv1\tnv2
+                            1970-01-01T00:00:00.000001Z\t10.0\tnull
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
-                            ts\ti\tnv1\tnv2
-                            1970-01-01T00:00:00.000001Z\t1\t10.0\tnull
-                            """),
-                    "select ts, i, " +
+            assertQuery("select ts, i, " +
                             "nth_value(val, 1) over (partition by i order by ts) nv1, " +
                             "nth_value(val, 2) over (partition by i order by ts) nv2 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\ti\tnv1\tnv2
+                            1970-01-01T00:00:00.000001Z\t1\t10.0\tnull
+                            """));
         });
     }
 
@@ -14713,21 +13787,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertQueryNoLeakCheck(
-                    "ts\tbucket\n",
-                    "select ts, ntile(3) over (order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("select ts, ntile(3) over (order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tbucket\n");
 
-            assertQueryNoLeakCheck(
-                    "ts\ti\tbucket\n",
-                    "select ts, i, ntile(3) over (partition by i order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("select ts, i, ntile(3) over (partition by i order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\ti\tbucket\n");
         });
     }
 
@@ -14743,8 +13813,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), " +
                     "(4, null, 40.0), (5, null, 50.0), (6, null, 60.0), (7, null, 70.0), (8, null, 80.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, ntile(3) over (partition by i order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tbucket
                             1970-01-01T00:00:00.000001Z\t1\t1
                             1970-01-01T00:00:00.000002Z\t1\t2
@@ -14754,12 +13827,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000006Z\tnull\t2
                             1970-01-01T00:00:00.000007Z\tnull\t2
                             1970-01-01T00:00:00.000008Z\tnull\t3
-                            """),
-                    "select ts, i, ntile(3) over (partition by i order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14772,20 +13840,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, null), (3, 20), (4, null), (5, 30)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, ntile(3) over (order by val) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tbucket
                             1970-01-01T00:00:00.000001Z\t10\t2
                             1970-01-01T00:00:00.000002Z\tnull\t1
                             1970-01-01T00:00:00.000003Z\t20\t2
                             1970-01-01T00:00:00.000004Z\tnull\t1
                             1970-01-01T00:00:00.000005Z\t30\t3
-                            """),
-                    "select ts, val, ntile(3) over (order by val) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14798,20 +13864,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 2, 40), (5, 2, 50)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, ntile(3) over (partition by i order by val) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tbucket
                             1970-01-01T00:00:00.000001Z\t1\t1
                             1970-01-01T00:00:00.000002Z\t1\t2
                             1970-01-01T00:00:00.000003Z\t1\t3
                             1970-01-01T00:00:00.000004Z\t2\t1
                             1970-01-01T00:00:00.000005Z\t2\t2
-                            """),
-                    "select ts, i, ntile(3) over (partition by i order by val) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14836,8 +13900,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     (5, 2, 20.0),
                     (6, 2, null)""");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts range between 1 second preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -14845,13 +13914,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\t20.0
                             1970-01-01T00:00:00.000006Z\t2\t20.0
-                            """),
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts range between 1 second preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14864,22 +13927,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
             // |rowsLo| = 2^31 > Integer.MAX_VALUE, current row as upper bound.
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (order by ts " +
-                            "rows between 2_147_483_648 preceding and current row) nv from tab",
-                    70,
-                    "frame start exceeds maximum supported size",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (order by ts " +
+                            "rows between 2_147_483_648 preceding and current row) nv from tab")
+                    .noLeakCheck()
+                    .fails(70, "frame start exceeds maximum supported size");
 
             // rowsLo = unbounded (skips its own check), |rowsHi| = 2^31 > Integer.MAX_VALUE.
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (order by ts " +
-                            "rows between unbounded preceding and 2_147_483_648 preceding) nv from tab",
-                    94,
-                    "frame end exceeds maximum supported size",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (order by ts " +
+                            "rows between unbounded preceding and 2_147_483_648 preceding) nv from tab")
+                    .noLeakCheck()
+                    .fails(94, "frame end exceeds maximum supported size");
         });
     }
 
@@ -14892,24 +13949,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values " +
                     "(1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, " +
+                            "ntile(3) over (order by ts) bucket, " +
+                            "cume_dist() over (order by ts) cd, " +
+                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv " +
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tbucket\tcd\tnv
                             1970-01-01T00:00:00.000001Z\t1\t0.2\tnull
                             1970-01-01T00:00:00.000002Z\t1\t0.4\t20.0
                             1970-01-01T00:00:00.000003Z\t2\t0.6\t20.0
                             1970-01-01T00:00:00.000004Z\t2\t0.8\t20.0
                             1970-01-01T00:00:00.000005Z\t3\t1.0\t20.0
-                            """),
-                    "select ts, " +
-                            "ntile(3) over (order by ts) bucket, " +
-                            "cume_dist() over (order by ts) cd, " +
-                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14922,12 +13977,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val) over (order by ts) from tab",
-                    7,
-                    "there is no matching function `nth_value` with the argument types",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(7, "there is no matching function `nth_value` with the argument types");
         });
     }
 
@@ -14937,27 +13989,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, ntile(5) over (order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tbucket
                             1970-01-01T00:00:00.000001Z\t1
-                            """),
-                    "select ts, ntile(5) over (order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, ntile(5) over (partition by i order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tbucket
                             1970-01-01T00:00:00.000001Z\t1\t1
-                            """),
-                    "select ts, i, ntile(5) over (partition by i order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14971,21 +14019,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 2) over (" +
+                            "order by ts rows between 3 preceding and current row exclude current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\t20.0
                             1970-01-01T00:00:00.000004Z\t20.0
                             1970-01-01T00:00:00.000005Z\t30.0
-                            """),
-                    "select ts, nth_value(val, 2) over (" +
-                            "order by ts rows between 3 preceding and current row exclude current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -14999,21 +14046,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 2) over (" +
+                            "order by ts desc range between unbounded preceding and current row) nv from tab order by ts desc")
+                    .timestampDesc(""ts"")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000005Z\tnull
                             1970-01-01T00:00:00.000004Z\t40.0
                             1970-01-01T00:00:00.000003Z\t40.0
                             1970-01-01T00:00:00.000002Z\t40.0
                             1970-01-01T00:00:00.000001Z\t40.0
-                            """),
-                    "select ts, nth_value(val, 2) over (" +
-                            "order by ts desc range between unbounded preceding and current row) nv from tab order by ts desc",
-                    "ts###DESC",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15027,8 +14073,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), " +
                     "(5, 2, 50.0), (6, 2, 60.0), (7, 2, 70.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, ntile(2) over (partition by i order by ts desc) bucket from tab order by ts desc")
+                    .timestampDesc(""ts"")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tbucket
                             1970-01-01T00:00:00.000007Z\t2\t1
                             1970-01-01T00:00:00.000006Z\t2\t1
@@ -15037,12 +14086,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000003Z\t1\t1
                             1970-01-01T00:00:00.000002Z\t1\t2
                             1970-01-01T00:00:00.000001Z\t1\t2
-                            """),
-                    "select ts, i, ntile(2) over (partition by i order by ts desc) bucket from tab order by ts desc",
-                    "ts###DESC",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15056,8 +14100,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), " +
                     "(5, 2, 50.0), (6, 2, 60.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, cume_dist() over (partition by i order by ts desc) cd from tab order by ts desc")
+                    .timestampDesc(""ts"")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tcd
                             1970-01-01T00:00:00.000006Z\t2\t0.5
                             1970-01-01T00:00:00.000005Z\t2\t1.0
@@ -15065,12 +14112,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000003Z\t1\t0.5
                             1970-01-01T00:00:00.000002Z\t1\t0.75
                             1970-01-01T00:00:00.000001Z\t1\t1.0
-                            """),
-                    "select ts, i, cume_dist() over (partition by i order by ts desc) cd from tab order by ts desc",
-                    "ts###DESC",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15087,8 +14129,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(7, 2, 1, 70.0), " +
                     "(8, 2, 2, 80.0), (9, 2, 2, 90.0), (10, 2, 2, 100.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, j, ntile(2) over (partition by i, j order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\tbucket
                             1970-01-01T00:00:00.000001Z\t1\t1\t1
                             1970-01-01T00:00:00.000002Z\t1\t1\t1
@@ -15100,12 +14145,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000008Z\t2\t2\t1
                             1970-01-01T00:00:00.000009Z\t2\t2\t1
                             1970-01-01T00:00:00.000010Z\t2\t2\t2
-                            """),
-                    "select ts, i, j, ntile(2) over (partition by i, j order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15120,8 +14160,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(3, 1, 2, 30.0), (4, 1, 2, 40.0), (5, 1, 2, 50.0), " +
                     "(6, 2, 1, 60.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, j, cume_dist() over (partition by i, j order by ts) cd from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tj\tcd
                             1970-01-01T00:00:00.000001Z\t1\t1\t0.5
                             1970-01-01T00:00:00.000002Z\t1\t1\t1.0
@@ -15129,12 +14172,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t1\t2\t0.6666666666666666
                             1970-01-01T00:00:00.000005Z\t1\t2\t1.0
                             1970-01-01T00:00:00.000006Z\t2\t1\t1.0
-                            """),
-                    "select ts, i, j, cume_dist() over (partition by i, j order by ts) cd from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15149,20 +14187,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 'a', 10.0), (2, 'a', 20.0), (3, 'a', 30.0), " +
                     "(4, 'b', 40.0), (5, 'b', 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, s, ntile(2) over (partition by s order by ts) bucket from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ts\tbucket
                             1970-01-01T00:00:00.000001Z\ta\t1
                             1970-01-01T00:00:00.000002Z\ta\t1
                             1970-01-01T00:00:00.000003Z\ta\t2
                             1970-01-01T00:00:00.000004Z\tb\t1
                             1970-01-01T00:00:00.000005Z\tb\t2
-                            """),
-                    "select ts, s, ntile(2) over (partition by s order by ts) bucket from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15176,8 +14212,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 'a', 10.0), (2, 'a', 20.0), (3, 'a', 30.0), " +
                     "(4, 'b', 40.0), (5, 'b', 50.0), (6, 'b', 60.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, s, nth_value(val, 2) over (" +
+                            "partition by s order by ts rows between unbounded preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ts\tnv
                             1970-01-01T00:00:00.000001Z\ta\tnull
                             1970-01-01T00:00:00.000002Z\ta\t20.0
@@ -15185,13 +14226,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\tb\tnull
                             1970-01-01T00:00:00.000005Z\tb\t50.0
                             1970-01-01T00:00:00.000006Z\tb\t50.0
-                            """),
-                    "select ts, s, nth_value(val, 2) over (" +
-                            "partition by s order by ts rows between unbounded preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15207,8 +14242,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), " +
                     "(4, 2, 40.0), (5, 2, 50.0), (6, 2, 60.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -15216,13 +14256,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\tnull
                             1970-01-01T00:00:00.000006Z\t2\t60.0
-                            """),
-                    "select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15232,20 +14266,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\t30
                             1970-01-01T00:00:00.000004Z\t30
                             1970-01-01T00:00:00.000005Z\t30
-                            """),
-                    "select ts, nth_value(val, 3) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15255,20 +14288,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, " +
+                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
+                            "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv1\tnv2
                             1970-01-01T00:00:00.000001Z\t10\tnull
                             1970-01-01T00:00:00.000002Z\t20\tnull
-                            """),
-                    "select ts, " +
-                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15278,18 +14310,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20), (3, 30)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t10
                             1970-01-01T00:00:00.000002Z\t10
                             1970-01-01T00:00:00.000003Z\t10
-                            """),
-                    "select ts, nth_value(val, 1) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15299,20 +14330,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 2, 40), (5, 2, 50)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\t20
                             1970-01-01T00:00:00.000003Z\t1\t20
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\t50
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15322,20 +14352,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\t20
                             1970-01-01T00:00:00.000003Z\t20
                             1970-01-01T00:00:00.000004Z\t20
                             1970-01-01T00:00:00.000005Z\t20
-                            """),
-                    "select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15345,20 +14374,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (order by ts rows between 2 preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t10
                             1970-01-01T00:00:00.000002Z\t10
                             1970-01-01T00:00:00.000003Z\t10
                             1970-01-01T00:00:00.000004Z\t20
                             1970-01-01T00:00:00.000005Z\t30
-                            """),
-                    "select ts, nth_value(val, 1) over (order by ts rows between 2 preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15368,19 +14396,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\t20
                             1970-01-01T00:00:00.000003Z\t20
                             1970-01-01T00:00:00.000004Z\t20
-                            """),
-                    "select ts, nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15390,19 +14417,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over () nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t30
                             1970-01-01T00:00:00.000002Z\t30
                             1970-01-01T00:00:00.000003Z\t30
                             1970-01-01T00:00:00.000004Z\t30
-                            """),
-                    "select ts, nth_value(val, 3) over () nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15415,22 +14440,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, null), (2, 20), (3, null), (4, 40)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, " +
+                            "nth_value(val, 1) over (order by ts) nv1, " +
+                            "nth_value(val, 2) over (order by ts) nv2 " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv1\tnv2
                             1970-01-01T00:00:00.000001Z\tnull\tnull
                             1970-01-01T00:00:00.000002Z\tnull\t20
                             1970-01-01T00:00:00.000003Z\tnull\t20
                             1970-01-01T00:00:00.000004Z\tnull\t20
-                            """),
-                    "select ts, " +
-                            "nth_value(val, 1) over (order by ts) nv1, " +
-                            "nth_value(val, 2) over (order by ts) nv2 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15448,21 +14472,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // partition 1 (odd x) row-50 = x=99 -> 99. 49 NULLs per partition + 31 locked-value
             // rows per partition = 98 NULLs and 62 hits. ORDER BY a Long places NULL first
             // (LONG_NULL = Long.MIN_VALUE), unlike Double where NaN sorts last.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select nv, count(*) cnt from (" +
+                            "select nth_value(val, 50) over (" +
+                            "partition by i order by ts range between 1000 second preceding and current row) nv from tab" +
+                            ") group by nv order by nv")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             nv\tcnt
                             null\t98
                             99\t31
                             100\t31
-                            """,
-                    "select nv, count(*) cnt from (" +
-                            "select nth_value(val, 50) over (" +
-                            "partition by i order by ts range between 1000 second preceding and current row) nv from tab" +
-                            ") group by nv order by nv",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -15477,17 +14498,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 2, 40), (5, 2, 50), (6, 2, 60)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
-                            ts\tcd\tcd_no\tnv1\tnv2\tnv3\tnv4\tnv5\tnv6\tnv7\tnv8\tnv9
-                            1970-01-01T00:00:00.000001Z\t0.16666666666666666\t1.0\t10\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0.3333333333333333\t1.0\t20\t20\t20\t10\t20\t20\tnull\t20\t20
-                            1970-01-01T00:00:00.000003Z\t0.5\t1.0\t30\t20\t20\t10\t20\t20\t20\t20\t20
-                            1970-01-01T00:00:00.000004Z\t0.6666666666666666\t1.0\t40\tnull\tnull\tnull\t20\t30\t20\tnull\t20
-                            1970-01-01T00:00:00.000005Z\t0.8333333333333334\t1.0\t50\t50\t50\t40\t20\t40\t20\t50\t20
-                            1970-01-01T00:00:00.000006Z\t1.0\t1.0\t60\t50\t50\t40\t20\t50\t20\t50\t20
-                            """),
-                    "select ts, " +
+            assertQuery("select ts, " +
                             "cume_dist() over (order by ts) cd, " +
                             "cume_dist() over (partition by i) cd_no, " +
                             "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
@@ -15499,11 +14510,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "nth_value(val, 2) over (order by ts rows between unbounded preceding and 1 preceding) nv7, " +
                             "nth_value(val, 2) over (partition by i order by ts) nv8, " +
                             "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv9 " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\tcd\tcd_no\tnv1\tnv2\tnv3\tnv4\tnv5\tnv6\tnv7\tnv8\tnv9
+                            1970-01-01T00:00:00.000001Z\t0.16666666666666666\t1.0\t10\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0.3333333333333333\t1.0\t20\t20\t20\t10\t20\t20\tnull\t20\t20
+                            1970-01-01T00:00:00.000003Z\t0.5\t1.0\t30\t20\t20\t10\t20\t20\t20\t20\t20
+                            1970-01-01T00:00:00.000004Z\t0.6666666666666666\t1.0\t40\tnull\tnull\tnull\t20\t30\t20\tnull\t20
+                            1970-01-01T00:00:00.000005Z\t0.8333333333333334\t1.0\t50\t50\t50\t40\t20\t40\t20\t50\t20
+                            1970-01-01T00:00:00.000006Z\t1.0\t1.0\t60\t50\t50\t40\t20\t50\t20\t50\t20
+                            """));
         });
     }
 
@@ -15512,12 +14531,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 0) over (order by ts) from tab",
-                    22,
-                    "n must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 0) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a positive integer");
         });
     }
 
@@ -15703,8 +14719,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(4::timestamp, 1, 40), (5::timestamp, 1, 50), " +
                     "(10::timestamp, 2, 100), (15::timestamp, 2, 150), (20::timestamp, 2, 200)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -15714,12 +14734,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000010Z\t2\tnull
                             1970-01-01T00:00:00.000015Z\t2\tnull
                             1970-01-01T00:00:00.000020Z\t2\t150
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15748,8 +14763,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //   ts=1s -> frame: {1s},      size=1, frameSize=1, n=2 -> null
             //   ts=2s -> frame: {1s, 2s},  size=2, frameSize=2, nth=row 2's val
             //   ts=5s -> rows 1s and 2s age out (diff > 2s), frame: {5s}, frameSize=1, n=2 -> null
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts range between 2 seconds preceding and current row) nv " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\ti\tnv
                             1970-01-01T00:00:01.000000Z\t1\tnull
@@ -15767,14 +14788,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:02.000000001Z\t2\t22
                             1970-01-01T00:00:05.000000000Z\t1\tnull
                             1970-01-01T00:00:05.000000001Z\t2\tnull
-                            """,
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts range between 2 seconds preceding and current row) nv " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -15790,8 +14804,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 1, 40), (5, 1, 50), " +
                     "(6, 2, 60), (7, 2, 70), (8, 2, 80)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -15801,13 +14820,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000006Z\t2\tnull
                             1970-01-01T00:00:00.000007Z\t2\tnull
                             1970-01-01T00:00:00.000008Z\t2\t70
-                            """),
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15821,20 +14834,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 2, 40), (5, 2, 50)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i) nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t20
                             1970-01-01T00:00:00.000002Z\t1\t20
                             1970-01-01T00:00:00.000003Z\t1\t20
                             1970-01-01T00:00:00.000004Z\t2\t50
                             1970-01-01T00:00:00.000005Z\t2\t50
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i) nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15851,8 +14862,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(4::timestamp, 40), (5::timestamp, 50), " +
                     "(10::timestamp, 100), (15::timestamp, 150)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
@@ -15861,12 +14876,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t20
                             1970-01-01T00:00:00.000010Z\t20
                             1970-01-01T00:00:00.000015Z\t100
-                            """),
-                    "select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15883,8 +14893,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     ? "insert into tab values (1_000_000, 10), (2_000_000, 20), (3_000_000, 30), (4_000_000, 40), (5_000_000, 50)"
                     : "insert into tab values (1_000_000_000, 10), (2_000_000_000, 20), (3_000_000_000, 30), (4_000_000_000, 40), (5_000_000_000, 50)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, nth_value(val, 2) over (" +
+                            "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\tnv
                             1970-01-01T00:00:01.000000Z\tnull
@@ -15900,13 +14915,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:03.000000000Z\t20
                             1970-01-01T00:00:04.000000000Z\t20
                             1970-01-01T00:00:05.000000000Z\t20
-                            """,
-                    "select ts, nth_value(val, 2) over (" +
-                            "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -15923,20 +14932,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Frame = rows [3..1] preceding current row. At ts=1 the frame is empty (null).
             // ts=2..4: frame grows up to 3 rows starting at row 1 (nv=10). ts=5: oldest
             // in-frame row is row 2 (rows 2,3,4) so nv=20.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (order by ts rows between 3 preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\t10
                             1970-01-01T00:00:00.000003Z\t10
                             1970-01-01T00:00:00.000004Z\t10
                             1970-01-01T00:00:00.000005Z\t20
-                            """),
-                    "select ts, nth_value(val, 1) over (order by ts rows between 3 preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15951,20 +14959,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over (order by ts rows between unbounded preceding and unbounded following) nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t30
                             1970-01-01T00:00:00.000002Z\t30
                             1970-01-01T00:00:00.000003Z\t30
                             1970-01-01T00:00:00.000004Z\t30
                             1970-01-01T00:00:00.000005Z\t30
-                            """),
-                    "select ts, nth_value(val, 3) over (order by ts rows between unbounded preceding and unbounded following) nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -15977,18 +14983,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20), (3, 30)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, nth_value(val, 2_147_483_647) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tnv
                             1970-01-01T00:00:00.000001Z\t10\tnull
                             1970-01-01T00:00:00.000002Z\t20\tnull
                             1970-01-01T00:00:00.000003Z\t30\tnull
-                            """),
-                    "select ts, val, nth_value(val, 2_147_483_647) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16000,18 +15005,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20), (3, 30)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, nth_value(val, 2L) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tnv
                             1970-01-01T00:00:00.000001Z\t10\tnull
                             1970-01-01T00:00:00.000002Z\t20\t20
                             1970-01-01T00:00:00.000003Z\t30\t20
-                            """),
-                    "select ts, val, nth_value(val, 2L) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16034,8 +15038,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     (6, 2, null)""");
 
             // Variant 1: NthValueOverPartitionFunction (whole partition, no ORDER BY, default frame).
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select i, nth_value(val, 2) over (partition by i) nv from tab")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             i\tnv
                             1\tnull
                             1\tnull
@@ -16043,17 +15049,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2\t20
                             2\t20
                             2\t20
-                            """,
-                    "select i, nth_value(val, 2) over (partition by i) nv from tab",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // Variant 2: NthValueOverUnboundedPartitionFrameFunction (rows between
             // unbounded preceding and current row).
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -16061,19 +15066,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\t20
                             1970-01-01T00:00:00.000006Z\t2\t20
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Variant 3: NthValueOverPartitionRangeFrameFunction (bounded RANGE over
             // designated timestamp). 1-second window keeps all partition rows in frame
             // under both MICRO and NANO timestamp precision. nth_value(val, 1) returns
             // the first row's val per partition: 10 for i=1, null for i=2.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 1) over (partition by i order by ts range between 1 second preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t10
                             1970-01-01T00:00:00.000002Z\t1\t10
@@ -16081,16 +15085,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\tnull
                             1970-01-01T00:00:00.000006Z\t2\tnull
-                            """),
-                    "select ts, i, nth_value(val, 1) over (partition by i order by ts range between 1 second preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Variant 4: NthValueOverPartitionRowsFrameFunction (bounded ROWS).
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 1) over (partition by i order by ts rows between 1 preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t10
                             1970-01-01T00:00:00.000002Z\t1\t10
@@ -16098,18 +15101,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\tnull
                             1970-01-01T00:00:00.000006Z\t2\t20
-                            """),
-                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between 1 preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Variant 5: NthValueOverPartitionRowsFrameUnboundedFunction
             // (unbounded preceding to K preceding). Locks the n=1 value; emits from
             // count >= n + K = 2 onward. i=1 locks val@ts=1 = 10. i=2 locks val@ts=4 = null.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\t10
@@ -16117,12 +15119,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\tnull
                             1970-01-01T00:00:00.000006Z\t2\tnull
-                            """),
-                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16136,20 +15133,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table nodts (ts #TIMESTAMP, i long, val long)", timestampType.getTypeName());
 
             // Non-partitioned path.
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (order by val range between 1 preceding and current row) from nodts",
-                    40,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (order by val range between 1 preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .fails(40, "RANGE is supported only for queries ordered by designated timestamp");
 
             // Partitioned path.
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (partition by i order by val range between 1 preceding and current row) from nodts",
-                    55,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (partition by i order by val range between 1 preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .fails(55, "RANGE is supported only for queries ordered by designated timestamp");
         });
     }
 
@@ -16163,19 +15154,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20), (3, 30)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (" +
+                            "order by ts rows between 1 preceding and 2 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\tnull
-                            """),
-                    "select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between 1 preceding and 2 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16187,21 +15177,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (order by ts " +
-                            "rows between 2_147_483_648 preceding and current row) nv from tab",
-                    70,
-                    "frame start exceeds maximum supported size",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (order by ts " +
+                            "rows between 2_147_483_648 preceding and current row) nv from tab")
+                    .noLeakCheck()
+                    .fails(70, "frame start exceeds maximum supported size");
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (order by ts " +
-                            "rows between unbounded preceding and 2_147_483_648 preceding) nv from tab",
-                    94,
-                    "frame end exceeds maximum supported size",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (order by ts " +
+                            "rows between unbounded preceding and 2_147_483_648 preceding) nv from tab")
+                    .noLeakCheck()
+                    .fails(94, "frame end exceeds maximum supported size");
         });
     }
 
@@ -16213,12 +15197,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 2) ignore nulls over (order by ts) from tab",
-                    25,
-                    "RESPECT/IGNORE NULLS is not supported for current window function",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 2) ignore nulls over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(25, "RESPECT/IGNORE NULLS is not supported for current window function");
         });
     }
 
@@ -16229,20 +15210,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 5_000_000_000L) over (order by ts) from tab",
-                    22,
-                    "n must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 5_000_000_000L) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a positive integer");
 
             // Integer.MAX_VALUE + 1 -- one past the accepted boundary.
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 2_147_483_648L) over (order by ts) from tab",
-                    22,
-                    "n must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 2_147_483_648L) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a positive integer");
         });
     }
 
@@ -16253,12 +15228,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, -1) over (order by ts) from tab",
-                    22,
-                    "n must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, -1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a positive integer");
         });
     }
 
@@ -16269,12 +15241,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long, i int) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, i) over (order by ts) from tab",
-                    22,
-                    "n must be a constant",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, i) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a constant");
         });
     }
 
@@ -16285,12 +15254,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, null) over (order by ts) from tab",
-                    22,
-                    "n cannot be NULL",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, null) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n cannot be NULL");
         });
     }
 
@@ -16301,12 +15267,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 2) respect nulls over (order by ts) from tab",
-                    25,
-                    "RESPECT/IGNORE NULLS is not supported for current window function",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 2) respect nulls over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(25, "RESPECT/IGNORE NULLS is not supported for current window function");
         });
     }
 
@@ -16319,23 +15282,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 2, 40), (5, 2, 50)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, " +
+                            "nth_value(val, 1) over (partition by i order by ts rows between current row and current row) nv1, " +
+                            "nth_value(val, 2) over (partition by i order by ts rows between current row and current row) nv2 " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv1\tnv2
                             1970-01-01T00:00:00.000001Z\t1\t10\tnull
                             1970-01-01T00:00:00.000002Z\t1\t20\tnull
                             1970-01-01T00:00:00.000003Z\t1\t30\tnull
                             1970-01-01T00:00:00.000004Z\t2\t40\tnull
                             1970-01-01T00:00:00.000005Z\t2\t50\tnull
-                            """),
-                    "select ts, i, " +
-                            "nth_value(val, 1) over (partition by i order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts rows between current row and current row) nv2 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16351,8 +15313,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10), (2, 1, 20), (3, 1, 30), " +
                     "(4, 2, 100), (5, 2, 200), (6, 2, 300)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, " +
+                            "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and current row) nv1, " +
+                            "nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv2 " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv1\tnv2
                             1970-01-01T00:00:00.000001Z\t1\t10\tnull
                             1970-01-01T00:00:00.000002Z\t1\t10\t20
@@ -16360,15 +15329,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t100\tnull
                             1970-01-01T00:00:00.000005Z\t2\t100\t200
                             1970-01-01T00:00:00.000006Z\t2\t100\t200
-                            """),
-                    "select ts, i, " +
-                            "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and current row) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv2 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16384,8 +15345,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10), (2, 1, 20), (3, 1, 30), " +
                     "(4, 2, 100), (5, 2, 200), (6, 2, 300)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between unbounded preceding and unbounded following) nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t20
                             1970-01-01T00:00:00.000002Z\t1\t20
@@ -16393,13 +15358,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t200
                             1970-01-01T00:00:00.000005Z\t2\t200
                             1970-01-01T00:00:00.000006Z\t2\t200
-                            """),
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between unbounded preceding and unbounded following) nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16427,8 +15386,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(5000000000, 1, 50), (5000000001, 2, 500), " +
                       "(6000000000, 1, 60), (6000000001, 2, 600)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts " +
+                            "range between unbounded preceding and 2 seconds preceding) nv " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\ti\tnv
                             1970-01-01T00:00:01.000000Z\t1\tnull
@@ -16458,15 +15424,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:05.000000001Z\t2\t200
                             1970-01-01T00:00:06.000000000Z\t1\t20
                             1970-01-01T00:00:06.000000001Z\t2\t200
-                            """,
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts " +
-                            "range between unbounded preceding and 2 seconds preceding) nv " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -16486,8 +15444,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(1000000, 1, 10), (1100000, 2, 15), (1200000, 1, 20), (1300000, 2, 25), " +
                       "(1400000, 1, 30), (1500000, 2, 35), (3000000, 1, 40), (3100000, 2, 45)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\ti\tnv
                             1970-01-01T00:00:00.001000Z\t1\tnull
@@ -16509,13 +15472,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.001500000Z\t2\tnull
                             1970-01-01T00:00:00.003000000Z\t1\t30
                             1970-01-01T00:00:00.003100000Z\t2\t35
-                            """,
-                    "select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -16534,37 +15491,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 // Non-partitioned: 49 occurrences of 2, 1 NULL. ORDER BY a Long places NULL
                 // first (LONG_NULL = Long.MIN_VALUE).
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery("select nv, count(*) cnt from (" +
+                                "select nth_value(val, 2) over (" +
+                                "order by ts range between 100 second preceding and current row) nv from tab" +
+                                ") group by nv order by nv")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
                                 nv\tcnt
                                 null\t1
                                 2\t49
-                                """,
-                        "select nv, count(*) cnt from (" +
-                                "select nth_value(val, 2) over (" +
-                                "order by ts range between 100 second preceding and current row) nv from tab" +
-                                ") group by nv order by nv",
-                        null,
-                        true,
-                        true
-                );
+                                """);
 
                 // Partitioned by i (x%2). 24 occurrences of 3, 24 of 4, 2 NULL.
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery("select nv, count(*) cnt from (" +
+                                "select nth_value(val, 2) over (" +
+                                "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
+                                ") group by nv order by nv")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
                                 nv\tcnt
                                 null\t2
                                 3\t24
                                 4\t24
-                                """,
-                        "select nv, count(*) cnt from (" +
-                                "select nth_value(val, 2) over (" +
-                                "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
-                                ") group by nv order by nv",
-                        null,
-                        true,
-                        true
-                );
+                                """);
             });
         } finally {
             node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 1024 * 1024);
@@ -16583,8 +15534,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     ? "insert into tab values (1000, 10), (1100, 20), (1200, 30), (3000, 40), (3100, 50)"
                     : "insert into tab values (1000000, 10), (1100000, 20), (1200000, 30), (3000000, 40), (3100000, 50)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, nth_value(val, 3) over (" +
+                            "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\tnv
                             1970-01-01T00:00:00.001000Z\tnull
@@ -16600,13 +15556,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.001200000Z\tnull
                             1970-01-01T00:00:00.003000000Z\t30
                             1970-01-01T00:00:00.003100000Z\t30
-                            """,
-                    "select ts, nth_value(val, 3) over (" +
-                            "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -16626,8 +15576,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //   ts=3: currentFrameElements=2, n=3 > 2 -> null (target branch)
             //   ts=4: currentFrameElements=3, n=3 <= 3 -> frame[2] = val of row 3 = 30
             //   ts=5..6: still nth = row 3 val = 30 (sliding window keeps row 1..3 in frame)
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over (order by ts rows between 5 preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
@@ -16635,12 +15589,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t30
                             1970-01-01T00:00:00.000005Z\t30
                             1970-01-01T00:00:00.000006Z\t30
-                            """),
-                    "select ts, nth_value(val, 3) over (order by ts rows between 5 preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16659,8 +15608,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Same per-partition shape as the non-partitioned variant: rows 1..3 -> null,
             // row 4 first hits n <= currentFrameSize=3, subsequent rows keep nth = row 3 val.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts rows between 5 preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -16674,13 +15628,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000010Z\t2\t300
                             1970-01-01T00:00:00.000011Z\t2\t300
                             1970-01-01T00:00:00.000012Z\t2\t300
-                            """),
-                    "select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts rows between 5 preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16697,8 +15645,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 1, 40), " +
                     "(5, 2, 100), (6, 2, 200), (7, 2, 300), (8, 2, 400)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -16708,13 +15661,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000006Z\t2\tnull
                             1970-01-01T00:00:00.000007Z\t2\t300
                             1970-01-01T00:00:00.000008Z\t2\t300
-                            """),
-                    "select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16732,8 +15679,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Frame = [100us..50us] preceding. Inter-row gaps are ~1s -> every prior row
             // is beyond maxDiff and evicted before ever entering the frame.
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, nth_value(val, 1) over (" +
+                            "order by ts range between 100 microseconds preceding and 50 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
@@ -16745,13 +15697,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000001000Z\tnull
                             1970-01-01T00:00:01.000000000Z\tnull
                             1970-01-01T00:00:02.000000000Z\tnull
-                            """,
-                    "select ts, nth_value(val, 1) over (" +
-                            "order by ts range between 100 microseconds preceding and 50 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -16765,20 +15711,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over (" +
+                            "order by ts range between unbounded preceding and unbounded following) nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t30
                             1970-01-01T00:00:00.000002Z\t30
                             1970-01-01T00:00:00.000003Z\t30
                             1970-01-01T00:00:00.000004Z\t30
-                            """),
-                    "select ts, nth_value(val, 3) over (" +
-                            "order by ts range between unbounded preceding and unbounded following) nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16792,20 +15736,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 2, 40), (5, 2, 50)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select i, nth_value(val, 1) over (partition by i) nv from tab order by i, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             i\tnv
                             1\t10
                             1\t10
                             1\t10
                             2\t40
                             2\t40
-                            """,
-                    "select i, nth_value(val, 1) over (partition by i) nv from tab order by i, ts",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -16825,8 +15766,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(1_000, 1, 10), (1_000_000_000, 1, 20), (2_000_000_000, 1, 30), " +
                       "(3_000_000_001, 2, 100), (4_000_000_001, 2, 200), (5_000_000_001, 2, 300)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, i, nth_value(val, 1) over (" +
+                            "partition by i order by ts " +
+                            "range between 100 microseconds preceding and 50 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
@@ -16844,14 +15791,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:03.000000001Z\t2\tnull
                             1970-01-01T00:00:04.000000001Z\t2\tnull
                             1970-01-01T00:00:05.000000001Z\t2\tnull
-                            """,
-                    "select ts, i, nth_value(val, 1) over (" +
-                            "partition by i order by ts " +
-                            "range between 100 microseconds preceding and 50 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -16866,8 +15806,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (" +
+                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
@@ -16875,13 +15820,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t10
                             1970-01-01T00:00:00.000005Z\t10
                             1970-01-01T00:00:00.000006Z\t10
-                            """),
-                    "select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16891,20 +15830,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 100), (2, 200), (3, 300), (4, 400), (5, 500)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t
                             1970-01-01T00:00:00.000002Z\t
                             1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000300Z
-                            """),
-                    "select ts, nth_value(val, 3) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16914,20 +15852,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 100), (2, 200)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, " +
+                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
+                            "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv1\tnv2
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000100Z\t
                             1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000200Z\t
-                            """),
-                    "select ts, " +
-                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16937,18 +15874,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 100), (2, 200), (3, 300)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000100Z
                             1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000100Z
                             1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000100Z
-                            """),
-                    "select ts, nth_value(val, 1) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16958,20 +15894,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 100), (2, 1, 200), (3, 1, 300), (4, 2, 400), (5, 2, 500)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t
                             1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:00.000003Z\t1\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:00.000004Z\t2\t
                             1970-01-01T00:00:00.000005Z\t2\t1970-01-01T00:00:00.000500Z
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -16981,20 +15916,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 100), (2, 200), (3, 300), (4, 400), (5, 500)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (order by ts rows between 2 preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000100Z
                             1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000100Z
                             1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000100Z
                             1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000300Z
-                            """),
-                    "select ts, nth_value(val, 1) over (order by ts rows between 2 preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -17004,19 +15938,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 100), (2, 200), (3, 300), (4, 400)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t
                             1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000200Z
-                            """),
-                    "select ts, nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -17026,19 +15959,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 100), (2, 200), (3, 300), (4, 400)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over () nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000300Z
-                            """),
-                    "select ts, nth_value(val, 3) over () nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -17051,22 +15982,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, null), (2, 200), (3, null), (4, 400)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, " +
+                            "nth_value(val, 1) over (order by ts) nv1, " +
+                            "nth_value(val, 2) over (order by ts) nv2 " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv1\tnv2
                             1970-01-01T00:00:00.000001Z\t\t
                             1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:00.000003Z\t\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000200Z
-                            """),
-                    "select ts, " +
-                            "nth_value(val, 1) over (order by ts) nv1, " +
-                            "nth_value(val, 2) over (order by ts) nv2 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -17084,21 +16014,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // timestamp 100us, partition 1 (odd x) row-50 = x=99 -> timestamp 99us. NULL
             // timestamp renders as the empty string. ORDER BY a TIMESTAMP places NULL first
             // (LONG_NULL backing value is Long.MIN_VALUE), unlike Double where NaN sorts last.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select nv, count(*) cnt from (" +
+                            "select nth_value(val, 50) over (" +
+                            "partition by i order by ts range between 1000 second preceding and current row) nv from tab" +
+                            ") group by nv order by nv")
+                    .timestamp("nv")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             nv\tcnt
                             \t98
                             1970-01-01T00:00:00.000099Z\t31
                             1970-01-01T00:00:00.000100Z\t31
-                            """,
-                    "select nv, count(*) cnt from (" +
-                            "select nth_value(val, 50) over (" +
-                            "partition by i order by ts range between 1000 second preceding and current row) nv from tab" +
-                            ") group by nv order by nv",
-                    "nv",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -17113,17 +16041,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 100), (2, 1, 200), (3, 1, 300), (4, 2, 400), (5, 2, 500), (6, 2, 600)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
-                            ts\tcd\tcd_no\tnv1\tnv2\tnv3\tnv4\tnv5\tnv6\tnv7\tnv8\tnv9
-                            1970-01-01T00:00:00.000001Z\t0.16666666666666666\t1.0\t1970-01-01T00:00:00.000100Z\t\t\t\t\t\t\t\t
-                            1970-01-01T00:00:00.000002Z\t0.3333333333333333\t1.0\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000100Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z
-                            1970-01-01T00:00:00.000003Z\t0.5\t1.0\t1970-01-01T00:00:00.000300Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000100Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z
-                            1970-01-01T00:00:00.000004Z\t0.6666666666666666\t1.0\t1970-01-01T00:00:00.000400Z\t\t\t\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000300Z\t1970-01-01T00:00:00.000200Z\t\t1970-01-01T00:00:00.000200Z
-                            1970-01-01T00:00:00.000005Z\t0.8333333333333334\t1.0\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000200Z
-                            1970-01-01T00:00:00.000006Z\t1.0\t1.0\t1970-01-01T00:00:00.000600Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000200Z
-                            """),
-                    "select ts, " +
+            assertQuery("select ts, " +
                             "cume_dist() over (order by ts) cd, " +
                             "cume_dist() over (partition by i) cd_no, " +
                             "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
@@ -17135,11 +16053,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "nth_value(val, 2) over (order by ts rows between unbounded preceding and 1 preceding) nv7, " +
                             "nth_value(val, 2) over (partition by i order by ts) nv8, " +
                             "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv9 " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\tcd\tcd_no\tnv1\tnv2\tnv3\tnv4\tnv5\tnv6\tnv7\tnv8\tnv9
+                            1970-01-01T00:00:00.000001Z\t0.16666666666666666\t1.0\t1970-01-01T00:00:00.000100Z\t\t\t\t\t\t\t\t
+                            1970-01-01T00:00:00.000002Z\t0.3333333333333333\t1.0\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000100Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z
+                            1970-01-01T00:00:00.000003Z\t0.5\t1.0\t1970-01-01T00:00:00.000300Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000100Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z
+                            1970-01-01T00:00:00.000004Z\t0.6666666666666666\t1.0\t1970-01-01T00:00:00.000400Z\t\t\t\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000300Z\t1970-01-01T00:00:00.000200Z\t\t1970-01-01T00:00:00.000200Z
+                            1970-01-01T00:00:00.000005Z\t0.8333333333333334\t1.0\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000200Z
+                            1970-01-01T00:00:00.000006Z\t1.0\t1.0\t1970-01-01T00:00:00.000600Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000200Z
+                            """));
         });
     }
 
@@ -17148,12 +16074,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) ignore nulls over (order by ts) from tab",
-                    25,
-                    "RESPECT/IGNORE NULLS is not supported for current window function",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) ignore nulls over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(25, "RESPECT/IGNORE NULLS is not supported for current window function");
         });
     }
 
@@ -17340,8 +16263,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(4::timestamp, 1, 40), (5::timestamp, 1, 50), " +
                     "(10::timestamp, 2, 100), (15::timestamp, 2, 150), (20::timestamp, 2, 200)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t
@@ -17363,12 +16290,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000010000Z\t2\t
                             1970-01-01T00:00:00.000015000Z\t2\t
                             1970-01-01T00:00:00.000020000Z\t2\t1970-01-01T00:00:00.000150Z
-                            """,
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -17389,8 +16311,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(2_000_000_000, 1, 20), (2_000_000_001, 2, 22), " +
                       "(5_000_000_000, 1, 50), (5_000_000_001, 2, 55)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts range between 2 seconds preceding and current row) nv " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\ti\tnv
                             1970-01-01T00:00:01.000000Z\t1\t
@@ -17408,14 +16336,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:02.000000001Z\t2\t1970-01-01T00:00:00.000022Z
                             1970-01-01T00:00:05.000000000Z\t1\t
                             1970-01-01T00:00:05.000000001Z\t2\t
-                            """,
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts range between 2 seconds preceding and current row) nv " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -17431,8 +16352,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 1, 40), (5, 1, 50), " +
                     "(6, 2, 60), (7, 2, 70), (8, 2, 80)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t
@@ -17454,13 +16380,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000000006Z\t2\t
                             1970-01-01T00:00:00.000000007Z\t2\t
                             1970-01-01T00:00:00.000000008Z\t2\t1970-01-01T00:00:00.000070Z
-                            """,
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -17474,20 +16394,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 100), (2, 1, 200), (3, 1, 300), (4, 2, 400), (5, 2, 500)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i) nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:00.000003Z\t1\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:00.000004Z\t2\t1970-01-01T00:00:00.000500Z
                             1970-01-01T00:00:00.000005Z\t2\t1970-01-01T00:00:00.000500Z
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i) nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -17506,8 +16424,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(4::timestamp, 40), (5::timestamp, 50), " +
                     "(10::timestamp, 100), (15::timestamp, 150)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t
@@ -17527,12 +16449,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005000Z\t1970-01-01T00:00:00.000020Z
                             1970-01-01T00:00:00.000010000Z\t1970-01-01T00:00:00.000020Z
                             1970-01-01T00:00:00.000015000Z\t1970-01-01T00:00:00.000100Z
-                            """,
-                    "select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -17547,8 +16464,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     ? "insert into tab values (1_000_000, 10), (2_000_000, 20), (3_000_000, 30), (4_000_000, 40), (5_000_000, 50)"
                     : "insert into tab values (1_000_000_000, 10), (2_000_000_000, 20), (3_000_000_000, 30), (4_000_000_000, 40), (5_000_000_000, 50)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, nth_value(val, 2) over (" +
+                            "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\tnv
                             1970-01-01T00:00:01.000000Z\t
@@ -17564,13 +16486,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:03.000000000Z\t1970-01-01T00:00:00.000020Z
                             1970-01-01T00:00:04.000000000Z\t1970-01-01T00:00:00.000020Z
                             1970-01-01T00:00:05.000000000Z\t1970-01-01T00:00:00.000020Z
-                            """,
-                    "select ts, nth_value(val, 2) over (" +
-                            "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -17584,8 +16500,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, nth_value(val, 1) over (order by ts rows between 3 preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t
@@ -17601,12 +16521,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000000003Z\t1970-01-01T00:00:00.000010Z
                             1970-01-01T00:00:00.000000004Z\t1970-01-01T00:00:00.000010Z
                             1970-01-01T00:00:00.000000005Z\t1970-01-01T00:00:00.000020Z
-                            """,
-                    "select ts, nth_value(val, 1) over (order by ts rows between 3 preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -17622,20 +16537,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 100), (2, 200), (3, 300), (4, 400), (5, 500)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over (order by ts rows between unbounded preceding and unbounded following) nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000300Z
-                            """),
-                    "select ts, nth_value(val, 3) over (order by ts rows between unbounded preceding and unbounded following) nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -17649,18 +16562,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 100), (2, 200), (3, 300)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, nth_value(val, 2_147_483_647) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tnv
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000100Z\t
                             1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000200Z\t
                             1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000300Z\t
-                            """),
-                    "select ts, val, nth_value(val, 2_147_483_647) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -17672,18 +16584,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 100), (2, 200), (3, 300)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, val, nth_value(val, 2L) over (order by ts) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tval\tnv
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000100Z\t
                             1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000300Z\t1970-01-01T00:00:00.000200Z
-                            """),
-                    "select ts, val, nth_value(val, 2L) over (order by ts) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -17704,8 +16615,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     (6, 2, null)""");
 
             // Variant 1: NthValueOverPartitionFunction (whole partition, no ORDER BY, default frame).
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select i, nth_value(val, 2) over (partition by i) nv from tab")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             i\tnv
                             1\t
                             1\t
@@ -17713,17 +16626,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2\t1970-01-01T00:00:00.000200Z
                             2\t1970-01-01T00:00:00.000200Z
                             2\t1970-01-01T00:00:00.000200Z
-                            """,
-                    "select i, nth_value(val, 2) over (partition by i) nv from tab",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // Variant 2: NthValueOverUnboundedPartitionFrameFunction (rows between
             // unbounded preceding and current row).
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t
                             1970-01-01T00:00:00.000002Z\t1\t
@@ -17731,19 +16643,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t
                             1970-01-01T00:00:00.000005Z\t2\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:00.000006Z\t2\t1970-01-01T00:00:00.000200Z
-                            """),
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Variant 3: NthValueOverPartitionRangeFrameFunction (bounded RANGE).
             // 1-second window keeps all partition rows in frame under both MICRO and
             // NANO timestamp precision. nth_value(val, 1) returns the first row's val
             // per partition: 100 for i=1, NULL for i=2.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 1) over (partition by i order by ts range between 1 second preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000100Z
                             1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000100Z
@@ -17751,16 +16662,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t
                             1970-01-01T00:00:00.000005Z\t2\t
                             1970-01-01T00:00:00.000006Z\t2\t
-                            """),
-                    "select ts, i, nth_value(val, 1) over (partition by i order by ts range between 1 second preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Variant 4: NthValueOverPartitionRowsFrameFunction (bounded ROWS).
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 1) over (partition by i order by ts rows between 1 preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000100Z
                             1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000100Z
@@ -17768,18 +16678,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t
                             1970-01-01T00:00:00.000005Z\t2\t
                             1970-01-01T00:00:00.000006Z\t2\t1970-01-01T00:00:00.000200Z
-                            """),
-                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between 1 preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Variant 5: NthValueOverPartitionRowsFrameUnboundedFunction (unbounded
             // preceding to K preceding). Locks n=1; emits from count >= n + K = 2
             // onward. i=1 locks val@ts=1 = 100. i=2 locks val@ts=4 = NULL.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t
                             1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000100Z
@@ -17787,12 +16696,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t
                             1970-01-01T00:00:00.000005Z\t2\t
                             1970-01-01T00:00:00.000006Z\t2\t
-                            """),
-                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -17805,20 +16709,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table nodts (ts #TIMESTAMP, i long, val timestamp)", timestampType.getTypeName());
 
             // Non-partitioned path.
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (order by val range between 1 preceding and current row) from nodts",
-                    40,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (order by val range between 1 preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .fails(40, "RANGE is supported only for queries ordered by designated timestamp");
 
             // Partitioned path.
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (partition by i order by val range between 1 preceding and current row) from nodts",
-                    55,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (partition by i order by val range between 1 preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .fails(55, "RANGE is supported only for queries ordered by designated timestamp");
         });
     }
 
@@ -17831,19 +16729,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 100), (2, 200), (3, 300)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (" +
+                            "order by ts rows between 1 preceding and 2 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t
                             1970-01-01T00:00:00.000002Z\t
                             1970-01-01T00:00:00.000003Z\t
-                            """),
-                    "select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between 1 preceding and 2 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -17855,21 +16752,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (order by ts " +
-                            "rows between 2_147_483_648 preceding and current row) nv from tab",
-                    70,
-                    "frame start exceeds maximum supported size",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (order by ts " +
+                            "rows between 2_147_483_648 preceding and current row) nv from tab")
+                    .noLeakCheck()
+                    .fails(70, "frame start exceeds maximum supported size");
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 1) over (order by ts " +
-                            "rows between unbounded preceding and 2_147_483_648 preceding) nv from tab",
-                    94,
-                    "frame end exceeds maximum supported size",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 1) over (order by ts " +
+                            "rows between unbounded preceding and 2_147_483_648 preceding) nv from tab")
+                    .noLeakCheck()
+                    .fails(94, "frame end exceeds maximum supported size");
         });
     }
 
@@ -17880,20 +16771,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 5_000_000_000L) over (order by ts) from tab",
-                    22,
-                    "n must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 5_000_000_000L) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a positive integer");
 
             // Integer.MAX_VALUE + 1 -- one past the accepted boundary.
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 2_147_483_648L) over (order by ts) from tab",
-                    22,
-                    "n must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 2_147_483_648L) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a positive integer");
         });
     }
 
@@ -17904,12 +16789,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, -1) over (order by ts) from tab",
-                    22,
-                    "n must be a positive integer",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, -1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a positive integer");
         });
     }
 
@@ -17921,12 +16803,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp, i int) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, i) over (order by ts) from tab",
-                    22,
-                    "n must be a constant",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, i) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n must be a constant");
         });
     }
 
@@ -17937,12 +16816,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, null) over (order by ts) from tab",
-                    22,
-                    "n cannot be NULL",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, null) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(22, "n cannot be NULL");
         });
     }
 
@@ -17954,12 +16830,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select nth_value(val, 2) respect nulls over (order by ts) from tab",
-                    25,
-                    "RESPECT/IGNORE NULLS is not supported for current window function",
-                    sqlExecutionContext
-            );
+            assertQuery("select nth_value(val, 2) respect nulls over (order by ts) from tab")
+                    .noLeakCheck()
+                    .fails(25, "RESPECT/IGNORE NULLS is not supported for current window function");
         });
     }
 
@@ -17977,35 +16850,33 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "(1_000_000_000, 1_000_000_000), " +
                         "(2_000_000_000, 2_000_000_000), " +
                         "(3_000_000_000, 3_000_000_000)");
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery("select ts, nth_value(val, 2) over (order by ts) nv from tab")
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
                                 ts\tnv
                                 1970-01-01T00:00:01.000000000Z\t
                                 1970-01-01T00:00:02.000000000Z\t1970-01-01T00:00:02.000000000Z
                                 1970-01-01T00:00:03.000000000Z\t1970-01-01T00:00:02.000000000Z
-                                """,
-                        "select ts, nth_value(val, 2) over (order by ts) nv from tab",
-                        "ts",
-                        false,
-                        true
-                );
+                                """);
             } else {
                 execute("insert into tab values " +
                         "(1_000_000, 1_000_000), " +
                         "(2_000_000, 2_000_000), " +
                         "(3_000_000, 3_000_000)");
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery("select ts, nth_value(val, 2) over (order by ts) nv from tab")
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
                                 ts\tnv
                                 1970-01-01T00:00:01.000000Z\t
                                 1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:02.000000Z
                                 1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:02.000000Z
-                                """,
-                        "select ts, nth_value(val, 2) over (order by ts) nv from tab",
-                        "ts",
-                        false,
-                        true
-                );
+                                """);
             }
         });
     }
@@ -18019,23 +16890,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 100), (2, 1, 200), (3, 1, 300), (4, 2, 400), (5, 2, 500)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, " +
+                            "nth_value(val, 1) over (partition by i order by ts rows between current row and current row) nv1, " +
+                            "nth_value(val, 2) over (partition by i order by ts rows between current row and current row) nv2 " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv1\tnv2
                             1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000100Z\t
                             1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000200Z\t
                             1970-01-01T00:00:00.000003Z\t1\t1970-01-01T00:00:00.000300Z\t
                             1970-01-01T00:00:00.000004Z\t2\t1970-01-01T00:00:00.000400Z\t
                             1970-01-01T00:00:00.000005Z\t2\t1970-01-01T00:00:00.000500Z\t
-                            """),
-                    "select ts, i, " +
-                            "nth_value(val, 1) over (partition by i order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts rows between current row and current row) nv2 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -18051,8 +16921,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 100), (2, 1, 200), (3, 1, 300), " +
                     "(4, 2, 1000), (5, 2, 2000), (6, 2, 3000)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, " +
+                            "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and current row) nv1, " +
+                            "nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv2 " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv1\tnv2
                             1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000100Z\t
                             1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000100Z\t1970-01-01T00:00:00.000200Z
@@ -18060,15 +16937,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t1970-01-01T00:00:00.001000Z\t
                             1970-01-01T00:00:00.000005Z\t2\t1970-01-01T00:00:00.001000Z\t1970-01-01T00:00:00.002000Z
                             1970-01-01T00:00:00.000006Z\t2\t1970-01-01T00:00:00.001000Z\t1970-01-01T00:00:00.002000Z
-                            """),
-                    "select ts, i, " +
-                            "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and current row) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv2 " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -18084,8 +16953,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 100), (2, 1, 200), (3, 1, 300), " +
                     "(4, 2, 1000), (5, 2, 2000), (6, 2, 3000)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between unbounded preceding and unbounded following) nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000200Z
@@ -18093,13 +16966,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t1970-01-01T00:00:00.002000Z
                             1970-01-01T00:00:00.000005Z\t2\t1970-01-01T00:00:00.002000Z
                             1970-01-01T00:00:00.000006Z\t2\t1970-01-01T00:00:00.002000Z
-                            """),
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between unbounded preceding and unbounded following) nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -18126,8 +16993,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(5000000000, 1, 50), (5000000001, 2, 500), " +
                       "(6000000000, 1, 60), (6000000001, 2, 600)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts " +
+                            "range between unbounded preceding and 2 seconds preceding) nv " +
+                            "from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\ti\tnv
                             1970-01-01T00:00:01.000000Z\t1\t
@@ -18157,15 +17031,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:05.000000001Z\t2\t1970-01-01T00:00:00.000200Z
                             1970-01-01T00:00:06.000000000Z\t1\t1970-01-01T00:00:00.000020Z
                             1970-01-01T00:00:06.000000001Z\t2\t1970-01-01T00:00:00.000200Z
-                            """,
-                    "select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts " +
-                            "range between unbounded preceding and 2 seconds preceding) nv " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -18185,8 +17051,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(1000000, 1, 10), (1100000, 2, 15), (1200000, 1, 20), (1300000, 2, 25), " +
                       "(1400000, 1, 30), (1500000, 2, 35), (3000000, 1, 40), (3100000, 2, 45)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\ti\tnv
                             1970-01-01T00:00:00.001000Z\t1\t
@@ -18208,13 +17079,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.001500000Z\t2\t
                             1970-01-01T00:00:00.003000000Z\t1\t1970-01-01T00:00:00.000030Z
                             1970-01-01T00:00:00.003100000Z\t2\t1970-01-01T00:00:00.000035Z
-                            """,
-                    "select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -18233,37 +17098,33 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 // Non-partitioned: 49 occurrences of timestamp 2us, 1 NULL (NULL renders as empty
                 // string). ORDER BY a TIMESTAMP places NULL first (LONG_NULL = Long.MIN_VALUE).
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery("select nv, count(*) cnt from (" +
+                                "select nth_value(val, 2) over (" +
+                                "order by ts range between 100 second preceding and current row) nv from tab" +
+                                ") group by nv order by nv")
+                        .timestamp("nv")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
                                 nv\tcnt
                                 \t1
                                 1970-01-01T00:00:00.000002Z\t49
-                                """,
-                        "select nv, count(*) cnt from (" +
-                                "select nth_value(val, 2) over (" +
-                                "order by ts range between 100 second preceding and current row) nv from tab" +
-                                ") group by nv order by nv",
-                        "nv",
-                        true,
-                        true
-                );
+                                """);
 
                 // Partitioned by i (x%2). 24 occurrences of timestamp 3us, 24 of 4us, 2 NULL.
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery("select nv, count(*) cnt from (" +
+                                "select nth_value(val, 2) over (" +
+                                "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
+                                ") group by nv order by nv")
+                        .timestamp("nv")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("""
                                 nv\tcnt
                                 \t2
                                 1970-01-01T00:00:00.000003Z\t24
                                 1970-01-01T00:00:00.000004Z\t24
-                                """,
-                        "select nv, count(*) cnt from (" +
-                                "select nth_value(val, 2) over (" +
-                                "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
-                                ") group by nv order by nv",
-                        "nv",
-                        true,
-                        true
-                );
+                                """);
             });
         } finally {
             node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 1024 * 1024);
@@ -18283,8 +17144,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     ? "insert into tab values (1000, 10), (1100, 20), (1200, 30), (3000, 40), (3100, 50)"
                     : "insert into tab values (1000000, 10), (1100000, 20), (1200000, 30), (3000000, 40), (3100000, 50)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, nth_value(val, 3) over (" +
+                            "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\tnv
                             1970-01-01T00:00:00.001000Z\t
@@ -18300,13 +17166,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.001200000Z\t
                             1970-01-01T00:00:00.003000000Z\t1970-01-01T00:00:00.000030Z
                             1970-01-01T00:00:00.003100000Z\t1970-01-01T00:00:00.000030Z
-                            """,
-                    "select ts, nth_value(val, 3) over (" +
-                            "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -18319,8 +17179,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 100), (2, 200), (3, 300), (4, 400), (5, 500), (6, 600)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over (order by ts rows between 5 preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t
                             1970-01-01T00:00:00.000002Z\t
@@ -18328,12 +17192,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000300Z
-                            """),
-                    "select ts, nth_value(val, 3) over (order by ts rows between 5 preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -18348,8 +17207,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 100), (2, 1, 200), (3, 1, 300), (4, 1, 400), (5, 1, 500), (6, 1, 600), " +
                     "(7, 2, 1000), (8, 2, 2000), (9, 2, 3000), (10, 2, 4000), (11, 2, 5000), (12, 2, 6000)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts rows between 5 preceding and 1 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t
                             1970-01-01T00:00:00.000002Z\t1\t
@@ -18363,13 +17227,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000010Z\t2\t1970-01-01T00:00:00.003000Z
                             1970-01-01T00:00:00.000011Z\t2\t1970-01-01T00:00:00.003000Z
                             1970-01-01T00:00:00.000012Z\t2\t1970-01-01T00:00:00.003000Z
-                            """),
-                    "select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts rows between 5 preceding and 1 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -18384,8 +17242,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 100), (2, 1, 200), (3, 1, 300), (4, 1, 400), " +
                     "(5, 2, 1000), (6, 2, 2000), (7, 2, 3000), (8, 2, 4000)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t
                             1970-01-01T00:00:00.000002Z\t1\t
@@ -18395,13 +17258,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000006Z\t2\t
                             1970-01-01T00:00:00.000007Z\t2\t1970-01-01T00:00:00.003000Z
                             1970-01-01T00:00:00.000008Z\t2\t1970-01-01T00:00:00.003000Z
-                            """),
-                    "select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -18417,8 +17274,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     ? "insert into tab values (1, 100), (1_000_000, 200), (2_000_000, 300)"
                     : "insert into tab values (1_000, 100), (1_000_000_000, 200), (2_000_000_000, 300)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, nth_value(val, 1) over (" +
+                            "order by ts range between 100 microseconds preceding and 50 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t
@@ -18430,13 +17292,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000001000Z\t
                             1970-01-01T00:00:01.000000000Z\t
                             1970-01-01T00:00:02.000000000Z\t
-                            """,
-                    "select ts, nth_value(val, 1) over (" +
-                            "order by ts range between 100 microseconds preceding and 50 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -18450,20 +17306,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 100), (2, 200), (3, 300), (4, 400)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 3) over (" +
+                            "order by ts range between unbounded preceding and unbounded following) nv from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000300Z
                             1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000300Z
-                            """),
-                    "select ts, nth_value(val, 3) over (" +
-                            "order by ts range between unbounded preceding and unbounded following) nv from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -18476,20 +17330,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 100), (2, 1, 200), (3, 1, 300), (4, 2, 400), (5, 2, 500)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select i, nth_value(val, 1) over (partition by i) nv from tab order by i, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             i\tnv
                             1\t1970-01-01T00:00:00.000100Z
                             1\t1970-01-01T00:00:00.000100Z
                             1\t1970-01-01T00:00:00.000100Z
                             2\t1970-01-01T00:00:00.000400Z
                             2\t1970-01-01T00:00:00.000400Z
-                            """,
-                    "select i, nth_value(val, 1) over (partition by i) nv from tab order by i, ts",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -18509,8 +17360,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(1_000, 1, 100), (1_000_000_000, 1, 200), (2_000_000_000, 1, 300), " +
                       "(3_000_000_001, 2, 1000), (4_000_000_001, 2, 2000), (5_000_000_001, 2, 3000)");
 
-            assertQueryNoLeakCheck(
-                    timestampType == TestTimestampType.MICRO
+            assertQuery("select ts, i, nth_value(val, 1) over (" +
+                            "partition by i order by ts " +
+                            "range between 100 microseconds preceding and 50 microseconds preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(timestampType == TestTimestampType.MICRO
                             ? """
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t
@@ -18528,14 +17385,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:03.000000001Z\t2\t
                             1970-01-01T00:00:04.000000001Z\t2\t
                             1970-01-01T00:00:05.000000001Z\t2\t
-                            """,
-                    "select ts, i, nth_value(val, 1) over (" +
-                            "partition by i order by ts " +
-                            "range between 100 microseconds preceding and 50 microseconds preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -18551,8 +17401,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 100), (2, 200), (3, 300), (4, 400), (5, 500), (6, 600)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, nth_value(val, 1) over (" +
+                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t
                             1970-01-01T00:00:00.000002Z\t
@@ -18560,13 +17415,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000100Z
                             1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000100Z
                             1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000100Z
-                            """),
-                    "select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -18580,25 +17429,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values " +
                     "(1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, " +
+                            "ntile(3) over w bucket, " +
+                            "cume_dist() over w cd, " +
+                            "nth_value(val, 1) over w nv " +
+                            "from tab " +
+                            "window w as (order by ts)")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tbucket\tcd\tnv
                             1970-01-01T00:00:00.000001Z\t1\t0.2\t10.0
                             1970-01-01T00:00:00.000002Z\t1\t0.4\t10.0
                             1970-01-01T00:00:00.000003Z\t2\t0.6\t10.0
                             1970-01-01T00:00:00.000004Z\t2\t0.8\t10.0
                             1970-01-01T00:00:00.000005Z\t3\t1.0\t10.0
-                            """),
-                    "select ts, " +
-                            "ntile(3) over w bucket, " +
-                            "cume_dist() over w cd, " +
-                            "nth_value(val, 1) over w nv " +
-                            "from tab " +
-                            "window w as (order by ts)",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -18613,22 +17460,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 10.0), (2, 2, 20.0), (3, 1, 30.0), (4, 2, 40.0), " +
                     "(5, 1, 50.0), (6, 2, 60.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, " +
+                            "ntile(3) over (order by ts) bucket, " +
+                            "cume_dist() over (order by ts) cd, " +
+                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv " +
+                            "from (select * from tab where i = 1)")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tbucket\tcd\tnv
                             1970-01-01T00:00:00.000001Z\t1\t1\t0.3333333333333333\tnull
                             1970-01-01T00:00:00.000003Z\t1\t2\t0.6666666666666666\t30.0
                             1970-01-01T00:00:00.000005Z\t1\t3\t1.0\t30.0
-                            """),
-                    "select ts, i, " +
-                            "ntile(3) over (order by ts) bucket, " +
-                            "cume_dist() over (order by ts) cd, " +
-                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv " +
-                            "from (select * from tab where i = 1)",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -18638,18 +17483,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.5), (2, null), (3, 2.5)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, stddev_pop(j) over (order by ts rows between current row and current row) sd from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tsd
                             1970-01-01T00:00:00.000001Z\t0.0
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\t0.0
-                            """),
-                    "select ts, stddev_pop(j) over (order by ts rows between current row and current row) sd from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -18659,8 +17503,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, null), (2, 1, null), (3, 2, 42.0), (4, 2, null), (5, 3, 1.0), (6, 3, 3.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, stddev_pop(j) over (partition by i) sd from tab order by i, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tsd
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -18668,12 +17514,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t0.0
                             1970-01-01T00:00:00.000005Z\t3\t1.0
                             1970-01-01T00:00:00.000006Z\t3\t1.0
-                            """),
-                    "select ts, i, stddev_pop(j) over (partition by i) sd from tab order by i, ts",
-                    null,
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -19004,12 +17845,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select stddev_pop(j) over (order by ts groups between 1 preceding and current row) from tab",
-                    -1,
-                    "function not implemented for given window parameters",
-                    sqlExecutionContext
-            );
+            assertQuery("select stddev_pop(j) over (order by ts groups between 1 preceding and current row) from tab")
+                    .noLeakCheck()
+                    .failsWith("function not implemented for given window parameters");
         });
     }
 
@@ -19018,12 +17856,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, j double)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select stddev_pop(j) over (order by ts range between 1 microsecond preceding and current row) from nodts",
-                    -1,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select stddev_pop(j) over (order by ts range between 1 microsecond preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .failsWith("RANGE is supported only for queries ordered by designated timestamp");
         });
     }
 
@@ -19187,18 +18022,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.5), (2, null), (3, 2.5)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, stddev_samp(j) over (order by ts rows between current row and current row) sd from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tsd
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\tnull
-                            """),
-                    "select ts, stddev_samp(j) over (order by ts rows between current row and current row) sd from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -19208,8 +18042,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, null), (2, 1, null), (3, 2, 42.0), (4, 2, null), (5, 3, 1.0), (6, 3, 3.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, stddev_samp(j) over (partition by i) sd from tab order by i, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tsd
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull
@@ -19217,12 +18053,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t3\t1.4142135623730951
                             1970-01-01T00:00:00.000006Z\t3\t1.4142135623730951
-                            """),
-                    "select ts, i, stddev_samp(j) over (partition by i) sd from tab order by i, ts",
-                    null,
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -19404,12 +18235,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select stddev_samp(j) over (order by ts groups between 1 preceding and current row) from tab",
-                    -1,
-                    "function not implemented for given window parameters",
-                    sqlExecutionContext
-            );
+            assertQuery("select stddev_samp(j) over (order by ts groups between 1 preceding and current row) from tab")
+                    .noLeakCheck()
+                    .failsWith("function not implemented for given window parameters");
         });
     }
 
@@ -19418,12 +18246,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, j double)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select stddev_samp(j) over (order by ts range between 1 microsecond preceding and current row) from nodts",
-                    -1,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select stddev_samp(j) over (order by ts range between 1 microsecond preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .failsWith("RANGE is supported only for queries ordered by designated timestamp");
         });
     }
 
@@ -19518,18 +18343,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.5), (2, null), (3, 2.5)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, var_pop(j) over (order by ts rows between current row and current row) vr from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tvr
                             1970-01-01T00:00:00.000001Z\t0.0
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\t0.0
-                            """),
-                    "select ts, var_pop(j) over (order by ts rows between current row and current row) vr from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -19605,12 +18429,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, j double)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select var_pop(j) over (order by ts range between 1 microsecond preceding and current row) from nodts",
-                    -1,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select var_pop(j) over (order by ts range between 1 microsecond preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .failsWith("RANGE is supported only for queries ordered by designated timestamp");
         });
     }
 
@@ -19619,12 +18440,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select var_pop(j) over (order by ts groups between 1 preceding and current row) from tab",
-                    -1,
-                    "function not implemented for given window parameters",
-                    sqlExecutionContext
-            );
+            assertQuery("select var_pop(j) over (order by ts groups between 1 preceding and current row) from tab")
+                    .noLeakCheck()
+                    .failsWith("function not implemented for given window parameters");
         });
     }
 
@@ -19657,18 +18475,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1.5), (2, null), (3, 2.5)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, var_samp(j) over (order by ts rows between current row and current row) vr from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\tvr
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\tnull
-                            """),
-                    "select ts, var_samp(j) over (order by ts rows between current row and current row) vr from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -19717,12 +18534,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select var_samp(j) over (order by ts groups between 1 preceding and current row) from tab",
-                    -1,
-                    "function not implemented for given window parameters",
-                    sqlExecutionContext
-            );
+            assertQuery("select var_samp(j) over (order by ts groups between 1 preceding and current row) from tab")
+                    .noLeakCheck()
+                    .failsWith("function not implemented for given window parameters");
         });
     }
 
@@ -19731,19 +18545,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, j double)", timestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "select var_samp(j) over (order by ts range between 1 microsecond preceding and current row) from nodts",
-                    -1,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select var_samp(j) over (order by ts range between 1 microsecond preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .failsWith("RANGE is supported only for queries ordered by designated timestamp");
 
-            assertExceptionNoLeakCheck(
-                    "select variance(j) over (order by ts range between 1 microsecond preceding and current row) from nodts",
-                    -1,
-                    "RANGE is supported only for queries ordered by designated timestamp",
-                    sqlExecutionContext
-            );
+            assertQuery("select variance(j) over (order by ts range between 1 microsecond preceding and current row) from nodts")
+                    .noLeakCheck()
+                    .failsWith("RANGE is supported only for queries ordered by designated timestamp");
         });
     }
 
@@ -19801,86 +18609,56 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 execute("insert into tab select x::timestamp, 1, x, x*2::double, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(100000)");
 
                 //TODO: improve error message and position
-                assertExceptionNoLeakCheck(
-                        "select avg(j) over (partition by i rows between 100001 preceding and current row) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
+                assertQuery("select avg(j) over (partition by i rows between 100001 preceding and current row) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
 
-                assertExceptionNoLeakCheck(
-                        "select sum(j) over (partition by i rows between 100001 preceding and current row) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
+                assertQuery("select sum(j) over (partition by i rows between 100001 preceding and current row) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
 
-                assertExceptionNoLeakCheck(
-                        "select first_value(j) over (partition by i rows between 100001 preceding and current row) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
+                assertQuery("select first_value(j) over (partition by i rows between 100001 preceding and current row) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
 
-                assertExceptionNoLeakCheck(
-                        "select first_value(j) ignore nulls over (partition by i rows between 100001 preceding and current row) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
+                assertQuery("select first_value(j) ignore nulls over (partition by i rows between 100001 preceding and current row) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
 
-                assertExceptionNoLeakCheck(
-                        "select last_value(j) ignore nulls over (partition by i rows between 100001 preceding and current row) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
+                assertQuery("select last_value(j) ignore nulls over (partition by i rows between 100001 preceding and current row) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
 
-                assertExceptionNoLeakCheck(
-                        "select count(j) over (partition by i rows between 100001 preceding and current row) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
-                assertExceptionNoLeakCheck(
-                        "select count(s) over (partition by i rows between 100001 preceding and current row) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
-                assertExceptionNoLeakCheck(
-                        "select count(d) over (partition by i rows between 100001 preceding and current row) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
-                assertExceptionNoLeakCheck(
-                        "select count(c) over (partition by i rows between 100001 preceding and current row) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
-                assertExceptionNoLeakCheck(
-                        "select max(j) over (partition by i rows between 100001 preceding and current row) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
-                assertExceptionNoLeakCheck(
-                        "select min(j) over (partition by i rows between 100001 preceding and current row) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
-                assertExceptionNoLeakCheck(
-                        "select lag(j, 1000001) over(partition by i) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
-                assertExceptionNoLeakCheck(
-                        "select lead(j, 1000001) over(partition by i) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
-                assertExceptionNoLeakCheck(
-                        "select lag(j, 1000001) ignore nulls over(partition by i) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
-                assertExceptionNoLeakCheck(
-                        "select lead(j, 1000001) ignore nulls over(partition by i) from tab",
-                        0,
-                        "Maximum number of pages (10) breached in VirtualMemory"
-                );
+                assertQuery("select count(j) over (partition by i rows between 100001 preceding and current row) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
+                assertQuery("select count(s) over (partition by i rows between 100001 preceding and current row) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
+                assertQuery("select count(d) over (partition by i rows between 100001 preceding and current row) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
+                assertQuery("select count(c) over (partition by i rows between 100001 preceding and current row) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
+                assertQuery("select max(j) over (partition by i rows between 100001 preceding and current row) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
+                assertQuery("select min(j) over (partition by i rows between 100001 preceding and current row) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
+                assertQuery("select lag(j, 1000001) over(partition by i) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
+                assertQuery("select lead(j, 1000001) over(partition by i) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
+                assertQuery("select lag(j, 1000001) ignore nulls over(partition by i) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
+                assertQuery("select lead(j, 1000001) ignore nulls over(partition by i) from tab")
+                        .noLeakCheck()
+                        .fails(0, "Maximum number of pages (10) breached in VirtualMemory");
             });
         } finally {
             // disable
@@ -20499,64 +19277,56 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowFunctionAsArgumentToAggregateWithBaseColumnAndGroupBy() throws Exception {
         // Base column mixed with window function inside aggregate argument with GROUP BY.
         // max(x - avg(x) OVER (...)) computes max deviation from the moving average per category.
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
-                        category\tmax_dev
-                        A\t0.5
-                        B\t0.5
-                        """,
-                "SELECT category, max(x - avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS max_dev " +
-                        "FROM tab GROUP BY category ORDER BY category",
-                "CREATE TABLE tab AS (" +
+        assertMemoryLeak(() -> assertQuery("SELECT category, max(x - avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS max_dev " +
+                        "FROM tab GROUP BY category ORDER BY category")
+        .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        ));
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+        .expectSize()
+        .noLeakCheck()
+        .returns("""
+                        category\tmax_dev
+                        A\t0.5
+                        B\t0.5
+                        """));
     }
 
     @Test
     public void testWindowFunctionAsArgumentToAggregateWithBaseColumnImplicitGroupBy() throws Exception {
         // Base column mixed with window function inside aggregate, no GROUP BY clause.
         // sum triggers implicit grouping; x needs pass-through in the inner window model.
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
-                        result
-                        20.0
-                        """,
-                "SELECT sum(x + avg(x) OVER ()) AS result FROM tab",
-                "CREATE TABLE tab AS (" +
+        assertMemoryLeak(() -> assertQuery("SELECT sum(x + avg(x) OVER ()) AS result FROM tab")
+        .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                false,
-                true
-        ));
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+        .noRandomAccess()
+        .expectSize()
+        .noLeakCheck()
+        .returns("""
+                        result
+                        20.0
+                        """));
     }
 
     @Test
     public void testWindowFunctionAsArgumentToAggregateWithBasicGroupBy() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
-                        category\tresult
-                        A\t5.0
-                        B\t5.0
-                        """,
-                "SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category",
-                "CREATE TABLE tab AS (" +
+        assertMemoryLeak(() -> assertQuery("SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category")
+        .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        ));
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+        .expectSize()
+        .noLeakCheck()
+        .returns("""
+                        category\tresult
+                        A\t5.0
+                        B\t5.0
+                        """));
     }
 
     @Test
@@ -20564,23 +19334,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Window function inside aggregate argument with explicit GROUP BY.
         // max(avg(x) OVER (PARTITION BY cat ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW))
         // computes a 3-row moving average per category, then picks the peak per category.
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
-                        category\tpeak_ma
-                        A\t1.5
-                        B\t3.5
-                        """,
-                "SELECT category, max(avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS peak_ma " +
-                        "FROM tab GROUP BY category ORDER BY category",
-                "CREATE TABLE tab AS (" +
+        assertMemoryLeak(() -> assertQuery("SELECT category, max(avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS peak_ma " +
+                        "FROM tab GROUP BY category ORDER BY category")
+        .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        ));
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+        .expectSize()
+        .noLeakCheck()
+        .returns("""
+                        category\tpeak_ma
+                        A\t1.5
+                        B\t3.5
+                        """));
     }
 
     @Test
@@ -20589,23 +19356,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // avg(x) OVER () computes over non-null values: (1+2+3+4)/4 = 2.5
         // Row 5 has x=NULL, category=B; avg(x) OVER () still returns 2.5 for that row.
         // sum per category: A(2 rows)=5.0, B(3 rows)=7.5
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
-                        category\tresult
-                        A\t5.0
-                        B\t7.5
-                        """,
-                "SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category",
-                "CREATE TABLE tab AS (" +
+        assertMemoryLeak(() -> assertQuery("SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category")
+        .ddl("CREATE TABLE tab AS (" +
                         "SELECT CASE WHEN x = 5 THEN NULL ELSE x::DOUBLE END AS x, " +
                         "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(5)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        ));
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+        .expectSize()
+        .noLeakCheck()
+        .returns("""
+                        category\tresult
+                        A\t5.0
+                        B\t7.5
+                        """));
     }
 
     @Test
@@ -20613,23 +19377,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // GROUP BY on a non-aggregate expression (upper(cat)) combined with a nested
         // window inside an aggregate. The inner window model must expose the underlying
         // literal (cat), not the GROUP BY alias (upper_cat).
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
-                        upper_cat\tresult
-                        A\t5.0
-                        B\t5.0
-                        """,
-                "SELECT upper(cat) AS upper_cat, sum(avg(x) OVER ()) AS result " +
-                        "FROM tab GROUP BY upper(cat) ORDER BY upper_cat",
-                "CREATE TABLE tab AS (" +
+        assertMemoryLeak(() -> assertQuery("SELECT upper(cat) AS upper_cat, sum(avg(x) OVER ()) AS result " +
+                        "FROM tab GROUP BY upper(cat) ORDER BY upper_cat")
+        .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'a' ELSE 'b' END AS cat, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        ));
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+        .expectSize()
+        .noLeakCheck()
+        .returns("""
+                        upper_cat\tresult
+                        A\t5.0
+                        B\t5.0
+                        """));
     }
 
     @Test
@@ -20638,51 +19399,45 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Extraction creates two inner window models (one per nested window). Pass-through of
         // one window's alias must only reach outer models that have the owning model in their
         // nested chain, not the deeper one (which would produce an unresolvable column).
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
-                        category\tmax_avg\tmin_sum
-                        A\t1.5\t3.0
-                        B\t3.5\t7.0
-                        """,
-                "SELECT category, " +
+        assertMemoryLeak(() -> assertQuery("SELECT category, " +
                         "max(avg(x) OVER (PARTITION BY category)) AS max_avg, " +
                         "min(sum(x) OVER (PARTITION BY category)) AS min_sum " +
-                        "FROM tab GROUP BY category ORDER BY category",
-                "CREATE TABLE tab AS (" +
+                        "FROM tab GROUP BY category ORDER BY category")
+        .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        ));
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+        .expectSize()
+        .noLeakCheck()
+        .returns("""
+                        category\tmax_avg\tmin_sum
+                        A\t1.5\t3.0
+                        B\t3.5\t7.0
+                        """));
     }
 
     @Test
     public void testWindowFunctionAsArgumentToAggregateWithMultipleGroupByKeys() throws Exception {
         // Multiple GROUP BY keys must all get pass-through columns in the inner window model.
         // avg(x) OVER () = (1+2+3+4)/4 = 2.5, each (cat1, cat2) group has 1 row → sum(2.5) = 2.5
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
-                        cat1\tcat2\tresult
-                        A\tX\t2.5
-                        A\tY\t2.5
-                        B\tX\t2.5
-                        B\tY\t2.5
-                        """,
-                "SELECT cat1, cat2, sum(avg(x) OVER ()) AS result FROM tab GROUP BY cat1, cat2 ORDER BY cat1, cat2",
-                "CREATE TABLE tab AS (" +
+        assertMemoryLeak(() -> assertQuery("SELECT cat1, cat2, sum(avg(x) OVER ()) AS result FROM tab GROUP BY cat1, cat2 ORDER BY cat1, cat2")
+        .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, " +
                         "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS cat1, " +
                         "CASE WHEN x % 2 = 1 THEN 'X' ELSE 'Y' END AS cat2, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        ));
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+        .expectSize()
+        .noLeakCheck()
+        .returns("""
+                        cat1\tcat2\tresult
+                        A\tX\t2.5
+                        A\tY\t2.5
+                        B\tX\t2.5
+                        B\tY\t2.5
+                        """));
     }
 
     @Test
@@ -20690,51 +19445,45 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Three aggregates, each with a distinct nested window, stressing the chain when
         // nInner > 2: pass-through must reach intermediate models without leaking window
         // aliases into models that can't resolve them.
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
-                        category\tmax_avg\tmin_sum\tavg_cnt
-                        A\t1.5\t3.0\t2.0
-                        B\t3.5\t7.0\t2.0
-                        """,
-                "SELECT category, " +
+        assertMemoryLeak(() -> assertQuery("SELECT category, " +
                         "max(avg(x) OVER (PARTITION BY category)) AS max_avg, " +
                         "min(sum(x) OVER (PARTITION BY category)) AS min_sum, " +
                         "avg(count(x) OVER (PARTITION BY category)) AS avg_cnt " +
-                        "FROM tab GROUP BY category ORDER BY category",
-                "CREATE TABLE tab AS (" +
+                        "FROM tab GROUP BY category ORDER BY category")
+        .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        ));
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+        .expectSize()
+        .noLeakCheck()
+        .returns("""
+                        category\tmax_avg\tmin_sum\tavg_cnt
+                        A\t1.5\t3.0\t2.0
+                        B\t3.5\t7.0\t2.0
+                        """));
     }
 
     @Test
     public void testWindowFunctionAsArgumentToAggregateWithPartitionByNotInGroupBy() throws Exception {
         // Window PARTITION BY uses a column (cat2) that is NOT a GROUP BY key (cat1).
         // Inner window model must expose both columns so the chain resolves them.
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
-                        cat1\tpeak
-                        A\t3.0
-                        B\t3.0
-                        """,
-                "SELECT cat1, max(avg(x) OVER (PARTITION BY cat2)) AS peak " +
-                        "FROM tab GROUP BY cat1 ORDER BY cat1",
-                "CREATE TABLE tab AS (" +
+        assertMemoryLeak(() -> assertQuery("SELECT cat1, max(avg(x) OVER (PARTITION BY cat2)) AS peak " +
+                        "FROM tab GROUP BY cat1 ORDER BY cat1")
+        .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, " +
                         "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS cat1, " +
                         "CASE WHEN x % 2 = 1 THEN 'X' ELSE 'Y' END AS cat2, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        ));
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+        .expectSize()
+        .noLeakCheck()
+        .returns("""
+                        cat1\tpeak
+                        A\t3.0
+                        B\t3.0
+                        """));
     }
 
     @Test
@@ -20742,23 +19491,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Reproduces the shape from issue #6954: the original bug report used a SYMBOL
         // column as the GROUP BY key. SYMBOL resolution goes through a distinct code path
         // from STRING, so this guards against a regression specific to that type.
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
-                        category\tresult
-                        A\t5.0
-                        B\t5.0
-                        """,
-                "SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category",
-                "CREATE TABLE tab AS (" +
+        assertMemoryLeak(() -> assertQuery("SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category")
+        .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, " +
                         "(CASE WHEN x <= 2 THEN 'A' ELSE 'B' END)::SYMBOL AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                true,
-                true
-        ));
+                        ") TIMESTAMP(ts) PARTITION BY DAY")
+        .expectSize()
+        .noLeakCheck()
+        .returns("""
+                        category\tresult
+                        A\t5.0
+                        B\t5.0
+                        """));
     }
 
     @Test
@@ -20844,21 +19590,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by day", sqlExecutionContext);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select symbol, price, row_number() over (partition by symbol order by price) " +
+                            "from trades")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             symbol\tprice\trow_number
                             BB\t1\t1
                             CC\t2\t2
                             AA\t2\t1
                             CC\t1\t1
                             BB\t2\t2
-                            """,
-                    "select symbol, price, row_number() over (partition by symbol order by price) " +
-                            "from trades",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // WindowContext should be properly clean up when we try to execute the next query.
             for (String function : WINDOW_ONLY_FUNCTIONS) {
@@ -21434,18 +20177,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 for (String column : FRAME_FUNCTIONS_PARAMETER_COLUMN_NAME[i]) {
                     if (!func.contains("first_value") && !func.contains("last_value")) {
                         String query1 = "select #FUNCT_NAME IGNORE NULLS over () from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column);
-                        assertExceptionNoLeakCheck(
-                                query1,
-                                36,
-                                "RESPECT/IGNORE NULLS is not supported for current window function"
-                        );
+                        assertQuery(query1)
+                                .noLeakCheck()
+                                .fails(36, "RESPECT/IGNORE NULLS is not supported for current window function");
 
                         String query2 = "select #FUNCT_NAME RESPECT NULLS over () from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column);
-                        assertExceptionNoLeakCheck(
-                                query2,
-                                36,
-                                "RESPECT/IGNORE NULLS is not supported for current window function"
-                        );
+                        assertQuery(query2)
+                                .noLeakCheck()
+                                .fails(36, "RESPECT/IGNORE NULLS is not supported for current window function");
                     }
                 }
             }
@@ -21573,11 +20312,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             // Base window 'nonexistent' is not defined
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) OVER w2 FROM t WINDOW w2 AS (nonexistent ORDER BY ts)",
-                    43,
-                    "window 'nonexistent' is not defined"
-            );
+            assertQuery("SELECT sum(x) OVER w2 FROM t WINDOW w2 AS (nonexistent ORDER BY ts)")
+                    .noLeakCheck()
+                    .fails(43, "window 'nonexistent' is not defined");
         });
     }
 
@@ -21590,19 +20327,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 2000000)");
 
             // w2 inherits everything from w1 without adding anything
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum
                             1.0
                             3.0
                             6.0
-                            """,
-                    "SELECT sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -21615,19 +20350,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 2000000)");
 
             // w2 inherits ORDER BY from w1 and adds its own frame
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum
                             1.0
                             3.0
                             5.0
-                            """,
-                    "SELECT sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -21641,22 +20374,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (4, 'B', 3000000)");
 
             // Chained: w3 inherits from w2, which inherits from w1
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, category, sum(x) OVER w3 as sum FROM t " +
+                            "WINDOW w1 AS (PARTITION BY category), " +
+                            "w2 AS (w1 ORDER BY ts), " +
+                            "w3 AS (w2 ROWS BETWEEN CURRENT ROW AND CURRENT ROW)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tcategory\tsum
                             1\tA\t1.0
                             2\tB\t2.0
                             3\tA\t3.0
                             4\tB\t4.0
-                            """,
-                    "SELECT x, category, sum(x) OVER w3 as sum FROM t " +
-                            "WINDOW w1 AS (PARTITION BY category), " +
-                            "w2 AS (w1 ORDER BY ts), " +
-                            "w3 AS (w2 ROWS BETWEEN CURRENT ROW AND CURRENT ROW)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -21667,11 +20398,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Circular reference: w1 references w2, w2 references w1
             // w1 is parsed first, references w2 which doesn't exist yet -> forward reference error
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) OVER w1 FROM t WINDOW w1 AS (w2), w2 AS (w1)",
-                    43,
-                    "window 'w2' is not defined"
-            );
+            assertQuery("SELECT sum(x) OVER w1 FROM t WINDOW w1 AS (w2), w2 AS (w1)")
+                    .noLeakCheck()
+                    .fails(43, "window 'w2' is not defined");
         });
     }
 
@@ -21681,11 +20410,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             // Forward reference: w1 references w2 which is defined later
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) OVER w1 FROM t WINDOW w1 AS (w2 ORDER BY ts), w2 AS (ORDER BY ts)",
-                    43,
-                    "window 'w2' is not defined"
-            );
+            assertQuery("SELECT sum(x) OVER w1 FROM t WINDOW w1 AS (w2 ORDER BY ts), w2 AS (ORDER BY ts)")
+                    .noLeakCheck()
+                    .fails(43, "window 'w2' is not defined");
         });
     }
 
@@ -21698,21 +20425,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 2000000)");
 
             // Window inheritance inside a subquery
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM (" +
+                            "SELECT x, sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)" +
+                            ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum
                             1\t1.0
                             2\t3.0
                             3\t5.0
-                            """,
-                    "SELECT * FROM (" +
-                            "SELECT x, sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)" +
-                            ")",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -21725,19 +20450,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 2000000)");
 
             // Multiple functions sharing the inherited window
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(x) OVER w2 as s, avg(x) OVER w2 as a FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             s\ta
                             1.0\t1.0
                             3.0\t1.5
                             6.0\t2.0
-                            """,
-                    "SELECT sum(x) OVER w2 as s, avg(x) OVER w2 as a FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -21750,20 +20473,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 2000000)");
 
             // w2 inherits ORDER BY from w1 but overrides frame
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), " +
+                            "w2 AS (w1 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sum
                             1.0
                             3.0
                             6.0
-                            """,
-                    "SELECT sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), " +
-                            "w2 AS (w1 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -21776,19 +20497,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, 2000000)");
 
             // w2 inherits from w1 but overrides ORDER BY with its own
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ORDER BY ts DESC)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tsum
                             1\t6.0
                             2\t5.0
                             3\t3.0
-                            """,
-                    "SELECT x, sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ORDER BY ts DESC)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -21802,20 +20520,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (4, 'B', 3000000)");
 
             // w1 provides PARTITION BY, w2 adds ORDER BY on top
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, category, sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (PARTITION BY category), w2 AS (w1 ORDER BY ts)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tcategory\tsum
                             1\tA\t1.0
                             2\tB\t2.0
                             3\tA\t4.0
                             4\tB\t6.0
-                            """,
-                    "SELECT x, category, sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (PARTITION BY category), w2 AS (w1 ORDER BY ts)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -21825,12 +20541,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
 
             // SQL standard: PARTITION BY not allowed in child window when base is specified
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(x) OVER w2 FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 PARTITION BY category)",
-                    67,
-                    "PARTITION BY not allowed in window referencing another window"
-            );
+            assertQuery("SELECT sum(x) OVER w2 FROM t " +
+                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 PARTITION BY category)")
+                    .noLeakCheck()
+                    .fails(67, "PARTITION BY not allowed in window referencing another window");
         });
     }
 
@@ -21844,21 +20558,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (4, 'B', 3000000)");
 
             // w1 provides PARTITION BY + ORDER BY, w2 adds frame
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x, category, sum(x) OVER w2 as sum FROM t " +
+                            "WINDOW w1 AS (PARTITION BY category ORDER BY ts), " +
+                            "w2 AS (w1 ROWS BETWEEN CURRENT ROW AND CURRENT ROW)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             x\tcategory\tsum
                             1\tA\t1.0
                             2\tB\t2.0
                             3\tA\t3.0
                             4\tB\t4.0
-                            """,
-                    "SELECT x, category, sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (PARTITION BY category ORDER BY ts), " +
-                            "w2 AS (w1 ROWS BETWEEN CURRENT ROW AND CURRENT ROW)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -21958,11 +20670,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "'over' expected");
                     }
                 } else {
-                    assertExceptionNoLeakCheck(
-                            "select #FUNCT_NAME, * from trades".replace("#FUNCT_NAME", function),
-                            7,
-                            "window function called in non-window context, make sure to add OVER clause"
-                    );
+                    assertQuery("select #FUNCT_NAME, * from trades".replace("#FUNCT_NAME", function))
+                            .noLeakCheck()
+                            .fails(7, "window function called in non-window context, make sure to add OVER clause");
                 }
             }
         });
@@ -22268,17 +20978,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Without the cume_dist OVER (ORDER BY ts) column, this query would route to the
             // streaming Window plan and the no-ORDER variant's pass1() would also be skipped;
             // pinning both cume_dist shapes in one SELECT exercises both pass1 paths.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
-                            ts\tcd\tcd_no\tnv1\tnv2\tnv3\tnv4\tnv5\tnv6\tnv7\tnv8
-                            1970-01-01T00:00:00.000001Z\t0.16666666666666666\t1.0\t10.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0.3333333333333333\t1.0\t20.0\t20.0\t20.0\t10.0\t20.0\t20.0\tnull\t20.0
-                            1970-01-01T00:00:00.000003Z\t0.5\t1.0\t30.0\t20.0\t20.0\t10.0\t20.0\t20.0\t20.0\t20.0
-                            1970-01-01T00:00:00.000004Z\t0.6666666666666666\t1.0\t40.0\tnull\tnull\tnull\t20.0\t30.0\t20.0\tnull
-                            1970-01-01T00:00:00.000005Z\t0.8333333333333334\t1.0\t50.0\t50.0\t50.0\t40.0\t20.0\t40.0\t20.0\t50.0
-                            1970-01-01T00:00:00.000006Z\t1.0\t1.0\t60.0\t50.0\t50.0\t40.0\t20.0\t50.0\t20.0\t50.0
-                            """),
-                    "select ts, " +
+            assertQuery("select ts, " +
                             "cume_dist() over (order by ts) cd, " +
                             "cume_dist() over (partition by i) cd_no, " +
                             "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
@@ -22289,11 +20989,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "nth_value(val, 2) over (order by ts rows between 2 preceding and current row) nv6, " +
                             "nth_value(val, 2) over (order by ts rows between unbounded preceding and 1 preceding) nv7, " +
                             "nth_value(val, 2) over (partition by i order by ts) nv8 " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            "from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\tcd\tcd_no\tnv1\tnv2\tnv3\tnv4\tnv5\tnv6\tnv7\tnv8
+                            1970-01-01T00:00:00.000001Z\t0.16666666666666666\t1.0\t10.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0.3333333333333333\t1.0\t20.0\t20.0\t20.0\t10.0\t20.0\t20.0\tnull\t20.0
+                            1970-01-01T00:00:00.000003Z\t0.5\t1.0\t30.0\t20.0\t20.0\t10.0\t20.0\t20.0\t20.0\t20.0
+                            1970-01-01T00:00:00.000004Z\t0.6666666666666666\t1.0\t40.0\tnull\tnull\tnull\t20.0\t30.0\t20.0\tnull
+                            1970-01-01T00:00:00.000005Z\t0.8333333333333334\t1.0\t50.0\t50.0\t50.0\t40.0\t20.0\t40.0\t20.0\t50.0
+                            1970-01-01T00:00:00.000006Z\t1.0\t1.0\t60.0\t50.0\t50.0\t40.0\t20.0\t50.0\t20.0\t50.0
+                            """));
         });
     }
 
