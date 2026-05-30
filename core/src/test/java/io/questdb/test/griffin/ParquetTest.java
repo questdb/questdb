@@ -281,9 +281,13 @@ public class ParquetTest extends AbstractCairoTest {
         });
     }
 
-    // Regression for a parquet read crash when the query projects ZERO columns.
+    // Guards an AssertionError introduced by this PR's own hoist of remapColumns()
+    // when the query projects ZERO columns. This passes on master: there
+    // remapColumns() is never called for a zero-column projection, so master never
+    // trips the assert. The hoist makes remapColumns() always run, which is what
+    // exposes the zero-column case.
     //
-    // PageFrameMemoryPool.ParquetBuffers.decode() always calls remapColumns() to
+    // PageFrameMemoryPool.ParquetBuffers.decode() now always calls remapColumns() to
     // size and zero the per-column page-address lists. When the projection has no
     // columns, addressCache.getColumnCount() is 0, so remapColumns() would size the
     // lists to 0 and trip DirectLongList.setCapacity()'s assert capacity > 0 (or,
@@ -1937,8 +1941,8 @@ public class ParquetTest extends AbstractCairoTest {
         });
     }
 
-    // Red regression for a parquet column-top SIGSEGV (originally surfaced by
-    // BackupFuzzTest.testMatViewRefreshAfterBackup as a crash in
+    // Regression test (red on master) for a parquet column-top SIGSEGV (originally
+    // surfaced by BackupFuzzTest.testMatViewRefreshAfterBackup as a crash in
     // PageFrameMemoryRecord.getSymA over a PARQUET frame). SYMBOL reads through the
     // data vector only (getSymA gates on pageAddresses), so this variant exercises
     // the data-vector zeroing. See the VARCHAR variant for the aux-vector path.
