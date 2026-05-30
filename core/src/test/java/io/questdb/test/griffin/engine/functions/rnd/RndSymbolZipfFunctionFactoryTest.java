@@ -137,11 +137,8 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
     @Test
     public void testInsufficientArgs() throws Exception {
         // Need at least 2 arguments: one symbol and alpha
-        assertException(
-                "select rnd_symbol_zipf('AAPL') as testCol from long_sequence(10)",
-                7,
-                "expected at least 2 arguments: symbol list and alpha parameter"
-        );
+        assertQuery("select rnd_symbol_zipf('AAPL') as testCol from long_sequence(10)")
+                .fails(7, "expected at least 2 arguments: symbol list and alpha parameter");
     }
 
     @Test
@@ -166,11 +163,8 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testNegativeAlpha() throws Exception {
-        assertException(
-                "select rnd_symbol_zipf('AAPL', 'MSFT', -1.0) as testCol from long_sequence(10)",
-                39,
-                "alpha must be positive"
-        );
+        assertQuery("select rnd_symbol_zipf('AAPL', 'MSFT', -1.0) as testCol from long_sequence(10)")
+                .fails(39, "alpha must be positive");
     }
 
     @Test
@@ -271,11 +265,8 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testZeroAlpha() throws Exception {
-        assertException(
-                "select rnd_symbol_zipf('AAPL', 'MSFT', 0.0) as testCol from long_sequence(10)",
-                39,
-                "alpha must be positive"
-        );
+        assertQuery("select rnd_symbol_zipf('AAPL', 'MSFT', 0.0) as testCol from long_sequence(10)")
+                .fails(39, "alpha must be positive");
     }
 
     @Override

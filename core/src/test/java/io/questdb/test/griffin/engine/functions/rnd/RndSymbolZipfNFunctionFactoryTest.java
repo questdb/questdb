@@ -137,11 +137,8 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
     @Test
     public void testInsufficientArgs() throws Exception {
         // Need exactly 2 arguments: symbol count and alpha
-        assertException(
-                "select rnd_symbol_zipf(10) as testCol from long_sequence(10)",
-                7,
-                "expected at least 2 arguments: symbol list and alpha parameter"
-        );
+        assertQuery("select rnd_symbol_zipf(10) as testCol from long_sequence(10)")
+                .fails(7, "expected at least 2 arguments: symbol list and alpha parameter");
     }
 
     @Test
@@ -185,29 +182,20 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
 
     @Test
     public void testNanAlpha() throws Exception {
-        assertException(
-                "select rnd_symbol_zipf(1_000_000, nan)",
-                23,
-                "non-null value expected"
-        );
+        assertQuery("select rnd_symbol_zipf(1_000_000, nan)")
+                .fails(23, "non-null value expected");
     }
 
     @Test
     public void testNegativeAlpha() throws Exception {
-        assertException(
-                "select rnd_symbol_zipf(5, -1.0) as testCol from long_sequence(10)",
-                26,
-                "alpha must be positive"
-        );
+        assertQuery("select rnd_symbol_zipf(5, -1.0) as testCol from long_sequence(10)")
+                .fails(26, "alpha must be positive");
     }
 
     @Test
     public void testNegativeSymbolCount() throws Exception {
-        assertException(
-                "select rnd_symbol_zipf(-5, 1.5) as testCol from long_sequence(10)",
-                23,
-                "symbol count must be positive"
-        );
+        assertQuery("select rnd_symbol_zipf(-5, 1.5) as testCol from long_sequence(10)")
+                .fails(23, "symbol count must be positive");
     }
 
     @Test
@@ -228,20 +216,14 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
 
     @Test
     public void testZeroAlpha() throws Exception {
-        assertException(
-                "select rnd_symbol_zipf(5, 0.0) as testCol from long_sequence(10)",
-                26,
-                "alpha must be positive"
-        );
+        assertQuery("select rnd_symbol_zipf(5, 0.0) as testCol from long_sequence(10)")
+                .fails(26, "alpha must be positive");
     }
 
     @Test
     public void testZeroSymbolCount() throws Exception {
-        assertException(
-                "select rnd_symbol_zipf(0, 1.5) as testCol from long_sequence(10)",
-                23,
-                "symbol count must be positive"
-        );
+        assertQuery("select rnd_symbol_zipf(0, 1.5) as testCol from long_sequence(10)")
+                .fails(23, "symbol count must be positive");
     }
 
     @Override
