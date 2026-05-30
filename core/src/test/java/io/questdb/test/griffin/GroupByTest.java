@@ -1317,8 +1317,10 @@ public class GroupByTest extends AbstractCairoTest {
             execute("CREATE TABLE t (v INT) ");
             execute("INSERT INTO t VALUES (1), (2), (3)");
             assertQueryNoLeakCheck(
-                    "e0\ta0\n" +
-                            "null\t2.0\n",
+                    """
+                            e0\ta0
+                            null\t2.0
+                            """,
                     "SELECT null AS e0, avg(v) AS a0 FROM t GROUP BY 1",
                     null,
                     true,
@@ -1328,9 +1330,11 @@ public class GroupByTest extends AbstractCairoTest {
             execute("CREATE TABLE t2 (k INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10), (1, 20), (2, 30)");
             assertQueryNoLeakCheck(
-                    "e0\tk\ta\n" +
-                            "null\t1\t15.0\n" +
-                            "null\t2\t30.0\n",
+                    """
+                            e0\tk\ta
+                            null\t1\t15.0
+                            null\t2\t30.0
+                            """,
                     "SELECT null AS e0, k, avg(v) AS a FROM t2 GROUP BY 1, k ORDER BY k",
                     null,
                     true,
@@ -3028,8 +3032,10 @@ public class GroupByTest extends AbstractCairoTest {
             bindVariableService.setStr("b0", "KNWL");
 
             assertQueryNoLeakCheck(
-                    "k\tcnt\n" +
-                            "A\t1\n",
+                    """
+                            k\tcnt
+                            A\t1
+                            """,
                     "SELECT * FROM (SELECT sym AS k, count() AS cnt FROM t)\n" +
                             "WHERE (cnt IS NOT NULL) AND (:b0::VARCHAR != 'UX')",
                     null,
