@@ -174,7 +174,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         SampleByFillCursor cursorLocal;
         try {
             if (keyColIndices.size() > 0) {
-                keysMap = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
+                // Lazy variant (openOnInit=false): the native backing is allocated by the
+                // first reopen() in the cursor's of(), after the per-query MemoryTracker is
+                // bound, so the map's malloc and the matching free at cursor close balance
+                // on the per-query counter. Mirrors the AbstractSampleByFillRecordCursorFactory
+                // idiom from PR 3.2.
+                keysMap = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes, false);
             } else if (fixedPrevSrcCols.size() > 0) {
                 // Non-keyed with at least one fixed-size FILL_PREV source: cache
                 // the prev row in a SimpleMapValue so the gap-emit path reads
@@ -353,7 +358,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private boolean isEmittingFills;
         private boolean isInitialized;
         private final boolean isKeyed;
-        private boolean isOpen = true;
+        // Starts closed: the keyed keysMap is built lazily (openOnInit=false), so the
+        // first of() must reopen it under the bound MemoryTracker. close() flips this
+        // back to false and frees the map, so the next of() reopens again.
+        private boolean isOpen;
         // True when the recordAt-based PREV path is reachable: any FILL_PREV
         // output column reads a variable-width source (VARCHAR/BIN/STRING/ARRAY),
         // or non-keyed FILL_PREV is in use (no MapValue cache available).
@@ -960,6 +968,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
             this.baseCursor = baseCursor;
             this.baseRecord = baseCursor.getRecord();
+            if (isKeyed) {
+                // Bind the active workload's MemoryTracker before reopen() so the keysMap's
+                // initial allocation is charged to it; the matching free at cursor close keeps
+                // the per-query counter balanced. Rebound on every of() because the same pooled
+                // cursor serves many queries, each with its own tracker.
+                keysMap.setMemoryTracker(executionContext.getMemoryTracker());
+            }
             if (!isOpen) {
                 isOpen = true;
                 if (isKeyed) {

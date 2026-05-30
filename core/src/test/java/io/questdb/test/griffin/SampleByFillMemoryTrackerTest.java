@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -57,9 +58,15 @@ import org.junit.Test;
  * past the limit crosses it at the offending allocation site. The non-keyed FILL
  * variants are out of scope (single SimpleMapValue, one group) and are not
  * exercised here. The GROUP BY fast-path {@code SampleByFillRecordCursorFactory}
- * also stays global-only: its cursor instance is reused across getCursor() with a
- * lifecycle that does not fit the lazy bind-on-open pattern, and its pre-aggregated
- * base GROUP BY (wired by PR 2.5) already charges the dominant key-by-bucket map.
+ * (the default / {@code ALIGN TO CALENDAR} target) builds its key-discovery
+ * {@code keysMap} the same lazy way, binding the tracker in the cursor's
+ * {@code of()} before {@code reopen()} and freeing at cursor close; the
+ * {@code testFastPath*} cases below exercise it under mixed full and partial
+ * fetch. On the fast path the pre-aggregated base GROUP BY (wired by PR 2.5)
+ * still charges the dominant key-by-bucket map, so a breach is usually caught
+ * there first; wiring {@code keysMap} closes the remaining accounting gap and
+ * keeps the per-query counter balanced across the reused cursor's
+ * close/reopen cycle.
  * <p>
  * The per-query limit is set in {@link #beforeClass()} because
  * {@code CairoEngine#getMemoryTrackerProvider} caches the
@@ -92,6 +99,46 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
         // function state sits well under the 512 KiB per-query limit on small
         // workloads. Re-read on every factory construction, so @Before suffices.
         setProperty(PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE, 4 * 1024L);
+    }
+
+    @Test
+    public void testFastPathFillNullFailsOnHighCardinality() throws Exception {
+        // Default alignment (ALIGN TO CALENDAR) routes to the GROUP BY fast-path
+        // SampleByFillRecordCursorFactory. A high-cardinality key trips the per-query
+        // limit while the keyed maps grow during the build pass -- usually at the base
+        // GROUP BY's key-by-bucket map (PR 2.5), but the fill cursor's keysMap is now
+        // charged too. Either way the breach carries the per-query message.
+        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR");
+    }
+
+    @Test
+    public void testFastPathFillNullSucceedsOnSmall() throws Exception {
+        // A single key with a one-bucket gap fits the limit and routes to the fast
+        // path; FILL(NULL) synthesizes the missing 01:00 bucket as a null sum.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            // Rows at 00:00 and 02:00 leave bucket 01:00 empty.
+            execute(
+                    "CREATE TABLE tab AS (" +
+                            "SELECT 7::long AS k, x::double AS v, ((x - 1) * 7_200_000_000L)::timestamp AS ts " +
+                            "FROM long_sequence(2)" +
+                            ") TIMESTAMP(ts)"
+            );
+            drainWalQueue();
+            final String query = "SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR";
+            // Confirm the default-alignment query routes to the GROUP BY fast-path
+            // (otherwise this would silently exercise a legacy cursor instead).
+            try (RecordCursorFactory factory = select(query)) {
+                assertHitsFastPath(factory);
+            }
+            assertSql(
+                    "k\tsum\n" +
+                            "7\t1.0\n" +
+                            "7\tnull\n" +
+                            "7\t2.0\n",
+                    query
+            );
+        });
     }
 
     @Test
@@ -176,6 +223,18 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRepeatedFastPathFillRunsReleaseAllocations() throws Exception {
+        // The GROUP BY fast-path (default / ALIGN TO CALENDAR) reuses a single fill
+        // cursor across getCursor(); its lazy keysMap reopens on open and frees on
+        // close. Mixing full and partial fetches is the exact case the per-query
+        // wiring had to get right -- a malloc/free asymmetry on the reused-cursor
+        // streaming lifecycle would surface here as a residual native allocation.
+        // The routing guard inside the helper asserts we are actually on the fast
+        // path rather than silently testing a legacy cursor.
+        assertRepeatedRunsReleaseAllocations("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR", true);
+    }
+
+    @Test
     public void testRepeatedFillCursorRunsReleaseAllocations() throws Exception {
         // Repeat the same keyed FILL(NULL) SAMPLE BY many times to verify that
         // close/reopen cycles release every byte the map and allocator allocate.
@@ -236,7 +295,29 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
         });
     }
 
+    private void assertHitsFastPath(RecordCursorFactory factory) {
+        // The fast-path SampleByFillRecordCursorFactory sits below an outer
+        // SelectedRecordCursorFactory / sort wrap, so walk the base-factory chain
+        // rather than checking the top factory's class directly.
+        RecordCursorFactory cur = factory;
+        while (cur != null) {
+            if (cur instanceof SampleByFillRecordCursorFactory) {
+                return;
+            }
+            RecordCursorFactory next = cur.getBaseFactory();
+            if (next == cur) {
+                break;
+            }
+            cur = next;
+        }
+        Assert.fail("expected SampleByFillRecordCursorFactory in base chain of " + factory.getClass().getSimpleName());
+    }
+
     private void assertRepeatedRunsReleaseAllocations(String query) throws Exception {
+        assertRepeatedRunsReleaseAllocations(query, false);
+    }
+
+    private void assertRepeatedRunsReleaseAllocations(String query, boolean assertFastPath) throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setParallelGroupByEnabled(false);
             // A handful of keys over a few buckets: comfortably under the limit so
@@ -250,17 +331,29 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
             drainWalQueue();
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                for (int i = 0; i < 20; i++) {
+                if (assertFastPath) {
+                    assertHitsFastPath(factory);
+                }
+                for (int i = 0; i < 21; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        if ((i & 1) == 0) {
-                            //noinspection StatementWithEmptyBody
-                            while (cursor.hasNext()) {
-                                // full drain
-                            }
-                        } else {
-                            // Partial fetch: open, fetch one row, then close. Exercises the
-                            // close-after-partial-build path that a full drain does not.
-                            cursor.hasNext();
+                        switch (i % 3) {
+                            case 0:
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                    // full drain
+                                }
+                                break;
+                            case 1:
+                                // Partial fetch: open, fetch one row, then close. Exercises the
+                                // close-after-partial-build path that a full drain does not.
+                                cursor.hasNext();
+                                break;
+                            default:
+                                // Zero fetch: open then close with no hasNext(). Exercises the
+                                // reopen-then-close path where the map's initial backing is
+                                // allocated by of() but never built up, so the free at close
+                                // must still balance the open.
+                                break;
                         }
                     }
                 }
