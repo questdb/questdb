@@ -2330,7 +2330,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
             checkWalFilesRemoved(sysTableName1);
 
-            assertException(tableName, 0, "does not exist");
+            assertQuery(tableName).fails(0, "does not exist");
         });
     }
 
