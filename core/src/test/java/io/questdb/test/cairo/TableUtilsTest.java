@@ -338,6 +338,67 @@ public class TableUtilsTest extends AbstractTest {
     }
 
     @Test
+    public void testCheckStoragePolicyTtlHoursExactBoundary() {
+        // Storage policies measure partition age from the partition floor (its start), not the
+        // ceiling that table TTL uses. Partition 2024-01-01 with a 24h policy becomes eligible
+        // once maxTimestamp reaches exactly 24h past the partition floor.
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        long partitionTimestamp = driver.fromDays(19_723); // 2024-01-01
+        long partitionFloor = txReader.getPartitionFloor(partitionTimestamp);
+        long maxTimestamp = partitionFloor + driver.fromHours(24);
+
+        Assert.assertTrue(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, 24));
+        // one microsecond before the boundary — not yet eligible
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp - 1, 24));
+    }
+
+    @Test
+    public void testCheckStoragePolicyTtlMonthsBoundary() {
+        // Negative TTL means months; storage policies measure the gap from the partition floor.
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.MONTH);
+        long partitionTimestamp = driver.fromDays(19_723); // 2024-01-01
+        long partitionFloor = txReader.getPartitionFloor(partitionTimestamp); // 2024-01-01
+        // 3 months after the floor: 2024-04-01
+        long maxTimestamp = partitionFloor + driver.fromDays(91);
+        Assert.assertTrue(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, -3));
+        // 2 months after the floor: not enough for a 3-month policy
+        long maxTimestamp2Months = partitionFloor + driver.fromDays(60);
+        Assert.assertFalse(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp2Months, -3));
+    }
+
+    @Test(expected = AssertionError.class)
+    public void testCheckStoragePolicyTtlRejectsZero() {
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        long partitionTimestamp = driver.fromDays(19_723);
+        long maxTimestamp = partitionTimestamp + driver.fromHours(100);
+
+        TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, 0);
+    }
+
+    @Test
+    public void testCheckStoragePolicyTtlShiftsOnePartitionVsTtl() {
+        // Storage policy ages from the partition floor while table TTL ages from the ceiling,
+        // so a storage policy threshold is effectively one partition wider. With daily
+        // partitions and a 1h setting, the partition is eligible for storage policy as soon as
+        // the next (active) partition starts, while table TTL still treats it as too young.
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        long partitionTimestamp = driver.fromDays(19_723); // 2024-01-01
+        // maxTimestamp sits exactly at the start of the next partition (2024-01-02).
+        long maxTimestamp = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
+
+        Assert.assertTrue(TableUtils.checkStoragePolicyTtl(txReader, driver, partitionTimestamp, maxTimestamp, 1));
+        Assert.assertFalse(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp, 1));
+    }
+
+    @Test
     public void testCheckTtlHoursExactBoundary() {
         // Partition 2024-01-01, ceiling is 2024-01-02T00:00:00Z.
         // maxTimestamp exactly 24h after ceiling => TTL of 24h is met.
