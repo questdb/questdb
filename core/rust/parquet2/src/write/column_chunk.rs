@@ -218,48 +218,29 @@ fn build_column_chunk(
         .map(|x| x.header_size as i64 + x.header.uncompressed_page_size as i64)
         .sum();
 
-    let num_values = specs
-        .iter()
-        .map(|spec| {
-            let type_ = spec.header.type_.try_into().unwrap();
-            match type_ {
-                PageType::DataPage => {
-                    spec.header.data_page_header.as_ref().unwrap().num_values as i64
-                }
-                PageType::DataPageV2 => {
-                    spec.header.data_page_header_v2.as_ref().unwrap().num_values as i64
-                }
-                _ => 0, // only data pages contribute
+    let mut num_values: i64 = 0;
+    let mut encodings = Vec::new();
+    for spec in specs {
+        let type_: PageType = spec.header.type_.try_into()?;
+        match type_ {
+            PageType::DataPage => {
+                let header = spec.header.data_page_header.as_ref().unwrap();
+                num_values += header.num_values as i64;
+                push_unique(&mut encodings, header.encoding);
+                push_unique(&mut encodings, Encoding::Rle.into());
             }
-        })
-        .sum();
-    let mut encodings = specs
-        .iter()
-        .flat_map(|spec| {
-            let type_ = spec.header.type_.try_into().unwrap();
-            match type_ {
-                PageType::DataPage => vec![
-                    spec.header.data_page_header.as_ref().unwrap().encoding,
-                    Encoding::Rle.into(),
-                ],
-                PageType::DataPageV2 => {
-                    vec![
-                        spec.header.data_page_header_v2.as_ref().unwrap().encoding,
-                        Encoding::Rle.into(),
-                    ]
-                }
-                PageType::DictionaryPage => vec![
-                    spec.header
-                        .dictionary_page_header
-                        .as_ref()
-                        .unwrap()
-                        .encoding,
-                ],
+            PageType::DataPageV2 => {
+                let header = spec.header.data_page_header_v2.as_ref().unwrap();
+                num_values += header.num_values as i64;
+                push_unique(&mut encodings, header.encoding);
+                push_unique(&mut encodings, Encoding::Rle.into());
             }
-        })
-        .collect::<HashSet<_>>() // unique
-        .into_iter() // to vec
-        .collect::<Vec<_>>();
+            PageType::DictionaryPage => {
+                let header = spec.header.dictionary_page_header.as_ref().unwrap();
+                push_unique(&mut encodings, header.encoding);
+            }
+        }
+    }
 
     let (data_page_offset, dictionary_page_offset) = extract_page_offsets(specs)?;
 
@@ -301,6 +282,17 @@ fn build_column_chunk(
         crypto_metadata: None,
         encrypted_column_metadata: None,
     })
+}
+
+/// Appends `encoding` only if absent; a column chunk uses at most a few distinct
+/// encodings, so a linear scan is cheaper than allocating a hash set.
+fn push_unique(
+    encodings: &mut Vec<parquet_format_safe::Encoding>,
+    encoding: parquet_format_safe::Encoding,
+) {
+    if !encodings.contains(&encoding) {
+        encodings.push(encoding);
+    }
 }
 
 /// Extract the offsets of the first data page and dictionary page from the page write specs.
