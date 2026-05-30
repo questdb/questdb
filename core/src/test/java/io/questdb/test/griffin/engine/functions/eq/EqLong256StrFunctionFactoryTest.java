@@ -54,7 +54,7 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
     public void testInvalidConstantInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (l long256)");
-            assertException("x where l = 'foobar'", 0, "inconvertible value: `foobar` [STRING -> LONG256]");
+            assertQuery("x where l = 'foobar'").fails(0, "inconvertible value: `foobar` [STRING -> LONG256]");
         });
     }
 
@@ -67,41 +67,29 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
         // behave on invalid hex literals.
         assertMemoryLeak(() -> {
             execute("create table x (l long256)");
-            assertException("x where (195683)::IPv4 = l", 0, "inconvertible value: `0.2.252.99` [STRING -> LONG256]");
+            assertQuery("x where (195683)::IPv4 = l").fails(0, "inconvertible value: `0.2.252.99` [STRING -> LONG256]");
         });
     }
 
     @Test
     public void testLong256Decode1() throws Exception {
-        assertQuery(
-                "rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n",
-                "xxxx where rnd_long256='0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650'",
-                "create table xxxx as (select rnd_long256() from long_sequence(200));",
-                null,
-                true
-        );
+        assertQuery("xxxx where rnd_long256='0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650'")
+                .ddl("create table xxxx as (select rnd_long256() from long_sequence(200));")
+                .returns("rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n");
     }
 
     @Test
     public void testLong256Decode2() throws Exception {
-        assertQuery(
-                "rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n",
-                "xxxx where rnd_long256!='0x056'",
-                "create table xxxx as (select rnd_long256() from long_sequence(1));",
-                null,
-                true
-        );
+        assertQuery("xxxx where rnd_long256!='0x056'")
+                .ddl("create table xxxx as (select rnd_long256() from long_sequence(1));")
+                .returns("rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n");
     }
 
     @Test
     public void testLong256Decode3() throws Exception {
-        assertQuery(
-                "rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n",
-                "xxxx where '0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650'=rnd_long256",
-                "create table xxxx as (select rnd_long256() from long_sequence(200));",
-                null,
-                true
-        );
+        assertQuery("xxxx where '0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650'=rnd_long256")
+                .ddl("create table xxxx as (select rnd_long256() from long_sequence(200));")
+                .returns("rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n");
     }
 
     @Test
@@ -124,24 +112,16 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLong256NotNull() throws Exception {
-        assertQuery(
-                "rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n",
-                "xxxx where null!=rnd_long256 limit 1",
-                "create table xxxx as (select rnd_long256() from long_sequence(200));",
-                null,
-                true
-        );
+        assertQuery("xxxx where null!=rnd_long256 limit 1")
+                .ddl("create table xxxx as (select rnd_long256() from long_sequence(200));")
+                .returns("rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n");
     }
 
     @Test
     public void testLong256Null() throws Exception {
-        assertQuery(
-                "rnd_long256\n",
-                "xxxx where rnd_long256=null",
-                "create table xxxx as (select rnd_long256() from long_sequence(200));",
-                null,
-                true
-        );
+        assertQuery("xxxx where rnd_long256=null")
+                .ddl("create table xxxx as (select rnd_long256() from long_sequence(200));")
+                .returns("rnd_long256\n");
     }
 
     @Test
@@ -167,7 +147,7 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
     public void testStrColumnInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (l long256, a string)");
-            assertException("x where l = a", 12, "STRING constant expected");
+            assertQuery("x where l = a").fails(12, "STRING constant expected");
         });
     }
 }
