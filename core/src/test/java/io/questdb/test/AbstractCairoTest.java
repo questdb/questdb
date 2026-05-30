@@ -1935,6 +1935,27 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    /**
+     * Entry point for the fluent query-assertion builder. The expected output is supplied to the
+     * terminal step ({@link QueryAssertion#returns}, {@link QueryAssertion#returnsRecords},
+     * {@link QueryAssertion#fails}), so every chain reads as query -&gt; options -&gt; expectation:
+     * <pre>
+     * assertQuery("select * from x")
+     *         .timestamp("ts")
+     *         .expectSize()
+     *         .returns(expected);
+     *
+     * assertQuery("select foo from bar").fails(12, "Invalid column");
+     * </pre>
+     * Defaults mirror the most common historical behavior: leak checking on,
+     * {@code supportsRandomAccess=true}, {@code expectSize=false}, {@code sizeCanBeVariable=false},
+     * and no designated timestamp (the result is asserted to have no timestamp unless
+     * {@link QueryAssertion#timestamp} is called).
+     */
+    protected QueryAssertion assertQuery(CharSequence query) {
+        return new QueryAssertion(query);
+    }
+
     protected void assertQuery(String expected, String query, boolean expectSize) throws Exception {
         assertQuery(expected, query, null, null, true, expectSize);
     }
@@ -2289,6 +2310,287 @@ public abstract class AbstractCairoTest extends AbstractTest {
             @Nullable SCSequence eventSubSeq
     ) throws SqlException {
         return engine.update(updateSql, sqlExecutionContext, eventSubSeq);
+    }
+
+    /**
+     * Fluent builder for SQL query assertions. Obtain one via {@link #assertQuery(CharSequence)}.
+     * <p>
+     * This replaces the large family of positional {@code assertQuery} / {@code assertQueryNoLeakCheck} /
+     * {@code assertException} overloads: every option is a named step rather than a positional boolean,
+     * and cross-cutting concerns ({@link #noLeakCheck()}, {@link #fullFatJoins()}, {@link #cached()},
+     * {@link #plan}) compose instead of multiplying method names. Each step only records intent; the
+     * terminal step performs the assertion by delegating to the corresponding legacy workhorse, so the
+     * semantics are identical to the hand-written positional call.
+     * <p>
+     * A chain does nothing until a terminal step runs - always finish with {@link #returns},
+     * {@link #returnsRecords} or {@link #fails}.
+     */
+    protected class QueryAssertion {
+        private final CharSequence query;
+        private boolean cached;
+        private SqlExecutionContext context;
+        private CharSequence ddl;
+        private CharSequence ddl2;
+        private boolean expectSize;
+        private CharSequence expectedPlan;
+        private CharSequence expectedTimestamp;
+        private boolean fullFatJoins;
+        private boolean leakCheck = true;
+        private boolean sizeCanBeVariable;
+        private boolean supportsRandomAccess = true;
+
+        private QueryAssertion(CharSequence query) {
+            this.query = query;
+        }
+
+        /**
+         * Compile the query once and assert the result twice from the cached factory, exercising the
+         * full-fat cursor path. Supports only {@link #timestamp}, {@link #expectSize} and
+         * {@link #noRandomAccess}.
+         */
+        public QueryAssertion cached() {
+            this.cached = true;
+            return this;
+        }
+
+        /**
+         * SQL to execute before the query (typically a CREATE TABLE / INSERT). Drains the WAL queue
+         * afterwards when WAL is enabled by default, exactly as the legacy helpers do.
+         */
+        public QueryAssertion ddl(CharSequence ddl) {
+            this.ddl = ddl;
+            return this;
+        }
+
+        /**
+         * Assert that {@code cursor.size()} returns a known (non-negative) value. Off by default.
+         */
+        public QueryAssertion expectSize() {
+            this.expectSize = true;
+            return this;
+        }
+
+        /**
+         * Terminal: assert that compiling/running the query fails with an error whose message contains
+         * {@code contains} at position {@code errorPos}. Pass {@code errorPos = -1} to skip the position
+         * check (or use {@link #failsWith}).
+         */
+        public void fails(int errorPos, CharSequence contains) throws Exception {
+            final SqlExecutionContext ctx = context != null ? context : sqlExecutionContext;
+            if (ddl != null) {
+                if (leakCheck) {
+                    assertException(query, ddl, errorPos, contains);
+                } else {
+                    assertExceptionNoLeakCheck(query, ddl, errorPos, contains);
+                }
+                return;
+            }
+            if (leakCheck) {
+                assertException(query, errorPos, contains, ctx);
+            } else {
+                assertExceptionNoLeakCheck(query, errorPos, contains, ctx);
+            }
+        }
+
+        /**
+         * Terminal: assert the query fails with an error message containing {@code contains}, without
+         * checking the error position.
+         */
+        public void failsWith(CharSequence contains) throws Exception {
+            fails(-1, contains);
+        }
+
+        /**
+         * Force full-fat (non-optimized) join execution. Supports {@link #ddl}, {@link #timestamp},
+         * {@link #expectSize} and {@link #noRandomAccess}.
+         */
+        public QueryAssertion fullFatJoins() {
+            this.fullFatJoins = true;
+            return this;
+        }
+
+        /**
+         * SQL to execute after the first assertion, re-checking the same factory against the second
+         * expected value. Requires the two-argument {@link #returns(CharSequence, CharSequence)} (or
+         * {@link #returnsRecords(Record[], Record[])}) terminal.
+         */
+        public QueryAssertion mutateWith(CharSequence ddl2) {
+            this.ddl2 = ddl2;
+            return this;
+        }
+
+        /**
+         * Skip the surrounding memory-leak check. Use inside a test body that is already wrapped in
+         * {@code assertMemoryLeak(...)}.
+         */
+        public QueryAssertion noLeakCheck() {
+            this.leakCheck = false;
+            return this;
+        }
+
+        /**
+         * Declare that the factory does not support random access, skipping the random-access record
+         * checks. Random access is exercised by default.
+         */
+        public QueryAssertion noRandomAccess() {
+            this.supportsRandomAccess = false;
+            return this;
+        }
+
+        /**
+         * Also assert the query's execution plan (EXPLAIN output). Implies a leak check; cannot be
+         * combined with {@link #noLeakCheck()}, {@link #fullFatJoins()} or {@link #cached()}.
+         */
+        public QueryAssertion plan(CharSequence expectedPlan) {
+            this.expectedPlan = expectedPlan;
+            return this;
+        }
+
+        /**
+         * Terminal: assert the query produces exactly {@code expected}.
+         */
+        public void returns(CharSequence expected) throws Exception {
+            if (ddl2 != null) {
+                throw new IllegalStateException("mutateWith(...) requires returns(before, after)");
+            }
+            dispatch(expected, null);
+        }
+
+        /**
+         * Terminal: assert the query produces {@code expectedBefore}, then run the {@link #mutateWith}
+         * statement and assert the same factory now produces {@code expectedAfter}.
+         */
+        public void returns(CharSequence expectedBefore, CharSequence expectedAfter) throws Exception {
+            if (ddl2 == null) {
+                throw new IllegalStateException("returns(before, after) requires mutateWith(...)");
+            }
+            dispatch(expectedBefore, expectedAfter);
+        }
+
+        /**
+         * Terminal: assert the query produces the given raw records. Always leak-checked (there is no
+         * no-leak-check variant for the record path); supports only {@link #ddl}, {@link #timestamp},
+         * {@link #mutateWith} and {@link #expectSize}.
+         */
+        public void returnsRecords(Record[] expected) throws Exception {
+            if (ddl2 != null) {
+                throw new IllegalStateException("mutateWith(...) requires returnsRecords(before, after)");
+            }
+            requireRecordPathCompatible();
+            assertQuery(expected, query, ddl, expectedTimestamp, null, null, expectSize);
+        }
+
+        /**
+         * Terminal: the record-array counterpart of {@link #returns(CharSequence, CharSequence)}.
+         */
+        public void returnsRecords(Record[] expectedBefore, Record[] expectedAfter) throws Exception {
+            if (ddl2 == null) {
+                throw new IllegalStateException("returnsRecords(before, after) requires mutateWith(...)");
+            }
+            requireRecordPathCompatible();
+            assertQuery(expectedBefore, query, ddl, expectedTimestamp, ddl2, expectedAfter, expectSize);
+        }
+
+        /**
+         * Allow {@code cursor.size()} to be reported as unknown (-1) in some passes. Off by default.
+         */
+        public QueryAssertion sizeMayVary() {
+            this.sizeCanBeVariable = true;
+            return this;
+        }
+
+        /**
+         * Assert the result has a designated timestamp on the given column. Without this step the
+         * result is asserted to have no designated timestamp.
+         */
+        public QueryAssertion timestamp(CharSequence column) {
+            this.expectedTimestamp = column;
+            return this;
+        }
+
+        /**
+         * Like {@link #timestamp} but also assert ascending (forward) scan order.
+         */
+        public QueryAssertion timestampAsc(CharSequence column) {
+            this.expectedTimestamp = column + "###ASC";
+            return this;
+        }
+
+        /**
+         * Like {@link #timestamp} but also assert descending (backward) scan order.
+         */
+        public QueryAssertion timestampDesc(CharSequence column) {
+            this.expectedTimestamp = column + "###DESC";
+            return this;
+        }
+
+        /**
+         * Run with a specific {@link SqlExecutionContext} instead of the test's default one.
+         */
+        public QueryAssertion withContext(SqlExecutionContext context) {
+            this.context = context;
+            return this;
+        }
+
+        private void dispatch(CharSequence expected, CharSequence expected2) throws Exception {
+            if (expectedPlan != null) {
+                if (!leakCheck || fullFatJoins || cached) {
+                    throw new IllegalStateException("plan(...) cannot be combined with noLeakCheck()/fullFatJoins()/cached()");
+                }
+                assertQueryAndPlan(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable, expectedPlan);
+                return;
+            }
+            if (cached) {
+                if (ddl != null || ddl2 != null || sizeCanBeVariable || fullFatJoins) {
+                    throw new IllegalStateException("cached() supports only timestamp()/expectSize()/noRandomAccess()");
+                }
+                final String exp = expected.toString();
+                final String ts = expectedTimestamp == null ? null : expectedTimestamp.toString();
+                if (leakCheck) {
+                    assertMemoryLeak(() -> assertQueryAndCacheFullFat(exp, query.toString(), ts, supportsRandomAccess, expectSize));
+                } else {
+                    assertQueryAndCacheFullFat(exp, query.toString(), ts, supportsRandomAccess, expectSize);
+                }
+                return;
+            }
+            if (fullFatJoins) {
+                if (ddl2 != null || sizeCanBeVariable) {
+                    throw new IllegalStateException("fullFatJoins() supports only ddl()/timestamp()/expectSize()/noRandomAccess()");
+                }
+                final CharSequence exp = expected;
+                final String ts = expectedTimestamp == null ? null : expectedTimestamp.toString();
+                if (leakCheck) {
+                    assertMemoryLeak(() -> {
+                        runDdl();
+                        assertQueryFullFatNoLeakCheck(exp, query, ts, supportsRandomAccess, expectSize, true);
+                    });
+                } else {
+                    runDdl();
+                    assertQueryFullFatNoLeakCheck(exp, query, ts, supportsRandomAccess, expectSize, true);
+                }
+                return;
+            }
+            if (leakCheck) {
+                assertQuery(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable);
+            } else {
+                assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable);
+            }
+        }
+
+        private void requireRecordPathCompatible() {
+            if (!leakCheck || fullFatJoins || cached || expectedPlan != null || sizeCanBeVariable || !supportsRandomAccess || context != null) {
+                throw new IllegalStateException("returnsRecords(...) supports only ddl()/timestamp()/mutateWith()/expectSize()");
+            }
+        }
+
+        private void runDdl() throws SqlException {
+            if (ddl != null) {
+                execute(ddl);
+                if (configuration.getWalEnabledDefault()) {
+                    drainWalQueue();
+                }
+            }
+        }
     }
 
     protected enum SymbolAsFieldMode {
