@@ -884,56 +884,41 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByAliasInDifferentOrder1() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select key1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1, 2")
+                .ddl("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ")
+                .expectSize()
+                .returns("""
                         k1\tk2\tcount
                         0\t0\t2
                         0\t2\t3
                         1\t1\t3
                         1\t3\t2
-                        """,
-                "select key1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1, 2",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10)); ",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupByAliasInDifferentOrder2() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select key1+1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1, 2")
+                .ddl("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));")
+                .expectSize()
+                .returns("""
                         k1\tk2\tcount
                         1\t0\t2
                         1\t2\t3
                         2\t1\t3
                         2\t3\t2
-                        """,
-                "select key1+1 as k1, key2 as k2, count(*) from t group by k2, k1 order by 1, 2",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupByAllIndexedColumns() throws Exception {
-        assertQuery(
-                """
-                        time\ts1\tfirst\tfirst1\tfirst2
-                        2023-05-16T00:00:00.000000Z\ta\tfoo\tnull\t0.08486964232560668
-                        2023-05-16T00:02:00.000000Z\tb\tfoo\t0.8899286912289663\t0.6254021542412018
-                        2023-05-16T00:05:00.000000Z\tc\tfoo\t0.1985581797355932\t0.33608255572515877
-                        """,
-                "SELECT first(ts) as time, s1, first(s2), first(d1), first(d2) " +
-                        "FROM x " +
-                        "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
-                        "AND s2 = ('foo') " +
-                        "GROUP BY s1, s2 " +
-                        "ORDER BY s1, s2;",
-                "create table x as " +
+        assertQuery("SELECT first(ts) as time, s1, first(s2), first(d1), first(d2) " +
+                "FROM x " +
+                "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
+                "AND s2 = ('foo') " +
+                "GROUP BY s1, s2 " +
+                "ORDER BY s1, s2;")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         "   rnd_symbol('a','b','c') s1," +
@@ -942,11 +927,14 @@ public class GroupByTest extends AbstractCairoTest {
                         "   rnd_double(1) d2," +
                         "   timestamp_sequence('2023-05-16T00:00:00.00000Z', 60*1000000L) ts" +
                         "   from long_sequence(100)" +
-                        "), index(s1), index(s2) timestamp(ts) partition by DAY",
-                null,
-                true,
-                true
-        );
+                        "), index(s1), index(s2) timestamp(ts) partition by DAY")
+                .expectSize()
+                .returns("""
+                        time\ts1\tfirst\tfirst1\tfirst2
+                        2023-05-16T00:00:00.000000Z\ta\tfoo\tnull\t0.08486964232560668
+                        2023-05-16T00:02:00.000000Z\tb\tfoo\t0.8899286912289663\t0.6254021542412018
+                        2023-05-16T00:05:00.000000Z\tc\tfoo\t0.1985581797355932\t0.33608255572515877
+                        """);
     }
 
     @Test
@@ -1032,130 +1020,98 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByColumnIdx1() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select key, count(*) from t group by 1 order by 1")
+                .ddl("create table t as ( select x%2 as key, x as value from long_sequence(100))")
+                .expectSize()
+                .returns("""
                         key\tcount
                         0\t50
                         1\t50
-                        """,
-                "select key, count(*) from t group by 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100))",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupByColumnIdx2() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select key, count(*) from t group by 1, 1 order by 1")
+                .ddl("create table t as ( select x%2 as key, x as value from long_sequence(100));")
+                .expectSize()
+                .returns("""
                         key\tcount
                         0\t50
                         1\t50
-                        """,
-                "select key, count(*) from t group by 1, 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupByColumnIdx3() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select key, count(*) from t group by key, 1 order by 1")
+                .ddl("create table t as ( select x%2 as key, x as value from long_sequence(100));")
+                .expectSize()
+                .returns("""
                         key\tcount
                         0\t50
                         1\t50
-                        """,
-                "select key, count(*) from t group by key, 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupByColumnIdx4() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select key+1, count(*) from t group by key, 1 order by key+1")
+                .ddl("create table t as ( select x%2 as key, x as value from long_sequence(100));")
+                .expectSize()
+                .returns("""
                         column\tcount
                         1\t50
                         2\t50
-                        """,
-                "select key+1, count(*) from t group by key, 1 order by key+1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupByColumnIdx5() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select key+1 as z, count(*) from t group by key, 1 order by z")
+                .ddl("create table t as ( select x%2 as key, x as value from long_sequence(100));")
+                .expectSize()
+                .returns("""
                         z\tcount
                         1\t50
                         2\t50
-                        """,
-                "select key+1 as z, count(*) from t group by key, 1 order by z",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupByColumnIdx6() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select key+1, count(*) from t group by key, 1 order by 1")
+                .ddl("create table t as ( select x%2 as key, x as value from long_sequence(100));")
+                .expectSize()
+                .returns("""
                         column\tcount
                         1\t50
                         2\t50
-                        """,
-                "select key+1, count(*) from t group by key, 1 order by 1",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupByColumnIdx7() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select key+1, count(*) from t group by key, 1 order by key+3 desc")
+                .ddl("create table t as ( select x%2 as key, x as value from long_sequence(100));")
+                .expectSize()
+                .returns("""
                         column\tcount
                         2\t50
                         1\t50
-                        """,
-                "select key+1, count(*) from t group by key, 1 order by key+3 desc",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupByColumnIdx8() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select key+1, key, key, count(*) from t group by key order by 1,2,3 desc")
+                .ddl("create table t as ( select x%2 as key, x as value from long_sequence(100));")
+                .expectSize()
+                .returns("""
                         column\tkey\tkey1\tcount
                         1\t0\t0\t50
                         2\t1\t1\t50
-                        """,
-                "select key+1, key, key, count(*) from t group by key order by 1,2,3 desc",
-                "create table t as ( select x%2 as key, x as value from long_sequence(100));",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -1201,20 +1157,16 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByDuplicateColumn() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select key1 as k1, key2 as k2, count(*) from t group by k2, k1, k2 order by 1, 2")
+                .ddl("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));")
+                .expectSize()
+                .returns("""
                         k1\tk2\tcount
                         0\t0\t2
                         0\t2\t3
                         1\t1\t3
                         1\t3\t2
-                        """,
-                "select key1 as k1, key2 as k2, count(*) from t group by k2, k1, k2 order by 1, 2",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -1312,12 +1264,9 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByInvalidOrderByExpression() throws Exception {
-        assertException(
-                "SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('{}') LIMIT 1;",
-                "CREATE TABLE x (ts TIMESTAMP, event SHORT, origin SHORT) TIMESTAMP(ts);",
-                69,
-                "Invalid date"
-        );
+        assertQuery("SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('{}') LIMIT 1;")
+                .ddl("CREATE TABLE x (ts TIMESTAMP, event SHORT, origin SHORT) TIMESTAMP(ts);")
+                .fails(69, "Invalid date");
     }
 
     @Test
@@ -1346,19 +1295,15 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNonPartitioned() throws Exception {
-        assertQuery(
-                """
+        assertQuery("SELECT k, sum(val) FROM tab ORDER BY k LIMIT 3;")
+                .ddl("CREATE TABLE tab AS (SELECT rnd_str(4, 4, 0) k, rnd_double() val FROM long_sequence(100000));")
+                .expectSize()
+                .returns("""
                         k\tsum
                         BBBE\t0.7453598685393461
                         BBBI\t0.7394866029725212
                         BBBK\t1.370328208214273
-                        """,
-                "SELECT k, sum(val) FROM tab ORDER BY k LIMIT 3;",
-                "CREATE TABLE tab AS (SELECT rnd_str(4, 4, 0) k, rnd_double() val FROM long_sequence(100000));",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -1396,18 +1341,14 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByOrderByExpression() throws Exception {
-        assertQuery(
-                """
+        assertQuery("SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('1970-01-01T00:00:00.000002Z');")
+                .ddl("CREATE TABLE x AS (SELECT x::timestamp AS ts, x::short AS event, x::short AS origin FROM long_sequence(2)) TIMESTAMP(ts);")
+                .expectSize()
+                .returns("""
                         ref0
                         1970-01-01T00:00:00.000002Z
                         1970-01-01T00:00:00.000001Z
-                        """,
-                "SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('1970-01-01T00:00:00.000002Z');",
-                "CREATE TABLE x AS (SELECT x::timestamp AS ts, x::short AS event, x::short AS origin FROM long_sequence(2)) TIMESTAMP(ts);",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -1523,8 +1464,10 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByVarchar() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select key, max(value) from t group by key order by key")
+                .ddl("create table t as ( select (x%10)::varchar key, x as value from long_sequence(100)); ")
+                .expectSize()
+                .returns("""
                         key\tmax
                         0\t100
                         1\t91
@@ -1536,13 +1479,7 @@ public class GroupByTest extends AbstractCairoTest {
                         7\t97
                         8\t98
                         9\t99
-                        """,
-                "select key, max(value) from t group by key order by key",
-                "create table t as ( select (x%10)::varchar key, x as value from long_sequence(100)); ",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -1826,20 +1763,16 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithDuplicateSelectColumn() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2")
+                .ddl("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));")
+                .expectSize()
+                .returns("""
                         k1\tkey2\tkey21\tcount
                         0\t0\t0\t2
                         0\t2\t2\t3
                         1\t1\t1\t3
                         1\t3\t3\t2
-                        """,
-                "select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2",
-                "create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -3120,9 +3053,7 @@ public class GroupByTest extends AbstractCairoTest {
                 HGOOZZVDZJ\t1\t1\t540.0
                 SHRUEDRQQU\t2\t2\t468.0
                 """;
-        assertQuery(
-                expected,
-                """
+        assertQuery("""
                         WITH x_sample AS (
                           SELECT id, uuid, url, sum(metric) m_sum
                           FROM x
@@ -3131,19 +3062,17 @@ public class GroupByTest extends AbstractCairoTest {
                         )
                         SELECT url, count_distinct(uuid) u_count, count() cnt, avg(m_sum) avg_m_sum
                         FROM x_sample
-                        GROUP BY url""",
-                """
+                        GROUP BY url""")
+                .ddl("""
                         create table x as (
                         select timestamp_sequence(100000000, 100000000) ts,
                           rnd_int(0, 10, 0) id,
                           rnd_uuid4() uuid,
                           rnd_str(10, 10, 10, 0) url,
                           rnd_long(0, 1000, 0) metric
-                        from long_sequence(20)) timestamp(ts)""",
-                null,
-                true,
-                true
-        );
+                        from long_sequence(20)) timestamp(ts)""")
+                .expectSize()
+                .returns(expected);
         assertQueryNoLeakCheck(
                 expected,
                 """
