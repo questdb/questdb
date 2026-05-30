@@ -56,7 +56,7 @@ public class LastNotNullSymbolGroupByFunctionFactoryTest extends AbstractCairoTe
         assertQuery(
                 """
                         a0
-
+                        
                         """,
                 "select last_not_null(('0.83055')::symbol) a0 from tab where 1 = 0",
                 "create table tab as (select rnd_int() a from long_sequence(10))",
