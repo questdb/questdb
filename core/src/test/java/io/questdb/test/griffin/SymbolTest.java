@@ -43,13 +43,17 @@ public class SymbolTest extends AbstractCairoTest {
             assertQuery("x where \"sym_top\" = 'STWEFZMJCWHFQEDUY' order by ts asc")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns("sym\tts\tsym_top\n" +
-                            "EF\t2022-02-01T00:00:00.000000Z\tSTWEFZMJCWHFQEDUY\n");
+                    .returns("""
+                            sym\tts\tsym_top
+                            EF\t2022-02-01T00:00:00.000000Z\tSTWEFZMJCWHFQEDUY
+                            """);
             assertQuery("x where \"sym_top\" = 'STWEFZMJCWHFQEDUY' order by ts desc")
                     .noLeakCheck()
                     .timestamp("ts###desc")
-                    .returns("sym\tts\tsym_top\n" +
-                            "EF\t2022-02-01T00:00:00.000000Z\tSTWEFZMJCWHFQEDUY\n");
+                    .returns("""
+                            sym\tts\tsym_top
+                            EF\t2022-02-01T00:00:00.000000Z\tSTWEFZMJCWHFQEDUY
+                            """);
         });
     }
 
@@ -74,9 +78,11 @@ public class SymbolTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns("sym\tts\n" +
-                            "baz\t2024-05-14T16:00:02.000000Z\n" +
-                            "\t2024-05-14T16:00:02.000000Z\n");
+                    .returns("""
+                            sym\tts
+                            baz\t2024-05-14T16:00:02.000000Z
+                            \t2024-05-14T16:00:02.000000Z
+                            """);
         });
     }
 
@@ -101,10 +107,12 @@ public class SymbolTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns("sym\tts\n" +
-                            "\t2024-05-14T16:00:01.000000Z\n" +
-                            "\t2024-05-14T16:00:02.000000Z\n" +
-                            "\t2024-05-14T16:00:03.000000Z\n");
+                    .returns("""
+                            sym\tts
+                            \t2024-05-14T16:00:01.000000Z
+                            \t2024-05-14T16:00:02.000000Z
+                            \t2024-05-14T16:00:03.000000Z
+                            """);
         });
     }
 
@@ -124,9 +132,60 @@ public class SymbolTest extends AbstractCairoTest {
                             " where timestamp in '2024-03-05T12:13'" +
                             " order by sym desc")
                     .noLeakCheck()
-                    .returns("sym\nZVDZ\nYR\nYPH\nXWC\nXG\nVLTO\nUWD\nUQSR\nULOF\nTMH\nSXU\nSXU\nSXU\nSDOT\nRFB\nPH\n" +
-                            "PH\nOWLP\nOWLP\nLU\nKWZ\nJSHR\nIBBT\nHYHB\nHWVD\nGLHM\nGLHM\nGLHM\nFZ\nFZ\nFMQN\nFLOP\n" +
-                            "FF\nFDT\nEHBH\nEDYY\nEDYY\nEDRQ\nCPSW\n\n\n\n\n\n\n\n\n\n\n\n\n");
+                    .returns("""
+                            sym
+                            ZVDZ
+                            YR
+                            YPH
+                            XWC
+                            XG
+                            VLTO
+                            UWD
+                            UQSR
+                            ULOF
+                            TMH
+                            SXU
+                            SXU
+                            SXU
+                            SDOT
+                            RFB
+                            PH
+                            PH
+                            OWLP
+                            OWLP
+                            LU
+                            KWZ
+                            JSHR
+                            IBBT
+                            HYHB
+                            HWVD
+                            GLHM
+                            GLHM
+                            GLHM
+                            FZ
+                            FZ
+                            FMQN
+                            FLOP
+                            FF
+                            FDT
+                            EHBH
+                            EDYY
+                            EDYY
+                            EDRQ
+                            CPSW
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            """);
         });
     }
 

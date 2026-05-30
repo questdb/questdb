@@ -31,7 +31,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.cast.*;
+import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastNullTypeFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToBooleanFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
@@ -64,44 +67,49 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
 
     @Test
     public void testCastFalseStringAsBoolean() throws SqlException {
-        Function function = parseFunction("cast('FalSE' as BOOLEAN)", metadata, functionParser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertTrue(function.isConstant());
-        Assert.assertFalse(function.getBool(null));
+        try (Function function = parseFunction("cast('FalSE' as BOOLEAN)", metadata, functionParser)) {
+            Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+            Assert.assertTrue(function.isConstant());
+            Assert.assertFalse(function.getBool(null));
+        }
     }
 
     @Test
     public void testCastNull() throws SqlException {
         for (int i = 0; i < typeNames.size(); i++) {
             CharSequence type = typeNames.getQuick(i);
-            Function function = parseFunction(String.format("cast(null as %s)", type), metadata, functionParser);
-            Assert.assertEquals(typeNameToId.get(type), function.getType());
-            Assert.assertTrue(function.isConstant());
+            try (Function function = parseFunction(String.format("cast(null as %s)", type), metadata, functionParser)) {
+                Assert.assertEquals(typeNameToId.get(type), function.getType());
+                Assert.assertTrue(function.isConstant());
+            }
         }
     }
 
     @Test
     public void testCastNullGeoByteBits() throws SqlException {
-        Function function = parseFunction("cast(null as GeOhAsH(7b))", metadata, functionParser);
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(7), function.getType());
-        Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoByte(null));
+        try (Function function = parseFunction("cast(null as GeOhAsH(7b))", metadata, functionParser)) {
+            Assert.assertTrue(function.isConstant());
+            Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(7), function.getType());
+            Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoByte(null));
+        }
     }
 
     @Test
     public void testCastNullGeoByteChars() throws SqlException {
-        Function function = parseFunction("cast(null as GeOhAsH(1c))", metadata, functionParser);
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(5), function.getType());
-        Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoByte(null));
+        try (Function function = parseFunction("cast(null as GeOhAsH(1c))", metadata, functionParser)) {
+            Assert.assertTrue(function.isConstant());
+            Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(5), function.getType());
+            Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoByte(null));
+        }
     }
 
     @Test
     public void testCastNullGeoHash3() throws SqlException {
-        Function function = parseFunction("cast('' as GeOhAsH(60b))", metadata, functionParser);
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(60), function.getType());
-        Assert.assertEquals(GeoHashes.NULL, function.getGeoLong(null));
+        try (Function function = parseFunction("cast('' as GeOhAsH(60b))", metadata, functionParser)) {
+            Assert.assertTrue(function.isConstant());
+            Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(60), function.getType());
+            Assert.assertEquals(GeoHashes.NULL, function.getGeoLong(null));
+        }
     }
 
     @Test
@@ -136,66 +144,74 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
 
     @Test
     public void testCastNullGeoIntChars() throws SqlException {
-        Function function = parseFunction("cast(null as GeOhAsH(6c))", metadata, functionParser);
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(30), function.getType());
-        Assert.assertEquals(GeoHashes.INT_NULL, function.getGeoInt(null));
+        try (Function function = parseFunction("cast(null as GeOhAsH(6c))", metadata, functionParser)) {
+            Assert.assertTrue(function.isConstant());
+            Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(30), function.getType());
+            Assert.assertEquals(GeoHashes.INT_NULL, function.getGeoInt(null));
+        }
     }
 
     @Test
     public void testCastNullGeoLongBits() throws SqlException {
-        Function function = parseFunction("cast(null as GeOhAsH(60b))", metadata, functionParser);
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(60), function.getType());
-        Assert.assertEquals(GeoHashes.NULL, function.getGeoLong(null));
+        try (Function function = parseFunction("cast(null as GeOhAsH(60b))", metadata, functionParser)) {
+            Assert.assertTrue(function.isConstant());
+            Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(60), function.getType());
+            Assert.assertEquals(GeoHashes.NULL, function.getGeoLong(null));
+        }
     }
 
     @Test
     public void testCastNullGeoLongChars() throws SqlException {
-        Function function = parseFunction("cast(null as GeOhAsH(12c))", metadata, functionParser);
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(60), function.getType());
-        Assert.assertEquals(GeoHashes.NULL, function.getGeoLong(null));
+        try (Function function = parseFunction("cast(null as GeOhAsH(12c))", metadata, functionParser)) {
+            Assert.assertTrue(function.isConstant());
+            Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(60), function.getType());
+            Assert.assertEquals(GeoHashes.NULL, function.getGeoLong(null));
+        }
     }
 
     @Test
     public void testCastNullGeoShortBits() throws SqlException {
-        Function function = parseFunction("cast(null as GeOhAsH(8b))", metadata, functionParser);
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(8), function.getType());
-        Assert.assertEquals(GeoHashes.NULL, function.getGeoShort(null));
+        try (Function function = parseFunction("cast(null as GeOhAsH(8b))", metadata, functionParser)) {
+            Assert.assertTrue(function.isConstant());
+            Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(8), function.getType());
+            Assert.assertEquals(GeoHashes.NULL, function.getGeoShort(null));
+        }
     }
 
     @Test
     public void testCastNullGeoShortChars() throws SqlException {
-        Function function = parseFunction("cast(null as GeOhAsH(3c))", metadata, functionParser);
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(15), function.getType());
-        Assert.assertEquals(GeoHashes.SHORT_NULL, function.getGeoShort(null));
+        try (Function function = parseFunction("cast(null as GeOhAsH(3c))", metadata, functionParser)) {
+            Assert.assertTrue(function.isConstant());
+            Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(15), function.getType());
+            Assert.assertEquals(GeoHashes.SHORT_NULL, function.getGeoShort(null));
+        }
     }
 
     @Test
     public void testCastNullStringAsBoolean() throws SqlException {
-        Function function = parseFunction("cast('' as BOOLEAN)", metadata, functionParser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertTrue(function.isConstant());
-        Assert.assertFalse(function.getBool(null));
+        try (Function function = parseFunction("cast('' as BOOLEAN)", metadata, functionParser)) {
+            Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+            Assert.assertTrue(function.isConstant());
+            Assert.assertFalse(function.getBool(null));
+        }
     }
 
     @Test
     public void testCastStringAsBoolean() throws SqlException {
-        Function function = parseFunction("cast('bongos' as BOOLEAN)", metadata, functionParser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertTrue(function.isConstant());
-        Assert.assertFalse(function.getBool(null));
+        try (Function function = parseFunction("cast('bongos' as BOOLEAN)", metadata, functionParser)) {
+            Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+            Assert.assertTrue(function.isConstant());
+            Assert.assertFalse(function.getBool(null));
+        }
     }
 
     @Test
     public void testCastTrueStringAsBoolean() throws SqlException {
-        Function function = parseFunction("cast('tRuE' as BOOLEAN)", metadata, functionParser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertTrue(function.isConstant());
-        Assert.assertTrue(function.getBool(null));
+        try (Function function = parseFunction("cast('tRuE' as BOOLEAN)", metadata, functionParser)) {
+            Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+            Assert.assertTrue(function.isConstant());
+            Assert.assertTrue(function.getBool(null));
+        }
     }
 
     static {

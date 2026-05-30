@@ -225,9 +225,11 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                             "order by name.name")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("name\temail\tbio\n" +
-                            "Alice\talice@test.com\tSoftware Developer\n" +
-                            "Bob\tbob@test.com\tData Analyst\n");
+                    .returns("""
+                            name\temail\tbio
+                            Alice\talice@test.com\tSoftware Developer
+                            Bob\tbob@test.com\tData Analyst
+                            """);
         });
     }
 
@@ -380,10 +382,12 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                             "where current.account_id is null")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("account_id\tmetric\n" +
-                            "1\tmemory\n" +
-                            "2\tcpu\n" +
-                            "2\tmemory\n");
+                    .returns("""
+                            account_id\tmetric
+                            1\tmemory
+                            2\tcpu
+                            2\tmemory
+                            """);
         });
     }
 
@@ -412,11 +416,13 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                             "order by account_id, metric")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("account_id\tmetric\n" +
-                            "1\tcpu\n" +
-                            "1\tmemory\n" +
-                            "2\tcpu\n" +
-                            "2\tmemory\n");
+                    .returns("""
+                            account_id\tmetric
+                            1\tcpu
+                            1\tmemory
+                            2\tcpu
+                            2\tmemory
+                            """);
         });
     }
 
@@ -477,9 +483,11 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                             "order by name, product_name")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("name\tproduct_name\tcategory_name\n" +
-                            "Alice\tLaptop\tElectronics\n" +
-                            "Bob\tMouse\tElectronics\n");
+                    .returns("""
+                            name\tproduct_name\tcategory_name
+                            Alice\tLaptop\tElectronics
+                            Bob\tMouse\tElectronics
+                            """);
         });
     }
 
@@ -508,8 +516,10 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                             "inner join sensors as sensors_tbl on sensors_tbl.sensor_id = samples_tbl.sensor_id")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("sensor_id\tapptype\n" +
-                            "air\t1\n");
+                    .returns("""
+                            sensor_id\tapptype
+                            air\t1
+                            """);
         });
     }
 
@@ -538,8 +548,10 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                             "inner join sensors on sensors.sensor_id = samples.sensor_id")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("sensor_name\tapplication_type\n" +
-                            "air\t1\n");
+                    .returns("""
+                            sensor_name\tapplication_type
+                            air\t1
+                            """);
         });
     }
 
@@ -568,8 +580,10 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                             "inner join sensors se on se.sensor_id = sa.sensor_id")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("sensor_id\tapptype\n" +
-                            "air\t1\n");
+                    .returns("""
+                            sensor_id\tapptype
+                            air\t1
+                            """);
         });
     }
 
@@ -600,8 +614,10 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                             "inner join sensors on sensors.sensor_id = samples.sensor_id")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("sensor_id\tapptype\n" +
-                            "air\t1\n");
+                    .returns("""
+                            sensor_id\tapptype
+                            air\t1
+                            """);
         });
     }
 
@@ -632,9 +648,11 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                             "left join sensors on sensors.sensor_id = samples.sensor_id")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("sensor_id\tapptype\n" +
-                            "air\t1\n" +
-                            "soil\tnull\n");
+                    .returns("""
+                            sensor_id\tapptype
+                            air\t1
+                            soil\tnull
+                            """);
         });
     }
 
@@ -676,10 +694,12 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                             "order by name, product_name")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("name\tproduct_name\n" +
-                            "Alice\tLaptop\n" +
-                            "Alice\tMouse\n" +
-                            "Bob\tLaptop\n");
+                    .returns("""
+                            name\tproduct_name
+                            Alice\tLaptop
+                            Alice\tMouse
+                            Bob\tLaptop
+                            """);
         });
     }
 
@@ -749,9 +769,11 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                             "inner join sensors s2 on s1.parent_id = s2.sensor_id")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("sensor_id\tapptype\n" +
-                            "air1\t2\n" +
-                            "air2\t2\n");
+                    .returns("""
+                            sensor_id\tapptype
+                            air1\t2
+                            air2\t2
+                            """);
         });
     }
 
@@ -784,9 +806,11 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                             "order by sensors.sensor_id")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("sensor_id\ttype\tvalue\n" +
-                            "hum1\thumidity\t60.0\n" +
-                            "temp1\ttemperature\t25.5\n");
+                    .returns("""
+                            sensor_id\ttype\tvalue
+                            hum1\thumidity\t60.0
+                            temp1\ttemperature\t25.5
+                            """);
         });
     }
 

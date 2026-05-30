@@ -44,11 +44,13 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         ")")
                 .noRandomAccess()
                 .expectSize()
-                .returns("c\n" +
-                        "0\n" +
-                        "0\n" +
-                        "0\n" +
-                        "0\n");
+                .returns("""
+                        c
+                        0
+                        0
+                        0
+                        0
+                        """);
     }
 
     @Test
@@ -65,10 +67,12 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 2 as id, 100 as amount, 'abc' status from long_sequence(1) " +
                         ")")
                 .noRandomAccess()
-                .returns("status\n" +
-                        "abc\n" +
-                        "abc\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        abc
+                        abc
+                        """);
     }
 
     @Test
@@ -81,8 +85,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 1 as id, 100 as amount, 'abc' status from long_sequence(1) " +
                         ")")
                 .noRandomAccess()
-                .returns("status\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        """);
     }
 
     @Test
@@ -95,10 +101,12 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 3 as id, 100 as amount, 'ghi' status ) ")
                 .ddl(null)
                 .noRandomAccess()
-                .returns("status\n" +
-                        "abc\n" +
-                        "def\n" +
-                        "ghi\n");
+                .returns("""
+                        status
+                        abc
+                        def
+                        ghi
+                        """);
     }
 
     @Test
@@ -132,8 +140,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 1 as id, 101 as amount, 'abc' status  ) ")
                 .ddl(null)
                 .noRandomAccess()
-                .returns("status\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        """);
     }
 
     @Test
@@ -147,8 +157,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "union all " +
                         "select 2 as id, 100 as amount, 'abc' status from long_sequence(1) " +
                         ")")
-                .returns("status\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        """);
     }
 
     //latest by pushdown test - end  
@@ -172,8 +184,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "except " +
                         "select 1 as id, 100 as amount, 'def' status ) ")
                 .ddl(null)
-                .returns("status\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        """);
     }
 
     @Test
@@ -183,8 +197,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "except " +
                         "select 1 as id, 101 as amount, 'abc' status ) ")
                 .ddl(null)
-                .returns("status\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        """);
     }
 
     @Test
@@ -206,8 +222,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 .ddl("create table test as ( " +
                         "select 1 as id, 100 as amount, 'abc' status from long_sequence(1) " +
                         ")")
-                .returns("status\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        """);
     }
 
     @Test
@@ -231,8 +249,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "intersect " +
                         "select 1 as id, 100 as amount, 'abc' status ) ")
                 .ddl(null)
-                .returns("status\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        """);
     }
 
     //order by pushdown test - end
@@ -267,8 +287,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 1 as id, 100 as amount, 'abc' status ) ")
                 .ddl(null)
                 .noRandomAccess()
-                .returns("status\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        """);
     }
 
     //test with combinations of set operations, e.g. union with union all
@@ -282,10 +304,12 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 2 as id, 100 as amount, 'abc' status ) ")
                 .ddl(null)
                 .noRandomAccess()
-                .returns("status\n" +
-                        "abc\n" +
-                        "abc\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        abc
+                        abc
+                        """);
     }
 
     //select columns pushdown with real tables
@@ -301,9 +325,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 2 as id, 100 as amount, 'abc' status from long_sequence(1) " +
                         ")")
                 .noRandomAccess()
-                .returns("status\n" +
-                        "abc\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        abc
+                        """);
     }
 
     @Test
@@ -315,9 +341,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 .ddl(null)
                 .noRandomAccess()
                 .expectSize()
-                .returns("status\n" +
-                        "abc\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        abc
+                        """);
     }
 
     @Test
@@ -329,9 +357,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 .ddl(null)
                 .noRandomAccess()
                 .expectSize()
-                .returns("status\n" +
-                        "abc\n" +
-                        "def\n");
+                .returns("""
+                        status
+                        abc
+                        def
+                        """);
     }
 
     @Test
@@ -346,9 +376,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 2 as id, 100 as amount, 'abc' status from long_sequence(1) " +
                         ")")
                 .noRandomAccess()
-                .returns("status\n" +
-                        "abc\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        abc
+                        """);
     }
 
     @Test
@@ -361,8 +393,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 1 as id, 100 as amount, 'abc' status from long_sequence(1) " +
                         ")")
                 .noRandomAccess()
-                .returns("status\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        """);
     }
 
     //select columns pushdown with virtual selects - start
@@ -374,9 +408,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 2 as id, 100 as amount, 'def' status ) ")
                 .ddl(null)
                 .noRandomAccess()
-                .returns("status\n" +
-                        "abc\n" +
-                        "def\n");
+                .returns("""
+                        status
+                        abc
+                        def
+                        """);
     }
 
 
@@ -390,9 +426,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 2 as id, 100 as amount, 'abc' status ) ")
                 .ddl(null)
                 .noRandomAccess()
-                .returns("status\n" +
-                        "abc\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        abc
+                        """);
     }
 
     @Test
@@ -403,8 +441,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 1 as id, 100 as amount, 'abc' status ) ")
                 .ddl(null)
                 .noRandomAccess()
-                .returns("status\n" +
-                        "abc\n");
+                .returns("""
+                        status
+                        abc
+                        """);
     }
 
     @Test
@@ -427,8 +467,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "group by id ")
                 .ddl(null)
                 .expectSize()
-                .returns("id\tminv\tmaxv\n" +
-                        "1\t2\t2\n");
+                .returns("""
+                        id\tminv\tmaxv
+                        1\t2\t2
+                        """);
     }
 
     @Test
@@ -451,8 +493,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "group by id ")
                 .ddl(null)
                 .expectSize()
-                .returns("id\tminv\tmaxv\n" +
-                        "1\t2\t3\n");
+                .returns("""
+                        id\tminv\tmaxv
+                        1\t2\t3
+                        """);
     }
 
     // latest by pushdown test - start
@@ -469,8 +513,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         ") timestamp(ts)")
                 .noRandomAccess()
                 .expectSize()
-                .returns("ts\tstatus\tamount\n" +
-                        "1970-01-01T00:00:00.000002Z\topen\t101\n");
+                .returns("""
+                        ts\tstatus\tamount
+                        1970-01-01T00:00:00.000002Z\topen\t101
+                        """);
     }
 
     @Test
@@ -483,8 +529,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 1 as id, 't2' as rec_type, cast(1 as timestamp) ts ) )" +
                         "order by id desc )")
                 .ddl(null)
-                .returns("rec_type\n" +
-                        "t1\n");
+                .returns("""
+                        rec_type
+                        t1
+                        """);
     }
 
     @Test
@@ -510,8 +558,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 1 as id, 't1' as rec_type, cast(1 as timestamp) ts ) )" +
                         "order by id desc )")
                 .ddl(null)
-                .returns("rec_type\n" +
-                        "t1\n");
+                .returns("""
+                        rec_type
+                        t1
+                        """);
     }
 
     @Test
@@ -541,9 +591,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "order by id desc )")
                 .ddl(null)
                 .expectSize()
-                .returns("rec_type\n" +
-                        "t2\n" +
-                        "t1\n");
+                .returns("""
+                        rec_type
+                        t2
+                        t1
+                        """);
     }
 
     @Test
@@ -556,9 +608,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select '1 ' as id, 't2' as rec_type, cast(1 as timestamp) ts ) )" +
                         "order by id desc )")
                 .ddl(null)
-                .returns("rec_type\n" +
-                        "t1\n" +
-                        "t2\n");
+                .returns("""
+                        rec_type
+                        t1
+                        t2
+                        """);
     }
 
     @Test
@@ -571,8 +625,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 1 as id, 't3' as rec_type, cast(1 as timestamp) ts ) )" +
                         "order by id desc )")
                 .ddl(null)
-                .returns("rec_type\n" +
-                        "t3\n");
+                .returns("""
+                        rec_type
+                        t3
+                        """);
     }
 
     @Test
@@ -582,8 +638,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select x from long_sequence(2)" +
                         ")")
                 .noRandomAccess()
-                .returns("sm\n" +
-                        "6\n");
+                .returns("""
+                        sm
+                        6
+                        """);
 
     }
 
@@ -599,10 +657,12 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 .timestamp("ts")
                 .noRandomAccess()
                 .expectSize()
-                .returns("type\tts\n" +
-                        "st\t1970-01-01T00:00:00.000001Z\n" +
-                        "st\t1970-01-01T00:00:00.000002Z\n" +
-                        "st\t1970-01-01T00:00:00.000003Z\n");
+                .returns("""
+                        type\tts
+                        st\t1970-01-01T00:00:00.000001Z
+                        st\t1970-01-01T00:00:00.000002Z
+                        st\t1970-01-01T00:00:00.000003Z
+                        """);
     }
 
     //timestamp pushdown tests start
@@ -619,10 +679,12 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 .ddl(null)
                 .timestamp("ts")
                 .noRandomAccess()
-                .returns("type\tts\n" +
-                        "st\t1970-01-01T00:00:00.000001Z\n" +
-                        "st\t1970-01-01T00:00:00.000002Z\n" +
-                        "st\t1970-01-01T00:00:00.000003Z\n");
+                .returns("""
+                        type\tts
+                        st\t1970-01-01T00:00:00.000001Z
+                        st\t1970-01-01T00:00:00.000002Z
+                        st\t1970-01-01T00:00:00.000003Z
+                        """);
     }
 
     @Test
@@ -633,8 +695,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 2 as id, 'st' as type, cast(2 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
                 .timestamp("ts")
-                .returns("type\tts\n" +
-                        "st\t1970-01-01T00:00:00.000001Z\n");
+                .returns("""
+                        type\tts
+                        st\t1970-01-01T00:00:00.000001Z
+                        """);
     }
 
     @Test
@@ -656,8 +720,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 1 as id, 'st' as type, cast(1 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
                 .timestamp("ts")
-                .returns("type\tts\n" +
-                        "st\t1970-01-01T00:00:00.000001Z\n");
+                .returns("""
+                        type\tts
+                        st\t1970-01-01T00:00:00.000001Z
+                        """);
     }
 
     @Test
@@ -681,9 +747,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 .timestamp("ts")
                 .noRandomAccess()
                 .expectSize()
-                .returns("type\tts\n" +
-                        "st\t1970-01-01T00:00:00.000001Z\n" +
-                        "st\t1970-01-01T00:00:00.000002Z\n");
+                .returns("""
+                        type\tts
+                        st\t1970-01-01T00:00:00.000001Z
+                        st\t1970-01-01T00:00:00.000002Z
+                        """);
     }
 
     @Test
@@ -696,9 +764,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 .timestamp("ts")
                 .noRandomAccess()
                 .expectSize()
-                .returns("type\tts\n" +
-                        "st\t1970-01-01T00:00:00.000001Z\n" +
-                        "st\t1970-01-01T00:00:00.000002Z\n");
+                .returns("""
+                        type\tts
+                        st\t1970-01-01T00:00:00.000001Z
+                        st\t1970-01-01T00:00:00.000002Z
+                        """);
     }
 
     //same as above but with duplicate rows
@@ -712,9 +782,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 .timestamp("ts")
                 .noRandomAccess()
                 .expectSize()
-                .returns("type\tts\n" +
-                        "st\t1970-01-01T00:00:00.000001Z\n" +
-                        "st\t1970-01-01T00:00:00.000001Z\n");
+                .returns("""
+                        type\tts
+                        st\t1970-01-01T00:00:00.000001Z
+                        st\t1970-01-01T00:00:00.000001Z
+                        """);
     }
 
     @Test
@@ -726,9 +798,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 .ddl(null)
                 .timestamp("ts")
                 .noRandomAccess()
-                .returns("type\tts\n" +
-                        "st\t1970-01-01T00:00:00.000001Z\n" +
-                        "st\t1970-01-01T00:00:00.000002Z\n");
+                .returns("""
+                        type\tts
+                        st\t1970-01-01T00:00:00.000001Z
+                        st\t1970-01-01T00:00:00.000002Z
+                        """);
     }
 
     @Test
@@ -740,8 +814,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 .ddl(null)
                 .timestamp("ts")
                 .noRandomAccess()
-                .returns("type\tts\n" +
-                        "st\t1970-01-01T00:00:00.000001Z\n");
+                .returns("""
+                        type\tts
+                        st\t1970-01-01T00:00:00.000001Z
+                        """);
     }
 
     @Test
@@ -756,8 +832,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "where id=1 ")
                 .ddl(null)
                 .noRandomAccess()
-                .returns("rec_type\n" +
-                        "t1\n");
+                .returns("""
+                        rec_type
+                        t1
+                        """);
     }
 
     @Test
@@ -768,8 +846,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 2 as id, 't1' as rec_type, cast(2 as timestamp) ts from long_sequence(1) where x < 0 ) " +
                         "where id!=0 ")
                 .ddl(null)
-                .returns("rec_type\n" +
-                        "t1\n");
+                .returns("""
+                        rec_type
+                        t1
+                        """);
     }
 
     //where clause pushdown tests start
@@ -781,8 +861,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 2 as id, 't1' as rec_type, cast(2 as timestamp) ts ) " +
                         "where id!=0 ")
                 .ddl(null)
-                .returns("rec_type\n" +
-                        "t1\n");
+                .returns("""
+                        rec_type
+                        t1
+                        """);
     }
 
     @Test
@@ -804,8 +886,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select 1 as id, 't1' as rec_type, cast(1 as timestamp) ts ) " +
                         "where id<10 ")
                 .ddl(null)
-                .returns("rec_type\n" +
-                        "t1\n");
+                .returns("""
+                        rec_type
+                        t1
+                        """);
     }
 
     @Test
@@ -828,9 +912,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "where id<10 ")
                 .ddl(null)
                 .noRandomAccess()
-                .returns("rec_type\n" +
-                        "t1\n" +
-                        "t2\n");
+                .returns("""
+                        rec_type
+                        t1
+                        t2
+                        """);
     }
 
     @Test
@@ -842,8 +928,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "where id=1 ")
                 .ddl(null)
                 .noRandomAccess()
-                .returns("rec_type\n" +
-                        "t1\n");
+                .returns("""
+                        rec_type
+                        t1
+                        """);
     }
 
     @Test
@@ -855,9 +943,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "where id>0 ")
                 .ddl(null)
                 .noRandomAccess()
-                .returns("rec_type\n" +
-                        "t1\n" +
-                        "t2\n");
+                .returns("""
+                        rec_type
+                        t1
+                        t2
+                        """);
     }
 
     @Test
@@ -869,8 +959,10 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "where id=1 ")
                 .ddl(null)
                 .noRandomAccess()
-                .returns("rec_type\n" +
-                        "t1\n");
+                .returns("""
+                        rec_type
+                        t1
+                        """);
     }
 
     //select columns pushdown with virtual selects - end 

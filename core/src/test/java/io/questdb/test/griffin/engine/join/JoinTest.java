@@ -6276,10 +6276,12 @@ public class JoinTest extends AbstractCairoTest {
             assertQuery("SELECT b.val AS e0, b.sym AS e1, a.sym AS e2 FROM x_idx a SPLICE JOIN y_tab b WHERE a.ts IN '2024-01-01' ORDER BY 3")
                     .noLeakCheck()
                     .ddl(null)
-                    .returns("e0\te1\te2\n" +
-                            "1.0\tb\ta\n" +
-                            "2.0\tb\ta\n" +
-                            "3.0\tb\ta\n");
+                    .returns("""
+                            e0\te1\te2
+                            1.0\tb\ta
+                            2.0\tb\ta
+                            3.0\tb\ta
+                            """);
         });
     }
 
