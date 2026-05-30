@@ -49,35 +49,25 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                             ")"
             );
 
-            assertExceptionNoLeakCheck(
-                    "select dateadd(period, stride, ts, tz) val from test_tab",
-                    23,
-                    "`null` is not a valid stride"
-            );
+            assertQuery("select dateadd(period, stride, ts, tz) val from test_tab")
+                    .noLeakCheck()
+                    .fails(23, "`null` is not a valid stride");
 
-            assertExceptionNoLeakCheck(
-                    "select dateadd(period, stride, ts, tz) val from test_tab where stride is not null",
-                    35,
-                    "invalid timezone: unknown/unknown"
-            );
+            assertQuery("select dateadd(period, stride, ts, tz) val from test_tab where stride is not null")
+                    .noLeakCheck()
+                    .fails(35, "invalid timezone: unknown/unknown");
 
-            assertExceptionNoLeakCheck(
-                    "select dateadd(period, stride, ts, tz) val from test_tab where stride is not null and tz <> 'unknown/unknown'",
-                    15,
-                    "invalid period [period=\u0000]"
-            );
+            assertQuery("select dateadd(period, stride, ts, tz) val from test_tab where stride is not null and tz <> 'unknown/unknown'")
+                    .noLeakCheck()
+                    .fails(15, "invalid period [period=\u0000]");
 
-            assertExceptionNoLeakCheck(
-                    "select dateadd(period, stride, ts, tz) val from test_tab where stride is not null and tz <> 'unknown/unknown' and period is not null",
-                    35,
-                    "NULL timezone"
-            );
+            assertQuery("select dateadd(period, stride, ts, tz) val from test_tab where stride is not null and tz <> 'unknown/unknown' and period is not null")
+                    .noLeakCheck()
+                    .fails(35, "NULL timezone");
 
-            assertExceptionNoLeakCheck(
-                    "select dateadd(period, stride, ts_ns, tz) val from test_tab where stride is not null and tz <> 'unknown/unknown' and period is not null and tz is not null",
-                    15,
-                    "invalid period [period=x]"
-            );
+            assertQuery("select dateadd(period, stride, ts_ns, tz) val from test_tab where stride is not null and tz <> 'unknown/unknown' and period is not null and tz is not null")
+                    .noLeakCheck()
+                    .fails(15, "invalid period [period=x]");
 
             assertSql(
                     """
@@ -155,53 +145,53 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
         assertMemoryLeak(() -> {
             // Input query performing DATEADD and converting to UTC
             // Validate the result accounts for DST transition correctly
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select to_utc(dateadd('w', 1, '2024-10-21'), 'Europe/Bratislava') as utc_time")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             utc_time
                             2024-10-27T23:00:00.000000Z
-                            """,
-                    "select to_utc(dateadd('w', 1, '2024-10-21'), 'Europe/Bratislava') as utc_time"
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select to_utc(dateadd('h', 2, '2021-03-28'), 'Europe/Berlin') as utc_time")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             utc_time
                             2021-03-28T01:00:00.000000Z
-                            """,
-                    "select to_utc(dateadd('h', 2, '2021-03-28'), 'Europe/Berlin') as utc_time"
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select to_utc(dateadd('h', 2, '2021-10-31'), 'Europe/Berlin') as utc_time")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             utc_time
                             2021-10-31T00:00:00.000000Z
-                            """,
-                    "select to_utc(dateadd('h', 2, '2021-10-31'), 'Europe/Berlin') as utc_time"
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select to_utc(dateadd('w', 1, '2024-10-21'::timestamp_ns), 'Europe/Bratislava') as utc_time")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             utc_time
                             2024-10-27T23:00:00.000000000Z
-                            """,
-                    "select to_utc(dateadd('w', 1, '2024-10-21'::timestamp_ns), 'Europe/Bratislava') as utc_time"
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select to_utc(dateadd('h', 2, '2021-03-28'::timestamp_ns), 'Europe/Berlin') as utc_time")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             utc_time
                             2021-03-28T01:00:00.000000000Z
-                            """,
-                    "select to_utc(dateadd('h', 2, '2021-03-28'::timestamp_ns), 'Europe/Berlin') as utc_time"
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select to_utc(dateadd('h', 2, '2021-10-31'::timestamp_ns), 'Europe/Berlin') as utc_time")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             utc_time
                             2021-10-31T00:00:00.000000000Z
-                            """,
-                    "select to_utc(dateadd('h', 2, '2021-10-31'::timestamp_ns), 'Europe/Berlin') as utc_time"
-            );
+                            """);
         });
     }
 
@@ -266,7 +256,8 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
     @Test
     public void testNullStride() throws Exception {
         for (int i = 0; i < UNITS.length; i++) {
-            assertException("select dateadd('" + UNITS[i] + "', null, 1587275359886758L, 'Europe/Bratislava')", 20, "`null` is not a valid stride");
+            assertQuery("select dateadd('" + UNITS[i] + "', null, 1587275359886758L, 'Europe/Bratislava')")
+                    .fails(20, "`null` is not a valid stride");
         }
     }
 
@@ -282,7 +273,8 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
 
     @Test
     public void testPeriodNullChar() throws Exception {
-        assertException("select dateadd('\0', 5, 1587275359886758L, 'Europe/Bratislava')", 15, "invalid time period [unit=");
+        assertQuery("select dateadd('\0', 5, 1587275359886758L, 'Europe/Bratislava')")
+                .fails(15, "invalid time period [unit=");
     }
 
     @Test
@@ -351,17 +343,11 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                 "dateadd\n:TIMESTAMP\n:TIMESTAMP\n",
                 String.format("select dateadd('y', cast(x as int), null, '%s') from long_sequence(2)",
                         timezone));
-        assertException(
-                "select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)",
-                90,
-                "invalid timezone: %s"
-        );
+        assertQuery("select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '%s') from long_sequence(2)")
+                .fails(90, "invalid timezone: %s");
 
-        assertException(
-                "select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '03:00') from long_sequence(2)",
-                20,
-                "`null` is not a valid stride"
-        );
+        assertQuery("select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '03:00') from long_sequence(2)")
+                .fails(20, "`null` is not a valid stride");
 
         assertSql(
                 """
@@ -413,12 +399,14 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
 
     @Test
     public void testUnknownPeriod() throws Exception {
-        assertException("select dateadd('q', -5, 1587275359886758L, 'Europe/Bratislava')", 15, "invalid time period [unit=q]");
+        assertQuery("select dateadd('q', -5, 1587275359886758L, 'Europe/Bratislava')")
+                .fails(15, "invalid time period [unit=q]");
     }
 
     @Test
     public void testUnknownTimezone() throws Exception {
-        assertException("select dateadd('d', 2, 1603580400000000L, 'Random/Time')", 42, "invalid timezone: Random/Time");
+        assertQuery("select dateadd('d', 2, 1603580400000000L, 'Random/Time')")
+                .fails(42, "invalid timezone: Random/Time");
     }
 
     private void testDateAddEquivalenceWithUTC(char unit, int interval, String date, String dateType, String tz, StringSink sink2) throws Exception {

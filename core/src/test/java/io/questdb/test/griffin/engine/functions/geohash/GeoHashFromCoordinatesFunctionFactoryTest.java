@@ -36,46 +36,30 @@ public class GeoHashFromCoordinatesFunctionFactoryTest extends AbstractFunctionF
 
     @Test
     public void testMakeGeoHash13bits() throws Exception {
-        assertQuery(
-                "make_geohash\n0111101011101\n",
-                "select make_geohash(-0.1275, 51.50722, 13)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select make_geohash(-0.1275, 51.50722, 13)")
+                .expectSize()
+                .returns("make_geohash\n0111101011101\n");
     }
 
     @Test
     public void testMakeGeoHash40bits() throws Exception {
-        assertQuery(
-                "make_geohash\ngcpvj0e5\n",
-                "select make_geohash(-0.1275, 51.50722, 40)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select make_geohash(-0.1275, 51.50722, 40)")
+                .expectSize()
+                .returns("make_geohash\ngcpvj0e5\n");
     }
 
     @Test
     public void testMakeGeoHashZero() throws Exception {
-        assertQuery(
-                "make_geohash\ns0000\n",
-                "select make_geohash(0.0, 0.0, 25)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select make_geohash(0.0, 0.0, 25)")
+                .expectSize()
+                .returns("make_geohash\ns0000\n");
     }
 
     @Test
     public void testMakeGeoHashZeroBits() throws Exception {
-        assertQuery(
-                "make_geohash\n11000000000000000000000\n",
-                "select make_geohash(0.0, 0.0, 23)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select make_geohash(0.0, 0.0, 23)")
+                .expectSize()
+                .returns("make_geohash\n11000000000000000000000\n");
     }
 
     @Test

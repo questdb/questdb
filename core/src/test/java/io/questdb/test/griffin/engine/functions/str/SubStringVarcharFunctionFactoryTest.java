@@ -50,8 +50,10 @@ public class SubStringVarcharFunctionFactoryTest extends AbstractFunctionFactory
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery(
-                "k\tsubstring\tlength\n" +
+        assertQuery("select k, substring(k,2,4), length(substring(k,2,4)) from x")
+                .ddl("create table x as (select rnd_varchar('раз два','три четыре','пять шесть') k from long_sequence(15))")
+                .expectSize()
+                .returns("k\tsubstring\tlength\n" +
                         "раз два\tаз д\t4\n" +
                         "раз два\tаз д\t4\n" +
                         "три четыре\tри ч\t4\n" +
@@ -66,13 +68,7 @@ public class SubStringVarcharFunctionFactoryTest extends AbstractFunctionFactory
                         "пять шесть\tять \t4\n" +
                         "три четыре\tри ч\t4\n" +
                         "три четыре\tри ч\t4\n" +
-                        "три четыре\tри ч\t4\n",
-                "select k, substring(k,2,4), length(substring(k,2,4)) from x",
-                "create table x as (select rnd_varchar('раз два','три четыре','пять шесть') k from long_sequence(15))",
-                null,
-                true,
-                true
-        );
+                        "три четыре\tри ч\t4\n");
     }
 
     @Test
