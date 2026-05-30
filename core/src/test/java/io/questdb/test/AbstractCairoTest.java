@@ -621,7 +621,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public static String replaceTimestampSuffix1(String expected, String timestampType) {
-        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replaceAll("00Z", "00000Z").replaceAll("-00000", "-00000000") : expected;
+        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replace("00Z", "00000Z").replace("-00000", "-00000000") : expected;
     }
 
     @BeforeClass
@@ -2265,7 +2265,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected PoolListener createWriterReleaseListener(CharSequence tableName, SOCountDownLatch latch) {
-        return (factoryType, thread, tableToken, event, segment, position) -> {
+        return (factoryType, _, tableToken, event, _, _) -> {
             if (
                     factoryType == PoolListener.SRC_WRITER
                             && event == PoolListener.EV_RETURN
