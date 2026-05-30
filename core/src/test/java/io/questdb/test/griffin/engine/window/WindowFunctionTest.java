@@ -1934,7 +1934,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
                             "min(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) " +
                             "from tab_big order by ts desc")
-                    .timestampDesc(""ts"")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -2000,7 +2000,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
                             "min(j) over (order by ts desc range between unbounded preceding and 1 preceding) " +
                             "from tab_big order by ts desc")
-                    .timestampDesc(""ts"")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -2205,7 +2205,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
                             "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding) " +
                             "from tab order by ts desc")
-                    .timestampDesc(""ts"")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -2235,7 +2235,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(i) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
                             "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) " +
                             "from tab order by ts desc")
-                    .timestampDesc(""ts"")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -2266,7 +2266,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (partition by i order by ts desc range between 0 preceding and current row) " +
                             "from tab " +
                             "order by ts desc")
-                    .timestampDesc(""ts"")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -2356,7 +2356,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
                             "min(j) over (partition by i order by ts desc range between unbounded preceding and current row) " +
                             "from tab order by ts desc")
-                    .timestampDesc(""ts"")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -2417,7 +2417,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) " +
                             "from tab " +
                             "order by ts desc")
-                    .timestampDesc(""ts"")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -2479,7 +2479,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding) " +
                             "from tab " +
                             "order by ts desc")
-                    .timestampDesc(""ts"")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -2627,7 +2627,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) " +
                             "from dups " +
                             "order by ts desc")
-                    .timestampDesc(""ts"")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -2649,7 +2649,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(j) over (partition by i order by ts desc range between unbounded preceding and current row) " +
                             "from dups " +
                             "order by ts desc")
-                    .timestampDesc(""ts"")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -14048,7 +14048,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQuery("select ts, nth_value(val, 2) over (" +
                             "order by ts desc range between unbounded preceding and current row) nv from tab order by ts desc")
-                    .timestampDesc(""ts"")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -14074,7 +14074,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(5, 2, 50.0), (6, 2, 60.0), (7, 2, 70.0)");
 
             assertQuery("select ts, i, ntile(2) over (partition by i order by ts desc) bucket from tab order by ts desc")
-                    .timestampDesc(""ts"")
+                    .timestampDesc("ts")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix1("""
@@ -14101,7 +14101,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(5, 2, 50.0), (6, 2, 60.0)");
 
             assertQuery("select ts, i, cume_dist() over (partition by i order by ts desc) cd from tab order by ts desc")
-                    .timestampDesc(""ts"")
+                    .timestampDesc("ts")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix1("""
