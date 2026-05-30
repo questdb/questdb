@@ -249,7 +249,9 @@ public class IntersectTest extends AbstractCairoTest {
                     "3\t2021-01-01T00:00:02.000000789Z\t300.0\n";
 
 
-            assertQueryNoLeakCheck(expected, "select * from trades1 intersect all select * from trades2", null, true, false);
+            assertQuery("select * from trades1 intersect all select * from trades2")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -292,19 +294,19 @@ public class IntersectTest extends AbstractCairoTest {
                     "2\t2020-01-01T00:00:00.124456Z\tB\n";
 
             // explicit cast to micros truncates nanos: 2 matching rows
-            assertQueryNoLeakCheck(expected,
-                    "select id, ts_micro, type from micro_events " +
+            assertQuery("select id, ts_micro, type from micro_events " +
                             "intersect " +
-                            "select id, ts_nano::timestamp as ts_micro, type from nano_events",
-                    null, true, false);
+                            "select id, ts_nano::timestamp as ts_micro, type from nano_events")
+                    .noLeakCheck()
+                    .returns(expected);
 
             // implicit cast promotes micros to nanos -> only the first row matches
-            assertQueryNoLeakCheck("id\tts\ttype\n" +
-                            "1\t2020-01-01T00:00:00.123456000Z\tA\n",
-                    "select id, ts_micro as ts, type from micro_events " +
+            assertQuery("select id, ts_micro as ts, type from micro_events " +
                             "intersect " +
-                            "select id, ts_nano as ts, type from nano_events",
-                    null, true, false);
+                            "select id, ts_nano as ts, type from nano_events")
+                    .noLeakCheck()
+                    .returns("id\tts\ttype\n" +
+                            "1\t2020-01-01T00:00:00.123456000Z\tA\n");
         });
     }
 
@@ -452,7 +454,9 @@ public class IntersectTest extends AbstractCairoTest {
                     "2\t2020-01-01T00:00:00.123456789Z\tview\n" +
                     "4\t2020-01-01T00:00:01.000000000Z\tclick\n";
 
-            assertQueryNoLeakCheck(expected, "select * from events1 intersect select * from events2", null, true, false);
+            assertQuery("select * from events1 intersect select * from events2")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -478,7 +482,9 @@ public class IntersectTest extends AbstractCairoTest {
                     "1\t2022-01-01T00:00:00.000000000Z\t25.5\n" +
                     "2\t\t30.0\n";
 
-            assertQueryNoLeakCheck(expected, "select * from sensors1 intersect select * from sensors2", null, true, false);
+            assertQuery("select * from sensors1 intersect select * from sensors2")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 }

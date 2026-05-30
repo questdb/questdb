@@ -88,7 +88,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         // Verify the query plan shows parallel execution
@@ -129,7 +129,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         TestUtils.assertSql(
@@ -165,7 +165,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         TestUtils.assertSqlCursors(
@@ -194,7 +194,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         TestUtils.assertSqlCursors(
@@ -223,7 +223,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         TestUtils.assertSqlCursors(
@@ -399,7 +399,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
                     "x::double key " +
                     "from long_sequence(100_000))");
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> TestUtils.assertSql(
+                TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> TestUtils.assertSql(
                         engine,
                         sqlExecutionContext,
                         "select sym, typeOf(arg_max(value, key)) AS t, arg_max(value, key) val " +

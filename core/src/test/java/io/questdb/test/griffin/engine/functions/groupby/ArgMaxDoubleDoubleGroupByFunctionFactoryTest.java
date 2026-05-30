@@ -89,7 +89,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // First, compute expected results using a non-parallel query
                         // by finding max key per symbol and the corresponding value
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
@@ -133,7 +133,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         // All results should be null since all keys are null
@@ -171,7 +171,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         // Verify the query plan shows parallel execution
@@ -223,7 +223,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         // Results should NOT be null - valid keys from second half should win
@@ -255,7 +255,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         // Run query - this exercises merge with null keys
@@ -286,7 +286,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         // Run parallel query and verify it produces results

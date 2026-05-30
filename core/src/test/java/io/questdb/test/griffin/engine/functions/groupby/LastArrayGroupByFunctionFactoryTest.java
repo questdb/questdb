@@ -36,8 +36,10 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             execute("insert into tab values (ARRAY[3.0, 4.0])");
             assertQuery(
-                    "arr\n" +
-                            "[3.0,4.0]\n",
+                    """
+                            arr
+                            [3.0,4.0]
+                            """,
                     "select last(arr) arr from tab",
                     null,
                     false,
@@ -56,9 +58,11 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (2, ARRAY[40.0, 41.0])");
             execute("insert into tab values (2, ARRAY[50.0, 51.0])");
             assertQuery(
-                    "grp\tarr\n" +
-                            "1\t[30.0,31.0]\n" +
-                            "2\t[50.0,51.0]\n",
+                    """
+                            grp\tarr
+                            1\t[30.0,31.0]
+                            2\t[50.0,51.0]
+                            """,
                     "select grp, last(arr) arr from tab order by grp",
                     null,
                     true,
@@ -81,9 +85,11 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tsym\tarr\n" +
-                            "1970-01-01T00:00:00.000000Z\ta\t[3.0,4.0]\n" +
-                            "1970-01-01T00:00:10.000000Z\tb\t[5.0,6.0]\n");
+                    .returns("""
+                            ts\tsym\tarr
+                            1970-01-01T00:00:00.000000Z\ta\t[3.0,4.0]
+                            1970-01-01T00:00:10.000000Z\tb\t[5.0,6.0]
+                            """);
         });
     }
 
@@ -100,9 +106,11 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
-                    .returns("ts\tarr\n" +
-                            "1970-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
-                            "1970-01-01T00:00:20.000000Z\t[3.0,4.0]\n");
+                    .returns("""
+                            ts\tarr
+                            1970-01-01T00:00:00.000000Z\t[1.0,2.0]
+                            1970-01-01T00:00:20.000000Z\t[3.0,4.0]
+                            """);
         });
     }
 
@@ -119,10 +127,12 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .returns("ts\tgrp\tarr\n" +
-                            "1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]\n" +
-                            "1970-01-01T00:00:10.000000Z\ta\tnull\n" +
-                            "1970-01-01T00:00:20.000000Z\ta\t[3.0,4.0]\n");
+                    .returns("""
+                            ts\tgrp\tarr
+                            1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]
+                            1970-01-01T00:00:10.000000Z\ta\tnull
+                            1970-01-01T00:00:20.000000Z\ta\t[3.0,4.0]
+                            """);
         });
     }
 
@@ -139,10 +149,12 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .returns("ts\tarr\n" +
-                            "1970-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
-                            "1970-01-01T00:00:10.000000Z\tnull\n" +
-                            "1970-01-01T00:00:20.000000Z\t[3.0,4.0]\n");
+                    .returns("""
+                            ts\tarr
+                            1970-01-01T00:00:00.000000Z\t[1.0,2.0]
+                            1970-01-01T00:00:10.000000Z\tnull
+                            1970-01-01T00:00:20.000000Z\t[3.0,4.0]
+                            """);
         });
     }
 
@@ -159,11 +171,13 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .returns("ts\tarr\n" +
-                            "1970-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
-                            "1970-01-01T00:00:10.000000Z\tnull\n" +
-                            "1970-01-01T00:00:20.000000Z\t[3.0,4.0]\n" +
-                            "1970-01-01T00:00:30.000000Z\tnull\n");
+                    .returns("""
+                            ts\tarr
+                            1970-01-01T00:00:00.000000Z\t[1.0,2.0]
+                            1970-01-01T00:00:10.000000Z\tnull
+                            1970-01-01T00:00:20.000000Z\t[3.0,4.0]
+                            1970-01-01T00:00:30.000000Z\tnull
+                            """);
         });
     }
 
@@ -180,10 +194,12 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .returns("ts\tarr\n" +
-                            "1970-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
-                            "1970-01-01T00:00:10.000000Z\tnull\n" +
-                            "1970-01-01T00:00:20.000000Z\t[3.0,4.0]\n");
+                    .returns("""
+                            ts\tarr
+                            1970-01-01T00:00:00.000000Z\t[1.0,2.0]
+                            1970-01-01T00:00:10.000000Z\tnull
+                            1970-01-01T00:00:20.000000Z\t[3.0,4.0]
+                            """);
         });
     }
 
@@ -200,10 +216,12 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .returns("ts\tgrp\tarr\n" +
-                            "1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]\n" +
-                            "1970-01-01T00:00:10.000000Z\ta\t[1.0,2.0]\n" +
-                            "1970-01-01T00:00:20.000000Z\ta\t[3.0,4.0]\n");
+                    .returns("""
+                            ts\tgrp\tarr
+                            1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]
+                            1970-01-01T00:00:10.000000Z\ta\t[1.0,2.0]
+                            1970-01-01T00:00:20.000000Z\ta\t[3.0,4.0]
+                            """);
         });
     }
 
@@ -221,11 +239,13 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .returns("ts\tgrp\tarr\n" +
-                            "1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]\n" +
-                            "1970-01-01T00:00:00.000000Z\tb\tnull\n" +
-                            "1970-01-01T00:00:10.000000Z\tb\t[5.0,6.0]\n" +
-                            "1970-01-01T00:00:10.000000Z\ta\t[3.0,4.0]\n");
+                    .returns("""
+                            ts\tgrp\tarr
+                            1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]
+                            1970-01-01T00:00:00.000000Z\tb\tnull
+                            1970-01-01T00:00:10.000000Z\tb\t[5.0,6.0]
+                            1970-01-01T00:00:10.000000Z\ta\t[3.0,4.0]
+                            """);
         });
     }
 
@@ -242,10 +262,12 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .returns("ts\tarr1\tarr2\n" +
-                            "1970-01-01T00:00:00.000000Z\t[1.0,2.0]\t[10.0]\n" +
-                            "1970-01-01T00:00:10.000000Z\tnull\tnull\n" +
-                            "1970-01-01T00:00:20.000000Z\t[3.0,4.0]\t[30.0,40.0]\n");
+                    .returns("""
+                            ts\tarr1\tarr2
+                            1970-01-01T00:00:00.000000Z\t[1.0,2.0]\t[10.0]
+                            1970-01-01T00:00:10.000000Z\tnull\tnull
+                            1970-01-01T00:00:20.000000Z\t[3.0,4.0]\t[30.0,40.0]
+                            """);
         });
     }
 
@@ -279,8 +301,10 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             execute("insert into tab values (null)");
             assertQuery(
-                    "arr\n" +
-                            "null\n",
+                    """
+                            arr
+                            null
+                            """,
                     "select last(arr) arr from tab",
                     null,
                     false,
@@ -296,8 +320,10 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             execute("insert into tab values (ARRAY[])");
             assertQuery(
-                    "arr\n" +
-                            "[]\n",
+                    """
+                            arr
+                            []
+                            """,
                     "select last(arr) arr from tab",
                     null,
                     false,
@@ -313,8 +339,10 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             execute("insert into tab values (ARRAY[3.0, null, 5.0])");
             assertQuery(
-                    "arr\n" +
-                            "[3.0,null,5.0]\n",
+                    """
+                            arr
+                            [3.0,null,5.0]
+                            """,
                     "select last(arr) arr from tab",
                     null,
                     false,
@@ -329,8 +357,10 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             assertQuery(
-                    "arr\n" +
-                            "[1.0,2.0]\n",
+                    """
+                            arr
+                            [1.0,2.0]
+                            """,
                     "select last(arr) arr from tab",
                     null,
                     false,
@@ -346,8 +376,10 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (null)");
             execute("insert into tab values (null)");
             assertQuery(
-                    "arr\n" +
-                            "null\n",
+                    """
+                            arr
+                            null
+                            """,
                     "select last(arr) arr from tab",
                     null,
                     false,
@@ -365,9 +397,11 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (2, null)");
             execute("insert into tab values (2, ARRAY[20.0, 21.0])");
             assertQuery(
-                    "grp\tarr\n" +
-                            "1\tnull\n" +
-                            "2\t[20.0,21.0]\n",
+                    """
+                            grp\tarr
+                            1\tnull
+                            2\t[20.0,21.0]
+                            """,
                     "select grp, last(arr) arr from tab order by grp",
                     null,
                     true,
@@ -383,8 +417,10 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (ARRAY[1.0])");
             execute("insert into tab values (ARRAY[2.0, 3.0, 4.0])");
             assertQuery(
-                    "arr\n" +
-                            "[2.0,3.0,4.0]\n",
+                    """
+                            arr
+                            [2.0,3.0,4.0]
+                            """,
                     "select last(arr) arr from tab",
                     null,
                     false,

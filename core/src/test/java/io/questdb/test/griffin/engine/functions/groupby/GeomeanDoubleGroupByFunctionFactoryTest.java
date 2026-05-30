@@ -229,7 +229,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // Verify the query plan shows parallel execution
@@ -270,7 +270,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // All results should be null since all values are null
@@ -307,7 +307,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // Verify the query plan shows parallel execution
@@ -357,7 +357,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // All results should be null (NaN displayed as null) since each group has negative values
@@ -395,7 +395,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // Run query - this exercises merge with null values
@@ -425,7 +425,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // Run parallel query and verify it produces consistent results

@@ -63,17 +63,17 @@ public class CastDecimalToDecimalFunctionFactoryTest extends BaseFunctionFactory
 
     @Test
     public void testConstantCastFunction() throws SqlException {
-        Function function = parse("cast(cast(123.45 as DECIMAL(5, 2)) as DECIMAL(6, 3))");
-
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.getDecimalType(6, 3), function.getType());
-        Assert.assertEquals(123450, function.getDecimal32(null));
+        try (Function function = parse("cast(cast(123.45 as DECIMAL(5, 2)) as DECIMAL(6, 3))")) {
+            Assert.assertTrue(function.isConstant());
+            Assert.assertEquals(ColumnType.getDecimalType(6, 3), function.getType());
+            Assert.assertEquals(123450, function.getDecimal32(null));
+        }
     }
 
     @Test
     public void testConstantCastFunctionArithmeticOverflow() throws SqlException {
         try {
-            parse("cast(cast(12345L as DECIMAL(5, 0)) as DECIMAL(76, 75))");
+            parse("cast(cast(12345L as DECIMAL(5, 0)) as DECIMAL(76, 75))").close();
             Assert.fail();
         } catch (ImplicitCastException ex) {
             TestUtils.assertContains(ex.getMessage(), "inconvertible value: 12345 [DECIMAL(5,0) -> DECIMAL(76,75)]");
@@ -82,17 +82,17 @@ public class CastDecimalToDecimalFunctionFactoryTest extends BaseFunctionFactory
 
     @Test
     public void testConstantCastFunctionNull() throws SqlException {
-        Function function = parse("cast(cast(cast(NULL as LONG) as DECIMAL(5, 2)) as DECIMAL(6, 3))");
-
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.getDecimalType(6, 3), function.getType());
-        Assert.assertEquals(Decimals.DECIMAL32_NULL, function.getDecimal32(null));
+        try (Function function = parse("cast(cast(cast(NULL as LONG) as DECIMAL(5, 2)) as DECIMAL(6, 3))")) {
+            Assert.assertTrue(function.isConstant());
+            Assert.assertEquals(ColumnType.getDecimalType(6, 3), function.getType());
+            Assert.assertEquals(Decimals.DECIMAL32_NULL, function.getDecimal32(null));
+        }
     }
 
     @Test
     public void testConstantCastFunctionOverflow() throws SqlException {
         try {
-            parse("cast(cast(123.45 as DECIMAL(5, 2)) as DECIMAL(5, 3))");
+            parse("cast(cast(123.45 as DECIMAL(5, 2)) as DECIMAL(5, 3))").close();
             Assert.fail();
         } catch (ImplicitCastException ex) {
             TestUtils.assertContains(ex.getMessage(), "inconvertible value: 123.45 [DECIMAL(5,2) -> DECIMAL(5,3)]");

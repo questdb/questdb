@@ -81,18 +81,15 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     SELECT sec_offs, avg(price) FROM priced_orders ORDER BY sec_offs;
                     """;
             assertHintUsedAndResultSameAsWithoutHint(sql);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs	avg
                             0	2.6666666666666665
                             1	3.3333333333333335
                             2	5.333333333333333
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -117,8 +114,11 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     ORDER BY order_ts + usec_offs
                     """;
             assertHintUsedAndResultSameAsWithoutHint(sql);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:00:00.000000Z
@@ -126,12 +126,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             1\t1970-01-01T00:00:01.000000Z
                             2\t1970-01-01T00:00:01.000000Z
                             3\t1970-01-01T00:00:01.000000Z
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -186,13 +181,11 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     ORDER BY order_ts + usec_offs
                     """;
             assertHintUsedAndResultSameAsWithoutHint(sql);
-            assertQueryNoLeakCheck(
-                    "id\tts\n",
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("id\tts\n");
         });
     }
 
@@ -209,13 +202,11 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     ORDER BY order_ts + usec_offs
                     """;
             assertHintUsedAndResultSameAsWithoutHint(sql);
-            assertQueryNoLeakCheck(
-                    "id\tts\n",
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("id\tts\n");
         });
     }
 
@@ -306,16 +297,14 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     ORDER BY order_ts + usec_offs
                     """;
             assertHintUsedAndResultSameAsWithoutHint(sql);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count(*) FROM (" + sql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count
                             100000
-                            """,
-                    "SELECT count(*) FROM (" + sql + ")",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -341,19 +330,16 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     ORDER BY order_ts + usec_offs
                     """;
             assertHintUsedAndResultSameAsWithoutHint(sql);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             1\t1970-01-01T00:00:01.000000Z
                             3\t1970-01-01T00:00:10.000000Z
                             3\t1970-01-01T00:00:11.000000Z
-                            """,
-                    sql,
-                    null,
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -380,8 +366,11 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     ORDER BY order_ts + usec_offs
                     """;
             assertHintUsedAndResultSameAsWithoutHint(sql);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:00:00.100000Z
@@ -392,12 +381,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             1\t1970-01-01T00:00:02.000000Z
                             2\t1970-01-01T00:00:02.100000Z
                             3\t1970-01-01T00:00:02.200000Z
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -423,8 +407,11 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     ORDER BY order_ts + usec_offs
                     """;
             assertHintUsedAndResultSameAsWithoutHint(sql);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             1\t1970-01-01T00:00:01.000000Z
@@ -441,12 +428,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             2\t1970-01-01T00:00:05.000000Z
                             3\t1970-01-01T00:00:05.000000Z
                             3\t1970-01-01T00:00:06.000000Z
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -472,8 +454,11 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     ORDER BY order_ts + usec_offs
                     """;
             assertHintUsedAndResultSameAsWithoutHint(sql);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             1\t1970-01-01T00:00:01.000000Z
@@ -484,12 +469,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:02:00.000000Z
                             3\t1970-01-01T00:02:01.000000Z
                             3\t1970-01-01T00:02:02.000000Z
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -516,16 +496,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:05.000000Z')");
 
-            assertQueryNoLeakCheck(
-                    """
-                            id\tts
-                            1\t1970-01-01T00:00:03.000000Z
-                            1\t1970-01-01T00:00:04.000000Z
-                            1\t1970-01-01T00:00:05.000000Z
-                            1\t1970-01-01T00:00:06.000000Z
-                            1\t1970-01-01T00:00:07.000000Z
-                            """,
-                    """
+            assertQuery("""
                             WITH offsets AS (
                                 SELECT 1_000_000 * (x-3) usec_offs
                                 FROM long_sequence(5)
@@ -533,11 +504,18 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id\tts
+                            1\t1970-01-01T00:00:03.000000Z
+                            1\t1970-01-01T00:00:04.000000Z
+                            1\t1970-01-01T00:00:05.000000Z
+                            1\t1970-01-01T00:00:06.000000Z
+                            1\t1970-01-01T00:00:07.000000Z
+                            """);
         });
     }
 
@@ -556,16 +534,16 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         (1, '1970-01-01T00:00:01', '1970-01-01T00:00:03'),
                         (2, '1970-01-01T00:00:02', '1970-01-01T00:00:02'),
                         (3, '1970-01-01T00:00:03', '1970-01-01T00:00:01')""");
-            assertQueryNoLeakCheck("""
+            assertQuery("SELECT id, the_ts FROM (SELECT id, other_ts + 0 AS the_ts FROM orders ORDER BY other_ts + 0)")
+                    .noLeakCheck()
+                    .timestamp("the_ts")
+                    .expectSize()
+                    .returns("""
                             id\tthe_ts
                             3\t1970-01-01T00:00:01.000000Z
                             2\t1970-01-01T00:00:02.000000Z
                             1\t1970-01-01T00:00:03.000000Z
-                            """,
-                    "SELECT id, the_ts FROM (SELECT id, other_ts + 0 AS the_ts FROM orders ORDER BY other_ts + 0)",
-                    "the_ts",
-                    true,
-                    true);
+                            """);
         });
     }
 
@@ -599,9 +577,24 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     """;
 
             // Execute multiple times to test any cursor reuse
-            assertQueryNoLeakCheck(expected, sql, null, null, false, true);
-            assertQueryNoLeakCheck(expected, sql, null, null, false, true);
-            assertQueryNoLeakCheck(expected, sql, null, null, false, true);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -634,8 +627,12 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     ORDER BY reading_ts + usec_offs
                     """;
             assertHintUsedAndResultSameAsWithoutHint(sql);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sensor_id	temperature	ts
                             101	20.5	2024-01-01T00:00:00.000000Z
                             101	20.5	2024-01-01T00:00:10.000000Z
@@ -655,13 +652,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             103	19.8	2024-01-01T00:01:30.000000Z
                             103	19.8	2024-01-01T00:01:40.000000Z
                             103	19.8	2024-01-01T00:01:50.000000Z
-                            """,
-                    sql,
-                    null,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -682,39 +673,33 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     ORDER BY order_ts + usec_offs
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count(*) FROM (" + sql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count
                             1201
-                            """,
-                    "SELECT count(*) FROM (" + sql + ")",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
             // Verify timestamps are in sorted order
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT /*+ markout_horizon(orders offsets) */ id, ts FROM (" + sql + ") LIMIT 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT /*+ markout_horizon(orders offsets) */ id, ts FROM (" + sql + ") LIMIT 1",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT /*+ markout_horizon(orders offsets) */ id, ts FROM (" + sql + ") LIMIT -1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:20:00.000000Z
-                            """,
-                    "SELECT /*+ markout_horizon(orders offsets) */ id, ts FROM (" + sql + ") LIMIT -1",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -733,18 +718,16 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs""";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             1\t1970-01-01T00:00:01.000000Z
                             1\t1970-01-01T00:00:02.000000Z
-                            """,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
             assertHintUsedAndResultSameAsWithoutHint(query);
         });
@@ -761,25 +744,23 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         (3, '1970-01-01T00:00:10.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            id\tts
-                            1\t1970-01-01T00:00:00.000000Z
-                            2\t1970-01-01T00:00:05.000000Z
-                            3\t1970-01-01T00:00:10.000000Z
-                            """,
-                    """
+            assertQuery("""
                             WITH offsets AS (
                                 SELECT 1_000_000 * (x-1) usec_offs
                                 FROM long_sequence(1)
                             )
                             SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""",
-                    null,
-                    false,
-                    true
-            );
+                            ORDER BY order_ts + usec_offs""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id\tts
+                            1\t1970-01-01T00:00:00.000000Z
+                            2\t1970-01-01T00:00:05.000000Z
+                            3\t1970-01-01T00:00:10.000000Z
+                            """);
         });
     }
 
@@ -795,8 +776,18 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         (3, 2)
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                            WITH offsets AS (
+                                SELECT 1_000_000 * (x-1) usec_offs
+                                FROM long_sequence(2)
+                            )
+                            SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                            FROM orders CROSS JOIN offsets
+                            ORDER BY order_ts + usec_offs""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:00:00.000001Z
@@ -804,19 +795,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             1\t1970-01-01T00:00:01.000000Z
                             2\t1970-01-01T00:00:01.000001Z
                             3\t1970-01-01T00:00:01.000002Z
-                            """,
-                    """
-                            WITH offsets AS (
-                                SELECT 1_000_000 * (x-1) usec_offs
-                                FROM long_sequence(2)
-                            )
-                            SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -830,8 +809,18 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                      (2, 'Bob', 250.75, '1970-01-01T00:00:05.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                            WITH offsets AS (
+                                SELECT 1_000_000 * (x-1) usec_offs
+                                FROM long_sequence(3)
+                            )
+                            SELECT /*+ markout_horizon(orders offsets) */ id, customer, amount, order_ts + usec_offs AS ts
+                            FROM orders CROSS JOIN offsets
+                            ORDER BY order_ts + usec_offs""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             id\tcustomer\tamount\tts
                             1\tAlice\t100.5\t1970-01-01T00:00:00.000000Z
                             1\tAlice\t100.5\t1970-01-01T00:00:01.000000Z
@@ -839,19 +828,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             2\tBob\t250.75\t1970-01-01T00:00:05.000000Z
                             2\tBob\t250.75\t1970-01-01T00:00:06.000000Z
                             2\tBob\t250.75\t1970-01-01T00:00:07.000000Z
-                            """,
-                    """
-                            WITH offsets AS (
-                                SELECT 1_000_000 * (x-1) usec_offs
-                                FROM long_sequence(3)
-                            )
-                            SELECT /*+ markout_horizon(orders offsets) */ id, customer, amount, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -865,17 +842,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         (2, '1970-01-01T00:00:05.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            id\tsec_offs\tts
-                            1\t0\t1970-01-01T00:00:00.000000Z
-                            1\t1\t1970-01-01T00:00:01.000000Z
-                            1\t2\t1970-01-01T00:00:02.000000Z
-                            2\t0\t1970-01-01T00:00:05.000000Z
-                            2\t1\t1970-01-01T00:00:06.000000Z
-                            2\t2\t1970-01-01T00:00:07.000000Z
-                            """,
-                    """
+            assertQuery("""
                             WITH offsets AS (
                                 SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
                                 FROM long_sequence(3)
@@ -883,11 +850,19 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             SELECT /*+ markout_horizon(orders offsets) */ id, sec_offs, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id\tsec_offs\tts
+                            1\t0\t1970-01-01T00:00:00.000000Z
+                            1\t1\t1970-01-01T00:00:01.000000Z
+                            1\t2\t1970-01-01T00:00:02.000000Z
+                            2\t0\t1970-01-01T00:00:05.000000Z
+                            2\t1\t1970-01-01T00:00:06.000000Z
+                            2\t2\t1970-01-01T00:00:07.000000Z
+                            """);
         });
     }
 

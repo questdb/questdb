@@ -43,49 +43,40 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n" +
                 "HBC\t0.0367581207471136\t1970-01-03T00:54:00.000000Z\n";
 
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym != 'AAA'",
-                "create table x (\n" +
+        assertQuery("select sym k, price, ts from x where sym != 'AAA'")
+                .ddl("create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY")
+                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
+                        "    from long_sequence(10)) timestamp (ts)")
+                .timestamp("ts")
+                .returns("k\tprice\tts\n", expected);
     }
 
     @Test
     public void testNotEquals1SymbolsWithConstantFilter() throws Exception {
         final String expected = "k\tj\tprice\tts\n";
-        assertQuery(
-                expected,
-                "select sym k, sym2 j, price, ts from x where sym != 'ABB' and 2 = 1",
-                """
+        assertQuery("select sym k, sym2 j, price, ts from x where sym != 'ABB' and 2 = 1")
+                .ddl("""
                         create table x (
                             sym symbol cache index,
                             sym2 symbol cache index,
                             price double,
                             ts timestamp
-                        ) timestamp(ts) partition by DAY""",
-                "ts",
-                """
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
                         insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,
                                 rnd_symbol('D', 'E', 'F') sym2,
                                 rnd_double() price,
                                 timestamp_sequence(172800000000, 360000000) ts
-                                from long_sequence(10)) timestamp (ts)""",
-                expected,
-                true,
-                true,
-                false
-        );
+                                from long_sequence(10)) timestamp (ts)""")
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected, expected);
     }
 
     @Test
@@ -94,24 +85,19 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "DXR\t0.299199045961845\t1970-01-03T00:06:00.000000Z\tF\n" +
                 "DXR\t0.6778564558839208\t1970-01-03T00:48:00.000000Z\tF\n";
 
-        assertQuery(
-                "k\tprice\tts\tj\n",
-                "select sym k, price, ts, sym2 j from x where sym2 = 'F' AND sym != 'ABB' order by k, j desc",
-                "create table x (\n" +
+        assertQuery("select sym k, price, ts, sym2 j from x where sym2 = 'F' AND sym != 'ABB' order by k, j desc")
+                .ddl("create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    sym2 symbol cache index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY")
+                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_symbol('D', 'E', 'F') sym2, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "        from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
+                        "        from long_sequence(10)) timestamp (ts)")
+                .returns("k\tprice\tts\tj\n", expected);
     }
 
     @Test
@@ -121,24 +107,20 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "HBC\tD\t0.7611029514995744\t1970-01-03T00:30:00.000000Z\n" +
                 "DXR\tF\t0.6778564558839208\t1970-01-03T00:48:00.000000Z\n";
 
-        assertQuery(
-                "k\tj\tprice\tts\n",
-                "select sym k, sym2 j, price, ts from x where sym != 'ABB' and price > 0.5",
-                "create table x (\n" +
+        assertQuery("select sym k, sym2 j, price, ts from x where sym != 'ABB' and price > 0.5")
+                .ddl("create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    sym2 symbol cache index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY")
+                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_symbol('D', 'E', 'F') sym2, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "        from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
+                        "        from long_sequence(10)) timestamp (ts)")
+                .timestamp("ts")
+                .returns("k\tj\tprice\tts\n", expected);
     }
 
     @Test
@@ -150,22 +132,17 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "HBC\t0.7905675319675964\t1970-01-03T00:24:00.000000Z\n" +
                 "HBC\t0.0367581207471136\t1970-01-03T00:54:00.000000Z\n";
 
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym != 'ABB' order by k",
-                "create table x (\n" +
+        assertQuery("select sym k, price, ts from x where sym != 'ABB' order by k")
+                .ddl("create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY")
+                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
+                        "    from long_sequence(10)) timestamp (ts)")
+                .returns("k\tprice\tts\n", expected);
     }
 
     @Test
@@ -178,24 +155,19 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "HBC\tD\t0.7611029514995744\t1970-01-03T00:30:00.000000Z\n" +
                 "HBC\tD\t0.2390529010846525\t1970-01-03T00:42:00.000000Z\n";
 
-        assertQuery(
-                "k\tj\tprice\tts\n",
-                "select sym k, sym2 j, price, ts from x where sym != 'ABB' order by k, j desc",
-                "create table x (\n" +
+        assertQuery("select sym k, sym2 j, price, ts from x where sym != 'ABB' order by k, j desc")
+                .ddl("create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    sym2 symbol cache index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY")
+                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_symbol('D', 'E', 'F') sym2, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "        from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
+                        "        from long_sequence(10)) timestamp (ts)")
+                .returns("k\tj\tprice\tts\n", expected);
     }
 
     @Test
@@ -208,22 +180,18 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z\n" +
                 "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
                 "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n";
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym != 'HBC' and sym != 'AAA'",
-                "create table x (\n" +
+        assertQuery("select sym k, price, ts from x where sym != 'HBC' and sym != 'AAA'")
+                .ddl("create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY")
+                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
+                        "    from long_sequence(10)) timestamp (ts)")
+                .timestamp("ts")
+                .returns("k\tprice\tts\n", expected);
         // insert query values:
         //
         // sym	price	ts
@@ -256,22 +224,18 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
                 "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n";
 
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym != 'HBC'",
-                "create table x (\n" +
+        assertQuery("select sym k, price, ts from x where sym != 'HBC'")
+                .ddl("create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY")
+                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
+                        "    from long_sequence(10)) timestamp (ts)")
+                .timestamp("ts")
+                .returns("k\tprice\tts\n", expected);
     }
 
     @Test
@@ -285,22 +249,18 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
                 "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n";
 
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym != 'HBC'",
-                "create table x (\n" +
+        assertQuery("select sym k, price, ts from x where sym != 'HBC'")
+                .ddl("create table x (\n" +
                         "    sym symbol nocache index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        ") timestamp(ts) partition by DAY")
+                .mutateWith("insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
+                        "    from long_sequence(10)) timestamp (ts)")
+                .timestamp("ts")
+                .returns("k\tprice\tts\n", expected);
     }
 
     @Test
@@ -607,24 +567,19 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "HML\t0.7692964421576207\t1970-01-04T05:48:00.000000Z\n" +
                 "WSW\t0.5621120081615097\t1970-01-04T05:54:00.000000Z\n";
 
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym != 'HBC'",
-                "create table x (\n" +
+        assertQuery("select sym k, price, ts from x where sym != 'HBC'")
+                .ddl("create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into x select * from (select rnd_symbol(120, 3, 3, 0) sym, \n" +
+                        ") timestamp(ts) partition by DAY")
+                .mutateWith("insert into x select * from (select rnd_symbol(120, 3, 3, 0) sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(300)) timestamp (ts)",
-                expected,
-                true,
-                false,
-                true
-        );
+                        "    from long_sequence(300)) timestamp (ts)")
+                .timestamp("ts")
+                .sizeMayVary()
+                .returns("k\tprice\tts\n", expected);
     }
 
     @Test
@@ -632,25 +587,21 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
         final String expected = "k\tprice\tts\n";
 
         String query = "select sym k, price, ts from x where sym = 'ABC'";
-        assertQuery(
-                "k\tprice\tts\n",
-                query,
-                "create table x as (" +
+        assertQuery(query)
+                .ddl("create table x as (" +
                         "select " +
                         "rnd_symbol('ABB', 'HBC', 'DXR') sym, " +
                         "rnd_double() price, " +
                         "timestamp_sequence(172800000000, 360000000) ts " +
                         "from long_sequence(10)" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into x select * from (select rnd_symbol('ABC') sym, \n" +
+                        ") timestamp(ts) partition by DAY")
+                .mutateWith("insert into x select * from (select rnd_symbol('ABC') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(177800000000, 360000000) ts \n" +
-                        "    from long_sequence(2)) timestamp (ts)",
-                expected +
+                        "    from long_sequence(2)) timestamp (ts)")
+                .timestamp("ts")
+                .returns("k\tprice\tts\n", expected +
                         "ABC\t0.6276954028373309\t1970-01-03T01:23:20.000000Z\n" +
-                        "ABC\t0.6778564558839208\t1970-01-03T01:29:20.000000Z\n",
-                true
-        );
+                        "ABC\t0.6778564558839208\t1970-01-03T01:29:20.000000Z\n");
     }
 }

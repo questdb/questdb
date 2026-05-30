@@ -1237,7 +1237,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     Assert.fail("position: " + ((FlyweightMessageContainer) e).getPosition() + ", message: " + e.getMessage());
                 }
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
-                Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
+                if (errorPos > -1) {
+                    Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
+                }
             } else {
                 throw e;
             }
@@ -2366,7 +2368,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
          * Assert that {@code cursor.size()} returns a known (non-negative) value. Off by default.
          */
         public QueryAssertion expectSize() {
-            this.expectSize = true;
+            return expectSize(true);
+        }
+
+        /**
+         * Variable-driven variant of {@link #expectSize()} for helper methods that receive the flag as
+         * a parameter. {@code expectSize(true)} asserts a known size; {@code expectSize(false)} asserts
+         * an undetermined (-1) size, the default.
+         */
+        public QueryAssertion expectSize(boolean expectSize) {
+            this.expectSize = expectSize;
             return this;
         }
 
@@ -2378,10 +2389,22 @@ public abstract class AbstractCairoTest extends AbstractTest {
         public void fails(int errorPos, CharSequence contains) throws Exception {
             final SqlExecutionContext ctx = context != null ? context : sqlExecutionContext;
             if (ddl != null) {
+                if (fullFatJoins) {
+                    throw new IllegalStateException("fullFatJoins() is not supported together with ddl() on the fails() path");
+                }
                 if (leakCheck) {
                     assertException(query, ddl, errorPos, contains);
                 } else {
                     assertExceptionNoLeakCheck(query, ddl, errorPos, contains);
+                }
+                return;
+            }
+            if (fullFatJoins) {
+                // there is no leak-checked full-fat assertException overload, so wrap the no-leak one
+                if (leakCheck) {
+                    assertMemoryLeak(() -> assertExceptionNoLeakCheck(query, errorPos, contains, true, ctx));
+                } else {
+                    assertExceptionNoLeakCheck(query, errorPos, contains, true, ctx);
                 }
                 return;
             }
@@ -2401,11 +2424,21 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
 
         /**
-         * Force full-fat (non-optimized) join execution. Supports {@link #ddl}, {@link #timestamp},
-         * {@link #expectSize} and {@link #noRandomAccess}.
+         * Force full-fat (non-optimized) join execution. Supports {@link #timestamp},
+         * {@link #expectSize}, {@link #noRandomAccess} and the {@link #fails}/{@link #failsWith}
+         * terminals (so a query that only errors in full-fat mode can be asserted). Not supported
+         * together with {@link #ddl} on the {@link #fails} path.
          */
         public QueryAssertion fullFatJoins() {
-            this.fullFatJoins = true;
+            return fullFatJoins(true);
+        }
+
+        /**
+         * Variable-driven variant of {@link #fullFatJoins()} for helper methods that receive the flag
+         * as a parameter (e.g. a test parameterized over normal vs full-fat execution).
+         */
+        public QueryAssertion fullFatJoins(boolean fullFatJoins) {
+            this.fullFatJoins = fullFatJoins;
             return this;
         }
 

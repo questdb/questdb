@@ -245,7 +245,9 @@ public class ExceptTest extends AbstractCairoTest {
                     "1\t2021-01-01T00:00:00.000000000Z\t100.0\n" +
                     "4\t2021-01-01T00:00:03.000000000Z\t400.0\n";
 
-            assertQueryNoLeakCheck(expected, "select * from trades1 except all select * from trades2", null, true);
+            assertQuery("select * from trades1 except all select * from trades2")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -289,13 +291,11 @@ public class ExceptTest extends AbstractCairoTest {
 
             // note: nanos is truncated when casting to micros, so the 2nd row in nano_events becomes equivalent to the 2nd row in micro_events
             // and is excluded from the result set
-            assertQueryNoLeakCheck(expected,
-                    "select id, ts_micro, type from micro_events " +
+            assertQuery("select id, ts_micro, type from micro_events " +
                             "except " +
-                            "select id, CAST(ts_nano as timestamp) as ts_micro, type from nano_events",
-                    null,
-                    true
-            );
+                            "select id, CAST(ts_nano as timestamp) as ts_micro, type from nano_events")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -319,13 +319,11 @@ public class ExceptTest extends AbstractCairoTest {
                     "2\t2020-01-01T00:00:00.124456000Z\tB\n" +
                     "3\t2020-01-01T00:00:00.125456000Z\tC\n";
 
-            assertQueryNoLeakCheck(expected,
-                    "select id, ts_micro as ts, type from micro_events " +
+            assertQuery("select id, ts_micro as ts, type from micro_events " +
                             "except " +
-                            "select id, ts_nano as ts, type from nano_events",
-                    null,
-                    true
-            );
+                            "select id, ts_nano as ts, type from nano_events")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -504,7 +502,9 @@ public class ExceptTest extends AbstractCairoTest {
                     "3\t2020-01-01T00:00:00.500000000Z\tscroll\n" +
                     "5\t2020-01-01T00:00:01.500000123Z\tclose\n";
 
-            assertQueryNoLeakCheck(expected, "select * from events1 except events2", null, true);
+            assertQuery("select * from events1 except events2")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -528,7 +528,9 @@ public class ExceptTest extends AbstractCairoTest {
                     "3\t2022-01-01T00:00:01.111111111Z\tnull\n" +
                     "4\t2022-01-01T00:00:02.222222222Z\t35.5\n";
 
-            assertQueryNoLeakCheck(expected, "select * from sensors1 except sensors2", null, true);
+            assertQuery("select * from sensors1 except sensors2")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 }

@@ -50,7 +50,7 @@ public class ArgMaxDoubleLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testArgMaxParallelAllNullKeys() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_double() value, cast(null as long) key from long_sequence(100000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
                 TestUtils.assertSql(engine, sqlExecutionContext, sql, sink, "sym\targ_max\nA\tnull\nB\tnull\nC\tnull\nD\tnull\nE\tnull\n");
             }, configuration, LOG);
@@ -61,7 +61,7 @@ public class ArgMaxDoubleLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testArgMaxParallelChunky() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_double() value, rnd_long() key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -72,7 +72,7 @@ public class ArgMaxDoubleLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testArgMaxParallelMergeNullDestValidSrc() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_double() value, case when x <= 1000000 then null else rnd_long() end key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -83,7 +83,7 @@ public class ArgMaxDoubleLongGroupByFunctionFactoryTest extends AbstractCairoTes
     public void testArgMaxParallelWithNullKeys() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_double() value, case when x % 2 = 0 then null else rnd_long() end key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);

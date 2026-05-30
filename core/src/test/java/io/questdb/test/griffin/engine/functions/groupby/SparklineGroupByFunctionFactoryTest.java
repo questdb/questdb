@@ -1082,7 +1082,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "FROM long_sequence(10000))");
 
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, sparkline(val, 0.0, 1.0, 8) FROM tab GROUP BY sym ORDER BY sym";
 
                 TestUtils.assertSql(
@@ -1118,7 +1118,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "FROM long_sequence(500000))");
 
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, sparkline(val, 0.0, 1.0, 8) FROM tab GROUP BY sym ORDER BY sym";
                 // Assert cursor is self-consistent across two executions
                 // and stable under the worker pool.
@@ -1142,7 +1142,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "FROM long_sequence(2_000_000)) TIMESTAMP(ts) PARTITION BY MONTH");
 
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT ts, sparkline(val, 0.0, 1.0, 8) FROM tab SAMPLE BY 1h";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -1157,7 +1157,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "FROM long_sequence(100000))");
 
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, sparkline(val) FROM tab GROUP BY sym ORDER BY sym";
                 TestUtils.assertSql(
                         engine,

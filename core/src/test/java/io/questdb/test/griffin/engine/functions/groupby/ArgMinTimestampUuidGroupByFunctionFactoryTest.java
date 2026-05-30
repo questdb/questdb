@@ -50,7 +50,7 @@ public class ArgMinTimestampUuidGroupByFunctionFactoryTest extends AbstractCairo
     public void testArgMinParallelAllNullKeys() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, timestamp_sequence(0, 1000) value, cast(null as uuid) key from long_sequence(100000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_min(value, key) from tab group by sym order by sym";
                 TestUtils.assertSql(engine, sqlExecutionContext, sql, sink, "sym\targ_min\nA\t\nB\t\nC\t\nD\t\nE\t\n");
             }, configuration, LOG);
@@ -61,7 +61,7 @@ public class ArgMinTimestampUuidGroupByFunctionFactoryTest extends AbstractCairo
     public void testArgMinParallelChunky() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, timestamp_sequence(0, 1000) value, rnd_uuid4() key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_min(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -72,7 +72,7 @@ public class ArgMinTimestampUuidGroupByFunctionFactoryTest extends AbstractCairo
     public void testArgMinParallelMergeNullDestValidSrc() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, timestamp_sequence(0, 1000) value, case when x <= 1000000 then cast(null as uuid) else rnd_uuid4() end key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_min(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -83,7 +83,7 @@ public class ArgMinTimestampUuidGroupByFunctionFactoryTest extends AbstractCairo
     public void testArgMinParallelWithNullKeys() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, timestamp_sequence(0, 1000) value, case when x % 2 = 0 then cast(null as uuid) else rnd_uuid4() end key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_min(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);

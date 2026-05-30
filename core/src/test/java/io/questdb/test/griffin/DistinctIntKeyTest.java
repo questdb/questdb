@@ -77,43 +77,38 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctInt() throws Exception {
-        assertQuery(
-                "i\n" +
+        assertQuery("select DISTINCT i from tab WHERE ts in '2020-03' order by 1 LIMIT 4")
+                .ddl("create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, (2 * (x % 10))::int i from long_sequence(10000))" +
+                        " timestamp(ts) PARTITION BY MONTH")
+                .expectSize()
+                .returns("i\n" +
                         "0\n" +
                         "2\n" +
                         "4\n" +
-                        "6\n",
-                "select DISTINCT i from tab WHERE ts in '2020-03' order by 1 LIMIT 4",
-                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, (2 * (x % 10))::int i from long_sequence(10000))" +
-                        " timestamp(ts) PARTITION BY MONTH",
-                null,
-                true,
-                true
-        );
+                        "6\n");
     }
 
     @Test
     public void testDistinctIntFilteredFramed() throws Exception {
-        assertQuery(
-                "i\n" +
+        assertQuery("select DISTINCT i from tab WHERE ts in '2020-03' order by 1 LIMIT -4")
+                .ddl("create table tab as (" +
+                        "select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, (2 * (x % 10))::int i from long_sequence(10000)" +
+                        ") timestamp(ts) PARTITION BY MONTH")
+                .expectSize()
+                .returns("i\n" +
                         "12\n" +
                         "14\n" +
                         "16\n" +
-                        "18\n",
-                "select DISTINCT i from tab WHERE ts in '2020-03' order by 1 LIMIT -4",
-                "create table tab as (" +
-                        "select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, (2 * (x % 10))::int i from long_sequence(10000)" +
-                        ") timestamp(ts) PARTITION BY MONTH",
-                null,
-                true,
-                true
-        );
+                        "18\n");
     }
 
     @Test
     public void testDistinctIntWithAnotherCol() throws Exception {
-        assertQuery(
-                "i\tmonth\n" +
+        assertQuery("select DISTINCT i, month(ts) from tab order by 1 LIMIT 10")
+                .ddl("create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::int i from long_sequence(10000))" +
+                        " timestamp(ts) PARTITION BY MONTH")
+                .expectSize()
+                .returns("i\tmonth\n" +
                         "1\t1\n" +
                         "2\t1\n" +
                         "3\t1\n" +
@@ -123,14 +118,7 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
                         "7\t1\n" +
                         "8\t1\n" +
                         "9\t1\n" +
-                        "10\t1\n",
-                "select DISTINCT i, month(ts) from tab order by 1 LIMIT 10",
-                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::int i from long_sequence(10000))" +
-                        " timestamp(ts) PARTITION BY MONTH",
-                null,
-                true,
-                true
-        );
+                        "10\t1\n");
     }
 
     @Test

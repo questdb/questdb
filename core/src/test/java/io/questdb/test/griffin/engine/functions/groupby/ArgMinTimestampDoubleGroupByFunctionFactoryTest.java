@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -51,7 +50,7 @@ public class ArgMinTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
     public void testArgMinParallelAllNullKeys() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, timestamp_sequence(0, 1000) value, cast(null as double) key from long_sequence(100000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_min(value, key) from tab group by sym order by sym";
                 TestUtils.assertSql(engine, sqlExecutionContext, sql, sink, "sym\targ_min\nA\t\nB\t\nC\t\nD\t\nE\t\n");
             }, configuration, LOG);
@@ -62,7 +61,7 @@ public class ArgMinTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
     public void testArgMinParallelChunky() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, timestamp_sequence(0, 1000) value, rnd_double() key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_min(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -73,7 +72,7 @@ public class ArgMinTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
     public void testArgMinParallelMergeNullDestValidSrc() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, timestamp_sequence(0, 1000) value, case when x <= 1000000 then null else rnd_double() end key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_min(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -84,7 +83,7 @@ public class ArgMinTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
     public void testArgMinParallelWithNullKeys() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, timestamp_sequence(0, 1000) value, case when x % 2 = 0 then null else rnd_double() end key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_min(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);

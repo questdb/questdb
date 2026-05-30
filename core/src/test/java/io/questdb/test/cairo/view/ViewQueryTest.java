@@ -34,13 +34,13 @@ public class ViewQueryTest extends AbstractViewTest {
             final String query1 = "select 42 as col";
             createView(VIEW1, query1);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(VIEW1)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             col
                             42
-                            """,
-                    VIEW1
-            );
+                            """);
         });
     }
 
@@ -79,24 +79,30 @@ public class ViewQueryTest extends AbstractViewTest {
 
             // ASOF JOIN: Get the most recent quote at the time of each trade
             // Using both views with default parameters
-            assertQueryNoLeakCheck("""
+            assertQuery("SELECT t.ts as trade_ts, t.symbol, t.price, t.side, q.ts as quote_ts, q.bid, q.ask " +
+                            "FROM " + VIEW2 + " t ASOF JOIN " + VIEW1 + " q ON (symbol)")
+                    .noLeakCheck()
+                    .timestamp("trade_ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             trade_ts\tsymbol\tprice\tside\tquote_ts\tbid\task
                             2024-01-01T00:00:02.000000Z\tAAPL\t149.8\tBUY\t2024-01-01T00:00:00.000000Z\t149.0\t150.0
                             2024-01-01T00:00:12.000000Z\tAAPL\t150.8\tBUY\t2024-01-01T00:00:10.000000Z\t150.0\t151.0
-                            """,
-                    "SELECT t.ts as trade_ts, t.symbol, t.price, t.side, q.ts as quote_ts, q.bid, q.ask " +
-                            "FROM " + VIEW2 + " t ASOF JOIN " + VIEW1 + " q ON (symbol)",
-                    "trade_ts", false, false, true);
+                            """);
 
             // Override to get SELL trades instead
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @side := 'SELL' " +
+                            "SELECT t.ts as trade_ts, t.symbol, t.price, t.side, q.ts as quote_ts, q.bid, q.ask " +
+                            "FROM " + VIEW2 + " t ASOF JOIN " + VIEW1 + " q ON (symbol)")
+                    .noLeakCheck()
+                    .timestamp("trade_ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             trade_ts\tsymbol\tprice\tside\tquote_ts\tbid\task
                             2024-01-01T00:00:08.000000Z\tAAPL\t150.2\tSELL\t2024-01-01T00:00:05.000000Z\t149.5\t150.5
-                            """,
-                    "DECLARE @side := 'SELL' " +
-                            "SELECT t.ts as trade_ts, t.symbol, t.price, t.side, q.ts as quote_ts, q.bid, q.ask " +
-                            "FROM " + VIEW2 + " t ASOF JOIN " + VIEW1 + " q ON (symbol)",
-                    "trade_ts", false, false, true);
+                            """);
         });
     }
 
@@ -120,12 +126,14 @@ public class ViewQueryTest extends AbstractViewTest {
 
             // @threshold=6 means v > 6, so rows 7, 8
             // @multiplier=10 scales the values
-            assertQueryNoLeakCheck("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tscaled_v
                             1970-01-01T00:01:10.000000Z\t70
                             1970-01-01T00:01:20.000000Z\t80
-                            """,
-                    query, "ts", true, sqlExecutionContext);
+                            """);
         });
     }
 
@@ -150,11 +158,13 @@ public class ViewQueryTest extends AbstractViewTest {
                     )
                     """;
 
-            assertQueryNoLeakCheck("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             result
                             12
-                            """,
-                    query);
+                            """);
 
             // Test that outer scope sees its own @x
             String query2 = """
@@ -165,11 +175,13 @@ public class ViewQueryTest extends AbstractViewTest {
                     )
                     """;
 
-            assertQueryNoLeakCheck("""
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             outer_result\tinner_result
                             102\t105
-                            """,
-                    query2);
+                            """);
         });
     }
 
@@ -189,7 +201,10 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // Default: v > 5 from TABLE1 (rows 6,7,8) UNION v < 5 from TABLE2 (rows 0,1,2,3,4)
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW1)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ts\tkey\tv
                             1970-01-01T00:01:00.000000Z\tk6\t6
                             1970-01-01T00:01:10.000000Z\tk7\t7
@@ -199,11 +214,13 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:00:20.000000Z\tk2_2\t2
                             1970-01-01T00:00:30.000000Z\tk2_3\t3
                             1970-01-01T00:00:40.000000Z\tk2_4\t4
-                            """,
-                    VIEW1, null, false, sqlExecutionContext);
+                            """);
 
             // Override threshold to 3: v > 3 from TABLE1 (rows 4,5,6,7,8) UNION v < 3 from TABLE2 (rows 0,1,2)
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @threshold := 3 SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ts\tkey\tv
                             1970-01-01T00:00:40.000000Z\tk4\t4
                             1970-01-01T00:00:50.000000Z\tk5\t5
@@ -213,8 +230,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:00:00.000000Z\tk2_0\t0
                             1970-01-01T00:00:10.000000Z\tk2_1\t1
                             1970-01-01T00:00:20.000000Z\tk2_2\t2
-                            """,
-                    "DECLARE @threshold := 3 SELECT * FROM " + VIEW1, null, false, sqlExecutionContext);
+                            """);
         });
     }
 
@@ -301,40 +317,55 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // Query VIEW1 with default @min_v=3: v >= 3 -> rows 3,4,5,6,7,8 (6 rows)
-            assertQueryNoLeakCheck("""
+            assertQuery("SELECT count() as cnt FROM " + VIEW1)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             cnt
                             6
-                            """,
-                    "SELECT count() as cnt FROM " + VIEW1, null, false, true);
+                            """);
 
             // Query VIEW2 with default @max_v=6: v <= 6 -> rows 0,1,2,3,4,5,6 (7 rows)
-            assertQueryNoLeakCheck("""
+            assertQuery("SELECT count() as cnt FROM " + VIEW2)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             cnt
                             7
-                            """,
-                    "SELECT count() as cnt FROM " + VIEW2, null, false, true);
+                            """);
 
             // Override VIEW1's @min_v: v >= 5 -> rows 5,6,7,8 (4 rows)
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @min_v := 5 SELECT count() as cnt FROM " + VIEW1)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             cnt
                             4
-                            """,
-                    "DECLARE @min_v := 5 SELECT count() as cnt FROM " + VIEW1, null, false, true);
+                            """);
 
             // Override VIEW2's @max_v: v <= 4 -> rows 0,1,2,3,4 (5 rows)
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @max_v := 4 SELECT count() as cnt FROM " + VIEW2)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             cnt
                             5
-                            """,
-                    "DECLARE @max_v := 4 SELECT count() as cnt FROM " + VIEW2, null, false, true);
+                            """);
 
             // Cross join both views with overrides in same query
             // VIEW1: v >= 5 (4 rows), VIEW2: v <= 4 (5 rows) -> 4 * 5 = 20 rows
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @min_v := 5, @max_v := 4 SELECT count() as cnt FROM " + VIEW1 + " CROSS JOIN " + VIEW2)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             cnt
                             20
-                            """,
-                    "DECLARE @min_v := 5, @max_v := 4 SELECT count() as cnt FROM " + VIEW1 + " CROSS JOIN " + VIEW2, null, false, true);
+                            """);
         });
     }
 
@@ -360,21 +391,28 @@ public class ViewQueryTest extends AbstractViewTest {
 
             // Default: qty >= 50, latest per symbol
             // AAPL: 152.0 (qty=150), GOOG: 141.0 (qty=60), MSFT: 380.0 (qty=75)
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .sizeMayVary()
+                    .returns("""
                             ts\tsymbol\tprice\tqty
                             2024-01-01T00:03:00.000000Z\tMSFT\t380.0\t75
                             2024-01-01T00:04:00.000000Z\tGOOG\t141.0\t60
                             2024-01-01T00:05:00.000000Z\tAAPL\t152.0\t150
-                            """,
-                    VIEW1, "ts", true, true, true);
+                            """);
 
             // Override: qty >= 100, excludes GOOG and MSFT entirely
             // AAPL: latest with qty >= 100 is 152.0 (qty=150) - LATEST BY returns only ONE row per symbol
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @min_qty := 100 SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tsymbol\tprice\tqty
                             2024-01-01T00:05:00.000000Z\tAAPL\t152.0\t150
-                            """,
-                    "DECLARE @min_qty := 100 SELECT * FROM " + VIEW1, "ts", true, true);
+                            """);
         });
     }
 
@@ -396,37 +434,45 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // Query VIEW2 with default values: v > 3 AND v < 7 -> rows 4, 5, 6
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW2)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv
                             1970-01-01T00:00:40.000000Z\t4
                             1970-01-01T00:00:50.000000Z\t5
                             1970-01-01T00:01:00.000000Z\t6
-                            """,
-                    VIEW2, "ts", true, sqlExecutionContext);
+                            """);
 
             // Override @max at query level: v > 3 AND v < 6 -> rows 4, 5
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @max := 6 SELECT * FROM " + VIEW2)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv
                             1970-01-01T00:00:40.000000Z\t4
                             1970-01-01T00:00:50.000000Z\t5
-                            """,
-                    "DECLARE @max := 6 SELECT * FROM " + VIEW2, "ts", true, sqlExecutionContext);
+                            """);
 
             // Override @threshold at query level: v > 5 AND v < 7 -> row 6
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @threshold := 5 SELECT * FROM " + VIEW2)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv
                             1970-01-01T00:01:00.000000Z\t6
-                            """,
-                    "DECLARE @threshold := 5 SELECT * FROM " + VIEW2, "ts", true, sqlExecutionContext);
+                            """);
 
             // Override both at query level: v > 4 AND v < 8 -> rows 5, 6, 7
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @threshold := 4, @max := 8 SELECT * FROM " + VIEW2)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv
                             1970-01-01T00:00:50.000000Z\t5
                             1970-01-01T00:01:00.000000Z\t6
                             1970-01-01T00:01:10.000000Z\t7
-                            """,
-                    "DECLARE @threshold := 4, @max := 8 SELECT * FROM " + VIEW2, "ts", true, sqlExecutionContext);
+                            """);
         });
     }
 
@@ -448,18 +494,22 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // Default: @x = 5
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW2)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv
                             1970-01-01T00:00:50.000000Z\t5
-                            """,
-                    VIEW2, "ts", true, sqlExecutionContext);
+                            """);
 
             // Override @x through VIEW2 - should propagate to VIEW1
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @x := 6 SELECT * FROM " + VIEW2)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv
                             1970-01-01T00:01:00.000000Z\t6
-                            """,
-                    "DECLARE @x := 6 SELECT * FROM " + VIEW2, "ts", true, sqlExecutionContext);
+                            """);
         });
     }
 
@@ -542,22 +592,29 @@ public class ViewQueryTest extends AbstractViewTest {
 
             // Default: value > 15, so excludes first row (10.0)
             // Minute 0: avg(20) = 20, Minute 1: avg(30,40) = 35, Minute 2: avg(50,60) = 55
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .sizeMayVary()
+                    .returns("""
                             ts\tsensor\tavg_val
                             2024-01-01T00:00:00.000000Z\tA\t20.0
                             2024-01-01T00:01:00.000000Z\tA\t35.0
                             2024-01-01T00:02:00.000000Z\tA\t55.0
-                            """,
-                    VIEW1, "ts", true, true, true);
+                            """);
 
             // Override: value > 35, excludes first 3 rows
             // Minute 1: avg(40) = 40, Minute 2: avg(50,60) = 55
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @min_value := 35.0 SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tsensor\tavg_val
                             2024-01-01T00:01:00.000000Z\tA\t40.0
                             2024-01-01T00:02:00.000000Z\tA\t55.0
-                            """,
-                    "DECLARE @min_value := 35.0 SELECT * FROM " + VIEW1, "ts", true, true);
+                            """);
         });
     }
 
@@ -584,13 +641,15 @@ public class ViewQueryTest extends AbstractViewTest {
             // @x=6 overrides VIEW1's @x, so v >= 6 -> rows 6, 7, 8
             // Inner @z=100 is local to subquery
             // Outer @y=2 filters v > 2 (no effect since already v >= 6)
-            assertQueryNoLeakCheck("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv\tmarker
                             1970-01-01T00:01:00.000000Z\t6\t100
                             1970-01-01T00:01:10.000000Z\t7\t100
                             1970-01-01T00:01:20.000000Z\t8\t100
-                            """,
-                    query, "ts", true, sqlExecutionContext);
+                            """);
         });
     }
 
@@ -606,21 +665,25 @@ public class ViewQueryTest extends AbstractViewTest {
             execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
             drainWalAndViewQueues();
 
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv
                             1970-01-01T00:01:00.000000Z\t6
                             1970-01-01T00:01:10.000000Z\t7
                             1970-01-01T00:01:20.000000Z\t8
-                            """,
-                    VIEW1, "ts", true, sqlExecutionContext);
+                            """);
 
             // Override with different string value
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @limit := '6' SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv
                             1970-01-01T00:01:10.000000Z\t7
                             1970-01-01T00:01:20.000000Z\t8
-                            """,
-                    "DECLARE @limit := '6' SELECT * FROM " + VIEW1, "ts", true, sqlExecutionContext);
+                            """);
 
             // Test 2: Symbol/string parameter for filtering
             final String query2 = "DECLARE OVERRIDABLE @key_filter := 'k5' " +
@@ -628,18 +691,22 @@ public class ViewQueryTest extends AbstractViewTest {
             execute("CREATE VIEW " + VIEW2 + " AS (" + query2 + ")");
             drainWalAndViewQueues();
 
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW2)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tk\tv
                             1970-01-01T00:00:50.000000Z\tk5\t5
-                            """,
-                    VIEW2, "ts", true, sqlExecutionContext);
+                            """);
 
             // Override to different key
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @key_filter := 'k7' SELECT * FROM " + VIEW2)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tk\tv
                             1970-01-01T00:01:10.000000Z\tk7\t7
-                            """,
-                    "DECLARE @key_filter := 'k7' SELECT * FROM " + VIEW2, "ts", true, sqlExecutionContext);
+                            """);
         });
     }
 
@@ -663,18 +730,23 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // Default @x = 2: filter v <= 4, expressions use 2
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv\tx_val\tx_plus_x\tx_squared\tx_cubed\tv_plus_x\tcomplex_expr
                             1970-01-01T00:00:00.000000Z\t0\t2\t4\t4\t8\t2\t2
                             1970-01-01T00:00:10.000000Z\t1\t2\t4\t4\t8\t3\t4
                             1970-01-01T00:00:20.000000Z\t2\t2\t4\t4\t8\t4\t6
                             1970-01-01T00:00:30.000000Z\t3\t2\t4\t4\t8\t5\t8
                             1970-01-01T00:00:40.000000Z\t4\t2\t4\t4\t8\t6\t10
-                            """,
-                    VIEW1, "ts", true, sqlExecutionContext);
+                            """);
 
             // Override @x = 3: filter v <= 6, expressions use 3
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @x := 3 SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv\tx_val\tx_plus_x\tx_squared\tx_cubed\tv_plus_x\tcomplex_expr
                             1970-01-01T00:00:00.000000Z\t0\t3\t6\t9\t27\t3\t3
                             1970-01-01T00:00:10.000000Z\t1\t3\t6\t9\t27\t4\t6
@@ -683,8 +755,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:00:40.000000Z\t4\t3\t6\t9\t27\t7\t15
                             1970-01-01T00:00:50.000000Z\t5\t3\t6\t9\t27\t8\t18
                             1970-01-01T00:01:00.000000Z\t6\t3\t6\t9\t27\t9\t21
-                            """,
-                    "DECLARE @x := 3 SELECT * FROM " + VIEW1, "ts", true, sqlExecutionContext);
+                            """);
         });
     }
 
@@ -698,13 +769,17 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // sanity check
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv
                             1970-01-01T00:01:00.000000Z\t6
-                            """,
-                    VIEW1, "ts", true, sqlExecutionContext);
+                            """);
 
-            assertExceptionNoLeakCheck("DECLARE @x := 5 SELECT * FROM " + VIEW1, 11, "variable is not overridable: @x");
+            assertQuery("DECLARE @x := 5 SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .fails(11, "variable is not overridable: @x");
         });
     }
 
@@ -725,32 +800,34 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // Default: v >= 2 AND v <= 7 AND v != 3 -> 2, 4, 5, 6, 7
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW2)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv
                             1970-01-01T00:00:20.000000Z\t2
                             1970-01-01T00:00:40.000000Z\t4
                             1970-01-01T00:00:50.000000Z\t5
                             1970-01-01T00:01:00.000000Z\t6
                             1970-01-01T00:01:10.000000Z\t7
-                            """,
-                    VIEW2, "ts", true, sqlExecutionContext);
+                            """);
 
             // Can override @low (OVERRIDABLE in VIEW1) and @extra_filter (OVERRIDABLE in VIEW2)
             // @low=4, @extra_filter=5 -> v >= 4 AND v <= 7 AND v != 5 -> 4, 6, 7
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @low := 4, @extra_filter := 5 SELECT * FROM " + VIEW2)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv
                             1970-01-01T00:00:40.000000Z\t4
                             1970-01-01T00:01:00.000000Z\t6
                             1970-01-01T00:01:10.000000Z\t7
-                            """,
-                    "DECLARE @low := 4, @extra_filter := 5 SELECT * FROM " + VIEW2, "ts", true, sqlExecutionContext);
+                            """);
 
             // Cannot override @high (not OVERRIDABLE in VIEW1)
-            assertExceptionNoLeakCheck(
-                    "DECLARE @high := 8 SELECT * FROM " + VIEW2,
-                    14,
-                    "variable is not overridable: @high"
-            );
+            assertQuery("DECLARE @high := 8 SELECT * FROM " + VIEW2)
+                    .noLeakCheck()
+                    .fails(14, "variable is not overridable: @high");
         });
     }
 
@@ -766,26 +843,32 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // sanity check: no overrides at all
-            assertQueryNoLeakCheck("""
+            assertQuery("VIEW1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts	v
                             1970-01-01T00:00:50.000000Z	5
                             1970-01-01T00:01:00.000000Z	6
                             1970-01-01T00:01:10.000000Z	7
                             1970-01-01T00:01:20.000000Z	8
-                            """,
-                    "VIEW1", "ts", true, sqlExecutionContext);
+                            """);
 
             // can override @hi (marked as OVERRIDABLE)
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @hi := 7 SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts	v
                             1970-01-01T00:00:50.000000Z	5
                             1970-01-01T00:01:00.000000Z	6
                             1970-01-01T00:01:10.000000Z	7
-                            """,
-                    "DECLARE @hi := 7 SELECT * FROM " + VIEW1, "ts", true, sqlExecutionContext);
+                            """);
 
             // override @lo (not overridable) should fail
-            assertExceptionNoLeakCheck("DECLARE @lo := 3 SELECT * FROM " + VIEW1, 12, "variable is not overridable: @lo");
+            assertQuery("DECLARE @lo := 3 SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .fails(12, "variable is not overridable: @lo");
         });
     }
 
@@ -800,17 +883,23 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // default values
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv
                             1970-01-01T00:00:50.000000Z\t5
                             1970-01-01T00:01:00.000000Z\t6
                             1970-01-01T00:01:10.000000Z\t7
                             1970-01-01T00:01:20.000000Z\t8
-                            """,
-                    VIEW1, "ts", true, sqlExecutionContext);
+                            """);
 
-            assertExceptionNoLeakCheck("DECLARE @x := 3 SELECT * FROM " + VIEW1, 11, "variable is not overridable: @x");
-            assertExceptionNoLeakCheck("DECLARE @y := 10 SELECT * FROM " + VIEW1, 11, "variable is not overridable: @y");
+            assertQuery("DECLARE @x := 3 SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .fails(11, "variable is not overridable: @x");
+            assertQuery("DECLARE @y := 10 SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .fails(11, "variable is not overridable: @y");
         });
     }
 
@@ -827,11 +916,9 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // Attempting to query VIEW1 with external @x should fail
-            assertExceptionNoLeakCheck(
-                    "DECLARE @x := 6 SELECT * FROM " + VIEW1,
-                    11,
-                    "variable is not overridable: @x"
-            );
+            assertQuery("DECLARE @x := 6 SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .fails(11, "variable is not overridable: @x");
         });
     }
 
@@ -853,11 +940,13 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // VIEW1's @x=5 filters to v=5, VIEW2's @marker=999 is just a marker column
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW2)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv\tmarker
                             1970-01-01T00:00:50.000000Z\t5\t999
-                            """,
-                    VIEW2, "ts", true, sqlExecutionContext);
+                            """);
         });
     }
 
@@ -880,11 +969,13 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // VIEW2's @x=6 overrides VIEW1's @x, so v=6 is selected
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW2)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv\tmarker
                             1970-01-01T00:01:00.000000Z\t6\t6
-                            """,
-                    VIEW2, "ts", true, sqlExecutionContext);
+                            """);
         });
     }
 
@@ -908,26 +999,33 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalAndViewQueues();
 
             // Default: NULL values replaced with 0
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .sizeMayVary()
+                    .returns("""
                             ts\tcategory\tvalue
                             2024-01-01T00:00:00.000000Z\tA\t10
                             2024-01-01T00:01:00.000000Z\tB\t0
                             2024-01-01T00:02:00.000000Z\tA\t20
                             2024-01-01T00:03:00.000000Z\t\t30
                             2024-01-01T00:04:00.000000Z\tB\t40
-                            """,
-                    VIEW1, "ts", true, true, true);
+                            """);
 
             // Override: NULL values replaced with -1
-            assertQueryNoLeakCheck("""
+            assertQuery("DECLARE @default_val := -1 SELECT * FROM " + VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tcategory\tvalue
                             2024-01-01T00:00:00.000000Z\tA\t10
                             2024-01-01T00:01:00.000000Z\tB\t-1
                             2024-01-01T00:02:00.000000Z\tA\t20
                             2024-01-01T00:03:00.000000Z\t\t30
                             2024-01-01T00:04:00.000000Z\tB\t40
-                            """,
-                    "DECLARE @default_val := -1 SELECT * FROM " + VIEW1, "ts", true, true);
+                            """);
         });
     }
 
@@ -949,16 +1047,15 @@ public class ViewQueryTest extends AbstractViewTest {
 
             // view1 contains: AAPL (150.0) and MSFT (151.0), but not GOOG (140.0)
             // LEFT JOIN should match: AAPL->AAPL, GOOG->NULL, MSFT->MSFT
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT view1.ts, x.ticker, x.price FROM x LEFT JOIN view1 ON ticker")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ts\tticker\tprice
                             2024-01-01T00:00:00.000000Z\tAAPL\t150.0
                             \tGOOG\t140.0
                             2024-01-01T00:02:00.000000Z\tMSFT\t151.0
-                            """,
-                    "SELECT view1.ts, x.ticker, x.price FROM x LEFT JOIN view1 ON ticker",
-                    null, false, false
-            );
+                            """);
         });
     }
 
@@ -1028,21 +1125,21 @@ public class ViewQueryTest extends AbstractViewTest {
             final String query1 = "select 42 as col";
             createView(VIEW1, query1);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM '" + VIEW1 + "'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             col
                             42
-                            """,
-                    "SELECT * FROM '" + VIEW1 + "'"
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM \"" + VIEW1 + "\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             col
                             42
-                            """,
-                    "SELECT * FROM \"" + VIEW1 + "\""
-            );
+                            """);
         });
     }
 
@@ -1054,25 +1151,25 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalQueue();
             createView(VIEW1, "SELECT * FROM " + TABLE1);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM " + TABLE1 + " JOIN '" + VIEW1 + "' ON (v)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tv\tts1\tv1
                             2024-01-01T00:00:00.000000Z\t1\t2024-01-01T00:00:00.000000Z\t1
                             2024-01-02T00:00:00.000000Z\t2\t2024-01-02T00:00:00.000000Z\t2
-                            """,
-                    "SELECT * FROM " + TABLE1 + " JOIN '" + VIEW1 + "' ON (v)",
-                    "ts", false, false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM " + TABLE1 + " JOIN \"" + VIEW1 + "\" ON (v)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tv\tts1\tv1
                             2024-01-01T00:00:00.000000Z\t1\t2024-01-01T00:00:00.000000Z\t1
                             2024-01-02T00:00:00.000000Z\t2\t2024-01-02T00:00:00.000000Z\t2
-                            """,
-                    "SELECT * FROM " + TABLE1 + " JOIN \"" + VIEW1 + "\" ON (v)",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1339,7 +1436,10 @@ public class ViewQueryTest extends AbstractViewTest {
 
             createView(VIEW1, view, TABLE1);
 
-            assertQueryNoLeakCheck("""
+            assertQuery(VIEW1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts	k	k2	v
                             1970-01-01T00:00:00.000000Z	k0	k2_0	0
                             1970-01-01T00:00:10.000000Z	k1	k2_1	1
@@ -1350,8 +1450,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:00.000000Z	k6	k2_6	6
                             1970-01-01T00:01:10.000000Z	k7	k2_7	7
                             1970-01-01T00:01:20.000000Z	k8	k2_8	8
-                            """,
-                    VIEW1, "ts", true, sqlExecutionContext);
+                            """);
         });
     }
 

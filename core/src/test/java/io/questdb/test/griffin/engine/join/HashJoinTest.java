@@ -166,19 +166,15 @@ public class HashJoinTest extends AbstractCairoTest {
                         (cast(null as UUID), 'N', 40),
                         ('44444444-4444-4444-4444-444444444444', null, 50)""");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT m.id, m.sym, m.v, s.v FROM m JOIN s ON m.id = s.id AND m.sym = s.sym ORDER BY m.v")
+                    .noLeakCheck()
+                    .returns("""
                             id\tsym\tv\tv1
                             11111111-1111-1111-1111-111111111111\tA\t1\t10
                             33333333-3333-3333-3333-333333333333\tC\t3\t30
                             \tN\t4\t40
                             44444444-4444-4444-4444-444444444444\t\t5\t50
-                            """,
-                    "SELECT m.id, m.sym, m.v, s.v FROM m JOIN s ON m.id = s.id AND m.sym = s.sym ORDER BY m.v",
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -201,17 +197,13 @@ public class HashJoinTest extends AbstractCairoTest {
                         ('C', 'X', 14),
                         ('C', 'Y', 15)""");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT m.sym1, m.sym2, m.v, s.v FROM m JOIN s ON m.sym1 = s.sym1 AND m.sym2 = s.sym2 ORDER BY m.v")
+                    .noLeakCheck()
+                    .returns("""
                             sym1\tsym2\tv\tv1
                             A\tX\t1\t10
                             B\tY\t2\t13
-                            """,
-                    "SELECT m.sym1, m.sym2, m.v, s.v FROM m JOIN s ON m.sym1 = s.sym1 AND m.sym2 = s.sym2 ORDER BY m.v",
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -233,17 +225,13 @@ public class HashJoinTest extends AbstractCairoTest {
                         ('X', 'C', 14),
                         ('Y', 'C', 15)""");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT m.sym1, m.sym2, m.v, s.v FROM m JOIN s ON m.sym1 = s.sym1 AND m.sym2 = s.sym2 ORDER BY m.v")
+                    .noLeakCheck()
+                    .returns("""
                             sym1\tsym2\tv\tv1
                             A\tX\t1\t10
                             B\tY\t2\t13
-                            """,
-                    "SELECT m.sym1, m.sym2, m.v, s.v FROM m JOIN s ON m.sym1 = s.sym1 AND m.sym2 = s.sym2 ORDER BY m.v",
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -263,54 +251,38 @@ public class HashJoinTest extends AbstractCairoTest {
                         ('B', 20),
                         ('D', 40)""");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM m JOIN s ON m.sym = s.sym ORDER BY m.v")
+                    .noLeakCheck()
+                    .returns("""
                             sym\tv\tsym1\tv1
                             A\t1\tA\t10
                             B\t2\tB\t20
-                            """,
-                    "SELECT * FROM m JOIN s ON m.sym = s.sym ORDER BY m.v",
-                    null,
-                    true,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT * FROM m LEFT JOIN s ON m.sym = s.sym ORDER BY m.v")
+                    .noLeakCheck()
+                    .returns("""
                             sym\tv\tsym1\tv1
                             A\t1\tA\t10
                             B\t2\tB\t20
                             C\t3\t\tnull
-                            """,
-                    "SELECT * FROM m LEFT JOIN s ON m.sym = s.sym ORDER BY m.v",
-                    null,
-                    true,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT * FROM m RIGHT JOIN s ON m.sym = s.sym ORDER BY s.v")
+                    .noLeakCheck()
+                    .returns("""
                             sym\tv\tsym1\tv1
                             A\t1\tA\t10
                             B\t2\tB\t20
                             \tnull\tD\t40
-                            """,
-                    "SELECT * FROM m RIGHT JOIN s ON m.sym = s.sym ORDER BY s.v",
-                    null,
-                    true,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT * FROM m FULL JOIN s ON m.sym = s.sym ORDER BY m.v, s.v")
+                    .noLeakCheck()
+                    .returns("""
                             sym	v	sym1	v1
                             	null	D	40
                             A	1	A	10
                             B	2	B	20
                             C	3		null
-                            """,
-                    "SELECT * FROM m FULL JOIN s ON m.sym = s.sym ORDER BY m.v, s.v",
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -358,20 +330,16 @@ public class HashJoinTest extends AbstractCairoTest {
                         (cast(null as UUID), 'N', 40),
                         ('44444444-4444-4444-4444-444444444444', null, 50)""");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT m.id, m.sym, m.v, s.v FROM m LEFT JOIN s ON m.id = s.id AND m.sym = s.sym ORDER BY m.v")
+                    .noLeakCheck()
+                    .returns("""
                             id\tsym\tv\tv1
                             11111111-1111-1111-1111-111111111111\tA\t1\t10
                             22222222-2222-2222-2222-222222222222\tB\t2\tnull
                             33333333-3333-3333-3333-333333333333\tC\t3\t30
                             \tN\t4\t40
                             44444444-4444-4444-4444-444444444444\t\t5\t50
-                            """,
-                    "SELECT m.id, m.sym, m.v, s.v FROM m LEFT JOIN s ON m.id = s.id AND m.sym = s.sym ORDER BY m.v",
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -392,8 +360,9 @@ public class HashJoinTest extends AbstractCairoTest {
                         ('E', 'V', 40),
                         ('F', 'U', 50)""");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM m FULL JOIN s ON m.sym1 = s.sym1 AND m.sym2 = s.sym2 ORDER BY m.v, s.v")
+                    .noLeakCheck()
+                    .returns("""
                             sym1	sym2	v	sym11	sym21	v1
                             		null	B	Y	20
                             		null	D	W	30
@@ -401,12 +370,7 @@ public class HashJoinTest extends AbstractCairoTest {
                             		null	F	U	50
                             A	X	1	A	X	10
                             C	Z	3			null
-                            """,
-                    "SELECT * FROM m FULL JOIN s ON m.sym1 = s.sym1 AND m.sym2 = s.sym2 ORDER BY m.v, s.v",
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -419,20 +383,29 @@ public class HashJoinTest extends AbstractCairoTest {
             execute("insert into tabb values (1, 'a', 'pl')");
             execute("insert into tabb values (1, 'b', 'b')");
 
-            assertQueryNoLeakCheck("""
+            assertQuery("select * from taba left join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     i\tlocale_name\ti1\tstate\tcity
                     1\tpl\t1\ta\tpl
-                    """, "select * from taba left join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);
-            assertQueryNoLeakCheck("""
+                    """);
+            assertQuery("select * from taba right join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     i\tlocale_name\ti1\tstate\tcity
                     1\tpl\t1\ta\tpl
                     null\t\t1\tb\tb
-                    """, "select * from taba right join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);
-            assertQueryNoLeakCheck("""
+                    """);
+            assertQuery("select * from taba full join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     i\tlocale_name\ti1\tstate\tcity
                     1\tpl\t1\ta\tpl
                     null\t\t1\tb\tb
-                    """, "select * from taba full join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);
+                    """);
         });
     }
 
@@ -472,19 +445,15 @@ public class HashJoinTest extends AbstractCairoTest {
                 mTableName
         );
 
-        assertQueryNoLeakCheck(
-                """
+        assertQuery(query)
+                .noLeakCheck()
+                .returns("""
                         v\tv1
                         1\t10
                         3\t30
                         4\t40
                         5\t50
-                        """,
-                query,
-                null,
-                true,
-                false
-        );
+                        """);
     }
 
     private void assertHashOuterJoinSymbolAndDecimalKey(String tableSuffix, String decimalType, String id1, String id2, String id3) throws Exception {
@@ -523,20 +492,16 @@ public class HashJoinTest extends AbstractCairoTest {
                 mTableName
         );
 
-        assertQueryNoLeakCheck(
-                """
+        assertQuery(query)
+                .noLeakCheck()
+                .returns("""
                         v\tv1
                         1\t10
                         2\tnull
                         3\t30
                         4\t40
                         5\t50
-                        """,
-                query,
-                null,
-                true,
-                false
-        );
+                        """);
     }
 
 }

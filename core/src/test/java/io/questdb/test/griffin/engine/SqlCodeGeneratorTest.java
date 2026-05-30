@@ -444,7 +444,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 .fails(21, castNotAllowed);
         assertQuery("SELECT x[1] cast(x as LONG) FROM long_sequence(1)")
                 .fails(12, castNotAllowed);
-        assertSql("column\n2\n", "SELECT x + cast(x as LONG) FROM long_sequence(1)");
+        assertQuery("SELECT x + cast(x as LONG) FROM long_sequence(1)")
+                .expectSize()
+                .returns("column\n2\n");
     }
 
     @Test
@@ -498,10 +500,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table trades (symbol SYMBOL)");
             execute("insert into trades values ('USD'), ('EUR')");
-            assertSql(
-                    "SYMBOL\nUSD\nEUR\n",
-                    "SELECT symbol AS SYMBOL FROM trades"
-            );
+            assertQuery("SELECT symbol AS SYMBOL FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("SYMBOL\nUSD\nEUR\n");
         });
     }
 
@@ -723,15 +725,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ('2024-03-11T10:00:00.000000Z', 16.0),
                         ('2024-03-11T23:00:00.000000Z', 32.0),
                         ('2024-03-12T01:00:00.000000Z', 400.0)""");
-            assertSql(
-                    """
-                            ts\tsum
-                            2024-03-07T05:00:00.000000Z\t1.0
-                            2024-03-08T05:00:00.000000Z\t6.0
-                            2024-03-10T05:00:00.000000Z\t8.0
-                            2024-03-11T04:00:00.000000Z\t48.0
-                            """,
-                    """
+            assertQuery("""
                             WITH Test AS ((
                              SELECT timestamp AS ts, amount
                             FROM (
@@ -741,8 +735,17 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                              OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')
                             ) timestamp(timestamp))
                             ) SELECT ts, sum(amount) FROM Test \
-                            SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'"""
-            );
+                            SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'""")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2024-03-07T05:00:00.000000Z\t1.0
+                            2024-03-08T05:00:00.000000Z\t6.0
+                            2024-03-10T05:00:00.000000Z\t8.0
+                            2024-03-11T04:00:00.000000Z\t48.0
+                            """);
         });
     }
 
@@ -5008,68 +5011,81 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("insert into tab values ('d2', 'c2', 222, 6, 5)");
 
             // latest by designated timestamp, no order by, select all columns
-            assertSql(
-                    """
+            assertQuery("(tab where name in ('c1')) latest on ts partition by id")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
-                            """, "(tab where name in ('c1')) latest on ts partition by id"
-            );
+                            """);
 
             // latest by designated timestamp, ordered by another timestamp, select all columns
-            assertSql(
-                    """
+            assertQuery("(tab where name in ('c1') order by other_ts) latest on ts partition by id")
+                    .noLeakCheck()
+                    .timestamp("other_ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
-                            """, "(tab where name in ('c1') order by other_ts) latest on ts partition by id"
-            );
+                            """);
 
             // latest by designated timestamp, select subset of columns
-            assertSql(
-                    """
+            assertQuery("select value, ts from (tab where name in ('c1')) latest on ts partition by id")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             value\tts
                             113\t1970-01-01T00:00:00.000003Z
                             212\t1970-01-01T00:00:00.000004Z
-                            """, "select value, ts from (tab where name in ('c1')) latest on ts partition by id"
-            );
+                            """);
 
             // latest by designated timestamp, partition by multiple columns
-            assertSql(
-                    """
+            assertQuery("(tab where name in ('c1','c2')) latest on ts partition by id, name")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z
                             d1\tc2\t123\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
                             d2\tc2\t222\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000005Z
-                            """, "(tab where name in ('c1','c2')) latest on ts partition by id, name"
-            );
+                            """);
 
             // latest by non-designated timestamp, ordered
-            assertSql(
-                    """
+            assertQuery("(tab where name in ('c1') order by other_ts) latest on other_ts partition by id")
+                    .noLeakCheck()
+                    .timestamp("other_ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t111\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
-                            """,
-                    "(tab where name in ('c1') order by other_ts) latest on other_ts partition by id"
-            );
+                            """);
 
             // latest by non-designated timestamp, no order
             // note: other_ts is equal for both 211 and 212 records, so it's fine that
             // the second returned row is different from the ordered by query
-            assertSql(
-                    """
+            assertQuery("(tab where name in ('c1')) latest on other_ts partition by id")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t111\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
-                            """, "(tab where name in ('c1')) latest on other_ts partition by id"
-            );
+                            """);
 
             // empty sub-query
-            assertSql(
-                    "id\tname\tvalue\tts\tother_ts\n", "(tab where name in ('c3')) latest on ts partition by id"
-            );
+            assertQuery("(tab where name in ('c3')) latest on ts partition by id")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("id\tname\tvalue\tts\tother_ts\n");
         });
     }
 
@@ -7878,8 +7894,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
             execute("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
             execute("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
-            assertSql(
-                    """
+            assertQuery("tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts
                             d1\tc1\t101.10000000000001\t2021-10-05T11:31:35.878000Z
                             d1\tc2\t102.10000000000001\t2021-10-05T11:31:35.878000Z
@@ -7897,8 +7916,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z
                             d2\tc1\t401.20000000000005\t2021-10-06T12:31:35.878000Z
                             d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z
-                            """, "tab"
-            );
+                            """);
         });
     }
 
@@ -8000,18 +8018,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("CREATE TABLE t1(c0 INT, c1 SYMBOL, c2 STRING, c3 VARCHAR);");
             execute("INSERT INTO t1(c0) VALUES (1);");
 
-            assertSql(
-                    "c0\tc1\n",
-                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 >= t1.c0);"
-            );
-            assertSql(
-                    "c0\tc1\n",
-                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c2 >= t1.c0);"
-            );
-            assertSql(
-                    "c0\tc1\n",
-                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c3 >= t1.c0);"
-            );
+            assertQuery("SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 >= t1.c0);")
+                    .noLeakCheck()
+                    .returns("c0\tc1\n");
+            assertQuery("SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c2 >= t1.c0);")
+                    .noLeakCheck()
+                    .returns("c0\tc1\n");
+            assertQuery("SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c3 >= t1.c0);")
+                    .noLeakCheck()
+                    .returns("c0\tc1\n");
         });
     }
 
@@ -8158,14 +8173,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     count_distinct
                     6
                     """;
-            assertSql(
-                    expected,
-                    "select count_distinct(timestamp_floor('d', ts)) from x"
-            );
-            assertSql(
-                    expected,
-                    "select count(distinct timestamp_floor('d', ts)) from x"
-            );
+            assertQuery("select count_distinct(timestamp_floor('d', ts)) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select count(distinct timestamp_floor('d', ts)) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             for (int i = 0; i < 10; i++) {
                 printSqlResult(
@@ -9319,62 +9336,78 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
             execute("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
 
-            assertSql(
-                    """
+            assertQuery("tab where id = 'd1' latest on ts partition by id, name")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts
                             d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z
                             d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z
-                            """, "tab where id = 'd1' latest on ts partition by id, name"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("tab where id != 'd2' and value < 102.5 latest on ts partition by id, name")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts
                             d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z
                             d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z
-                            """, "tab where id != 'd2' and value < 102.5 latest on ts partition by id, name"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("tab where name = 'c1' latest on ts partition by id, name")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts
                             d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z
                             d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z
-                            """, "tab where name = 'c1' latest on ts partition by id, name"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("tab where name != 'c2' and value <= 111.7 latest on ts partition by id, name")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts
                             d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z
                             d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z
-                            """, "tab where name != 'c2' and value <= 111.7 latest on ts partition by id, name"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("tab where name = 'c2' latest on ts partition by id")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts
                             d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z
                             d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z
-                            """, "tab where name = 'c2' latest on ts partition by id"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("tab where id = 'd1' latest on ts partition by name")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts
                             d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z
                             d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z
-                            """, "tab where id = 'd1' latest on ts partition by name"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("tab where id = 'd2' latest on ts partition by name")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts
                             d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z
                             d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z
-                            """, "tab where id = 'd2' latest on ts partition by name"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("tab where id != 'd1' latest on ts partition by name")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue\tts
                             d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z
                             d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z
-                            """, "tab where id != 'd1' latest on ts partition by name"
-            );
+                            """);
         });
     }
 

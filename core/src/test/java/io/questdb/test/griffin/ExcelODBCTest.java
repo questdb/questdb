@@ -33,11 +33,7 @@ public class ExcelODBCTest extends AbstractCairoTest {
     public void testGetTableMetaDataQ1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table mytab (a int, b float)");
-            assertQueryNoLeakCheck(
-                    "nspname\trelname\tattname\tatttypid\ttypname\tattnum\tattlen\tatttypmod\tattnotnull\trelhasrules\trelkind\toid\tpg_get_expr\tswitch\ttyptypmod\trelhasoids\tattidentity\trelhassubclass\n" +
-                            "public\tmytab\ta\t23\tint4\t1\t4\t-1\tfalse\tfalse\tr\t1\t\t0\t0\tfalse\t\tfalse\n" +
-                            "public\tmytab\tb\t700\tfloat4\t2\t4\t-1\tfalse\tfalse\tr\t1\t\t0\t0\tfalse\t\tfalse\n",
-                    "select\n" +
+            assertQuery("select\n" +
                             "  n.nspname,\n" +
                             "  c.relname,\n" +
                             "  a.attname,\n" +
@@ -81,19 +77,17 @@ public class ExcelODBCTest extends AbstractCairoTest {
                             "order by\n" +
                             "  n.nspname,\n" +
                             "  c.relname,\n" +
-                            "  attnum;",
-                    null,
-                    true,
-                    false
-            );
+                            "  attnum;")
+                    .noLeakCheck()
+                    .returns("nspname\trelname\tattname\tatttypid\ttypname\tattnum\tattlen\tatttypmod\tattnotnull\trelhasrules\trelkind\toid\tpg_get_expr\tswitch\ttyptypmod\trelhasoids\tattidentity\trelhassubclass\n" +
+                            "public\tmytab\ta\t23\tint4\t1\t4\t-1\tfalse\tfalse\tr\t1\t\t0\t0\tfalse\t\tfalse\n" +
+                            "public\tmytab\tb\t700\tfloat4\t2\t4\t-1\tfalse\tfalse\tr\t1\t\t0\t0\tfalse\t\tfalse\n");
         });
     }
 
     @Test
     public void testGetTablesIndexesQ2() throws Exception {
-        assertQuery(
-                "attname\tattnum\trelname\tnspname\trelname1\n",
-                "select\n" +
+        assertQuery("select\n" +
                         "  ta.attname,\n" +
                         "  ia.attnum,\n" +
                         "  ic.relname,\n" +
@@ -119,18 +113,13 @@ public class ExcelODBCTest extends AbstractCairoTest {
                         "  AND (NOT ia.attisdropped)\n" +
                         "  AND ic.oid = i.indexrelid\n" +
                         "order by\n" +
-                        "  ia.attnum;",
-                null,
-                true,
-                false
-        );
+                        "  ia.attnum;")
+                .returns("attname\tattnum\trelname\tnspname\trelname1\n");
     }
 
     @Test
     public void testGetTablesIndexesQ3() throws Exception {
-        assertQuery(
-                "attname\tattnum\trelname\tnspname\tNULL\n",
-                "select\n" +
+        assertQuery("select\n" +
                         " ta.attname,\n" +
                         " ia.attnum,\n" +
                         " ic.relname,\n" +
@@ -153,10 +142,7 @@ public class ExcelODBCTest extends AbstractCairoTest {
                         " AND (NOT ta.attisdropped)\n" +
                         " AND (NOT ia.attisdropped)\n" +
                         "order by\n" +
-                        "  ia.attnum\n",
-                null,
-                true,
-                false
-        );
+                        "  ia.attnum\n")
+                .returns("attname\tattnum\trelname\tnspname\tNULL\n");
     }
 }
