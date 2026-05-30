@@ -635,7 +635,7 @@ public class UpdateTest extends AbstractCairoTest {
         Assume.assumeFalse(walEnabled);
 
         testUpdateAsyncMode(
-                tableWriter -> {
+                _ -> {
                 },
                 null,
                 """
@@ -683,7 +683,7 @@ public class UpdateTest extends AbstractCairoTest {
             }.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext());
 
             testUpdateAsyncMode(
-                    tableWriter -> {
+                    _ -> {
                     },
                     "[43] test error",
                     """
@@ -962,9 +962,11 @@ public class UpdateTest extends AbstractCairoTest {
                     "WHERE ts >= '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
             assertSql(
-                    "ts\td8\td16\td32\td64\td128\td256\n" +
-                            "1970-01-01T00:00:00.000000Z\t1.0\t1\t1.000\t1.000000000000\t1\t1.000000000000000000\n" +
-                            "1970-01-01T00:00:01.000000Z\t3.3\t0\t128.000\t123.000000000000\t123456789\t123.456789000000000000\n",
+                    """
+                            ts\td8\td16\td32\td64\td128\td256
+                            1970-01-01T00:00:00.000000Z\t1.0\t1\t1.000\t1.000000000000\t1\t1.000000000000000000
+                            1970-01-01T00:00:01.000000Z\t3.3\t0\t128.000\t123.000000000000\t123456789\t123.456789000000000000
+                            """,
                     "up"
             );
         });

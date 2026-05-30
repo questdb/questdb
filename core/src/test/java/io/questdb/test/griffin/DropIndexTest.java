@@ -582,7 +582,7 @@ public class DropIndexTest extends AbstractCairoTest {
         try (Stream<?> stream = Files.find(
                 tablePath,
                 Integer.MAX_VALUE,
-                (filePath, _attrs) -> fileChecker.accepts(tablePath, filePath, columnName, txn)
+                (filePath, _) -> fileChecker.accepts(tablePath, filePath, columnName, txn)
         )) {
             return stream.count();
         }

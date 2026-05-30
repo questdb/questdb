@@ -50,29 +50,33 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
 
     @Test
     public void testAlterSymbolCacheFlagToFalseAndCheckOpenReaderWithCursor() throws Exception {
-        String expectedOrdered = "sym\n" +
-                "googl\n" +
-                "googl\n" +
-                "googl\n" +
-                "googl\n" +
-                "googl\n" +
-                "googl\n" +
-                "ibm\n" +
-                "ibm\n" +
-                "msft\n" +
-                "msft\n";
+        String expectedOrdered = """
+                sym
+                googl
+                googl
+                googl
+                googl
+                googl
+                googl
+                ibm
+                ibm
+                msft
+                msft
+                """;
 
-        String expectedChronological = "sym\tk\n" +
-                "msft\t1970-01-01T00:00:00.000000Z\n" +
-                "googl\t1970-01-01T00:16:40.000000Z\n" +
-                "googl\t1970-01-01T00:33:20.000000Z\n" +
-                "ibm\t1970-01-01T00:50:00.000000Z\n" +
-                "googl\t1970-01-01T01:06:40.000000Z\n" +
-                "ibm\t1970-01-01T01:23:20.000000Z\n" +
-                "googl\t1970-01-01T01:40:00.000000Z\n" +
-                "googl\t1970-01-01T01:56:40.000000Z\n" +
-                "googl\t1970-01-01T02:13:20.000000Z\n" +
-                "msft\t1970-01-01T02:30:00.000000Z\n";
+        String expectedChronological = """
+                sym\tk
+                msft\t1970-01-01T00:00:00.000000Z
+                googl\t1970-01-01T00:16:40.000000Z
+                googl\t1970-01-01T00:33:20.000000Z
+                ibm\t1970-01-01T00:50:00.000000Z
+                googl\t1970-01-01T01:06:40.000000Z
+                ibm\t1970-01-01T01:23:20.000000Z
+                googl\t1970-01-01T01:40:00.000000Z
+                googl\t1970-01-01T01:56:40.000000Z
+                googl\t1970-01-01T02:13:20.000000Z
+                msft\t1970-01-01T02:30:00.000000Z
+                """;
 
         assertMemoryLeak(() -> {
             createX();
@@ -111,27 +115,31 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
             execute("insert into x values (8, 'GBP')");
             execute("insert into x values (9, 'GBP')");
 
-            String expectedOrdered = "sym\n" +
-                    "CHF\n" +
-                    "GBP\n" +
-                    "GBP\n" +
-                    "GBP\n" +
-                    "GBP\n" +
-                    "GBP\n" +
-                    "GBP\n" +
-                    "JPY\n" +
-                    "USD\n";
+            String expectedOrdered = """
+                    sym
+                    CHF
+                    GBP
+                    GBP
+                    GBP
+                    GBP
+                    GBP
+                    GBP
+                    JPY
+                    USD
+                    """;
 
-            String expectedChronological = "i\tsym\n" +
-                    "1\tGBP\n" +
-                    "2\tCHF\n" +
-                    "3\tGBP\n" +
-                    "4\tJPY\n" +
-                    "5\tUSD\n" +
-                    "6\tGBP\n" +
-                    "7\tGBP\n" +
-                    "8\tGBP\n" +
-                    "9\tGBP\n";
+            String expectedChronological = """
+                    i\tsym
+                    1\tGBP
+                    2\tCHF
+                    3\tGBP
+                    4\tJPY
+                    5\tUSD
+                    6\tGBP
+                    7\tGBP
+                    8\tGBP
+                    9\tGBP
+                    """;
 
             assertSql(
                     expectedOrdered,

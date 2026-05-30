@@ -77,8 +77,10 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 11111";
                 execute(alterCommand, sqlExecutionContext);
 
-                assertSql("maxUncommittedRows\to3MaxLag\n" +
-                        "11111\t1000000\n", "SELECT maxUncommittedRows, o3MaxLag FROM tables() WHERE table_name = '" + tableName + "'"
+                assertSql("""
+                        maxUncommittedRows\to3MaxLag
+                        11111\t1000000
+                        """, "SELECT maxUncommittedRows, o3MaxLag FROM tables() WHERE table_name = '" + tableName + "'"
                 );
                 rdr.reload();
                 Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
@@ -96,8 +98,10 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 String alterCommand2 = "ALTER TABLE " + tableName + " SET PARAM o3MaxLag = 0s";
                 execute(alterCommand2, sqlExecutionContext);
 
-                assertSql("maxUncommittedRows\to3MaxLag\n" +
-                        "0\t0\n", "SELECT maxUncommittedRows, o3MaxLag FROM tables() WHERE table_name = '" + tableName + "'"
+                assertSql("""
+                        maxUncommittedRows\to3MaxLag
+                        0\t0
+                        """, "SELECT maxUncommittedRows, o3MaxLag FROM tables() WHERE table_name = '" + tableName + "'"
                 );
                 rdr.reload();
                 Assert.assertEquals(0, rdr.getMetadata().getMaxUncommittedRows());
@@ -403,8 +407,10 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                     execute("create table x1(a int, b double, ts timestamp) timestamp(ts) partition by DAY");
                     execute("alter table x1 set param maxUncommittedRows = 150", sqlExecutionContext);
                     assertSql(
-                            "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                                    "1\tx1\tts\tDAY\t150\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'x1'"
+                            """
+                                    id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag
+                                    1\tx1\tts\tDAY\t150\t300000000
+                                    """, "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'x1'"
                     );
 
                     // test open table writer
@@ -413,8 +419,10 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                     getWriter("x1").close();
 
                     assertSql(
-                            "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                                    "1\tx1\tts\tDAY\t150\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'x1'"
+                            """
+                                    id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag
+                                    1\tx1\tts\tDAY\t150\t300000000
+                                    """, "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'x1'"
                     );
                 }
         );
@@ -445,17 +453,19 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
     private void assertX(String tableName) throws SqlException {
         engine.releaseAllReaders();
-        assertSql("ts\ti\tl\n" +
-                "2020-01-01T02:23:59.900000Z\t1\t1\n" +
-                "2020-01-01T04:47:59.800000Z\t2\t2\n" +
-                "2020-01-01T07:11:59.700000Z\t3\t3\n" +
-                "2020-01-01T09:35:59.600000Z\t4\t4\n" +
-                "2020-01-01T11:59:59.500000Z\t5\t5\n" +
-                "2020-01-01T14:23:59.400000Z\t6\t6\n" +
-                "2020-01-01T16:47:59.300000Z\t7\t7\n" +
-                "2020-01-01T19:11:59.200000Z\t8\t8\n" +
-                "2020-01-01T21:35:59.100000Z\t9\t9\n" +
-                "2020-01-01T23:59:59.000000Z\t10\t10\n", "select * from " + tableName
+        assertSql("""
+                ts\ti\tl
+                2020-01-01T02:23:59.900000Z\t1\t1
+                2020-01-01T04:47:59.800000Z\t2\t2
+                2020-01-01T07:11:59.700000Z\t3\t3
+                2020-01-01T09:35:59.600000Z\t4\t4
+                2020-01-01T11:59:59.500000Z\t5\t5
+                2020-01-01T14:23:59.400000Z\t6\t6
+                2020-01-01T16:47:59.300000Z\t7\t7
+                2020-01-01T19:11:59.200000Z\t8\t8
+                2020-01-01T21:35:59.100000Z\t9\t9
+                2020-01-01T23:59:59.000000Z\t10\t10
+                """, "select * from " + tableName
         );
     }
 

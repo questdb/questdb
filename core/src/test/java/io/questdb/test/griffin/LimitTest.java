@@ -1593,10 +1593,12 @@ public class LimitTest extends AbstractCairoTest {
                             "ORDER BY t.sym DESC LIMIT 3")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("sym\tprice\tts\twindow_price\n" +
-                            "DDD\t400.0\t2023-01-01T09:13:00.000000Z\tnull\n" +
-                            "CCC\t300.0\t2023-01-01T09:12:00.000000Z\tnull\n" +
-                            "BBB\t200.0\t2023-01-01T09:11:00.000000Z\tnull\n");
+                    .returns("""
+                            sym\tprice\tts\twindow_price
+                            DDD\t400.0\t2023-01-01T09:13:00.000000Z\tnull
+                            CCC\t300.0\t2023-01-01T09:12:00.000000Z\tnull
+                            BBB\t200.0\t2023-01-01T09:11:00.000000Z\tnull
+                            """);
         });
     }
 
