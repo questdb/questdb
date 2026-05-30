@@ -201,7 +201,14 @@ Three JSON sidecars sit next to the data files:
   (written, skipped, or partial), every structural-change transaction in
   seqTxn order, the txnlog format version and applied/maxTxn watermarks,
   the `appliedSeqTxn` watermark read from `_txn`, and per-segment reasons
-  when recovery was less than complete.
+  when recovery was less than complete. Note: in tier-2 mode (`_txnlog`
+  unreadable, see below), the rows themselves are still recovered via the
+  filesystem scan into a `__tier2.parquet` file; what's lost is the
+  txnlog-derived metadata. `manifest.structuralChanges` and
+  `manifest.sqlStatements` are empty in tier-2 because both lists are
+  populated by walking the txnlog cursor. The schema-per-`structureVersion`
+  view in `__schemas.json` is still emitted from each segment's own `_meta`,
+  so the schema lineage is preserved even when the ALTER history is not.
 - `<tableName>__sql_log.json` is emitted whenever the WAL contains non-DATA
   transactions stored as SQL events (UPDATE, ALTER TABLE, TRUNCATE,
   view/mat-view events). For each, it captures `(walId, segmentId,
@@ -323,3 +330,15 @@ cp /tmp/wal_recovery/mytable__wal4__seg0__seqTxn14-16.parquet \
 curl -G "http://localhost:9000/exec" \
     --data-urlencode "query=select count(*) from parquet_scan('recovered.parquet')"
 ```
+
+#### Notes on dependencies
+
+`WalToParquet` uses Gson (`com.google.code.gson:gson`) to emit the three
+JSON sidecars. QuestDB's core engine is zero-third-party-dependency on
+data paths, but this tool is a standalone offline CLI: it runs once per
+recovery, never on a query path, and emits JSON only at the end of each
+table's walk. Gson is already on the `utils` module classpath through
+existing tools, so this PR does not add a new dependency. If the
+zero-deps invariant tightens in the future, the sidecars can be
+hand-rolled with `io.questdb.std.str.StringSink`; nothing in the
+sidecars' shape requires Gson specifically.

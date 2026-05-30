@@ -32,6 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -113,6 +114,10 @@ public class WalToParquetIntegrationTest {
 
     @Test
     public void testHappyPathRecovery() throws Exception {
+        TestUtils.assertMemoryLeak(this::doTestHappyPathRecovery);
+    }
+
+    private void doTestHappyPathRecovery() throws Exception {
         // CREATE WAL table and INSERT known data. No ApplyWal2TableJob is ever
         // run, so the rows live in WAL and don't reach committed partitions.
         engine.execute(
@@ -224,15 +229,15 @@ public class WalToParquetIntegrationTest {
         );
         engine.execute(
                 "INSERT INTO all_types_test SELECT " +
-                        "  timestamp_sequence('2026-04-01T00:00:00.000000Z', 60000000L) ts," +
-                        "  (timestamp_sequence('2026-04-01T00:00:00.000000Z', 60000000L)::long * 1000 + x)::timestamp_ns ts_nano," +
+                        "  timestamp_sequence('2026-04-01T00:00:00.000000Z', 60_000_000L) ts," +
+                        "  (timestamp_sequence('2026-04-01T00:00:00.000000Z', 60_000_000L)::long * 1000 + x)::timestamp_ns ts_nano," +
                         "  rnd_symbol('A','B','C') sym," +
                         "  (rnd_double()*1000)::decimal(20,4) dec_val," +
                         "  rnd_double() dbl_val," +
                         "  ARRAY[ARRAY[rnd_double(),rnd_double()],ARRAY[rnd_double(),rnd_double()]] arr_val," +
                         "  rnd_uuid4() uuid_val," +
                         "  rnd_float() flt_val," +
-                        "  rnd_long(1,1000000,0) long_val," +
+                        "  rnd_long(1, 1_000_000, 0) long_val," +
                         "  rnd_bin(8,16,0) bin_val," +
                         "  rnd_varchar(5,10,0) vch_val " +
                         "FROM long_sequence(12)",
@@ -291,35 +296,6 @@ public class WalToParquetIntegrationTest {
             Assert.assertTrue("bin_val length in [8,16]", bin.length() >= 8 && bin.length() <= 16);
         }
 
-        // Row-level equality on every non-array, non-binary type. Compare
-        // against the live (still in WAL, not applied) view via wal table.
-        String compare = "select count(*) matched from " +
-                "  (select ts, ts_nano, sym, dec_val, dbl_val, uuid_val, flt_val, long_val, vch_val " +
-                "   from parquet_scan('" + parquet.getAbsolutePath() + "') where _txnSeq_ = 1) p " +
-                "join (select ts, ts_nano, sym, dec_val, dbl_val, uuid_val, flt_val, long_val, vch_val " +
-                "      from all_types_test order by ts limit 12) t " +
-                "  on p.ts = t.ts " +
-                "  and p.ts_nano = t.ts_nano " +
-                "  and p.sym = t.sym " +
-                "  and p.dec_val = t.dec_val " +
-                "  and p.dbl_val = t.dbl_val " +
-                "  and p.uuid_val = t.uuid_val " +
-                "  and p.flt_val = t.flt_val " +
-                "  and p.long_val = t.long_val " +
-                "  and p.vch_val = t.vch_val";
-        // Note: this only works if ApplyWal2TableJob has run. Since it hasn't,
-        // the committed table is empty and we can't cross-check via join.
-        // Sanity check via wal_tables() instead: the rows are pending in WAL.
-        try (
-                RecordCursorFactory f = engine.select("select bufferedTxnSize from wal_tables() where name = 'all_types_test'", sqlExecutionContext);
-                RecordCursor c = f.getCursor(sqlExecutionContext)
-        ) {
-            Assert.assertTrue(c.hasNext());
-            // Buffered txn size is non-zero -> rows are in WAL, not applied.
-            Assert.assertTrue("rows must still be in WAL, not applied", c.getRecord().getLong(0) >= 0);
-        }
-        // Suppress unused-warning for the compare query (kept for reference).
-        Assert.assertNotNull(compare);
     }
 
     @Test
@@ -409,6 +385,10 @@ public class WalToParquetIntegrationTest {
 
     @Test
     public void testSchemaEvolutionMapping() throws Exception {
+        TestUtils.assertMemoryLeak(this::doTestSchemaEvolutionMapping);
+    }
+
+    private void doTestSchemaEvolutionMapping() throws Exception {
         // Verifies the operator workflow: insert at structureVersion 0,
         // ALTER ADD COLUMN to bump to version 1, insert again, then assert
         // both versions are in __schemas.json AND each manifest segment
@@ -518,6 +498,10 @@ public class WalToParquetIntegrationTest {
 
     @Test
     public void testUnreadableEventRecordedAsPlaceholder() throws Exception {
+        TestUtils.assertMemoryLeak(this::doTestUnreadableEventRecordedAsPlaceholder);
+    }
+
+    private void doTestUnreadableEventRecordedAsPlaceholder() throws Exception {
         // When _event cannot be opened (corrupt or truncated), the sql_log
         // must record an UNKNOWN_EVENT_UNREADABLE placeholder pinpointing
         // the affected segment rather than silently dropping the events.
@@ -612,6 +596,546 @@ public class WalToParquetIntegrationTest {
                 "no Parquet file should be emitted when row count cannot be trusted",
                 parquet
         );
+    }
+
+    @Test
+    public void testAppliedSeqTxnReadFromTxn() throws Exception {
+        // Drive ApplyWal2TableJob to advance the _txn watermark, but skip the
+        // purge job so the WAL segment is still on disk. The tool must:
+        //   1. Read the advanced appliedSeqTxn from _txn (manifest watermark).
+        //   2. Mark every row whose seqTxn <= appliedSeqTxn as applied_unpurged.
+        // A future change to the _txn double-buffered layout would silently
+        // break this without coverage here.
+        engine.execute(
+                "CREATE TABLE applied_seq_test (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                sqlExecutionContext
+        );
+        engine.execute(
+                "INSERT INTO applied_seq_test VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 1), " +
+                        "('2026-10-01T00:00:01.000000Z', 2)",
+                sqlExecutionContext
+        );
+        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
+            walApplyJob.drain(0);
+        }
+        TableToken token = engine.verifyTableName("applied_seq_test");
+
+        WalToParquet.main(new String[]{
+                "--db-root", dbRoot,
+                "--table-dir", token.getDirName(),
+                "--table-name", token.getTableName(),
+                "--table-id", String.valueOf(token.getTableId()),
+                "--output-dir", outputDir.getAbsolutePath(),
+                "--include-empty"
+        });
+
+        File manifest = findFile(outputDir, "__manifest.json");
+        Assert.assertNotNull("manifest must be present after apply", manifest);
+        Gson gson = new Gson();
+        long appliedSeqTxn;
+        try (FileReader fr = new FileReader(manifest)) {
+            JsonObject root = gson.fromJson(fr, JsonObject.class);
+            appliedSeqTxn = root.get("appliedSeqTxn").getAsLong();
+        }
+        Assert.assertTrue(
+                "appliedSeqTxn must be advanced (>0) after ApplyWal2TableJob.drain",
+                appliedSeqTxn > 0
+        );
+
+        // ApplyWal2TableJob.drain(0) advances _txn but does NOT trigger purge
+        // (purge is a separate job we never start). The WAL segment must still
+        // be on disk, so the tool must emit a Parquet that the row-level
+        // assertion needs. If a future change makes apply purge synchronously
+        // this assertion fails and forces a re-evaluation of the contract -
+        // which is the right behavior, not a silent skip.
+        File parquet = findFile(outputDir, ".parquet");
+        Assert.assertNotNull("WAL segment must survive drain(0); purge runs separately", parquet);
+        String sql = "select _recovery_status_, count(*) cnt from parquet_scan('"
+                + parquet.getAbsolutePath() + "') group by _recovery_status_";
+        try (
+                RecordCursorFactory f = engine.select(sql, sqlExecutionContext);
+                RecordCursor c = f.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(c.hasNext());
+            Record r = c.getRecord();
+            Assert.assertEquals("applied_unpurged", r.getStrA(0).toString());
+            Assert.assertEquals(2L, r.getLong(1));
+            Assert.assertFalse("only one status bucket expected", c.hasNext());
+        }
+    }
+
+    @Test
+    public void testNullValuePreservation() throws Exception {
+        TestUtils.assertMemoryLeak(this::doTestNullValuePreservation);
+    }
+
+    private void doTestNullValuePreservation() throws Exception {
+        // Verifies that explicit NULLs in source rows round-trip through
+        // Parquet. The all-types test inserts random non-null values; this
+        // covers the orthogonal case where the source row has explicit NULLs
+        // in mixed nullable column types.
+        engine.execute(
+                "CREATE TABLE null_pres_test (" +
+                        "  ts TIMESTAMP," +
+                        "  l LONG," +
+                        "  d DOUBLE," +
+                        "  s SYMBOL," +
+                        "  v VARCHAR" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL",
+                sqlExecutionContext
+        );
+        engine.execute(
+                "INSERT INTO null_pres_test VALUES " +
+                        "('2027-02-01T00:00:00.000000Z', NULL, NULL, NULL, NULL), " +
+                        "('2027-02-01T00:00:01.000000Z', 7, 3.14, 'BTC', 'hi')",
+                sqlExecutionContext
+        );
+        TableToken token = engine.verifyTableName("null_pres_test");
+
+        WalToParquet.main(new String[]{
+                "--db-root", dbRoot,
+                "--table-dir", token.getDirName(),
+                "--table-name", token.getTableName(),
+                "--table-id", String.valueOf(token.getTableId()),
+                "--output-dir", outputDir.getAbsolutePath()
+        });
+
+        File parquet = findFile(outputDir, ".parquet");
+        Assert.assertNotNull(parquet);
+        // Count nulls per column. The recovered Parquet must preserve the
+        // exactly-one-null-per-column pattern from the source rows.
+        String sql = "SELECT count(*) total, " +
+                "  sum(case when l IS NULL then 1 else 0 end) lnull, " +
+                "  sum(case when d IS NULL then 1 else 0 end) dnull, " +
+                "  sum(case when s IS NULL then 1 else 0 end) snull, " +
+                "  sum(case when v IS NULL then 1 else 0 end) vnull, " +
+                "  sum(case when l = 7 then 1 else 0 end) lval, " +
+                "  sum(case when d = 3.14 then 1 else 0 end) dval, " +
+                "  sum(case when s = 'BTC' then 1 else 0 end) sval, " +
+                "  sum(case when v = 'hi' then 1 else 0 end) vval " +
+                "FROM parquet_scan('" + parquet.getAbsolutePath() + "')";
+        try (
+                RecordCursorFactory f = engine.select(sql, sqlExecutionContext);
+                RecordCursor c = f.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(c.hasNext());
+            Record r = c.getRecord();
+            Assert.assertEquals("total rows", 2L, r.getLong(0));
+            Assert.assertEquals("LONG null count", 1L, r.getLong(1));
+            Assert.assertEquals("DOUBLE null count", 1L, r.getLong(2));
+            Assert.assertEquals("SYMBOL null count", 1L, r.getLong(3));
+            Assert.assertEquals("VARCHAR null count", 1L, r.getLong(4));
+            Assert.assertEquals("LONG value preserved", 1L, r.getLong(5));
+            Assert.assertEquals("DOUBLE value preserved", 1L, r.getLong(6));
+            Assert.assertEquals("SYMBOL value preserved", 1L, r.getLong(7));
+            Assert.assertEquals("VARCHAR value preserved", 1L, r.getLong(8));
+        }
+    }
+
+    @Test
+    public void testDropColumnSchemaEvolution() throws Exception {
+        TestUtils.assertMemoryLeak(this::doTestDropColumnSchemaEvolution);
+    }
+
+    private void doTestDropColumnSchemaEvolution() throws Exception {
+        // Counterpart to testSchemaEvolutionMapping (which covers ADD COLUMN).
+        // DROP COLUMN bumps structureVersion and the segment must reference
+        // the post-drop schema in the manifest. The dropped column does not
+        // appear in the recovered schema/data.
+        engine.execute(
+                "CREATE TABLE drop_col_test (ts TIMESTAMP, a LONG, b SYMBOL) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY WAL",
+                sqlExecutionContext
+        );
+        engine.execute(
+                "INSERT INTO drop_col_test VALUES " +
+                        "('2027-03-01T00:00:00.000000Z', 1, 'x'), " +
+                        "('2027-03-01T00:00:01.000000Z', 2, 'y')",
+                sqlExecutionContext
+        );
+        engine.execute("ALTER TABLE drop_col_test DROP COLUMN b", sqlExecutionContext);
+        engine.execute(
+                "INSERT INTO drop_col_test VALUES " +
+                        "('2027-03-02T00:00:00.000000Z', 3), " +
+                        "('2027-03-02T00:00:01.000000Z', 4)",
+                sqlExecutionContext
+        );
+        TableToken token = engine.verifyTableName("drop_col_test");
+
+        WalToParquet.main(new String[]{
+                "--db-root", dbRoot,
+                "--table-dir", token.getDirName(),
+                "--table-name", token.getTableName(),
+                "--table-id", String.valueOf(token.getTableId()),
+                "--output-dir", outputDir.getAbsolutePath()
+        });
+
+        File schemas = findFile(outputDir, "__schemas.json");
+        Assert.assertNotNull("schemas sidecar must exist", schemas);
+        Gson gson = new Gson();
+        try (FileReader fr = new FileReader(schemas)) {
+            JsonObject root = gson.fromJson(fr, JsonObject.class);
+            JsonObject byVer = root.getAsJsonObject("structureVersions");
+            // Pre-drop and post-drop versions must both be present.
+            Assert.assertTrue("pre-drop structureVersion absent", byVer.has("0"));
+            Assert.assertTrue("post-drop structureVersion absent", byVer.has("1"));
+            // Pre-drop has 3 columns (ts, a, b); post-drop has 2 (ts, a).
+            Assert.assertEquals(3, byVer.getAsJsonArray("0").size());
+            Assert.assertEquals(2, byVer.getAsJsonArray("1").size());
+        }
+
+        // Manifest must list both structureVersions across the written segments.
+        File manifest = findFile(outputDir, "__manifest.json");
+        Assert.assertNotNull(manifest);
+        java.util.Set<Long> manifestVersions = new java.util.HashSet<>();
+        try (FileReader fr = new FileReader(manifest)) {
+            JsonObject root = gson.fromJson(fr, JsonObject.class);
+            for (com.google.gson.JsonElement el : root.getAsJsonArray("segments")) {
+                JsonObject seg = el.getAsJsonObject();
+                if ("written".equals(seg.get("status").getAsString())) {
+                    manifestVersions.add(seg.get("structureVersion").getAsLong());
+                }
+            }
+        }
+        Assert.assertTrue("manifest must reference both pre- and post-drop versions",
+                manifestVersions.contains(0L) && manifestVersions.contains(1L));
+
+        // Verify the actual Parquet content per structureVersion. The
+        // pre-drop file must carry column `b`; the post-drop file must NOT.
+        // The DROP COLUMN guarantee is meaningless if dropped column data
+        // leaks through into the post-drop segment's recovered output.
+        File preDropParquet = null;
+        File postDropParquet = null;
+        try (FileReader fr = new FileReader(manifest)) {
+            JsonObject root = gson.fromJson(fr, JsonObject.class);
+            for (com.google.gson.JsonElement el : root.getAsJsonArray("segments")) {
+                JsonObject seg = el.getAsJsonObject();
+                if (!"written".equals(seg.get("status").getAsString())) {
+                    continue;
+                }
+                long sv = seg.get("structureVersion").getAsLong();
+                String outFile = seg.get("outputFile").getAsString();
+                File p = new File(outputDir, outFile);
+                if (sv == 0L) {
+                    preDropParquet = p;
+                } else if (sv == 1L) {
+                    postDropParquet = p;
+                }
+            }
+        }
+        Assert.assertNotNull("pre-drop Parquet must be present", preDropParquet);
+        Assert.assertNotNull("post-drop Parquet must be present", postDropParquet);
+
+        // Pre-drop Parquet: column b is selectable.
+        String preSql = "SELECT count_distinct(b) c FROM parquet_scan('"
+                + preDropParquet.getAbsolutePath() + "')";
+        try (
+                RecordCursorFactory f = engine.select(preSql, sqlExecutionContext);
+                RecordCursor c = f.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(c.hasNext());
+            Assert.assertEquals("pre-drop must have 2 distinct b values", 2L, c.getRecord().getLong(0));
+        }
+
+        // Post-drop Parquet: column b must be absent. A SELECT referencing
+        // it must fail with SqlException at parse time.
+        String postSql = "SELECT b FROM parquet_scan('" + postDropParquet.getAbsolutePath() + "')";
+        try (
+                RecordCursorFactory f = engine.select(postSql, sqlExecutionContext);
+                RecordCursor c = f.getCursor(sqlExecutionContext)
+        ) {
+            Assert.fail("post-drop Parquet must not contain column `b`; got cursor of type " + f.getClass());
+        } catch (SqlException expected) {
+            // Expected: query references a column that no longer exists in
+            // the post-drop schema. The Parquet emitted for the post-drop
+            // segment must have only `ts` and `a`.
+        }
+    }
+
+    @Test
+    public void testRenameColumnSchemaEvolution() throws Exception {
+        TestUtils.assertMemoryLeak(this::doTestRenameColumnSchemaEvolution);
+    }
+
+    private void doTestRenameColumnSchemaEvolution() throws Exception {
+        // RENAME COLUMN bumps structureVersion (like ADD and DROP). The
+        // recovered schemas must record both names; the manifest segments
+        // must reference the correct version each.
+        engine.execute(
+                "CREATE TABLE rename_col_test (ts TIMESTAMP, a LONG, b LONG) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY WAL",
+                sqlExecutionContext
+        );
+        engine.execute(
+                "INSERT INTO rename_col_test VALUES " +
+                        "('2027-07-01T00:00:00.000000Z', 1, 10), " +
+                        "('2027-07-01T00:00:01.000000Z', 2, 20)",
+                sqlExecutionContext
+        );
+        engine.execute("ALTER TABLE rename_col_test RENAME COLUMN b TO renamed_b", sqlExecutionContext);
+        engine.execute(
+                "INSERT INTO rename_col_test VALUES " +
+                        "('2027-07-02T00:00:00.000000Z', 3, 30), " +
+                        "('2027-07-02T00:00:01.000000Z', 4, 40)",
+                sqlExecutionContext
+        );
+        TableToken token = engine.verifyTableName("rename_col_test");
+
+        WalToParquet.main(new String[]{
+                "--db-root", dbRoot,
+                "--table-dir", token.getDirName(),
+                "--table-name", token.getTableName(),
+                "--table-id", String.valueOf(token.getTableId()),
+                "--output-dir", outputDir.getAbsolutePath()
+        });
+
+        // Both pre- and post-rename schemas must be in __schemas.json. The
+        // pre-rename schema names the column `b`; the post-rename schema
+        // names it `renamed_b`. Same logical column count (3), different
+        // names.
+        File schemas = findFile(outputDir, "__schemas.json");
+        Assert.assertNotNull("schemas sidecar must exist", schemas);
+        Gson gson = new Gson();
+        boolean preHasB = false;
+        boolean postHasRenamedB = false;
+        try (FileReader fr = new FileReader(schemas)) {
+            JsonObject root = gson.fromJson(fr, JsonObject.class);
+            JsonObject byVer = root.getAsJsonObject("structureVersions");
+            Assert.assertTrue("pre-rename structureVersion absent", byVer.has("0"));
+            Assert.assertTrue("post-rename structureVersion absent", byVer.has("1"));
+            Assert.assertEquals(3, byVer.getAsJsonArray("0").size());
+            Assert.assertEquals(3, byVer.getAsJsonArray("1").size());
+            for (com.google.gson.JsonElement colEl : byVer.getAsJsonArray("0")) {
+                if ("b".equals(colEl.getAsJsonObject().get("name").getAsString())) {
+                    preHasB = true;
+                }
+            }
+            for (com.google.gson.JsonElement colEl : byVer.getAsJsonArray("1")) {
+                if ("renamed_b".equals(colEl.getAsJsonObject().get("name").getAsString())) {
+                    postHasRenamedB = true;
+                }
+            }
+        }
+        Assert.assertTrue("pre-rename schema must have column 'b'", preHasB);
+        Assert.assertTrue("post-rename schema must have column 'renamed_b'", postHasRenamedB);
+
+        // Manifest segments must reference the correct structureVersion.
+        File manifest = findFile(outputDir, "__manifest.json");
+        Assert.assertNotNull(manifest);
+        java.util.Set<Long> manifestVersions = new java.util.HashSet<>();
+        try (FileReader fr = new FileReader(manifest)) {
+            JsonObject root = gson.fromJson(fr, JsonObject.class);
+            for (com.google.gson.JsonElement el : root.getAsJsonArray("segments")) {
+                JsonObject seg = el.getAsJsonObject();
+                if ("written".equals(seg.get("status").getAsString())) {
+                    manifestVersions.add(seg.get("structureVersion").getAsLong());
+                }
+            }
+        }
+        Assert.assertTrue("manifest must reference both pre- and post-rename versions",
+                manifestVersions.contains(0L) && manifestVersions.contains(1L));
+
+        // Verify the actual Parquet content per structureVersion. Pre-rename
+        // segment must carry column `b`; post-rename segment must carry
+        // `renamed_b` and NOT `b`. A regression where the rename is reflected
+        // only in __schemas.json but the recovered Parquet uses the wrong
+        // column name would be caught here.
+        File preRenameParquet = null;
+        File postRenameParquet = null;
+        try (FileReader fr = new FileReader(manifest)) {
+            JsonObject root = gson.fromJson(fr, JsonObject.class);
+            for (com.google.gson.JsonElement el : root.getAsJsonArray("segments")) {
+                JsonObject seg = el.getAsJsonObject();
+                if (!"written".equals(seg.get("status").getAsString())) {
+                    continue;
+                }
+                long sv = seg.get("structureVersion").getAsLong();
+                String outFile = seg.get("outputFile").getAsString();
+                File p = new File(outputDir, outFile);
+                if (sv == 0L) {
+                    preRenameParquet = p;
+                } else if (sv == 1L) {
+                    postRenameParquet = p;
+                }
+            }
+        }
+        Assert.assertNotNull("pre-rename Parquet must be present", preRenameParquet);
+        Assert.assertNotNull("post-rename Parquet must be present", postRenameParquet);
+
+        // Pre-rename Parquet: column b is selectable.
+        try (
+                RecordCursorFactory f = engine.select(
+                        "SELECT count_distinct(b) c FROM parquet_scan('" + preRenameParquet.getAbsolutePath() + "')",
+                        sqlExecutionContext
+                );
+                RecordCursor c = f.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(c.hasNext());
+            Assert.assertEquals("pre-rename must have 2 distinct b values", 2L, c.getRecord().getLong(0));
+        }
+
+        // Post-rename Parquet: column renamed_b is selectable.
+        try (
+                RecordCursorFactory f = engine.select(
+                        "SELECT count_distinct(renamed_b) c FROM parquet_scan('" + postRenameParquet.getAbsolutePath() + "')",
+                        sqlExecutionContext
+                );
+                RecordCursor c = f.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(c.hasNext());
+            Assert.assertEquals("post-rename must have 2 distinct renamed_b values", 2L, c.getRecord().getLong(0));
+        }
+
+        // Post-rename Parquet: column b must NOT be selectable; the rename
+        // semantics require the Parquet to reflect the new schema.
+        try (
+                RecordCursorFactory f = engine.select(
+                        "SELECT b FROM parquet_scan('" + postRenameParquet.getAbsolutePath() + "')",
+                        sqlExecutionContext
+                );
+                RecordCursor c = f.getCursor(sqlExecutionContext)
+        ) {
+            Assert.fail("post-rename Parquet must not contain the old column name `b`; got cursor of type " + f.getClass());
+        } catch (SqlException expected) {
+            // Expected: the post-rename Parquet has `renamed_b`, not `b`.
+        }
+    }
+
+    @Test
+    public void testMultiSegmentRecovery() throws Exception {
+        TestUtils.assertMemoryLeak(this::doTestMultiSegmentRecovery);
+    }
+
+    private void doTestMultiSegmentRecovery() throws Exception {
+        // Force three WAL segments via two structural changes between data
+        // inserts, then recover all of them. Each segment must produce its
+        // own Parquet file with the correct row counts; the manifest must
+        // record all three; cumulative row counts across the Parquets must
+        // match the inserted total.
+        //
+        // Segment-roll-on-ALTER is the behavior of
+        // io.questdb.cairo.wal.WalWriter#applyStructureChanges: when a
+        // structural change arrives while segmentRowCount > 0 and
+        // uncommittedRows == 0, it sets rollSegmentOnNextRow = true; the
+        // next data write rolls to a fresh segment. The 3-segment count
+        // depends on that contract; a future change to the WAL writer
+        // that batches ALTERs into the current segment would break this
+        // test's segment count assertion.
+        engine.execute(
+                "CREATE TABLE multi_seg_test (ts TIMESTAMP, v LONG) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY WAL",
+                sqlExecutionContext
+        );
+        engine.execute(
+                "INSERT INTO multi_seg_test VALUES " +
+                        "('2027-08-01T00:00:00.000000Z', 1), " +
+                        "('2027-08-01T00:00:01.000000Z', 2)",
+                sqlExecutionContext
+        );
+        engine.execute("ALTER TABLE multi_seg_test ADD COLUMN c1 SYMBOL", sqlExecutionContext);
+        engine.execute(
+                "INSERT INTO multi_seg_test VALUES " +
+                        "('2027-08-02T00:00:00.000000Z', 3, 'A'), " +
+                        "('2027-08-02T00:00:01.000000Z', 4, 'B'), " +
+                        "('2027-08-02T00:00:02.000000Z', 5, 'C')",
+                sqlExecutionContext
+        );
+        engine.execute("ALTER TABLE multi_seg_test ADD COLUMN c2 LONG", sqlExecutionContext);
+        engine.execute(
+                "INSERT INTO multi_seg_test VALUES " +
+                        "('2027-08-03T00:00:00.000000Z', 6, 'D', 100)",
+                sqlExecutionContext
+        );
+        TableToken token = engine.verifyTableName("multi_seg_test");
+
+        WalToParquet.main(new String[]{
+                "--db-root", dbRoot,
+                "--table-dir", token.getDirName(),
+                "--table-name", token.getTableName(),
+                "--table-id", String.valueOf(token.getTableId()),
+                "--output-dir", outputDir.getAbsolutePath()
+        });
+
+        // Three "written" segments expected, each producing its own Parquet.
+        File manifest = findFile(outputDir, "__manifest.json");
+        Assert.assertNotNull(manifest);
+        Gson gson = new Gson();
+        int writtenSegments = 0;
+        long rowsAcrossSegments = 0;
+        java.util.List<String> parquetNames = new java.util.ArrayList<>();
+        try (FileReader fr = new FileReader(manifest)) {
+            JsonObject root = gson.fromJson(fr, JsonObject.class);
+            for (com.google.gson.JsonElement el : root.getAsJsonArray("segments")) {
+                JsonObject seg = el.getAsJsonObject();
+                if ("written".equals(seg.get("status").getAsString())) {
+                    writtenSegments++;
+                    rowsAcrossSegments += seg.get("rowsWritten").getAsLong();
+                    parquetNames.add(seg.get("outputFile").getAsString());
+                }
+            }
+        }
+        Assert.assertEquals("3 segments must be recovered", 3, writtenSegments);
+        Assert.assertEquals("total row count across segments", 6L, rowsAcrossSegments);
+
+        // Each Parquet file must actually exist on disk and read back the
+        // expected number of rows; a manifest entry without the underlying
+        // file would mean the manifest lies.
+        long aggregateRows = 0;
+        for (String name : parquetNames) {
+            File p = new File(outputDir, name);
+            Assert.assertTrue("Parquet must exist: " + name, p.isFile());
+            String sql = "SELECT count(*) FROM parquet_scan('" + p.getAbsolutePath() + "')";
+            try (
+                    RecordCursorFactory f = engine.select(sql, sqlExecutionContext);
+                    RecordCursor c = f.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertTrue(c.hasNext());
+                aggregateRows += c.getRecord().getLong(0);
+            }
+        }
+        Assert.assertEquals("aggregate Parquet row count", 6L, aggregateRows);
+    }
+
+    @Test
+    public void testUnderscorePrefixedUserTable() throws Exception {
+        TestUtils.assertMemoryLeak(this::doTestUnderscorePrefixedUserTable);
+    }
+
+    private void doTestUnderscorePrefixedUserTable() throws Exception {
+        // Regression for the discoverTables filter that previously dropped
+        // every directory beginning with `_`. QuestDB's table name validation
+        // permits a leading underscore, so the discovery path must surface
+        // such tables.
+        engine.execute(
+                "CREATE TABLE \"_under_test\" (ts TIMESTAMP, v LONG) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY WAL",
+                sqlExecutionContext
+        );
+        engine.execute(
+                "INSERT INTO \"_under_test\" VALUES " +
+                        "('2027-05-01T00:00:00.000000Z', 1), " +
+                        "('2027-05-01T00:00:01.000000Z', 2)",
+                sqlExecutionContext
+        );
+
+        // No --table-dir: rely on discoverTables. The tool must find the
+        // underscore-prefixed table and emit a Parquet for it.
+        WalToParquet.main(new String[]{
+                "--db-root", dbRoot,
+                "--output-dir", outputDir.getAbsolutePath()
+        });
+
+        File[] outFiles = outputDir.listFiles();
+        Assert.assertNotNull(outFiles);
+        boolean foundParquet = false;
+        for (File f : outFiles) {
+            if (f.getName().startsWith("_under_test__") && f.getName().endsWith(".parquet")) {
+                foundParquet = true;
+                break;
+            }
+        }
+        Assert.assertTrue("discoverTables must surface tables whose names start with `_`", foundParquet);
     }
 
     @Test
