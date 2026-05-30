@@ -31,32 +31,32 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
 
     @Test
     public void testArithmetic() throws Exception {
-        assertSql(
-                "column\n" +
-                        "2022-03-11T22:00:30.555560Z\n",
-                "select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC' + 5"
-        );
+        assertQuery("select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC' + 5")
+                .noLeakCheck()
+                .expectSize()
+                .returns("column\n" +
+                        "2022-03-11T22:00:30.555560Z\n");
 
-        assertSql(
-                "column\n" +
-                        "2022-03-11T22:00:30.555555560Z\n",
-                "select '2022-03-11T22:00:30.555555555Z'::timestamp_ns at time zone 'UTC' + 5"
-        );
+        assertQuery("select '2022-03-11T22:00:30.555555555Z'::timestamp_ns at time zone 'UTC' + 5")
+                .noLeakCheck()
+                .expectSize()
+                .returns("column\n" +
+                        "2022-03-11T22:00:30.555555560Z\n");
     }
 
     @Test
     public void testCast() throws Exception {
-        assertSql(
-                "cast\n" +
-                        "2022-03-11T17:00:30.555555Z\n",
-                "select cast('2022-03-11T22:00:30.555555Z'::timestamp at time zone 'EST' as string)"
-        );
+        assertQuery("select cast('2022-03-11T22:00:30.555555Z'::timestamp at time zone 'EST' as string)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("cast\n" +
+                        "2022-03-11T17:00:30.555555Z\n");
 
-        assertSql(
-                "cast\n" +
-                        "2022-03-11T17:00:30.555555555Z\n",
-                "select cast('2022-03-11T22:00:30.555555555Z'::timestamp_ns at time zone 'EST' as string)"
-        );
+        assertQuery("select cast('2022-03-11T22:00:30.555555555Z'::timestamp_ns at time zone 'EST' as string)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("cast\n" +
+                        "2022-03-11T17:00:30.555555555Z\n");
     }
 
     @Test
@@ -97,84 +97,84 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
 
     @Test
     public void testFunctionArg() throws Exception {
-        assertSql(
-                "date_trunc\n" +
-                        "2022-03-11T00:00:00.000000Z\n",
-                "select date_trunc('day', '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC')"
-        );
+        assertQuery("select date_trunc('day', '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC')")
+                .noLeakCheck()
+                .expectSize()
+                .returns("date_trunc\n" +
+                        "2022-03-11T00:00:00.000000Z\n");
 
-        assertSql(
-                "date_trunc\n" +
-                        "2022-03-11T00:00:00.000000000Z\n",
-                "select date_trunc('day', '2022-03-11T22:00:30.555555555Z'::timestamp_ns at time zone 'UTC')"
-        );
+        assertQuery("select date_trunc('day', '2022-03-11T22:00:30.555555555Z'::timestamp_ns at time zone 'UTC')")
+                .noLeakCheck()
+                .expectSize()
+                .returns("date_trunc\n" +
+                        "2022-03-11T00:00:00.000000000Z\n");
     }
 
     @Test
     public void testSwitch() throws Exception {
-        assertSql(
-                "case\n" +
-                        "abc\n",
-                "select case " +
+        assertQuery("select case " +
                         "   when to_timestamp('2022-03-11T22:00:30.555555Z') at time zone 'EST' > 0" +
                         "   then 'abc'" +
                         "   else 'cde'" +
-                        "end"
-        );
+                        "end")
+                .noLeakCheck()
+                .expectSize()
+                .returns("case\n" +
+                        "abc\n");
 
-        assertSql(
-                "case\n" +
-                        "abc\n",
-                "select case " +
+        assertQuery("select case " +
                         "   when to_timestamp_ns('2022-03-11T22:00:30.555555555Z') at time zone 'EST' > 0" +
                         "   then 'abc'" +
                         "   else 'cde'" +
-                        "end"
-        );
+                        "end")
+                .noLeakCheck()
+                .expectSize()
+                .returns("case\n" +
+                        "abc\n");
     }
 
     @Test
     public void testValidAliasTime() throws Exception {
-        assertSql(
-                "time\n" +
-                        "2022-03-11T22:00:30.555555Z\n",
-                "select '2022-03-11T22:00:30.555555Z'::timestamp time"
-        );
+        assertQuery("select '2022-03-11T22:00:30.555555Z'::timestamp time")
+                .noLeakCheck()
+                .expectSize()
+                .returns("time\n" +
+                        "2022-03-11T22:00:30.555555Z\n");
 
-        assertSql(
-                "time\n" +
-                        "2022-03-11T22:00:30.555555555Z\n",
-                "select '2022-03-11T22:00:30.555555555Z'::timestamp_ns time"
-        );
+        assertQuery("select '2022-03-11T22:00:30.555555555Z'::timestamp_ns time")
+                .noLeakCheck()
+                .expectSize()
+                .returns("time\n" +
+                        "2022-03-11T22:00:30.555555555Z\n");
     }
 
     @Test
     public void testValidAliasZone() throws Exception {
-        assertSql(
-                "zone\n" +
-                        "2022-03-11T22:00:30.555555Z\n",
-                "select '2022-03-11T22:00:30.555555Z'::timestamp zone"
-        );
+        assertQuery("select '2022-03-11T22:00:30.555555Z'::timestamp zone")
+                .noLeakCheck()
+                .expectSize()
+                .returns("zone\n" +
+                        "2022-03-11T22:00:30.555555Z\n");
 
-        assertSql(
-                "zone\n" +
-                        "2022-03-11T22:00:30.555555555Z\n",
-                "select '2022-03-11T22:00:30.555555555Z'::timestamp_ns zone"
-        );
+        assertQuery("select '2022-03-11T22:00:30.555555555Z'::timestamp_ns zone")
+                .noLeakCheck()
+                .expectSize()
+                .returns("zone\n" +
+                        "2022-03-11T22:00:30.555555555Z\n");
     }
 
     @Test
     public void testVanilla() throws Exception {
-        assertSql(
-                "cast\n" +
-                        "2022-03-11T22:00:30.555555Z\n",
-                "select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC'"
-        );
+        assertQuery("select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC'")
+                .noLeakCheck()
+                .expectSize()
+                .returns("cast\n" +
+                        "2022-03-11T22:00:30.555555Z\n");
 
-        assertSql(
-                "cast\n" +
-                        "2022-03-11T22:00:30.555555555Z\n",
-                "select '2022-03-11T22:00:30.555555555Z'::timestamp_ns at time zone 'UTC'"
-        );
+        assertQuery("select '2022-03-11T22:00:30.555555555Z'::timestamp_ns at time zone 'UTC'")
+                .noLeakCheck()
+                .expectSize()
+                .returns("cast\n" +
+                        "2022-03-11T22:00:30.555555555Z\n");
     }
 }

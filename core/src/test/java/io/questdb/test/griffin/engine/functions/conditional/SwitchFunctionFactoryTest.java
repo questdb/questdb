@@ -453,16 +453,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     public void testCastValueToIPv4_1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
-            assertSql(
-                    """
-                            x\tip\tk
-                            1\t54.206.96.238\t54.206.96.238
-                            2\t\t
-                            3\t54.98.173.21\t127.0.0.1
-                            4\t54.15.250.138\t127.0.0.1
-                            5\t\t127.0.0.1
-                            """,
-                    """
+            assertQuery("""
                             select\s
                                 x,
                                 ip,
@@ -471,8 +462,17 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                     when 2 then null
                                     else '127.0.0.1'
                                 end k
-                            from x"""
-            );
+                            from x""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tip\tk
+                            1\t54.206.96.238\t54.206.96.238
+                            2\t\t
+                            3\t54.98.173.21\t127.0.0.1
+                            4\t54.15.250.138\t127.0.0.1
+                            5\t\t127.0.0.1
+                            """);
         });
     }
 
@@ -480,16 +480,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     public void testCastValueToIPv4_2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
-            assertSql(
-                    """
-                            x\tip\tk
-                            1\t54.206.96.238\t192.168.1.1
-                            2\t\t
-                            3\t54.98.173.21\t54.98.173.21
-                            4\t54.15.250.138\t54.15.250.138
-                            5\t\t
-                            """,
-                    """
+            assertQuery("""
                             select\s
                                 x,
                                 ip,
@@ -497,8 +488,17 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                     when 1 then '192.168.1.1'
                                     else ip
                                 end k
-                            from x"""
-            );
+                            from x""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tip\tk
+                            1\t54.206.96.238\t192.168.1.1
+                            2\t\t
+                            3\t54.98.173.21\t54.98.173.21
+                            4\t54.15.250.138\t54.15.250.138
+                            5\t\t
+                            """);
         });
     }
 
@@ -569,16 +569,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     public void testCastValueToUuid2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
-            assertSql(
-                    """
-                            x\tu\tk
-                            1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650
-                            2\t9f9b2131-d49f-4d1d-ab81-39815c50d341\tb5b2159a-2356-4217-965d-4c984f0ffa8a
-                            3\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t
-                            4\tb5b2159a-2356-4217-965d-4c984f0ffa8a\t00000000-0000-0000-0000-000000000000
-                            5\te8beef38-cd7b-43d8-9b2d-34586f6275fa\t00000000-0000-0000-0000-000000000000
-                            """,
-                    """
+            assertQuery("""
                             select\s
                                 x,
                                 u,
@@ -588,8 +579,17 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                     when 3 then null
                                     else '00000000-0000-0000-0000-000000000000'
                                 end k
-                            from x"""
-            );
+                            from x""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tu\tk
+                            1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650
+                            2\t9f9b2131-d49f-4d1d-ab81-39815c50d341\tb5b2159a-2356-4217-965d-4c984f0ffa8a
+                            3\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t
+                            4\tb5b2159a-2356-4217-965d-4c984f0ffa8a\t00000000-0000-0000-0000-000000000000
+                            5\te8beef38-cd7b-43d8-9b2d-34586f6275fa\t00000000-0000-0000-0000-000000000000
+                            """);
         });
     }
 
@@ -597,16 +597,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     public void testCastValueToUuid3() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
-            assertSql(
-                    """
-                            x\tu\tk
-                            1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t00000000-0000-0000-0000-000000000000
-                            2\t9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341
-                            3\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15
-                            4\tb5b2159a-2356-4217-965d-4c984f0ffa8a\tb5b2159a-2356-4217-965d-4c984f0ffa8a
-                            5\te8beef38-cd7b-43d8-9b2d-34586f6275fa\te8beef38-cd7b-43d8-9b2d-34586f6275fa
-                            """,
-                    """
+            assertQuery("""
                             select\s
                                 x,
                                 u,
@@ -614,8 +605,17 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                     when 1 then '00000000-0000-0000-0000-000000000000'
                                     else u
                                 end k
-                            from x"""
-            );
+                            from x""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tu\tk
+                            1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t00000000-0000-0000-0000-000000000000
+                            2\t9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341
+                            3\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15
+                            4\tb5b2159a-2356-4217-965d-4c984f0ffa8a\tb5b2159a-2356-4217-965d-4c984f0ffa8a
+                            5\te8beef38-cd7b-43d8-9b2d-34586f6275fa\te8beef38-cd7b-43d8-9b2d-34586f6275fa
+                            """);
         });
     }
 
@@ -623,16 +623,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     public void testCastValueToUuid4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
-            assertSql(
-                    """
-                            x\tu\tk
-                            1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t
-                            2\t9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341
-                            3\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15
-                            4\tb5b2159a-2356-4217-965d-4c984f0ffa8a\tb5b2159a-2356-4217-965d-4c984f0ffa8a
-                            5\te8beef38-cd7b-43d8-9b2d-34586f6275fa\te8beef38-cd7b-43d8-9b2d-34586f6275fa
-                            """,
-                    """
+            assertQuery("""
                             select\s
                                 x,
                                 u,
@@ -640,8 +631,17 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                     when 1 then null
                                     else u
                                 end k
-                            from x"""
-            );
+                            from x""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tu\tk
+                            1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t
+                            2\t9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341
+                            3\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15
+                            4\tb5b2159a-2356-4217-965d-4c984f0ffa8a\tb5b2159a-2356-4217-965d-4c984f0ffa8a
+                            5\te8beef38-cd7b-43d8-9b2d-34586f6275fa\te8beef38-cd7b-43d8-9b2d-34586f6275fa
+                            """);
         });
     }
 

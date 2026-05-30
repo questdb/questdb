@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -89,11 +88,8 @@ public class PgTypeFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWithCategory() throws SqlException {
-        assertSql("oid\tswitch\n" +
-                        "17\tbinary\n" +
-                        "2950\tuuid\n",
-                "SELECT oid," +
+    public void testWithCategory() throws Exception {
+        assertQuery("SELECT oid," +
                         "   CASE " +
                         "    WHEN typcategory = 'E' THEN 'varchar' " +
                         "    ELSE typname " +
@@ -101,6 +97,11 @@ public class PgTypeFunctionFactoryTest extends AbstractCairoTest {
                         "FROM " +
                         "    pg_type " +
                         "WHERE " +
-                        "    typcategory in ('U', 'E') ");
+                        "    typcategory in ('U', 'E') ")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("oid\tswitch\n" +
+                        "17\tbinary\n" +
+                        "2950\tuuid\n");
     }
 }

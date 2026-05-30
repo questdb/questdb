@@ -81,10 +81,9 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertSql(
-                    "name\n",
-                    "select * from x where name like ''"
-            );
+            assertQuery("select * from x where name like ''")
+                    .noLeakCheck()
+                    .returns("name\n");
         });
     }
 
@@ -103,10 +102,9 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertSql(
-                    "name\n",
-                    "select * from x where name like '[][n'"
-            );
+            assertQuery("select * from x where name like '[][n'")
+                    .noLeakCheck()
+                    .returns("name\n");
         });
     }
 
@@ -225,11 +223,10 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
                             "select cast('AAAAVVV' as varchar) as name from long_sequence(1)\n" +
                             ")"
             );
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name like 'ABC%'"
-            );
+            assertQuery("select * from x where name like 'ABC%'")
+                    .noLeakCheck()
+                    .returns("name\n" +
+                            "ABCGE\n");
         });
     }
 
@@ -245,11 +242,10 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
                             "select cast('баз' as varchar) as name from long_sequence(1)\n" +
                             ")"
             );
-            assertSql(
-                    "name\n" +
-                            "фу\n",
-                    "select * from x where name like 'фу%'"
-            );
+            assertQuery("select * from x where name like 'фу%'")
+                    .noLeakCheck()
+                    .returns("name\n" +
+                            "фу\n");
         });
     }
 
@@ -309,8 +305,9 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testNotLikeCharacterMatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_varchar('H', 'A', 'ZK') name from long_sequence(20))");
-            assertSql(
-                    "name\n" +
+            assertQuery("select * from x where not name like 'H'")
+                    .noLeakCheck()
+                    .returns("name\n" +
                             "A\n" +
                             "ZK\n" +
                             "ZK\n" +
@@ -324,9 +321,7 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
                             "A\n" +
                             "A\n" +
                             "A\n" +
-                            "A\n",
-                    "select * from x where not name like 'H'"
-            );
+                            "A\n");
         });
     }
 
@@ -334,8 +329,9 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testNotLikeStringMatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_varchar('KL', 'VK', 'XJ', 'TTT') name from long_sequence(30))");
-            assertSql(
-                    "name\n" +
+            assertQuery("select * from x where not name like 'XJ'")
+                    .noLeakCheck()
+                    .returns("name\n" +
                             "KL\n" +
                             "VK\n" +
                             "TTT\n" +
@@ -359,9 +355,7 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
                             "KL\n" +
                             "KL\n" +
                             "TTT\n" +
-                            "KL\n",
-                    "select * from x where not name like 'XJ'"
-            );
+                            "KL\n");
         });
     }
 

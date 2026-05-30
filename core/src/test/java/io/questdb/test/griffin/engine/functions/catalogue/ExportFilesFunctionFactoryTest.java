@@ -58,8 +58,9 @@ public class ExportFilesFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testExportFilesBasic() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "path\tdiskSize\tdiskSizeHuman\n" +
+        assertMemoryLeak(() -> assertQuery("select path, diskSize, diskSizeHuman from export_files() order by path")
+                .noLeakCheck()
+                .returns("path\tdiskSize\tdiskSizeHuman\n" +
                         "analytics" + File.separator + "metrics.parquet\t496\t496.0 B\n" +
                         "analytics" + File.separator + "models" + File.separator + "prediction_model.parquet\t496\t496.0 B\n" +
                         "analytics" + File.separator + "results" + File.separator + "output.parquet\t496\t496.0 B\n" +
@@ -71,9 +72,7 @@ public class ExportFilesFunctionFactoryTest extends AbstractCairoTest {
                         "temp" + File.separator + "archived" + File.separator + "old_backup.parquet\t496\t496.0 B\n" +
                         "temp" + File.separator + "backup.sql\t1512\t1.5 KiB\n" +
                         "users_export.parquet\t496\t496.0 B\n" +
-                        "users_export2.parquet\t496\t496.0 B\n",
-                "select path, diskSize, diskSizeHuman from export_files() order by path"
-        ));
+                        "users_export2.parquet\t496\t496.0 B\n"));
     }
 
     @Test
@@ -100,10 +99,10 @@ public class ExportFilesFunctionFactoryTest extends AbstractCairoTest {
                 ff.mkdir(path.$(), 493);
             }
 
-            assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
-                    "select * from export_files()"
-            );
+            assertQuery("select * from export_files()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n");
         });
     }
 

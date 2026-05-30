@@ -45,19 +45,27 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOfNull() throws SqlException {
-        assertSql("typeOf\n" +
-                "NULL\n", "select typeOf(null)"
-        );
-        assertSql("typeOf\n" +
-                "STRING\n", "select typeOf(cast(null as string))"
-        );
-        assertSql("typeOf\n" +
-                "NULL\n", "select typeOf(value) from (select null value from long_sequence(1))"
-        );
-        assertSql("typeOf\n" +
-                "LONG\n", "select typeOf(value) from (select cast(null as long) value from long_sequence(1))"
-        );
+    public void testOfNull() throws Exception {
+        assertQuery("select typeOf(null)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("typeOf\n" +
+                        "NULL\n");
+        assertQuery("select typeOf(cast(null as string))")
+                .noLeakCheck()
+                .expectSize()
+                .returns("typeOf\n" +
+                        "STRING\n");
+        assertQuery("select typeOf(value) from (select null value from long_sequence(1))")
+                .noLeakCheck()
+                .expectSize()
+                .returns("typeOf\n" +
+                        "NULL\n");
+        assertQuery("select typeOf(value) from (select cast(null as long) value from long_sequence(1))")
+                .noLeakCheck()
+                .expectSize()
+                .returns("typeOf\n" +
+                        "LONG\n");
     }
 
     @Test
@@ -71,7 +79,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTypeOfAllRegularDataTypes() throws SqlException {
+    public void testTypeOfAllRegularDataTypes() throws Exception {
         for (int i = ColumnType.BOOLEAN; i < ColumnType.NULL; i++) {
             String name = ColumnType.nameOf(i);
             if (Chars.equals("unknown", name)
@@ -91,7 +99,10 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
                 continue;
             }
 
-            assertSql("typeOf\n" + ColumnType.nameOf(i) + "\n", "select typeOf(cast(null as " + name + "  ))");
+            assertQuery("select typeOf(cast(null as " + name + "  ))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\n" + ColumnType.nameOf(i) + "\n");
         }
     }
 

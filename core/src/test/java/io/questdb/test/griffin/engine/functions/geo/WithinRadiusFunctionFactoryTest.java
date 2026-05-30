@@ -93,15 +93,15 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (5.0, 5.0, 4.0, 4.0)");   // distance ~1.41, inside radius 10
             execute("insert into points values (5.0, 5.0, 20.0, 20.0)"); // distance ~21.2, outside radius 10
 
-            assertSql(
-                    """
+            assertQuery("select x, y, cx, cy, within_radius(x, y, cx, cy, 10.0) as inside from points")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             x\ty\tcx\tcy\tinside
                             5.0\t5.0\t0.0\t0.0\ttrue
                             5.0\t5.0\t4.0\t4.0\ttrue
                             5.0\t5.0\t20.0\t20.0\tfalse
-                            """,
-                    "select x, y, cx, cy, within_radius(x, y, cx, cy, 10.0) as inside from points"
-            );
+                            """);
         });
     }
 
@@ -113,15 +113,15 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (3.0, 4.0, 4.0)");   // distance 5, radius 4 -> outside
             execute("insert into points values (3.0, 4.0, 10.0)");  // distance 5, radius 10 -> inside
 
-            assertSql(
-                    """
+            assertQuery("select x, y, radius, within_radius(x, y, 0.0, 0.0, radius) as inside from points")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             x\ty\tradius\tinside
                             3.0\t4.0\t5.0\ttrue
                             3.0\t4.0\t4.0\tfalse
                             3.0\t4.0\t10.0\ttrue
-                            """,
-                    "select x, y, radius, within_radius(x, y, 0.0, 0.0, radius) as inside from points"
-            );
+                            """);
         });
     }
 
@@ -134,66 +134,98 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (0.0, 0.0)");   // at center, inside
             execute("insert into points values (6.0, 8.0)");   // distance 10, on boundary
 
-            assertSql(
-                    """
+            assertQuery("select x, y from points where within_radius(x, y, 0.0, 0.0, 10.0)")
+                    .noLeakCheck()
+                    .returns("""
                             x\ty
                             3.0\t4.0
                             0.0\t0.0
                             6.0\t8.0
-                            """,
-                    "select x, y from points where within_radius(x, y, 0.0, 0.0, 10.0)"
-            );
+                            """);
         });
     }
 
     @Test
     public void testLargeRadius() throws Exception {
-        assertSql("within_radius\ntrue\n", "select within_radius(1000000.0, 1000000.0, 0.0, 0.0, 2000000.0)");
+        assertQuery("select within_radius(1000000.0, 1000000.0, 0.0, 0.0, 2000000.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\ntrue\n");
     }
 
     @Test
     public void testNaNCenterX() throws Exception {
-        assertSql("within_radius\nfalse\n", "select within_radius(0.0, 0.0, NaN, 0.0, 10.0)");
+        assertQuery("select within_radius(0.0, 0.0, NaN, 0.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\nfalse\n");
     }
 
     @Test
     public void testNaNCenterY() throws Exception {
-        assertSql("within_radius\nfalse\n", "select within_radius(0.0, 0.0, 0.0, NaN, 10.0)");
+        assertQuery("select within_radius(0.0, 0.0, 0.0, NaN, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\nfalse\n");
     }
 
     @Test
     public void testNaNRadius() throws Exception {
-        assertSql("within_radius\nfalse\n", "select within_radius(0.0, 0.0, 0.0, 0.0, NaN)");
+        assertQuery("select within_radius(0.0, 0.0, 0.0, 0.0, NaN)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\nfalse\n");
     }
 
     @Test
     public void testNaNX() throws Exception {
-        assertSql("within_radius\nfalse\n", "select within_radius(NaN, 0.0, 0.0, 0.0, 10.0)");
+        assertQuery("select within_radius(NaN, 0.0, 0.0, 0.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\nfalse\n");
     }
 
     @Test
     public void testNaNY() throws Exception {
-        assertSql("within_radius\nfalse\n", "select within_radius(0.0, NaN, 0.0, 0.0, 10.0)");
+        assertQuery("select within_radius(0.0, NaN, 0.0, 0.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\nfalse\n");
     }
 
     @Test
     public void testNegativeCoordinates() throws Exception {
         // Point (-3, -4) is distance 5 from origin
-        assertSql("within_radius\ntrue\n", "select within_radius(-3.0, -4.0, 0.0, 0.0, 5.0)");
-        assertSql("within_radius\nfalse\n", "select within_radius(-3.0, -4.0, 0.0, 0.0, 4.0)");
+        assertQuery("select within_radius(-3.0, -4.0, 0.0, 0.0, 5.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\ntrue\n");
+        assertQuery("select within_radius(-3.0, -4.0, 0.0, 0.0, 4.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\nfalse\n");
     }
 
     @Test
     public void testNegativeRadius() throws Exception {
         // Negative radius should return false
-        assertSql("within_radius\nfalse\n", "select within_radius(0.0, 0.0, 0.0, 0.0, -5.0)");
+        assertQuery("select within_radius(0.0, 0.0, 0.0, 0.0, -5.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\nfalse\n");
     }
 
     @Test
     public void testNonOriginCenter() throws Exception {
         // Point (13, 14) is distance 5 from center (10, 10)
-        assertSql("within_radius\ntrue\n", "select within_radius(13.0, 14.0, 10.0, 10.0, 5.0)");
-        assertSql("within_radius\nfalse\n", "select within_radius(13.0, 14.0, 10.0, 10.0, 4.0)");
+        assertQuery("select within_radius(13.0, 14.0, 10.0, 10.0, 5.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\ntrue\n");
+        assertQuery("select within_radius(13.0, 14.0, 10.0, 10.0, 4.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\nfalse\n");
     }
 
     @Test
@@ -305,13 +337,19 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPointAtCenter() throws Exception {
-        assertSql("within_radius\ntrue\n", "select within_radius(5.0, 5.0, 5.0, 5.0, 10.0)");
+        assertQuery("select within_radius(5.0, 5.0, 5.0, 5.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\ntrue\n");
     }
 
     @Test
     public void testPointExactlyOnBoundary() throws Exception {
         // Point (3, 4) is exactly distance 5 from origin
-        assertSql("within_radius\ntrue\n", "select within_radius(3.0, 4.0, 0.0, 0.0, 5.0)");
+        assertQuery("select within_radius(3.0, 4.0, 0.0, 0.0, 5.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\ntrue\n");
     }
 
     // Tests for constant radius optimization
@@ -319,19 +357,31 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testPointInsideRadius() throws Exception {
         // Point (3, 4) is distance 5 from origin, radius is 10
-        assertSql("within_radius\ntrue\n", "select within_radius(3.0, 4.0, 0.0, 0.0, 10.0)");
+        assertQuery("select within_radius(3.0, 4.0, 0.0, 0.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\ntrue\n");
     }
 
     @Test
     public void testPointOutsideRadius() throws Exception {
         // Point (10, 10) is distance ~14.14 from origin, radius is 10
-        assertSql("within_radius\nfalse\n", "select within_radius(10.0, 10.0, 0.0, 0.0, 10.0)");
+        assertQuery("select within_radius(10.0, 10.0, 0.0, 0.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\nfalse\n");
     }
 
     @Test
     public void testVerySmallRadius() throws Exception {
-        assertSql("within_radius\ntrue\n", "select within_radius(0.0, 0.0, 0.0, 0.0, 0.0000001)");
-        assertSql("within_radius\nfalse\n", "select within_radius(0.0001, 0.0, 0.0, 0.0, 0.0000001)");
+        assertQuery("select within_radius(0.0, 0.0, 0.0, 0.0, 0.0000001)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\ntrue\n");
+        assertQuery("select within_radius(0.0001, 0.0, 0.0, 0.0, 0.0000001)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\nfalse\n");
     }
 
     @Test
@@ -342,15 +392,15 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (null, 4.0)");
             execute("insert into points values (3.0, null)");
 
-            assertSql(
-                    """
+            assertQuery("select x, y, within_radius(x, y, 0.0, 0.0, 10.0) as inside from points")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             x\ty\tinside
                             3.0\t4.0\ttrue
                             null\t4.0\tfalse
                             3.0\tnull\tfalse
-                            """,
-                    "select x, y, within_radius(x, y, 0.0, 0.0, 10.0) as inside from points"
-            );
+                            """);
         });
     }
 
@@ -363,24 +413,30 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (10.0, 10.0)"); // distance ~14.14 from origin
             execute("insert into points values (0.0, 0.0)");   // at origin
 
-            assertSql(
-                    """
+            assertQuery("select x, y, within_radius(x, y, 0.0, 0.0, 10.0) as inside from points")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             x\ty\tinside
                             3.0\t4.0\ttrue
                             6.0\t8.0\ttrue
                             10.0\t10.0\tfalse
                             0.0\t0.0\ttrue
-                            """,
-                    "select x, y, within_radius(x, y, 0.0, 0.0, 10.0) as inside from points"
-            );
+                            """);
         });
     }
 
     @Test
     public void testZeroRadius() throws Exception {
         // Only the center point should be inside
-        assertSql("within_radius\ntrue\n", "select within_radius(5.0, 5.0, 5.0, 5.0, 0.0)");
-        assertSql("within_radius\nfalse\n", "select within_radius(5.1, 5.0, 5.0, 5.0, 0.0)");
+        assertQuery("select within_radius(5.0, 5.0, 5.0, 5.0, 0.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\ntrue\n");
+        assertQuery("select within_radius(5.1, 5.0, 5.0, 5.0, 0.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_radius\nfalse\n");
     }
 
     @Test
@@ -400,18 +456,17 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into detections values ('d4', 10.0, 0.0)");   // exactly on s1 boundary
 
             // Join detections with sensors to find which sensor detected each point
-            assertSql(
-                    """
+            assertQuery("select d.detection_id, s.sensor_id " +
+                            "from detections d " +
+                            "join sensors s on within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
+                            "order by d.detection_id, s.sensor_id")
+                    .noLeakCheck()
+                    .returns("""
                             detection_id\tsensor_id
                             d1\ts1
                             d2\ts2
                             d4\ts1
-                            """,
-                    "select d.detection_id, s.sensor_id " +
-                            "from detections d " +
-                            "join sensors s on within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
-                            "order by d.detection_id, s.sensor_id"
-            );
+                            """);
         });
     }
 
@@ -428,17 +483,16 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into detections values ('d1', 5.0, 0.0)");  // distance 5 from both
 
             // Should match both sensors
-            assertSql(
-                    """
+            assertQuery("select d.detection_id, s.sensor_id " +
+                            "from detections d, sensors s " +
+                            "where within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
+                            "order by d.detection_id, s.sensor_id")
+                    .noLeakCheck()
+                    .returns("""
                             detection_id\tsensor_id
                             d1\ts1
                             d1\ts2
-                            """,
-                    "select d.detection_id, s.sensor_id " +
-                            "from detections d, sensors s " +
-                            "where within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
-                            "order by d.detection_id, s.sensor_id"
-            );
+                            """);
         });
     }
 }

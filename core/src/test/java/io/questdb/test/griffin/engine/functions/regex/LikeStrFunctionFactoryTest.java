@@ -81,10 +81,9 @@ public class LikeStrFunctionFactoryTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertSql(
-                    "name\n",
-                    "select * from x where name like ''"
-            );
+            assertQuery("select * from x where name like ''")
+                    .noLeakCheck()
+                    .returns("name\n");
         });
     }
 
@@ -103,10 +102,9 @@ public class LikeStrFunctionFactoryTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertSql(
-                    "name\n",
-                    "select * from x where name like '[][n'"
-            );
+            assertQuery("select * from x where name like '[][n'")
+                    .noLeakCheck()
+                    .returns("name\n");
         });
     }
 
@@ -237,11 +235,10 @@ public class LikeStrFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
             execute(sql);
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name like 'ABC%'"
-            );
+            assertQuery("select * from x where name like 'ABC%'")
+                    .noLeakCheck()
+                    .returns("name\n" +
+                            "ABCGE\n");
         });
     }
 
@@ -258,11 +255,10 @@ public class LikeStrFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
             execute(sql);
-            assertSql(
-                    "name\n" +
-                            "BDGDGGG\n",
-                    "select * from x where name like '%GGG'"
-            );
+            assertQuery("select * from x where name like '%GGG'")
+                    .noLeakCheck()
+                    .returns("name\n" +
+                            "BDGDGGG\n");
         });
     }
 
@@ -279,11 +275,10 @@ public class LikeStrFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
             execute(sql);
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name like '%BCG%'"
-            );
+            assertQuery("select * from x where name like '%BCG%'")
+                    .noLeakCheck()
+                    .returns("name\n" +
+                            "ABCGE\n");
         });
     }
 
@@ -300,12 +295,11 @@ public class LikeStrFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
             execute(sql);
-            assertSql(
-                    "name\n" +
+            assertQuery("select * from x where name like '_B%'")
+                    .noLeakCheck()
+                    .returns("name\n" +
                             "ABCGE\n" +
-                            "SBDHDJ\n",
-                    "select * from x where name like '_B%'"
-            );
+                            "SBDHDJ\n");
         });
     }
 
@@ -323,11 +317,10 @@ public class LikeStrFunctionFactoryTest extends AbstractCairoTest {
                             "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                             ")"
             );
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name like '_BC__'"
-            );
+            assertQuery("select * from x where name like '_BC__'")
+                    .noLeakCheck()
+                    .returns("name\n" +
+                            "ABCGE\n");
         });
     }
 
@@ -343,8 +336,9 @@ public class LikeStrFunctionFactoryTest extends AbstractCairoTest {
     public void testNotLikeCharacterMatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_str('H', 'A', 'ZK') name from long_sequence(20))");
-            assertSql(
-                    "name\n" +
+            assertQuery("select * from x where not name like 'H'")
+                    .noLeakCheck()
+                    .returns("name\n" +
                             "A\n" +
                             "ZK\n" +
                             "ZK\n" +
@@ -358,9 +352,7 @@ public class LikeStrFunctionFactoryTest extends AbstractCairoTest {
                             "A\n" +
                             "A\n" +
                             "A\n" +
-                            "A\n",
-                    "select * from x where not name like 'H'"
-            );
+                            "A\n");
         });
     }
 
@@ -368,8 +360,9 @@ public class LikeStrFunctionFactoryTest extends AbstractCairoTest {
     public void testNotLikeMatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_str('KL', 'VK', 'XJ', 'TTT') name from long_sequence(30))");
-            assertSql(
-                    "name\n" +
+            assertQuery("select * from x where not name like 'XJ'")
+                    .noLeakCheck()
+                    .returns("name\n" +
                             "KL\n" +
                             "VK\n" +
                             "TTT\n" +
@@ -393,9 +386,7 @@ public class LikeStrFunctionFactoryTest extends AbstractCairoTest {
                             "KL\n" +
                             "KL\n" +
                             "TTT\n" +
-                            "KL\n",
-                    "select * from x where not name like 'XJ'"
-            );
+                            "KL\n");
         });
     }
 

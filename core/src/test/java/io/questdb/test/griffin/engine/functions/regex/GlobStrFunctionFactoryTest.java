@@ -43,15 +43,14 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('file_x.txt' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, 'file_[abc].txt')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             file_a.txt
                             file_b.txt
                             file_c.txt
-                            """,
-                    "select * from x where glob(name, 'file_[abc].txt')"
-            );
+                            """);
         });
     }
 
@@ -71,14 +70,13 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('file_1.txt' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, 'file_[!abc].txt')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             file_x.txt
                             file_1.txt
-                            """,
-                    "select * from x where glob(name, 'file_[!abc].txt')"
-            );
+                            """);
         });
     }
 
@@ -96,15 +94,14 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('file_a.txt' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, 'file_[0-9].txt')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             file_0.txt
                             file_5.txt
                             file_9.txt
-                            """,
-                    "select * from x where glob(name, 'file_[0-9].txt')"
-            );
+                            """);
         });
     }
 
@@ -124,15 +121,14 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('data_z.csv' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, 'data_[0-9].csv')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             data_0.csv
                             data_5.csv
                             data_9.csv
-                            """,
-                    "select * from x where glob(name, 'data_[0-9].csv')"
-            );
+                            """);
         });
     }
 
@@ -152,13 +148,12 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('data_z.csv' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, 'data_[!a-zA-Z].csv')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             data_0.csv
-                            """,
-                    "select * from x where glob(name, 'data_[!a-zA-Z].csv')"
-            );
+                            """);
         });
     }
 
@@ -177,14 +172,13 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('other.csv' as string) as path from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(path, '**/file.txt')")
+                    .noLeakCheck()
+                    .returns("""
                             path
                             dir/file.txt
                             dir/subdir/file.txt
-                            """,
-                    "select * from x where glob(path, '**/file.txt')"
-            );
+                            """);
         });
     }
 
@@ -201,13 +195,12 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, 'file.txt')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             file.txt
-                            """,
-                    "select * from x where glob(name, 'file.txt')"
-            );
+                            """);
         });
     }
 
@@ -225,14 +218,13 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('data_2024_01.txt' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, 'log_2024_*_app.txt')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             log_2024_01_app.txt
                             log_2024_02_app.txt
-                            """,
-                    "select * from x where glob(name, 'log_2024_*_app.txt')"
-            );
+                            """);
         });
     }
 
@@ -248,14 +240,13 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('file!.txt' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, 'file!*')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             file!test.txt
                             file!.txt
-                            """,
-                    "select * from x where glob(name, 'file!*')"
-            );
+                            """);
         });
     }
 
@@ -271,10 +262,9 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('document.doc' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    "name\n",
-                    "select * from x where glob(name, '*.csv')"
-            );
+            assertQuery("select * from x where glob(name, '*.csv')")
+                    .noLeakCheck()
+                    .returns("name\n");
         });
     }
 
@@ -290,15 +280,14 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, '*')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             file.txt
                             readme
-                            
-                            """,
-                    "select * from x where glob(name, '*')"
-            );
+
+                            """);
         });
     }
 
@@ -317,14 +306,13 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('image.jpg' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, '*.txt')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             file.txt
                             readme.txt
-                            """,
-                    "select * from x where glob(name, '*.txt')"
-            );
+                            """);
         });
     }
 
@@ -342,14 +330,13 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('readme.txt' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, 'file?.txt')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             file1.txt
                             file2.txt
-                            """,
-                    "select * from x where glob(name, 'file?.txt')"
-            );
+                            """);
         });
     }
 
@@ -366,14 +353,13 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('document_2024.txt' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, 'файл_*.txt')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             файл_2024.txt
                             файл_2023.txt
-                            """,
-                    "select * from x where glob(name, 'файл_*.txt')"
-            );
+                            """);
         });
     }
 
@@ -390,13 +376,12 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('file_name.txt' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, 'file.name.txt')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             file.name.txt
-                            """,
-                    "select * from x where glob(name, 'file.name.txt')"
-            );
+                            """);
         });
     }
 
@@ -412,14 +397,13 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('data_2024_02.csv' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, 'data_2024_*.csv')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             data_2024_01.csv
                             data_2024_02.csv
-                            """,
-                    "select * from x where glob(name, 'data_2024_*.csv')"
-            );
+                            """);
         });
     }
 
@@ -435,14 +419,13 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('/var/data/app.log' as string) as path from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(path, '/var/log/app_*.log')")
+                    .noLeakCheck()
+                    .returns("""
                             path
                             /var/log/app_2024.log
                             /var/log/app_2023.log
-                            """,
-                    "select * from x where glob(path, '/var/log/app_*.log')"
-            );
+                            """);
         });
     }
 
@@ -458,14 +441,13 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                     select cast('other_file.txt' as string) as name from long_sequence(1)
                     )""";
             execute(sql);
-            assertSql(
-                    """
+            assertQuery("select * from x where glob(name, 'my file *.txt')")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             my file 2024.txt
                             my file 2023.txt
-                            """,
-                    "select * from x where glob(name, 'my file *.txt')"
-            );
+                            """);
         });
     }
 }

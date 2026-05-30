@@ -132,12 +132,12 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                         "(1.2m, 34.56m, 789.012m, 3456.7891m, 23456.78901m, 234567.890123m, now())"
         );
 
-        assertSql(
-                "concat\n" +
+        assertQuery("select concat(dec8, dec16, dec32, dec64, dec128, dec256) from decimals")
+                .noLeakCheck()
+                .expectSize()
+                .returns("concat\n" +
                         "nullnullnullnullnullnull\n" +
-                        "1.234.56789.0123456.789123456.78901234567.890123\n",
-                "select concat(dec8, dec16, dec32, dec64, dec128, dec256) from decimals"
-        );
+                        "1.234.56789.0123456.789123456.78901234567.890123\n");
     }
 
     @Test
@@ -151,11 +151,11 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNull() throws Exception {
-        assertSql(
-                "concat\n" +
-                        "foo1.2\n",
-                "select concat('foo', null, 1.2)"
-        );
+        assertQuery("select concat('foo', null, 1.2)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("concat\n" +
+                        "foo1.2\n");
     }
 
     @Test
@@ -197,8 +197,10 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                             " timestamp_sequence(0L, 10L) ts from long_sequence(10)) timestamp(ts)"
             );
             if (ColumnType.isTimestampMicro(timestampType)) {
-                assertSql(
-                        "concat\n" +
+                assertQuery("select concat(int, '/', short, '/', byte, '/', double, '/', float, '/', long, '/', str, '/', sym, '/', bool, '/', bin, '/', date, '/', long256, '/', chr, '/', uuid, '/', ipv4, '/', varchar, '/', timestamp) from all2 order by 1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("concat\n" +
                                 "-1148479920/24814/27/0.12966659791573354/0.28455776/-7611843578141082998/YR/A/false/[]/2827518/0x63eb3740c80f661e9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b/D/cec82869-edec-421b-8259-3f82b430328d/235.156.195.158/jF/1970-01-01T00:00:00.000000Z\n" +
                                 "-1309308188/10549/84/0.706473302224657/0.5913874/788901813531436389/LIG/A/false/[]/7841424/0x69e00a3e8d5fdfe360add80ba563dff19c7a8bc4087de26d94ccc98dfff078f4/M/34570a2b-ee44-4735-92c3-95ffb8982d58/128.124.238.97/ŗ\uDB47\uDD9C\uDA96\uDF8F/1970-01-01T00:00:00.000050Z\n" +
                                 "-1383560599/-31176/33/0.3679848625908545/0.82312495/5398991075259361292/VL/D/true/[]/5276379/0x2accfc7ab9ae2e0b5825a545d3d3e2bdd095456a4d3d5993fdb12ef0d2c74218/O/3c84de8f-7bd9-435d-abaf-9eca859915f5/130.88.42.208/ Ԡ阷/1970-01-01T00:00:00.000030Z\n" +
@@ -208,12 +210,12 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                                 "1289699549/-12476/53/0.05133515566281188/0.34257197/-5701911565963471026/ZN/D/false/[]/4978635/0xb23ff8774a5db433b19ddb7ff5abcafec82c35a389f834dababcd0482f05618f/Q/46065f74-1cb0-4a85-9508-d3fad3f12f80/105.159.220.32/]>U/1970-01-01T00:00:00.000070Z\n" +
                                 "1965091786/-3598/47/0.0032519916115479885/0.21458226/1704407071711577912/VIH/D/true/[]/5579405/0x85e70b46349799fe49f783d5343dd7bc3d3fe1302cd3371137fccdabf181b5ad/U/30ec2498-d018-4fdd-a7bf-677cfe82f252/56.8.217.77/-?y/1970-01-01T00:00:00.000090Z\n" +
                                 "2085282008/-1379/44/0.12026122412833129/0.6761935/8325936937764905778/QU/D/true/[]/395663/0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e/I/a5f80be4-b45b-4437-8929-90e1a29afcac/184.92.27.200/kV/1970-01-01T00:00:00.000010Z\n" +
-                                "532665695/-4874/54/0.7588175403454873/0.54067093/-8081265393416742311/YCT/A/false/[]/1179064/0xd25adf928386cdd2d992946a26184664ba453d761efcf9bb7ee6a03f4f930fa3/S/af44c40a-67ef-4e1c-9b3e-f21223ee8849/130.40.224.242/軦۽㒾/1970-01-01T00:00:00.000020Z\n",
-                        "select concat(int, '/', short, '/', byte, '/', double, '/', float, '/', long, '/', str, '/', sym, '/', bool, '/', bin, '/', date, '/', long256, '/', chr, '/', uuid, '/', ipv4, '/', varchar, '/', timestamp) from all2 order by 1"
-                );
+                                "532665695/-4874/54/0.7588175403454873/0.54067093/-8081265393416742311/YCT/A/false/[]/1179064/0xd25adf928386cdd2d992946a26184664ba453d761efcf9bb7ee6a03f4f930fa3/S/af44c40a-67ef-4e1c-9b3e-f21223ee8849/130.40.224.242/軦۽㒾/1970-01-01T00:00:00.000020Z\n");
             } else {
-                assertSql(
-                        "concat\n" +
+                assertQuery("select concat(int, '/', short, '/', byte, '/', double, '/', float, '/', long, '/', str, '/', sym, '/', bool, '/', bin, '/', date, '/', long256, '/', chr, '/', uuid, '/', ipv4, '/', varchar, '/', timestamp) from all2 order by 1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("concat\n" +
                                 "-1148479920/24814/27/0.12966659791573354/0.28455776/-7611843578141082998/YR/A/false/[]/2827518/0x63eb3740c80f661e9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b/D/cec82869-edec-421b-8259-3f82b430328d/235.156.195.158/jF/1970-01-01T00:00:00.000000000Z\n" +
                                 "-1309308188/10549/84/0.706473302224657/0.5913874/788901813531436389/LIG/A/false/[]/7841424/0x69e00a3e8d5fdfe360add80ba563dff19c7a8bc4087de26d94ccc98dfff078f4/M/34570a2b-ee44-4735-92c3-95ffb8982d58/128.124.238.97/ŗ\uDB47\uDD9C\uDA96\uDF8F/1970-01-01T00:00:00.000050000Z\n" +
                                 "-1383560599/-31176/33/0.3679848625908545/0.82312495/5398991075259361292/VL/D/true/[]/5276379/0x2accfc7ab9ae2e0b5825a545d3d3e2bdd095456a4d3d5993fdb12ef0d2c74218/O/3c84de8f-7bd9-435d-abaf-9eca859915f5/130.88.42.208/ Ԡ阷/1970-01-01T00:00:00.000030000Z\n" +
@@ -223,9 +225,7 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                                 "1289699549/-12476/53/0.05133515566281188/0.34257197/-5701911565963471026/ZN/D/false/[]/4978635/0xb23ff8774a5db433b19ddb7ff5abcafec82c35a389f834dababcd0482f05618f/Q/46065f74-1cb0-4a85-9508-d3fad3f12f80/105.159.220.32/]>U/1970-01-01T00:00:00.000070000Z\n" +
                                 "1965091786/-3598/47/0.0032519916115479885/0.21458226/1704407071711577912/VIH/D/true/[]/5579405/0x85e70b46349799fe49f783d5343dd7bc3d3fe1302cd3371137fccdabf181b5ad/U/30ec2498-d018-4fdd-a7bf-677cfe82f252/56.8.217.77/-?y/1970-01-01T00:00:00.000090000Z\n" +
                                 "2085282008/-1379/44/0.12026122412833129/0.6761935/8325936937764905778/QU/D/true/[]/395663/0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e/I/a5f80be4-b45b-4437-8929-90e1a29afcac/184.92.27.200/kV/1970-01-01T00:00:00.000010000Z\n" +
-                                "532665695/-4874/54/0.7588175403454873/0.54067093/-8081265393416742311/YCT/A/false/[]/1179064/0xd25adf928386cdd2d992946a26184664ba453d761efcf9bb7ee6a03f4f930fa3/S/af44c40a-67ef-4e1c-9b3e-f21223ee8849/130.40.224.242/軦۽㒾/1970-01-01T00:00:00.000020000Z\n",
-                        "select concat(int, '/', short, '/', byte, '/', double, '/', float, '/', long, '/', str, '/', sym, '/', bool, '/', bin, '/', date, '/', long256, '/', chr, '/', uuid, '/', ipv4, '/', varchar, '/', timestamp) from all2 order by 1"
-                );
+                                "532665695/-4874/54/0.7588175403454873/0.54067093/-8081265393416742311/YCT/A/false/[]/1179064/0xd25adf928386cdd2d992946a26184664ba453d761efcf9bb7ee6a03f4f930fa3/S/af44c40a-67ef-4e1c-9b3e-f21223ee8849/130.40.224.242/軦۽㒾/1970-01-01T00:00:00.000020000Z\n");
             }
         });
     }

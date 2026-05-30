@@ -94,8 +94,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
 
             drainWalQueue();
 
-            assertSql("l2price\n" +
-                    "25740.038313200002\n", "with recent_trades as\n" +
+            assertQuery("with recent_trades as\n" +
                     "(\n" +
                     "    select \n" +
                     "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 1 preceding and 1 preceding) as amount1,\n" +
@@ -118,7 +117,12 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                     ")\n" +
                     "select l2price(0.0015, amount1, price1, amount2, price2, amount3, price3, \n" +
                     "amount4, price4, amount5, price5, amount6, price6) from recent_trades\n" +
-                    "limit -1;");
+                    "limit -1;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("l2price\n" +
+                    "25740.038313200002\n");
 
             assertFailure(
                     "[869] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`.",

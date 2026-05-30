@@ -191,11 +191,11 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testVarInvalidTimezone() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "to_utc\n" +
-                        "2020-03-12T15:30:00.000000Z\n",
-                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select 'XU' zone)"
-        ));
+        assertMemoryLeak(() -> assertQuery("select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select 'XU' zone)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("to_utc\n" +
+                        "2020-03-12T15:30:00.000000Z\n"));
     }
 
     @Test
@@ -212,11 +212,11 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testVarTimezone() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                replaceTimestampSuffix("to_utc\n" +
-                        "2020-03-12T23:10:00.000000Z\n", timestampType.getTypeName()),
-                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as " + timestampType.getTypeName() + "), zone) from (select '-07:40' zone)"
-        ));
+        assertMemoryLeak(() -> assertQuery("select to_utc(cast('2020-03-12T15:30:00.000000Z' as " + timestampType.getTypeName() + "), zone) from (select '-07:40' zone)")
+                .noLeakCheck()
+                .expectSize()
+                .returns(replaceTimestampSuffix("to_utc\n" +
+                        "2020-03-12T23:10:00.000000Z\n", timestampType.getTypeName())));
     }
 
     @Test

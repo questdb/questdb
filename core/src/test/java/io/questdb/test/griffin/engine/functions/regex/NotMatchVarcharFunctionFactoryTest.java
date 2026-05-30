@@ -74,10 +74,9 @@ public class NotMatchVarcharFunctionFactoryTest extends AbstractCairoTest {
                     "91g>\n" +
                     "h볱9\n";
             execute("create table x as (select rnd_varchar() name from long_sequence(20))");
-            assertSql(
-                    expected,
-                    "select * from x where name !~ '[ABCDEFGHIJKLMN]'"
-            );
+            assertQuery("select * from x where name !~ '[ABCDEFGHIJKLMN]'")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 }

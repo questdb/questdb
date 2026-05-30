@@ -100,12 +100,12 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExtractTimestampFromDouble() throws SqlException {
-        assertSql(
-                "json_extract\n" +
-                        "1970-01-01T00:00:00.000001Z\n",
-                "select json_extract('{\"x\":1.0}', '.x')::timestamp"
-        );
+    public void testExtractTimestampFromDouble() throws Exception {
+        assertQuery("select json_extract('{\"x\":1.0}', '.x')::timestamp")
+                .noLeakCheck()
+                .expectSize()
+                .returns("json_extract\n" +
+                        "1970-01-01T00:00:00.000001Z\n");
     }
 
     @Test

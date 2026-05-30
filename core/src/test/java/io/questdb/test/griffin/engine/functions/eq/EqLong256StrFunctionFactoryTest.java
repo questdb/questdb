@@ -42,11 +42,10 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651");
-            assertSql(
-                    "l\n" +
-                            "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651\n",
-                    "x where l = $1"
-            );
+            assertQuery("x where l = $1")
+                    .noLeakCheck()
+                    .returns("l\n" +
+                            "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651\n");
         });
     }
 
@@ -134,12 +133,11 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("l256", "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652");
-            assertSql(
-                    "l\n" +
+            assertQuery("x where l != :l256")
+                    .noLeakCheck()
+                    .returns("l\n" +
                             "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n" +
-                            "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651\n",
-                    "x where l != :l256"
-            );
+                            "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651\n");
         });
     }
 

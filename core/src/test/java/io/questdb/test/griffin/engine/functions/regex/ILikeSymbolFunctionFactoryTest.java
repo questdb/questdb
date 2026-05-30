@@ -78,10 +78,9 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                             "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
                             ")"
             );
-            assertSql(
-                    "name\n",
-                    "select * from x where name ilike ''"
-            );
+            assertQuery("select * from x where name ilike ''")
+                    .noLeakCheck()
+                    .returns("name\n");
         });
     }
 
@@ -99,10 +98,9 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                             "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
                             ")"
             );
-            assertSql(
-                    "name\n",
-                    "select * from x where name ilike '[][n'"
-            );
+            assertQuery("select * from x where name ilike '[][n'")
+                    .noLeakCheck()
+                    .returns("name\n");
         });
     }
 
@@ -120,11 +118,10 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                             "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
                             ")"
             );
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name ilike 'aBcGe'"
-            );
+            assertQuery("select * from x where name ilike 'aBcGe'")
+                    .noLeakCheck()
+                    .returns("name\n" +
+                            "ABCGE\n");
         });
     }
 
@@ -168,11 +165,10 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
                     ")";
             execute(sql);
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name ilike 'AbC%'"
-            );
+            assertQuery("select * from x where name ilike 'AbC%'")
+                    .noLeakCheck()
+                    .returns("name\n" +
+                            "ABCGE\n");
         });
     }
 
@@ -189,11 +185,10 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
                     ")";
             execute(sql);
-            assertSql(
-                    "name\n" +
-                            "BDGDGGG\n",
-                    "select * from x where name ilike '%GgG'"
-            );
+            assertQuery("select * from x where name ilike '%GgG'")
+                    .noLeakCheck()
+                    .returns("name\n" +
+                            "BDGDGGG\n");
         });
     }
 
@@ -210,11 +205,10 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
                     ")";
             execute(sql);
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name ilike '%BcG%'"
-            );
+            assertQuery("select * from x where name ilike '%BcG%'")
+                    .noLeakCheck()
+                    .returns("name\n" +
+                            "ABCGE\n");
         });
     }
 
@@ -231,11 +225,10 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
                     ")";
             execute(sql);
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name ilike '_BC__'"
-            );
+            assertQuery("select * from x where name ilike '_BC__'")
+                    .noLeakCheck()
+                    .returns("name\n" +
+                            "ABCGE\n");
         });
     }
 
@@ -252,12 +245,11 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as symbol) as name from long_sequence(1)\n" +
                     ")";
             execute(sql);
-            assertSql(
-                    "name\n" +
+            assertQuery("select * from x where name ilike '_B%'")
+                    .noLeakCheck()
+                    .returns("name\n" +
                             "ABCGE\n" +
-                            "SBDHDJ\n",
-                    "select * from x where name ilike '_B%'"
-            );
+                            "SBDHDJ\n");
         });
     }
 
@@ -297,8 +289,9 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     public void testNotLikeCharacterMatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('a', 'BC', 'h', 'H', 'k') name from long_sequence(20))");
-            assertSql(
-                    "name\n" +
+            assertQuery("select * from x where not name ilike 'H'")
+                    .noLeakCheck()
+                    .returns("name\n" +
                             "a\n" +
                             "BC\n" +
                             "BC\n" +
@@ -310,9 +303,7 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                             "BC\n" +
                             "BC\n" +
                             "a\n" +
-                            "k\n",
-                    "select * from x where not name ilike 'H'"
-            );
+                            "k\n");
         });
     }
 
@@ -320,16 +311,15 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     public void testNotLikeStringMatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('kk', 'xJ', 'Xj', 'GU', 'XJ') name from long_sequence(20))");
-            assertSql(
-                    "name\n" +
+            assertQuery("select * from x where not name ilike 'XJ'")
+                    .noLeakCheck()
+                    .returns("name\n" +
                             "kk\n" +
                             "GU\n" +
                             "GU\n" +
                             "GU\n" +
                             "GU\n" +
-                            "kk\n",
-                    "select * from x where not name ilike 'XJ'"
-            );
+                            "kk\n");
         });
     }
 

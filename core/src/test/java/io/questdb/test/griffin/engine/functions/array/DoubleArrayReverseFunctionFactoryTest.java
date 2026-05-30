@@ -139,9 +139,11 @@ public class DoubleArrayReverseFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[rnd_double(0) * 100, rnd_double(0) * 100, rnd_double(0) * 100] arr FROM long_sequence(5))");
 
-            assertSql(
-                    "count\n5\n",
-                    "SELECT count(*) FROM (SELECT array_reverse(arr) FROM tango)");
+            assertQuery("SELECT count(*) FROM (SELECT array_reverse(arr) FROM tango)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n5\n");
         });
     }
 }

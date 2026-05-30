@@ -1403,8 +1403,18 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertSql(
-                    """
+            assertQuery("""
+                            select\s
+                                x,
+                                case
+                                    when x < 0 then a
+                                    when x > 100 and x < 200 then b
+                                    else '127.0.0.1'::ipv4\
+                                end\s
+                            from tanc""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             x\tcase
                             -920\t
                             363\t127.0.0.1
@@ -1426,17 +1436,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                             416\t127.0.0.1
                             -765\t
                             754\t127.0.0.1
-                            """,
-                    """
-                            select\s
-                                x,
-                                case
-                                    when x < 0 then a
-                                    when x > 100 and x < 200 then b
-                                    else '127.0.0.1'::ipv4\
-                                end\s
-                            from tanc"""
-            );
+                            """);
         });
     }
 
@@ -2374,16 +2374,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertSql(
-                    """
-                            x\tcase
-                            -920\t
-                            363\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
-                            367\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
-                            895\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
-                            -6\t
-                            """,
-                    """
+            assertQuery("""
                             select\s
                                 x,
                                 case
@@ -2391,8 +2382,17 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                                     when x > 100 and x < 200 then b
                                     else 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid\
                                 end\s
-                            from tanc"""
-            );
+                            from tanc""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tcase
+                            -920\t
+                            363\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+                            367\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+                            895\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+                            -6\t
+                            """);
         });
     }
 

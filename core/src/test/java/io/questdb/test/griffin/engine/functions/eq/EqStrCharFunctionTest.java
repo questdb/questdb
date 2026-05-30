@@ -45,24 +45,24 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (k INT)");
             execute("INSERT INTO t VALUES (1), (2)");
-            assertSql(
-                    "k\n",
-                    "SELECT k FROM t WHERE (0.645116::FLOAT)::CHAR != ((0.713754::FLOAT)::INT)::CHAR"
-            );
+            assertQuery("SELECT k FROM t WHERE (0.645116::FLOAT)::CHAR != ((0.713754::FLOAT)::INT)::CHAR")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("k\n");
             bindVariableService.clear();
             bindVariableService.setStr("b0", "0.645116");
-            assertSql(
-                    "k\n",
-                    "SELECT k FROM t WHERE (:b0::FLOAT)::CHAR != ((0.713754::FLOAT)::INT)::CHAR"
-            );
-            assertSql(
-                    "k\n1\n2\n",
-                    "SELECT k FROM t WHERE (0.645116::FLOAT)::CHAR = ((0.713754::FLOAT)::INT)::CHAR"
-            );
-            assertSql(
-                    "k\n1\n2\n",
-                    "SELECT k FROM t WHERE (:b0::FLOAT)::CHAR = ((0.713754::FLOAT)::INT)::CHAR"
-            );
+            assertQuery("SELECT k FROM t WHERE (:b0::FLOAT)::CHAR != ((0.713754::FLOAT)::INT)::CHAR")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("k\n");
+            assertQuery("SELECT k FROM t WHERE (0.645116::FLOAT)::CHAR = ((0.713754::FLOAT)::INT)::CHAR")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("k\n1\n2\n");
+            assertQuery("SELECT k FROM t WHERE (:b0::FLOAT)::CHAR = ((0.713754::FLOAT)::INT)::CHAR")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("k\n1\n2\n");
         });
     }
 
@@ -71,22 +71,26 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
             execute(
-                    "insert into tanc2 \n" +
-                            "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
-                            "1571270400000 + (x-1) * 100 timestamp,\n" +
-                            "rnd_str(2,2,3) instrument,\n" +
-                            "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
-                            "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
-                            "rnd_str('B', 'S') side\n" +
-                            "from long_sequence(100000) x"
+                    """
+                            insert into tanc2\s
+                            select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,
+                            1571270400000 + (x-1) * 100 timestamp,
+                            rnd_str(2,2,3) instrument,
+                            abs(cast(rnd_double(0)*100000 as int)) price,
+                            abs(cast(rnd_double(0)*10000 as int)) qty,
+                            rnd_str('B', 'S') side
+                            from long_sequence(100000) x"""
             );
 
-            String expected = "instrument\tsum\n" +
-                    "CZ\t2886736\n";
+            String expected = """
+                    instrument\tsum
+                    CZ\t2886736
+                    """;
 
-            assertSql(
-                    expected, "select instrument, sum(price) from tanc2  where instrument = 'CZ' and side = 'B'"
-            );
+            assertQuery("select instrument, sum(price) from tanc2  where instrument = 'CZ' and side = 'B'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -95,18 +99,21 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
             execute(
-                    "insert into tanc2 \n" +
-                            "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
-                            "1571270400000 + (x-1) * 100 timestamp,\n" +
-                            "rnd_str(2,2,3) instrument,\n" +
-                            "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
-                            "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
-                            "rnd_str('B', 'S') side\n" +
-                            "from long_sequence(100000) x"
+                    """
+                            insert into tanc2\s
+                            select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,
+                            1571270400000 + (x-1) * 100 timestamp,
+                            rnd_str(2,2,3) instrument,
+                            abs(cast(rnd_double(0)*100000 as int)) price,
+                            abs(cast(rnd_double(0)*10000 as int)) qty,
+                            rnd_str('B', 'S') side
+                            from long_sequence(100000) x"""
             );
 
-            String expected = "instrument\tsum\n" +
-                    "ML\t563832\n";
+            String expected = """
+                    instrument\tsum
+                    ML\t563832
+                    """;
 
             assertSql(
                     expected, "select instrument, sum(price) from tanc2  where instrument = 'ML' and side = rnd_char()"
@@ -118,17 +125,20 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
     public void testSymEqCharFunctionConst() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
-            execute("insert into tanc2 \n" +
-                    "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
-                    "1571270400000 + (x-1) * 100 timestamp,\n" +
-                    "rnd_str(2,2,3) instrument,\n" +
-                    "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
-                    "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
-                    "rnd_str('B', 'S') side\n" +
-                    "from long_sequence(100000) x");
+            execute("""
+                    insert into tanc2\s
+                    select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,
+                    1571270400000 + (x-1) * 100 timestamp,
+                    rnd_str(2,2,3) instrument,
+                    abs(cast(rnd_double(0)*100000 as int)) price,
+                    abs(cast(rnd_double(0)*10000 as int)) qty,
+                    rnd_str('B', 'S') side
+                    from long_sequence(100000) x""");
 
-            String expected = "instrument\tsum\n" +
-                    "ML\t2617153\n";
+            String expected = """
+                    instrument\tsum
+                    ML\t2617153
+                    """;
 
             assertSql(
                     expected, "select instrument, sum(price) from tanc2  where instrument = 'ML' and rnd_symbol('A', 'B', 'C') = 'B'"
@@ -141,21 +151,23 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
             execute(
-                    "insert into tanc2 \n" +
-                            "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
-                            "1571270400000 + (x-1) * 100 timestamp,\n" +
-                            "rnd_str(2,2,3) instrument,\n" +
-                            "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
-                            "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
-                            "rnd_str('B', 'S') side\n" +
-                            "from long_sequence(100000) x"
+                    """
+                            insert into tanc2\s
+                            select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,
+                            1571270400000 + (x-1) * 100 timestamp,
+                            rnd_str(2,2,3) instrument,
+                            abs(cast(rnd_double(0)*100000 as int)) price,
+                            abs(cast(rnd_double(0)*10000 as int)) qty,
+                            rnd_str('B', 'S') side
+                            from long_sequence(100000) x"""
             );
 
             String expected = "instrument\tsum\n";
 
-            assertSql(
-                    expected, "select instrument, sum(price) from tanc2  where instrument = 'KK' and side = 'C'"
-            );
+            assertQuery("select instrument, sum(price) from tanc2  where instrument = 'KK' and side = 'C'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 }

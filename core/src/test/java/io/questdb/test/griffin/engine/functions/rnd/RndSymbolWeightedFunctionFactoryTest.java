@@ -42,15 +42,16 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
 
         // Weights: AAPL=50, MSFT=30, GOOGL=15, TSLA=5 (total=100)
         // Expected distribution: AAPL=50%, MSFT=30%, GOOGL=15%, TSLA=5%
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol\tcnt
                         AAPL\t46
                         GOOGL\t19
                         MSFT\t29
                         TSLA\t6
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
@@ -63,14 +64,15 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
                 """);
 
         // Weights sum to 5.0: A=50%, B=30%, C=20%
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol	cnt
                         A	46
                         B	29
                         C	25
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
@@ -83,14 +85,15 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
                 """);
 
         // Equal weights should produce roughly equal distribution
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol	cnt
                         A	27
                         B	35
                         C	37
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
@@ -103,14 +106,15 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
                 """);
 
         // A should dominate with 95% probability
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol	cnt
                         A	94
                         B	5
                         C	1
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
@@ -129,12 +133,13 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
                 """);
 
         // Only A should appear (weight=100, others=0)
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol\tcnt
                         A\t50
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
@@ -158,13 +163,14 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
                 )
                 """);
 
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol\tcnt
                         A\t68
                         B\t32
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test

@@ -41,19 +41,19 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
                 """);
 
         // Should return all 5 symbols, but with different frequencies (sym0 most common)
-        assertSql(
-                """
+        assertQuery("""
+                        select testCol, count() as cnt from abc order by 1
+                        """)
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol	cnt
                         sym0	53
                         sym1	20
                         sym2	12
                         sym3	9
                         sym4	6
-                        """,
-                """
-                        select testCol, count() as cnt from abc order by 1
-                        """
-        );
+                        """);
     }
 
     @Test
@@ -66,16 +66,17 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
                 """);
 
         // The first symbol should have significantly more occurrences
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol\tcnt
                         sym0\t666
                         sym1\t185
                         sym2\t76
                         sym3\t49
                         sym4\t24
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
@@ -127,11 +128,14 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
                 """);
 
         // With alpha=5.0, sym0 should dominate
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                 testCol\tcnt
                 sym0\t98
                 sym1\t2
-                """, "select testCol, count() as cnt from abc order by 1");
+                """);
     }
 
     @Test
@@ -151,12 +155,14 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
                 """);
 
         // Verify we get multiple distinct symbols and first symbol is most common
-        assertSql("""
+        assertQuery("""
+                        select testCol, count() as cnt from abc order by 2 desc limit 1
+                        """)
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol	cnt
                         sym0	6078
-                        """,
-                """
-                        select testCol, count() as cnt from abc order by 2 desc limit 1
                         """);
     }
 
@@ -170,14 +176,17 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
                 """);
 
         // With alpha=0.5, distribution should be more even
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                 testCol\tcnt
                 sym0\t26
                 sym1\t22
                 sym2\t20
                 sym3\t14
                 sym4\t18
-                """, "select testCol, count() as cnt from abc order by 1");
+                """);
     }
 
     @Test
@@ -207,11 +216,14 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
                 )
                 """);
 
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                 testCol\tcnt
                 sym0\t63
                 sym1\t37
-                """, "select testCol, count() as cnt from abc order by 1");
+                """);
     }
 
     @Test

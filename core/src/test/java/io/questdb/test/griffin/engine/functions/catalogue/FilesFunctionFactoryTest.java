@@ -65,13 +65,10 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesColumnsExist() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertSql("""
                         path\tdiskSize\tdiskSizeHuman
                         test.txt\t100\t100.0 B
-                        """,
-                "select path, diskSize, diskSizeHuman from files('" + testRoot + "') where path = 'test.txt'"
-        ));
+                        """, "select path, diskSize, diskSizeHuman from files('" + testRoot + "') where path = 'test.txt'"));
     }
 
     /**
@@ -80,10 +77,10 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesEmptyResult() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
-                "select path, diskSize, diskSizeHuman, modifiedTime from files('" + testRoot + "') where path like '%.nonexistent'"
-        ));
+        assertMemoryLeak(() -> assertQuery("select path, diskSize, diskSizeHuman, modifiedTime from files('" + testRoot + "') where path like '%.nonexistent'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n"));
     }
 
     /**
@@ -92,14 +89,13 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesSizesAccurate() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select path, diskSize, diskSizeHuman from files('" + testRoot + "') where path in ('test.txt', 'large.bin') order by path")
+                .noLeakCheck()
+                .returns("""
                         path\tdiskSize\tdiskSizeHuman
                         large.bin\t1048576\t1.0 MiB
                         test.txt\t100\t100.0 B
-                        """,
-                "select path, diskSize, diskSizeHuman from files('" + testRoot + "') where path in ('test.txt', 'large.bin') order by path"
-        ));
+                        """));
     }
 
     /**
@@ -108,11 +104,10 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesNestedDirectories() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "path\tdiskSize\n" +
-                        "subdir" + File.separator + "nested.txt\t50\n",
-                "select path, diskSize from files('" + testRoot + "') where path like 'subdir%' order by path"
-        ));
+        assertMemoryLeak(() -> assertQuery("select path, diskSize from files('" + testRoot + "') where path like 'subdir%' order by path")
+                .noLeakCheck()
+                .returns("path\tdiskSize\n" +
+                        "subdir" + File.separator + "nested.txt\t50\n"));
     }
 
     /**
@@ -121,13 +116,14 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesCount() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select count(*) from files('" + testRoot + "')")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         count
                         3
-                        """,
-                "select count(*) from files('" + testRoot + "')"
-        ));
+                        """));
     }
 
     /**
@@ -136,13 +132,14 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesSumDiskSize() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select sum(diskSize) from files('" + testRoot + "')")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sum
                         1048726
-                        """,
-                "select sum(diskSize) from files('" + testRoot + "')"
-        ));
+                        """));
     }
 
     /**
@@ -151,15 +148,15 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesGroupBy() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select diskSize, count(*) as count from files('" + testRoot + "') group by diskSize order by diskSize")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         diskSize\tcount
                         50\t1
                         100\t1
                         1048576\t1
-                        """,
-                "select diskSize, count(*) as count from files('" + testRoot + "') group by diskSize order by diskSize"
-        ));
+                        """));
     }
 
     /**
@@ -168,13 +165,13 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesDistinct() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "path\n" +
+        assertMemoryLeak(() -> assertQuery("select distinct path from files('" + testRoot + "') order by path")
+                .noLeakCheck()
+                .expectSize()
+                .returns("path\n" +
                         "large.bin\n" +
                         "subdir" + File.separator + "nested.txt\n" +
-                        "test.txt\n",
-                "select distinct path from files('" + testRoot + "') order by path"
-        ));
+                        "test.txt\n"));
     }
 
     /**
@@ -183,13 +180,12 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesOrderByPath() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "path\n" +
+        assertMemoryLeak(() -> assertQuery("select path from files('" + testRoot + "') order by path")
+                .noLeakCheck()
+                .returns("path\n" +
                         "large.bin\n" +
                         "subdir" + File.separator + "nested.txt\n" +
-                        "test.txt\n",
-                "select path from files('" + testRoot + "') order by path"
-        ));
+                        "test.txt\n"));
     }
 
     /**
@@ -198,13 +194,12 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesWhereSize() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select path, diskSize from files('" + testRoot + "') where diskSize > 50 and diskSize < 1000 order by path")
+                .noLeakCheck()
+                .returns("""
                         path\tdiskSize
                         test.txt\t100
-                        """,
-                "select path, diskSize from files('" + testRoot + "') where diskSize > 50 and diskSize < 1000 order by path"
-        ));
+                        """));
     }
 
     /**
@@ -213,10 +208,10 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesNonexistentPath() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
-                "select path, diskSize, diskSizeHuman, modifiedTime from files('" + testRoot + "/nonexistent')"
-        ));
+        assertMemoryLeak(() -> assertQuery("select path, diskSize, diskSizeHuman, modifiedTime from files('" + testRoot + "/nonexistent')")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n"));
     }
 
     /**
@@ -225,14 +220,13 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesLimitOrdering() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select path, diskSize from files('" + testRoot + "') order by diskSize desc limit 2")
+                .noLeakCheck()
+                .returns("""
                         path\tdiskSize
                         large.bin\t1048576
                         test.txt\t100
-                        """,
-                "select path, diskSize from files('" + testRoot + "') order by diskSize desc limit 2"
-        ));
+                        """));
     }
 
     /**
@@ -241,13 +235,12 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesLastModifiedColumn() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "path\n" +
+        assertMemoryLeak(() -> assertQuery("select path from files('" + testRoot + "') where modifiedTime is not null order by path")
+                .noLeakCheck()
+                .returns("path\n" +
                         "large.bin\n" +
                         "subdir" + File.separator + "nested.txt\n" +
-                        "test.txt\n",
-                "select path from files('" + testRoot + "') where modifiedTime is not null order by path"
-        ));
+                        "test.txt\n"));
     }
 
     /**
@@ -256,13 +249,12 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesWherePathPattern() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select path from files('" + testRoot + "') where path like 'test%' order by path")
+                .noLeakCheck()
+                .returns("""
                         path
                         test.txt
-                        """,
-                "select path from files('" + testRoot + "') where path like 'test%' order by path"
-        ));
+                        """));
     }
 
     private void createTestFile(String relativePath, int size) {

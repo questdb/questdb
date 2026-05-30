@@ -33,13 +33,12 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
     public void testDynamicCast() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('1','3','5') a, abs(rnd_long())%5 b  from long_sequence(10))");
-            assertSql(
-                    "a\tb\n" +
+            assertQuery("select a,b from x where a = b")
+                    .noLeakCheck()
+                    .returns("a\tb\n" +
                             "1\t1\n" +
                             "1\t1\n" +
-                            "1\t1\n",
-                    "select a,b from x where a = b"
-            );
+                            "1\t1\n");
         });
     }
 
@@ -47,15 +46,14 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
     public void testDynamicCastNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('1','3','5', null) a, abs(rnd_long())%5 b  from long_sequence(20))");
-            assertSql(
-                    "a\tb\n" +
+            assertQuery("select a,b from x where a = null::long")
+                    .noLeakCheck()
+                    .returns("a\tb\n" +
                             "\t3\n" +
                             "\t1\n" +
                             "\t2\n" +
                             "\t0\n" +
-                            "\t3\n",
-                    "select a,b from x where a = null::long"
-            );
+                            "\t3\n");
         });
     }
 
@@ -63,16 +61,15 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
     public void testDynamicCastNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('1','3','5', null) a, abs(rnd_long())%5 b  from long_sequence(20))");
-            assertSql(
-                    "a\tb\n" +
+            assertQuery("select a,b from x where a = b")
+                    .noLeakCheck()
+                    .returns("a\tb\n" +
                             "1\t1\n" +
                             "3\t3\n" +
                             "1\t1\n" +
                             "1\t1\n" +
                             "3\t3\n" +
-                            "1\t1\n",
-                    "select a,b from x where a = b"
-            );
+                            "1\t1\n");
         });
     }
 
@@ -91,13 +88,12 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
     public void testStaticSymbolTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('1','3','5') a from long_sequence(10))");
-            assertSql(
-                    "a\n" +
+            assertQuery("select a from x where a = 3")
+                    .noLeakCheck()
+                    .returns("a\n" +
                             "3\n" +
                             "3\n" +
-                            "3\n",
-                    "select a from x where a = 3"
-            );
+                            "3\n");
         });
     }
 
@@ -105,8 +101,9 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
     public void testStaticSymbolTableNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('1','3','5', null) a from long_sequence(30))");
-            assertSql(
-                    "a\n" +
+            assertQuery("select a from x where a = null::long")
+                    .noLeakCheck()
+                    .returns("a\n" +
                             "\n" +
                             "\n" +
                             "\n" +
@@ -114,9 +111,7 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
                             "\n" +
                             "\n" +
                             "\n" +
-                            "\n",
-                    "select a from x where a = null::long"
-            );
+                            "\n");
         });
     }
 }

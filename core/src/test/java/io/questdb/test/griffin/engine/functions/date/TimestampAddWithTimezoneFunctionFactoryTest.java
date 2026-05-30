@@ -69,8 +69,21 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                     .noLeakCheck()
                     .fails(15, "invalid period [period=x]");
 
-            assertSql(
-                    """
+            assertQuery("select dateadd(period, stride, ts, tz) val," +
+                            " dateadd(period, stride, null, tz) val2," +
+                            " dateadd(period, stride, ts_ns, tz) val3," +
+                            " ts," +
+                            " period," +
+                            " stride," +
+                            " tz" +
+                            " from test_tab" +
+                            " where stride is not null" +
+                            " and tz <> 'unknown/unknown'" +
+                            " and period is not null" +
+                            " and tz is not null" +
+                            " and period <> 'x'")
+                    .noLeakCheck()
+                    .returns("""
                             val\tval2\tval3\tts\tperiod\tstride\ttz
                             1970-11-01T00:00:00.010000Z\t\t1970-11-01T00:00:00.010000000Z\t1970-01-01T00:00:00.010000Z\tM\t10\tEurope/Bratislava
                             1975-01-01T00:00:00.060000Z\t\t1975-01-01T00:00:00.060000000Z\t1970-01-01T00:00:00.060000Z\ty\t5\t08:00
@@ -97,21 +110,7 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                             1970-01-01T04:00:00.860000Z\t\t1970-01-01T04:00:00.860000000Z\t1970-01-01T00:00:00.860000Z\th\t4\tEurope/Bratislava
                             1970-01-01T02:00:00.910000Z\t\t1970-01-01T02:00:00.910000000Z\t1970-01-01T00:00:00.910000Z\th\t2\tEurope/Bratislava
                             1972-01-01T00:00:00.920000Z\t\t1972-01-01T00:00:00.920000000Z\t1970-01-01T00:00:00.920000Z\ty\t2\t08:00
-                            """,
-                    "select dateadd(period, stride, ts, tz) val," +
-                            " dateadd(period, stride, null, tz) val2," +
-                            " dateadd(period, stride, ts_ns, tz) val3," +
-                            " ts," +
-                            " period," +
-                            " stride," +
-                            " tz" +
-                            " from test_tab" +
-                            " where stride is not null" +
-                            " and tz <> 'unknown/unknown'" +
-                            " and period is not null" +
-                            " and tz is not null" +
-                            " and period <> 'x'"
-            );
+                            """);
 
             assertPlanNoLeakCheck(
                     "select dateadd(period, stride, ts, tz) val," +

@@ -55,8 +55,9 @@ public class ImportFilesFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testImportFilesBasic() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
+        assertMemoryLeak(() -> assertQuery("select path, diskSize, diskSizeHuman, modifiedTime from import_files() order by path")
+                .noLeakCheck()
+                .returns("path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                         "analytics" + File.separator + "metrics.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                         "analytics" + File.separator + "models" + File.separator + "prediction_model.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                         "analytics" + File.separator + "results" + File.separator + "output.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
@@ -69,9 +70,7 @@ public class ImportFilesFunctionFactoryTest extends AbstractCairoTest {
                         "reports" + File.separator + "monthly_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
                         "temp" + File.separator + "archived" + File.separator + "old_backup.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                         "temp" + File.separator + "backup.sql\t45\t45.0 B\t1970-04-26T17:46:40.045Z\n" +
-                        "test.txt\t1289\t1.3 KiB\t1970-04-26T17:46:41.289Z\n",
-                "select path, diskSize, diskSizeHuman, modifiedTime from import_files() order by path"
-        ));
+                        "test.txt\t1289\t1.3 KiB\t1970-04-26T17:46:41.289Z\n"));
     }
 
     @Test
@@ -104,10 +103,10 @@ public class ImportFilesFunctionFactoryTest extends AbstractCairoTest {
                 ff.mkdir(path.$(), 493);
             }
 
-            assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
-                    "select * from import_files()"
-            );
+            assertQuery("select * from import_files()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n");
         });
     }
 

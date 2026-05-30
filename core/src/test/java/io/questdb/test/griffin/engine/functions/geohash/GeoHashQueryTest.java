@@ -93,12 +93,14 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 execute(String.format("alter table %s add hash geohash(%sb)", tableName, l));
 
                 String columnType = l % 5 == 0 ? (l / 5) + "c" : l + "b";
-                assertSql(
-                        "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                                "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                                String.format("hash\tGEOHASH(%s)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n", columnType),
-                        "show columns from " + tableName
-                );
+                assertQuery("show columns from " + tableName)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(
+                                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+                                        "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                                        String.format("hash\tGEOHASH(%s)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n", columnType)
+                        );
             }
         });
     }
@@ -200,12 +202,14 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 String tableName = "pos" + l;
                 execute(String.format("create table %s(x long)", tableName));
                 execute(String.format("alter table %s add hash geohash(%sc)", tableName, l));
-                assertSql(
-                        "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                                "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                                String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n", l),
-                        "show columns from " + tableName
-                );
+                assertQuery("show columns from " + tableName)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(
+                                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+                                        "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                                        String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n", l)
+                        );
             }
         });
     }
@@ -236,7 +240,10 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            assertSql("""
+            assertQuery("t1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                     geo1\tgeo2\tgeo4\tgeo8\tgeo9\tx
                     q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t0
                     q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t1
@@ -248,8 +255,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t7
                     q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t8
                     q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t9
-                    """, "t1"
-            );
+                    """);
         });
     }
 
@@ -273,12 +279,14 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            assertSql("""
+            assertQuery("t1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                     geo1\tgeo2\tgeo4\tgeo8\tx
                     \t\t\t\t0
                     \t\t\t\t1
-                    """, "t1"
-            );
+                    """);
         });
     }
 
@@ -294,7 +302,10 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "x " +
                     "from long_sequence(2))");
 
-            assertSql("""
+            assertQuery("select * from t1 join t2 on t1.geo4 = t2.geo4")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     geo4\tx\tgeo41\tx1
                     1234\t3\t1234\t1
                     3456\t4\t3456\t2
@@ -303,8 +314,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     3456\t7\t3456\t2
                     1234\t8\t1234\t1
                     1234\t10\t1234\t1
-                    """, "select * from t1 join t2 on t1.geo4 = t2.geo4"
-            );
+                    """);
         });
     }
 
@@ -320,43 +330,52 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "hash1 geohash(1c)" +
                     ")");
             execute("insert into pos values('2021-05-10T23:59:59.160000Z','YYY','0f91tzzz','0f91tzzz','0f91tzzz','0f91tzzz')");
-            assertSql("""
+            assertQuery("select cast(hash8 as geohash(6c)), cast(hash4 as geohash(3c)), cast(hash2 as geohash(1c)), cast(hash1 as geohash(1b)) from pos")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                     cast\tcast1\tcast2\tcast3
                     0f91tz\t0f9\t0\t0
-                    """, "select cast(hash8 as geohash(6c)), cast(hash4 as geohash(3c)), cast(hash2 as geohash(1c)), cast(hash1 as geohash(1b)) from pos"
-            );
+                    """);
         });
     }
 
     @Test
     public void testGeoHashDowncast() throws Exception {
-        assertMemoryLeak(() -> assertSql("""
+        assertMemoryLeak(() -> assertQuery("""
+                select cast(cast('questdb' as geohash(7c)) as geohash(6c)) from long_sequence(1)
+                UNION ALL
+                select cast('questdb' as geohash(6c)) from long_sequence(1)""")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                 cast
                 questd
                 questd
-                """, """
-                select cast(cast('questdb' as geohash(7c)) as geohash(6c)) from long_sequence(1)
-                UNION ALL
-                select cast('questdb' as geohash(6c)) from long_sequence(1)"""
-        ));
+                """));
     }
 
     @Test
     public void testGeoHashDowncastNull() throws Exception {
-        assertMemoryLeak(() -> assertSql("""
+        assertMemoryLeak(() -> assertQuery("select cast(cast(NULL as geohash(7c)) as geohash(6c)) from long_sequence(1)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                 cast
-                
-                """, "select cast(cast(NULL as geohash(7c)) as geohash(6c)) from long_sequence(1)"
-        ));
+
+                """));
     }
 
     @Test
     public void testGeoHashDowncastSameSize() throws Exception {
-        assertMemoryLeak(() -> assertSql("""
+        assertMemoryLeak(() -> assertQuery("select cast(cast('questdb' as geohash(7c)) as geohash(35b)) from long_sequence(1)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                 cast
                 questdb
-                """, "select cast(cast('questdb' as geohash(7c)) as geohash(35b)) from long_sequence(1)"
-        ));
+                """));
     }
 
     @Test
@@ -367,12 +386,13 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "x " +
                     "from long_sequence(3))");
 
-            assertSql("""
+            assertQuery("select * from t1 where geo4 = cast('questdb' as geohash(7c))")
+                    .noLeakCheck()
+                    .returns("""
                     geo4\tx
                     questdb\t1
                     questdb\t2
-                    """, "select * from t1 where geo4 = cast('questdb' as geohash(7c))"
-            );
+                    """);
         });
     }
 
@@ -390,7 +410,12 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "x " +
                     "from long_sequence(2))");
 
-            assertSql("""
+            assertQuery("with g1 as (select distinct * from t1)," +
+                    "g2 as (select distinct * from t2)" +
+                    "select * from g1 join g2 on g1.geo4 = g2.geo4")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     geo4\tgeo1\tx\tgeo41\tgeo11\tx1
                     ques\tq\t1\tques\t3\t2
                     1234\t3\t2\t1234\tq\t1
@@ -400,10 +425,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     1234\tq\t8\t1234\tq\t1
                     ques\t1\t9\tques\t3\t2
                     ques\t1\t10\tques\t3\t2
-                    """, "with g1 as (select distinct * from t1)," +
-                    "g2 as (select distinct * from t2)" +
-                    "select * from g1 join g2 on g1.geo4 = g2.geo4"
-            );
+                    """);
         });
     }
 
@@ -421,7 +443,12 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "x " +
                     "from long_sequence(2))");
 
-            assertSql("""
+            assertQuery("with g1 as (select geo4, geo1, x from (select *, count() from t1))," +
+                    "g2 as (select geo4, geo1, x from (select *, count() from t2))" +
+                    "select * from g1 join g2 on g1.geo4 = g2.geo4")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     geo4\tgeo1\tx\tgeo41\tgeo11\tx1
                     ques\tq\t1\tques\t3\t2
                     1234\t3\t2\t1234\tq\t1
@@ -431,10 +458,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     1234\tq\t8\t1234\tq\t1
                     ques\t1\t9\tques\t3\t2
                     ques\t1\t10\tques\t3\t2
-                    """, "with g1 as (select geo4, geo1, x from (select *, count() from t1))," +
-                    "g2 as (select geo4, geo1, x from (select *, count() from t2))" +
-                    "select * from g1 join g2 on g1.geo4 = g2.geo4"
-            );
+                    """);
         });
     }
 
@@ -454,7 +478,14 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "timestamp_sequence(0, 1000000) ts " +
                     "from long_sequence(2)) timestamp(ts)");
 
-            assertSql("""
+            assertQuery("with g1 as (select distinct * from t1 order by ts)," +
+                            "g2 as (select distinct * from t2 order by ts)" +
+                            "select * from g1 lt join g2 on g1.geo4 = g2.geo4")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             geo4\tgeo1\tx\tts\tgeo41\tgeo11\tx1\tts1
                             ques\tq\t1\t1970-01-01T00:00:00.000000Z\t\t\tnull\t
                             1234\t3\t2\t1970-01-01T00:00:01.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z
@@ -466,11 +497,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                             1234\tq\t8\t1970-01-01T00:00:07.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z
                             ques\t1\t9\t1970-01-01T00:00:08.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z
                             ques\t1\t10\t1970-01-01T00:00:09.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z
-                            """,
-                    "with g1 as (select distinct * from t1 order by ts)," +
-                            "g2 as (select distinct * from t2 order by ts)" +
-                            "select * from g1 lt join g2 on g1.geo4 = g2.geo4"
-            );
+                            """);
         });
     }
 
@@ -488,12 +515,14 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "x " +
                     "from long_sequence(2))");
 
-            assertSql("""
+            assertQuery("select * from t1 join t2 on t1.x = t2.x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     geo4\tgeo8\tx\tgeo1\tgeo2\tx1
                     9v1s\t46swgj10\t1\ts\t1c\t1
                     jnw9\tzfuqd3bf\t2\tm\t71\t2
-                    """, "select * from t1 join t2 on t1.x = t2.x"
-            );
+                    """);
         });
     }
 
@@ -505,13 +534,15 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "x " +
                     "from long_sequence(3))");
 
-            assertSql("""
+            assertQuery("select * from t1 where cast(geo4 as geohash(5c)) != geo4 ")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                     geo4\tx
                     questdb\t1
                     questdb\t2
                     1234567\t3
-                    """, "select * from t1 where cast(geo4 as geohash(5c)) != geo4 "
-            );
+                    """);
         });
     }
 
@@ -523,11 +554,12 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "x " +
                     "from long_sequence(3))");
 
-            assertSql("""
+            assertQuery("select * from t1 where geo4 != cast('questdb' as geohash(7c))")
+                    .noLeakCheck()
+                    .returns("""
                     geo4\tx
                     1234567\t3
-                    """, "select * from t1 where geo4 != cast('questdb' as geohash(7c))"
-            );
+                    """);
         });
     }
 
@@ -539,9 +571,11 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 execute(String.format("create table %s(hash geohash(%sc))", tableName, l));
                 execute(String.format("insert into %s values('1234567890quest')", tableName));
                 String value = "1234567890quest".substring(0, l);
-                assertSql("hash\n"
-                        + value + "\n", "select hash from " + tableName
-                );
+                assertQuery("select hash from " + tableName)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("hash\n"
+                                + value + "\n");
             }
         });
     }
@@ -554,11 +588,14 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "x " +
                     "from long_sequence(3))");
 
-            assertSql("""
+            assertQuery("select first(geo4), last(geo4) from t1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                     first\tlast
                     questdb\t1234567
-                    """, "select first(geo4), last(geo4) from t1"
-            );
+                    """);
         });
     }
 
@@ -658,11 +695,13 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     " make_geohash(lon, lat, 40) as g8c  " +
                     " from pos)");
 
-            assertSql("""
+            assertQuery("select * from tb1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                     g1c\tg2c\tg4c\tg8c
                     9\t9v\t9v1s\t9v1s8hm7
-                    """, "select * from tb1"
-            );
+                    """);
         });
     }
 
@@ -688,14 +727,16 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "from long_sequence(2)"
             );
 
-            assertSql("""
+            assertQuery("t1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                     x\tts\ta1\ta2\ta4\ta8
                     1\t1970-01-01T00:00:00.000000Z\t\t\t\t
                     2\t1970-01-01T00:00:01.000000Z\t\t\t\t
                     1\t1970-01-01T00:00:00.000000Z\tq\tqu\t1234\t90123456
                     2\t1970-01-01T00:00:01.000000Z\t3\t34\t3456\t12345672
-                    """, "t1"
-            );
+                    """);
         });
     }
 

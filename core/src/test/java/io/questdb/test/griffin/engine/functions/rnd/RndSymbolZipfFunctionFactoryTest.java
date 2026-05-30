@@ -41,19 +41,19 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 """);
 
         // Should return all 5 symbols, but with different frequencies (AAPL most common)
-        assertSql(
-                """
+        assertQuery("""
+                        select testCol, count() as cnt from abc order by 1
+                        """)
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol	cnt
                         1AAPL	53
                         2GOOGL	12
                         2MSFT	20
                         4TSLA	9
                         5AMZN	6
-                        """,
-                """
-                        select testCol, count() as cnt from abc order by 1
-                        """
-        );
+                        """);
     }
 
     @Test
@@ -66,16 +66,17 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 """);
 
         // The first symbol should have significantly more occurrences
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol\tcnt
                         A\t666
                         B\t185
                         C\t76
                         D\t49
                         E\t24
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
@@ -127,11 +128,14 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 """);
 
         // With alpha=5.0, AAPL should dominate
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                 testCol\tcnt
                 1AAPL\t98
                 2MSFT\t2
-                """, "select testCol, count() as cnt from abc order by 1");
+                """);
     }
 
     @Test
@@ -151,14 +155,17 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 """);
 
         // With alpha=0.5, distribution should be more even
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                 testCol\tcnt
                 1AAPL\t26
                 2MSFT\t22
                 3GOOGL\t20
                 4TSLA\t14
                 5AMZN\t18
-                """, "select testCol, count() as cnt from abc order by 1");
+                """);
     }
 
     @Test
@@ -176,11 +183,14 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 )
                 """);
 
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                 testCol\tcnt
                 A\t63
                 B\t37
-                """, "select testCol, count() as cnt from abc order by 1");
+                """);
     }
 
     @Test
@@ -192,11 +202,14 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 )
                 """);
 
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                 testCol\tcnt
                 A\t63
                 B\t37
-                """, "select testCol, count() as cnt from abc order by 1");
+                """);
     }
 
     @Test
@@ -208,11 +221,14 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 )
                 """);
 
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                 testCol\tcnt
                 A\t63
                 B\t37
-                """, "select testCol, count() as cnt from abc order by 1");
+                """);
     }
 
     @Test
@@ -224,11 +240,14 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 )
                 """);
 
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                 testCol\tcnt
                 A\t63
                 B\t37
-                """, "select testCol, count() as cnt from abc order by 1");
+                """);
     }
 
     @Test
@@ -240,11 +259,14 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 )
                 """);
 
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                 testCol\tcnt
                 A\t63
                 B\t37
-                """, "select testCol, count() as cnt from abc order by 1");
+                """);
     }
 
     @Test
@@ -256,11 +278,14 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 )
                 """);
 
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                 testCol\tcnt
                 A\t63
                 B\t37
-                """, "select testCol, count() as cnt from abc order by 1");
+                """);
     }
 
     @Test

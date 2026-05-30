@@ -63,44 +63,44 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
             execute("create table test_rename ( ts timestamp, x int ) timestamp(ts) partition by day wal");
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("show columns from test_rename")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
                             x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "show columns from test_rename"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("information_schema.questdb_columns()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
                             qdb\tpublic\ttest_rename\tts\t0\t\tyes\tTIMESTAMP
                             qdb\tpublic\ttest_rename\tx\t1\t\tyes\tINT
-                            """,
-                    "information_schema.questdb_columns()"
-            );
+                            """);
 
             execute("rename table test_rename to test_renamed");
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("show columns from test_renamed")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
                             x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "show columns from test_renamed"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("information_schema.questdb_columns()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
                             qdb\tpublic\ttest_renamed\tts\t0\t\tyes\tTIMESTAMP
                             qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tINT
-                            """,
-                    "information_schema.questdb_columns()"
-            );
+                            """);
         });
     }
 }

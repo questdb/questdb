@@ -115,10 +115,9 @@ public class NotMatchStrFunctionFactoryTest extends AbstractCairoTest {
                     YPR
                     """;
             execute("create table x as (select rnd_str() name from long_sequence(2000))");
-            assertSql(
-                    expected,
-                    "select * from x where name !~ '[ABCDEFGHIJKLMN]'"
-            );
+            assertQuery("select * from x where name !~ '[ABCDEFGHIJKLMN]'")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 }

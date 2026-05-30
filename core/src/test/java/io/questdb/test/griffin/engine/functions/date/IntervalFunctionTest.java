@@ -82,67 +82,67 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     @Test
     public void testInterval() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql(
-                    """
+            assertQuery("select interval('2000-01-01T01:00:00.000Z', '2000-01-02T01:00:00.000Z')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             ('2000-01-01T01:00:00.000Z', '2000-01-02T01:00:00.000Z')
-                            """,
-                    "select interval('2000-01-01T01:00:00.000Z', '2000-01-02T01:00:00.000Z')"
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("lo", "2000-01-03T01:00:00.000Z");
             bindVariableService.setStr("hi", "2000-01-04T01:00:00.000Z");
-            assertSql(
-                    """
+            assertQuery("select interval(:lo, :hi)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             ('2000-01-03T01:00:00.000Z', '2000-01-04T01:00:00.000Z')
-                            """,
-                    "select interval(:lo, :hi)"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select interval(x,x+10000) from long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             ('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.010Z')
-                            """,
-                    "select interval(x,x+10000) from long_sequence(1)"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select interval('2000-01-01T01:00:00.000123123Z', '2000-01-02T01:00:00.000123Z')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             ('2000-01-01T01:00:00.000Z', '2000-01-02T01:00:00.000Z')
-                            """,
-                    "select interval('2000-01-01T01:00:00.000123123Z', '2000-01-02T01:00:00.000123Z')"
-            );
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr("lo", "2000-01-03T01:00:00.000123123Z");
             bindVariableService.setStr("hi", "2000-01-04T01:00:00.000123Z");
-            assertSql(
-                    """
+            assertQuery("select interval(:lo, :hi)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             ('2000-01-03T01:00:00.000Z', '2000-01-04T01:00:00.000Z')
-                            """,
-                    "select interval(:lo, :hi)"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select interval(x,x+10000) from long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             ('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.010Z')
-                            """,
-                    "select interval(x,x+10000) from long_sequence(1)"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select interval(x::timestamp_ns,(x+10000000)::timestamp_ns) from long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             ('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.010Z')
-                            """,
-                    "select interval(x::timestamp_ns,(x+10000000)::timestamp_ns) from long_sequence(1)"
-            );
+                            """);
         });
     }
 
@@ -214,35 +214,35 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     @Test
     public void testIntervalStartEnd() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql(
-                    """
+            assertQuery("select interval_start(today()) = date_trunc('day', now()) from long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             true
-                            """,
-                    "select interval_start(today()) = date_trunc('day', now()) from long_sequence(1)"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select interval_start(today()) = date_trunc('day', now()::timestamp_ns) from long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             true
-                            """,
-                    "select interval_start(today()) = date_trunc('day', now()::timestamp_ns) from long_sequence(1)"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select interval_end(today()) = dateadd('d', 1, date_trunc('day', now()))-1 from long_sequence(1)\n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             true
-                            """,
-                    "select interval_end(today()) = dateadd('d', 1, date_trunc('day', now()))-1 from long_sequence(1)\n"
-            );
+                            """);
             sqlExecutionContext.setIntervalFunctionType(ColumnType.INTERVAL_TIMESTAMP_NANO);
-            assertSql(
-                    """
+            assertQuery("select interval_end(today()) = dateadd('d', 1, date_trunc('day', now()::timestamp_ns))-1 from long_sequence(1)\n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             true
-                            """,
-                    "select interval_end(today()) = dateadd('d', 1, date_trunc('day', now()::timestamp_ns))-1 from long_sequence(1)\n"
-            );
+                            """);
             sqlExecutionContext.setIntervalFunctionType(ColumnType.INTERVAL_TIMESTAMP_MICRO);
         });
     }
@@ -264,8 +264,10 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             execute("CREATE TABLE x as (select x::timestamp ts from long_sequence(10)) timestamp(ts) PARTITION BY DAY WAL;");
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("select * from x where ts in yesterday()")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts
                             1970-01-01T00:00:00.000001Z
                             1970-01-01T00:00:00.000002Z
@@ -277,9 +279,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000008Z
                             1970-01-01T00:00:00.000009Z
                             1970-01-01T00:00:00.000010Z
-                            """,
-                    "select * from x where ts in yesterday()"
-            );
+                            """);
             assertPlanNoLeakCheck(
                     "select * from x where ts in yesterday()",
                     """
@@ -290,10 +290,10 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                             """
             );
 
-            assertSql(
-                    "ts\n",
-                    "select * from x where ts in today()"
-            );
+            assertQuery("select * from x where ts in today()")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("ts\n");
             assertPlanNoLeakCheck(
                     "select * from x where ts in today()",
                     """
@@ -304,10 +304,10 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                             """
             );
 
-            assertSql(
-                    "ts\n",
-                    "select * from x where ts in tomorrow()"
-            );
+            assertQuery("select * from x where ts in tomorrow()")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("ts\n");
             assertPlanNoLeakCheck(
                     "select * from x where ts in tomorrow()",
                     """
@@ -327,8 +327,10 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             execute("CREATE TABLE x as (select x::timestamp_ns ts from long_sequence(10)) timestamp(ts) PARTITION BY DAY WAL;");
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("select * from x where ts in yesterday()")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts
                             1970-01-01T00:00:00.000000001Z
                             1970-01-01T00:00:00.000000002Z
@@ -340,9 +342,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000000008Z
                             1970-01-01T00:00:00.000000009Z
                             1970-01-01T00:00:00.000000010Z
-                            """,
-                    "select * from x where ts in yesterday()"
-            );
+                            """);
             assertPlanNoLeakCheck(
                     "select * from x where ts in yesterday()",
                     """
@@ -353,10 +353,10 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                             """
             );
 
-            assertSql(
-                    "ts\n",
-                    "select * from x where ts in today()"
-            );
+            assertQuery("select * from x where ts in today()")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("ts\n");
             assertPlanNoLeakCheck(
                     "select * from x where ts in today()",
                     """
@@ -367,10 +367,10 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                             """
             );
 
-            assertSql(
-                    "ts\n",
-                    "select * from x where ts in tomorrow()"
-            );
+            assertQuery("select * from x where ts in tomorrow()")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("ts\n");
             assertPlanNoLeakCheck(
                     "select * from x where ts in tomorrow()",
                     """
@@ -386,13 +386,12 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     @Test
     public void testIntrinsicsAllVirtual() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql(
-                    """
+            assertQuery("select true as bool from long_sequence(1) where now() in today()")
+                    .noLeakCheck()
+                    .returns("""
                             bool
                             true
-                            """,
-                    "select true as bool from long_sequence(1) where now() in today()"
-            );
+                            """);
             // no interval scan with now()
             assertPlanNoLeakCheck(
                     "select true as bool from long_sequence(1) where now() in today()",
@@ -466,61 +465,55 @@ public class IntervalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select 'Europe/Sofia' tz from long_sequence(1))");
 
-            assertSql(
-                    """
+            assertQuery("select yesterday(tz), today(tz), tomorrow(tz) from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             yesterday\ttoday\ttomorrow
                             ('1970-01-06T22:00:00.000Z', '1970-01-07T21:59:59.999Z')\t('1970-01-07T22:00:00.000Z', '1970-01-08T21:59:59.999Z')\t('1970-01-08T22:00:00.000Z', '1970-01-09T21:59:59.999Z')
-                            """,
-                    "select yesterday(tz), today(tz), tomorrow(tz) from x"
-            );
+                            """);
         });
     }
 
     @Test
     public void testNowNsInInterval() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql(
-                    "result\n",
-                    "select true as result from long_sequence(1)\n" +
-                            "where now_ns() in tomorrow()"
-            );
-            assertSql(
-                    """
+            assertQuery("select true as result from long_sequence(1)\n" +
+                            "where now_ns() in tomorrow()")
+                    .noLeakCheck()
+                    .returns("result\n");
+            assertQuery("select true as result from long_sequence(1)\n" +
+                            "where now_ns() in today()")
+                    .noLeakCheck()
+                    .returns("""
                             result
                             true
-                            """,
-                    "select true as result from long_sequence(1)\n" +
-                            "where now_ns() in today()"
-            );
-            assertSql(
-                    "result\n",
-                    "select true as result from long_sequence(1)\n" +
-                            "where now_ns() in yesterday()"
-            );
+                            """);
+            assertQuery("select true as result from long_sequence(1)\n" +
+                            "where now_ns() in yesterday()")
+                    .noLeakCheck()
+                    .returns("result\n");
         });
     }
 
     @Test
     public void testTimestampInInterval() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql(
-                    "result\n",
-                    "select true as result from long_sequence(1)\n" +
-                            "where now() in tomorrow()"
-            );
-            assertSql(
-                    """
+            assertQuery("select true as result from long_sequence(1)\n" +
+                            "where now() in tomorrow()")
+                    .noLeakCheck()
+                    .returns("result\n");
+            assertQuery("select true as result from long_sequence(1)\n" +
+                            "where now() in today()")
+                    .noLeakCheck()
+                    .returns("""
                             result
                             true
-                            """,
-                    "select true as result from long_sequence(1)\n" +
-                            "where now() in today()"
-            );
-            assertSql(
-                    "result\n",
-                    "select true as result from long_sequence(1)\n" +
-                            "where now() in yesterday()"
-            );
+                            """);
+            assertQuery("select true as result from long_sequence(1)\n" +
+                            "where now() in yesterday()")
+                    .noLeakCheck()
+                    .returns("result\n");
         });
     }
 
@@ -533,30 +526,48 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                     yesterday
                     ('2024-03-30T22:00:00.000Z', '2024-03-31T20:59:59.999Z')
                     """;
-            assertSql(expected, "select yesterday('Europe/Sofia')");
+            assertQuery("select yesterday('Europe/Sofia')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Sofia");
-            assertSql(expected, "select yesterday(:tz)");
+            assertQuery("select yesterday(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             setCurrentMicros(MicrosTimestampDriver.floor("2024-03-31T06:00:00.000000Z"));
             expected = """
                     today
                     ('2024-03-30T22:00:00.000Z', '2024-03-31T20:59:59.999Z')
                     """;
-            assertSql(expected, "select today('Europe/Sofia')");
+            assertQuery("select today('Europe/Sofia')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Sofia");
-            assertSql(expected, "select today(:tz)");
+            assertQuery("select today(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             setCurrentMicros(MicrosTimestampDriver.floor("2024-03-30T06:00:00.000000Z"));
             expected = """
                     tomorrow
                     ('2024-03-30T22:00:00.000Z', '2024-03-31T20:59:59.999Z')
                     """;
-            assertSql(expected, "select tomorrow('Europe/Sofia')");
+            assertQuery("select tomorrow('Europe/Sofia')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Sofia");
-            assertSql(expected, "select tomorrow(:tz)");
+            assertQuery("select tomorrow(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -578,46 +589,76 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                     today
                     ('1970-01-02T00:00:00.000Z', '1970-01-02T23:59:59.999Z')
                     """;
-            assertSql(expected, "select today(null)");
+            assertQuery("select today(null)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", null);
-            assertSql(expected, "select today(:tz)");
+            assertQuery("select today(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             expected = """
                     today
                     ('1970-01-01T01:30:00.000Z', '1970-01-02T01:29:59.999Z')
                     """;
-            assertSql(expected, "select today('UTC-01:30')");
+            assertQuery("select today('UTC-01:30')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "UTC-01:30");
-            assertSql(expected, "select today(:tz)");
+            assertQuery("select today(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             expected = """
                     today
                     ('1970-01-01T22:30:00.000Z', '1970-01-02T22:29:59.999Z')
                     """;
-            assertSql(expected, "select today('UTC+01:30')");
+            assertQuery("select today('UTC+01:30')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "UTC+01:30");
-            assertSql(expected, "select today(:tz)");
+            assertQuery("select today(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             expected = """
                     today
                     ('1970-01-01T22:00:00.000Z', '1970-01-02T21:59:59.999Z')
                     """;
-            assertSql(expected, "select today('Europe/Sofia')");
+            assertQuery("select today('Europe/Sofia')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Sofia");
-            assertSql(expected, "select today(:tz)");
+            assertQuery("select today(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             expected = """
                     today
                     ('1970-01-01T05:00:00.000Z', '1970-01-02T04:59:59.999Z')
                     """;
-            assertSql(expected, "select today('America/Toronto')");
+            assertQuery("select today('America/Toronto')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "America/Toronto");
-            assertSql(expected, "select today(:tz)");
+            assertQuery("select today(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -639,46 +680,76 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                     tomorrow
                     ('1970-01-04T00:00:00.000Z', '1970-01-04T23:59:59.999Z')
                     """;
-            assertSql(expected, "select tomorrow(null)");
+            assertQuery("select tomorrow(null)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", null);
-            assertSql(expected, "select tomorrow(:tz)");
+            assertQuery("select tomorrow(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             expected = """
                     tomorrow
                     ('1970-01-03T01:30:00.000Z', '1970-01-04T01:29:59.999Z')
                     """;
-            assertSql(expected, "select tomorrow('UTC-01:30')");
+            assertQuery("select tomorrow('UTC-01:30')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "UTC-01:30");
-            assertSql(expected, "select tomorrow(:tz)");
+            assertQuery("select tomorrow(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             expected = """
                     tomorrow
                     ('1970-01-03T22:30:00.000Z', '1970-01-04T22:29:59.999Z')
                     """;
-            assertSql(expected, "select tomorrow('UTC+01:30')");
+            assertQuery("select tomorrow('UTC+01:30')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "UTC+01:30");
-            assertSql(expected, "select tomorrow(:tz)");
+            assertQuery("select tomorrow(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             expected = """
                     tomorrow
                     ('1970-01-03T22:00:00.000Z', '1970-01-04T21:59:59.999Z')
                     """;
-            assertSql(expected, "select tomorrow('Europe/Sofia')");
+            assertQuery("select tomorrow('Europe/Sofia')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Sofia");
-            assertSql(expected, "select tomorrow(:tz)");
+            assertQuery("select tomorrow(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             expected = """
                     tomorrow
                     ('1970-01-03T05:00:00.000Z', '1970-01-04T04:59:59.999Z')
                     """;
-            assertSql(expected, "select tomorrow('America/Toronto')");
+            assertQuery("select tomorrow('America/Toronto')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "America/Toronto");
-            assertSql(expected, "select tomorrow(:tz)");
+            assertQuery("select tomorrow(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -700,46 +771,76 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                     yesterday
                     ('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')
                     """;
-            assertSql(expected, "select yesterday(null)");
+            assertQuery("select yesterday(null)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", null);
-            assertSql(expected, "select yesterday(:tz)");
+            assertQuery("select yesterday(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             expected = """
                     yesterday
                     ('1970-01-06T01:30:00.000Z', '1970-01-07T01:29:59.999Z')
                     """;
-            assertSql(expected, "select yesterday('UTC-01:30')");
+            assertQuery("select yesterday('UTC-01:30')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "UTC-01:30");
-            assertSql(expected, "select yesterday(:tz)");
+            assertQuery("select yesterday(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             expected = """
                     yesterday
                     ('1970-01-06T22:30:00.000Z', '1970-01-07T22:29:59.999Z')
                     """;
-            assertSql(expected, "select yesterday('UTC+01:30')");
+            assertQuery("select yesterday('UTC+01:30')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "UTC+01:30");
-            assertSql(expected, "select yesterday(:tz)");
+            assertQuery("select yesterday(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             expected = """
                     yesterday
                     ('1970-01-06T22:00:00.000Z', '1970-01-07T21:59:59.999Z')
                     """;
-            assertSql(expected, "select yesterday('Europe/Sofia')");
+            assertQuery("select yesterday('Europe/Sofia')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Sofia");
-            assertSql(expected, "select yesterday(:tz)");
+            assertQuery("select yesterday(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             expected = """
                     yesterday
                     ('1970-01-06T05:00:00.000Z', '1970-01-07T04:59:59.999Z')
                     """;
-            assertSql(expected, "select yesterday('America/Toronto')");
+            assertQuery("select yesterday('America/Toronto')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("tz", "America/Toronto");
-            assertSql(expected, "select yesterday(:tz)");
+            assertQuery("select yesterday(:tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -867,7 +968,10 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             long todayStart = today(driver, sqlExecutionContext.getNow(timestampType));
             long todayEnd = tomorrow(driver, sqlExecutionContext.getNow(timestampType)) - 1;
             final Interval interval = new Interval(todayStart, todayEnd);
-            assertSql("today\n" + intervalAsString(interval, IntervalUtils.getIntervalType(timestampType)) + "\n", "select today()");
+            assertQuery("select today()")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("today\n" + intervalAsString(interval, IntervalUtils.getIntervalType(timestampType)) + "\n");
         });
     }
 
@@ -877,7 +981,10 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             long tomorrowStart = tomorrow(driver, sqlExecutionContext.getNow(timestampType));
             long tomorrowEnd = driver.addDays(tomorrowStart, 1) - 1;
             final Interval interval = new Interval(tomorrowStart, tomorrowEnd);
-            assertSql("tomorrow\n" + intervalAsString(interval, IntervalUtils.getIntervalType(timestampType)) + "\n", "select tomorrow()");
+            assertQuery("select tomorrow()")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("tomorrow\n" + intervalAsString(interval, IntervalUtils.getIntervalType(timestampType)) + "\n");
         });
     }
 
@@ -887,7 +994,10 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             long yesterdayStart = yesterday(driver, sqlExecutionContext.getNow(timestampType));
             long yesterdayEnd = today(driver, sqlExecutionContext.getNow(timestampType)) - 1;
             final Interval interval = new Interval(yesterdayStart, yesterdayEnd);
-            assertSql("yesterday\n" + intervalAsString(interval, IntervalUtils.getIntervalType(timestampType)) + "\n", "select yesterday()");
+            assertQuery("select yesterday()")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("yesterday\n" + intervalAsString(interval, IntervalUtils.getIntervalType(timestampType)) + "\n");
         });
     }
 }

@@ -77,10 +77,9 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
                             "select cast('AAAAVVV' as varchar) as name from long_sequence(1)\n" +
                             ")"
             );
-            assertSql(
-                    "name\n",
-                    "select * from x where name ilike ''"
-            );
+            assertQuery("select * from x where name ilike ''")
+                    .noLeakCheck()
+                    .returns("name\n");
         });
     }
 
@@ -98,10 +97,9 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
                             "select cast('AAAAVVV' as varchar) as name from long_sequence(1)\n" +
                             ")"
             );
-            assertSql(
-                    "name\n",
-                    "select * from x where name ilike '[][n'"
-            );
+            assertQuery("select * from x where name ilike '[][n'")
+                    .noLeakCheck()
+                    .returns("name\n");
         });
     }
 
@@ -119,11 +117,10 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
                             "select cast('AAAAVVV' as varchar) as name from long_sequence(1)\n" +
                             ")"
             );
-            assertSql(
-                    "name\n" +
-                            "ABCGE\n",
-                    "select * from x where name ilike 'aBcGe'"
-            );
+            assertQuery("select * from x where name ilike 'aBcGe'")
+                    .noLeakCheck()
+                    .returns("name\n" +
+                            "ABCGE\n");
         });
     }
 
@@ -139,11 +136,10 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
                             "select cast('баз' as varchar) as name from long_sequence(1)\n" +
                             ")"
             );
-            assertSql(
-                    "name\n" +
-                            "бар\n",
-                    "select * from x where name ilike 'БаР'"
-            );
+            assertQuery("select * from x where name ilike 'БаР'")
+                    .noLeakCheck()
+                    .returns("name\n" +
+                            "бар\n");
         });
     }
 
@@ -172,8 +168,9 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testNotLikeCharacterMatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_varchar('a', 'BC', 'h', 'H', 'k') name from long_sequence(20))");
-            assertSql(
-                    "name\n" +
+            assertQuery("select * from x where not name ilike 'H'")
+                    .noLeakCheck()
+                    .returns("name\n" +
                             "a\n" +
                             "BC\n" +
                             "BC\n" +
@@ -185,9 +182,7 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
                             "BC\n" +
                             "BC\n" +
                             "a\n" +
-                            "k\n",
-                    "select * from x where not name ilike 'H'"
-            );
+                            "k\n");
         });
     }
 
@@ -195,16 +190,15 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testNotLikeStringMatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_varchar('kk', 'xJ', 'Xj', 'GU', 'XJ') name from long_sequence(20))");
-            assertSql(
-                    "name\n" +
+            assertQuery("select * from x where not name ilike 'XJ'")
+                    .noLeakCheck()
+                    .returns("name\n" +
                             "kk\n" +
                             "GU\n" +
                             "GU\n" +
                             "GU\n" +
                             "GU\n" +
-                            "kk\n",
-                    "select * from x where not name ilike 'XJ'"
-            );
+                            "kk\n");
         });
     }
 
