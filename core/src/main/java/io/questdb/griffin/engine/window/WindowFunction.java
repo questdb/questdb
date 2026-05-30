@@ -195,6 +195,31 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Returns the number of forward rows this function requires from the same partition
+     * before it can finalise its output for the current row. {@code 0} means the function
+     * can emit immediately on {@link #computeNext(Record)} (e.g. LAG). A positive value
+     * means the function needs that many additional rows of the same partition before its
+     * value is known (e.g. LEAD with non-zero offset).
+     * <p>
+     * Only consulted by the streaming executor when {@link #getPassCount()} is
+     * {@link #ZERO_PASS}. The streaming executor reserves per-partition buffering
+     * proportional to the maximum lookahead across all window functions in the query.
+     * Functions with positive lookahead must support deferred emission: the row enqueued
+     * when the function is first invoked on a record may be emitted to the consumer
+     * lookahead rows later, after the function has back-filled the slot via a subsequent
+     * {@link #computeNext(Record)} call.
+     * <p>
+     * Returning a positive value here has no effect on the cached executor path. Functions
+     * that are routed through {@link CachedWindowRecordCursorFactory} still go through
+     * {@link #pass1(Record, long, WindowSPI)} regardless of lookahead.
+     *
+     * @return non-negative lookahead in rows; {@code 0} for immediate-emit functions
+     */
+    default int getLookahead() {
+        return 0;
+    }
+
+    /**
      * @return pass1 scan direction.
      * Some {@link #ONE_PASS} and {@link #TWO_PASS} window functions may be more efficient when using a backward scan.
      */
@@ -326,6 +351,57 @@ public interface WindowFunction extends Function {
       Set index of record chain column used to store window function result.
      */
     void setColumnIndex(int columnIndex);
+
+    /**
+     * Back-fills a deferred window slot with this function's value, computed from the supplied source row.
+     * <p>
+     * Called by the streaming deferred-emit executor when a previously-buffered pending slot's lookahead
+     * position has been reached by the current base row. The function reads its argument from {@code source}
+     * and writes the result into {@code pendingSlot}'s output column (the column previously set via
+     * {@link #setColumnIndex(int)}).
+     * <p>
+     * Only invoked on functions that returned a positive {@link #getLookahead()} value. Default throws
+     * to keep immediate-emit ({@link #ZERO_PASS} with {@code lookahead == 0}) and cached functions from
+     * accidentally landing here.
+     *
+     * @param source      the base row that supplies the value for back-filling
+     * @param pendingSlot the address in the pending-row chain that owns the slot to write
+     * @param spi         provides column slot addresses within {@code pendingSlot}
+     */
+    default void streamingBackfill(Record source, long pendingSlot, WindowSPI spi) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Fills a pending slot's output column with this function's default value (typically NULL) when the
+     * base cursor exhausts before the slot's lookahead position is reached.
+     * <p>
+     * Called by the streaming deferred-emit executor during end-of-cursor flush, exactly once per
+     * pending slot that still has an outstanding bit for this function. The function writes its
+     * {@code defaultValue} (or NULL if absent) into {@code pendingSlot}'s output column.
+     * <p>
+     * Only invoked on functions that returned a positive {@link #getLookahead()} value. Default throws.
+     *
+     * @param pendingSlot the address in the pending-row chain to write
+     * @param spi         provides column slot addresses within {@code pendingSlot}
+     */
+    default void streamingFlushDefault(long pendingSlot, WindowSPI spi) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Variant of {@link #pass1(Record, long, WindowSPI)} for streaming dispatch where the cursor
+     * has already resolved the current row's partition. {@code partitionStateAddr} points at three
+     * contiguous 8-byte LONG slots reserved for this LAG function inside the cursor's MapValue:
+     * [startOffset, firstIdx, count]. The implementation reads/writes its state directly via
+     * Unsafe, skipping the per-row map lookup the standard pass1 would do.
+     * <p>
+     * Default falls back to {@link #pass1(Record, long, WindowSPI)} and ignores the address.
+     * Pass {@code 0} from a non-co-located context (non-partitioned cursor, cached executor).
+     */
+    default void streamingPass1(Record record, long recordOffset, WindowSPI spi, long partitionStateAddr) {
+        pass1(record, recordOffset, spi);
+    }
 
     enum Pass1ScanDirection {
         FORWARD, BACKWARD

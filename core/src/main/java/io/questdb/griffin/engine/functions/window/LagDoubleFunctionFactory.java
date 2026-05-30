@@ -26,16 +26,23 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -57,6 +64,10 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        Function streaming = tryNewStreamingInstance(args, argPositions, configuration, sqlExecutionContext);
+        if (streaming != null) {
+            return streaming;
+        }
         return LeadLagWindowFunctionFactoryHelper.newInstance(
                 position,
                 args,
@@ -65,12 +76,68 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 sqlExecutionContext,
                 (defaultValue) -> {
                     if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), ColumnType.DOUBLE)) {
-                        throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to double");
+                        throw SqlException.$(argPositions.getQuick(2), "default value cannot be cast to double");
                     }
                 },
                 LagFunction::new,
                 LeadLagValueCurrentRow::new,
                 LagOverPartitionFunction::new
+        );
+    }
+
+    private static Function tryNewStreamingInstance(
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        if (!configuration.getSqlWindowStreamingLeadEnabled()) {
+            return null;
+        }
+        final WindowContext wc = sqlExecutionContext.getWindowContext();
+        if (wc.isEmpty() || wc.isIgnoreNulls() || wc.getPartitionByRecord() == null) {
+            return null;
+        }
+        if (args.size() > 3) {
+            return null;
+        }
+
+        long offset = 1;
+        if (args.size() >= 2) {
+            Function offsetFunc = args.getQuick(1);
+            if (!offsetFunc.isConstant()) {
+                return null;
+            }
+            offset = offsetFunc.getLong(null);
+            if (offset <= 0) {
+                return null;
+            }
+        }
+        if (offset > LeadLagWindowFunctionFactoryHelper.MAX_STREAMING_LAG_OFFSET) {
+            return null;
+        }
+
+        Function defaultValue = null;
+        if (args.size() == 3) {
+            Function dv = args.getQuick(2);
+            if (dv instanceof WindowFunction) {
+                throw SqlException.$(argPositions.getQuick(2), "default value can not be a window function");
+            }
+            if (!dv.isConstant()) {
+                return null;
+            }
+            if (!ColumnType.isSameOrBuiltInWideningCast(dv.getType(), ColumnType.DOUBLE)) {
+                throw SqlException.$(argPositions.getQuick(2), "default value cannot be cast to double");
+            }
+            defaultValue = dv;
+        }
+
+        return new StreamingLagOverPartitionFunction(
+                configuration,
+                wc.getPartitionByKeyTypes(),
+                wc.getPartitionByRecord(),
+                wc.getPartitionBySink(),
+                args.get(0), defaultValue, offset
         );
     }
 
@@ -174,6 +241,107 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
+        }
+    }
+
+    /**
+     * Partitioned LAG variant that participates in streaming dispatch. See
+     * {@code LagLongFunctionFactory.StreamingLagOverPartitionFunction} for the design rationale.
+     */
+    static final class StreamingLagOverPartitionFunction extends LagOverPartitionFunction {
+        private final CairoConfiguration configuration;
+        // Resolved in init() after super.init() runs defaultValue.init(); see LagLongFunctionFactory.
+        private double defaultDoubleValue;
+        private final ColumnTypes keyTypes;
+
+        public StreamingLagOverPartitionFunction(
+                CairoConfiguration configuration,
+                ColumnTypes keyTypes,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                Function defaultValue,
+                long offset
+        ) {
+            super(null, partitionByRecord, partitionBySink, null, arg, false, defaultValue, offset);
+            this.configuration = configuration;
+            this.keyTypes = keyTypes;
+            this.defaultDoubleValue = Double.NaN;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            if (map == null) {
+                map = MapFactory.createUnorderedMap(
+                        configuration,
+                        keyTypes,
+                        LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES
+                );
+                memory = Vm.getCARWInstance(
+                        configuration.getSqlWindowStorePageSize(),
+                        configuration.getSqlWindowStoreMaxPages(),
+                        MemoryTag.NATIVE_CIRCULAR_BUFFER
+                );
+            }
+            super.computeNext(record);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            this.defaultDoubleValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(null);
+        }
+
+        @Override
+        protected void nullStreamingFields() {
+            // Re-enable the lazy-alloc gate in computeNext / streamingPass1 on cursor reuse:
+            // super's close/reset frees map and memory but leaves the references non-null.
+            map = null;
+            memory = null;
+        }
+
+        @Override
+        public void streamingPass1(Record record, long recordOffset, WindowSPI spi, long partitionStateAddr) {
+            if (partitionStateAddr == 0L) {
+                pass1(record, recordOffset, spi);
+                return;
+            }
+
+            if (memory == null) {
+                memory = Vm.getCARWInstance(
+                        configuration.getSqlWindowStorePageSize(),
+                        configuration.getSqlWindowStoreMaxPages(),
+                        MemoryTag.NATIVE_CIRCULAR_BUFFER
+                );
+            }
+
+            long startOffset = Unsafe.getUnsafe().getLong(partitionStateAddr);
+            long firstIdx = Unsafe.getUnsafe().getLong(partitionStateAddr + Long.BYTES);
+            long count = Unsafe.getUnsafe().getLong(partitionStateAddr + 2L * Long.BYTES);
+
+            if (count == 0L && startOffset == 0L) {
+                startOffset = memory.appendAddressFor(offset * Double.BYTES) - memory.getPageAddress(0);
+            }
+
+            double lagValue;
+            if (count < offset) {
+                lagValue = defaultDoubleValue;
+            } else {
+                lagValue = memory.getDouble(startOffset + firstIdx * Double.BYTES);
+            }
+            double d = arg.getDouble(record);
+            memory.putDouble(startOffset + firstIdx * Double.BYTES, d);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
+
+            firstIdx++;
+            if (firstIdx == offset) {
+                firstIdx = 0;
+            }
+            count++;
+
+            Unsafe.getUnsafe().putLong(partitionStateAddr, startOffset);
+            Unsafe.getUnsafe().putLong(partitionStateAddr + Long.BYTES, firstIdx);
+            Unsafe.getUnsafe().putLong(partitionStateAddr + 2L * Long.BYTES, count);
         }
     }
 }

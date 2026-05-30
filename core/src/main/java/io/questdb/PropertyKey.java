@@ -259,6 +259,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_WINDOW_TREE_PAGE_SIZE("cairo.sql.window.tree.page.size"),
     CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES("cairo.sql.analytic.tree.max.pages"),
     CAIRO_SQL_WINDOW_TREE_MAX_PAGES("cairo.sql.window.tree.max.pages"),
+    CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED("cairo.sql.window.streaming.lead.enabled"),
+    CAIRO_SQL_WINDOW_STREAMING_MAX_PARTITIONS("cairo.sql.window.streaming.max.partitions"),
     CAIRO_SQL_INTERVAL_MAX_BRACKET_DEPTH("cairo.sql.interval.max.bracket.depth"),
     CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE("cairo.sql.interval.max.intervals.after.merge"),
     CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD("cairo.sql.interval.incremental.merge.threshold"),

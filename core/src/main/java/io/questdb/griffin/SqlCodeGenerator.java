@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
@@ -167,6 +168,7 @@ import io.questdb.griffin.engine.functions.memoization.SymbolFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.VarcharFunctionMemoizer;
+import io.questdb.griffin.engine.functions.window.BasePartitionedWindowFunction;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -327,6 +329,7 @@ import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
+import io.questdb.griffin.engine.window.DeferredEmitWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
@@ -9282,6 +9285,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             // if all window function don't require sorting or more than one pass then use streaming factory
             boolean isFastPath = true;
+            // Phase 6 cost-model heuristic: track whether any column triggered Phase 4 LAG<->LEAD
+            // normalisation. Streaming dispatch is a win when the cached executor would otherwise pay
+            // for sort trees (DESC orders or mixed directions vs base scan). It's a regression when
+            // cached is already optimal (orders match natural scan direction, so cached just materialises
+            // into a RecordArray and walks linearly). Normalisation fires precisely when there's a sort
+            // tree to eliminate.
+            boolean hasNormalisationFiredAnywhere = false;
 
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
@@ -9329,11 +9339,71 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int timestampIdx = base.getMetadata().getTimestampIndex();
                     int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
 
+                    // Phase 4: LAG <-> LEAD normalisation. When the streaming-lead flag is enabled and
+                    // the window OVER ORDER BY direction on the designated timestamp opposes the base
+                    // scan direction, swap the function token (lag <-> lead) and the effective order
+                    // direction so the OVER ORDER BY aligns with the base scan. The AST mutation happens
+                    // on a deep clone of the original node so the model is left untouched (defensive
+                    // against pool-recycled AST reuse across re-compilations).
+                    //
+                    // The normalised function is only safe to use when dismissOrder turns out true
+                    // below; the cached path reads `ac.getOrderByDirection()` (the ORIGINAL direction)
+                    // and would feed that to the swapped-token function, producing the wrong result.
+                    // Predict here whether the dismiss-order logic below would succeed for the swapped
+                    // direction and only normalise when it will. Without this gate, queries that fire
+                    // Phase 4 but whose outer ORDER BY does not align with the swap would parse the
+                    // swapped function, fail the assertion below in debug builds, fall back to the
+                    // cached path, and re-parse from the original AST — a wasted parse/free cycle.
+                    ExpressionNode astForParse = ast;
+                    int effectiveOrderByDirection = osz > 0 ? ac.getOrderByDirection().getQuick(0) : ORDER_ASC;
+                    boolean isLeadLagNormalised = false;
+                    if (configuration.getSqlWindowStreamingLeadEnabled()
+                            && osz == 1
+                            && timestampIdx != -1
+                            && baseMetadata.getColumnIndexQuiet(ac.getOrderBy().getQuick(0).token) == timestampIdx
+                            && !ac.isIgnoreNulls()) {
+                        int dir = ac.getOrderByDirection().getQuick(0);
+                        int baseDir = base.getScanDirection();
+                        boolean isMismatch = (dir == ORDER_ASC && baseDir == RecordCursorFactory.SCAN_DIRECTION_BACKWARD)
+                                || (dir == ORDER_DESC && baseDir == RecordCursorFactory.SCAN_DIRECTION_FORWARD);
+                        if (isMismatch) {
+                            // Predicted dismissOrder if we normalise: the second dismiss path below
+                            // (orderHash.size() < 2) is guaranteed to succeed after swap because the
+                            // swapped direction matches base scan direction by construction. The first
+                            // dismiss path (followedOrderByAdvice && orderHash.size() > 0) succeeds
+                            // when the outer ORDER BY's first column matches the OVER column with the
+                            // swapped direction.
+                            int swappedDir = dir == ORDER_ASC ? ORDER_DESC : ORDER_ASC;
+                            final ExpressionNode overOrderByNode = ac.getOrderBy().getQuick(0);
+                            boolean wouldDismissAfterSwap = orderHash.size() < 2
+                                    || (base.followedOrderByAdvice()
+                                            && Chars.equalsIgnoreCase(overOrderByNode.token, orderHash.keys().get(0))
+                                            && orderHash.get(overOrderByNode.token) == swappedDir);
+                            if (wouldDismissAfterSwap) {
+                                CharSequence newToken = null;
+                                if (Chars.equalsIgnoreCase("lag", ast.token)) {
+                                    newToken = "lead";
+                                } else if (Chars.equalsIgnoreCase("lead", ast.token)) {
+                                    newToken = "lag";
+                                }
+                                if (newToken != null) {
+                                    astForParse = ExpressionNode.deepClone(expressionNodePool, ast);
+                                    astForParse.token = newToken;
+                                    effectiveOrderByDirection = swappedDir;
+                                    isLeadLagNormalised = true;
+                                    hasNormalisationFiredAnywhere = true;
+                                }
+                            }
+                        }
+                    }
+
                     if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
                         dismissOrder = true;
                         for (int j = 0; j < osz; j++) {
                             ExpressionNode node = ac.getOrderBy().getQuick(j);
-                            int direction = ac.getOrderByDirection().getQuick(j);
+                            int direction = j == 0 && isLeadLagNormalised
+                                    ? effectiveOrderByDirection
+                                    : ac.getOrderByDirection().getQuick(j);
                             if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
                                     orderHash.get(node.token) != direction) {
                                 dismissOrder = false;
@@ -9343,7 +9413,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     if (!dismissOrder && osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
                         ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
-                        int orderByDirection = ac.getOrderByDirection().getQuick(0);
+                        int orderByDirection = isLeadLagNormalised
+                                ? effectiveOrderByDirection
+                                : ac.getOrderByDirection().getQuick(0);
 
                         if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
                                 ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
@@ -9351,6 +9423,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             dismissOrder = true;
                         }
                     }
+                    // Invariant: when Phase 4 normalisation has fired, the OVER ORDER BY direction
+                    // on the cloned AST is the opposite of the original. Downstream init paths read
+                    // the original direction via ac.getOrderByDirection() / qc.getOrderByDirection(),
+                    // which would now disagree with the parsed function's effective ordering. The
+                    // only safe consumer of the normalised function is the streaming cursor, which
+                    // requires dismissOrder=true to skip comparator-driven sorting. If we ever land
+                    // here with normalisation set and dismissOrder still false, the function would
+                    // run with a stale direction on the cached path.
+                    assert !isLeadLagNormalised || dismissOrder
+                            : "Phase 4 normalisation requires dismissOrder; otherwise the swapped function would receive the original (now mismatched) OVER ORDER BY direction";
 
                     executionContext.configureWindowContext(
                             partitionByRecord,
@@ -9376,7 +9458,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                     final Function f;
                     try {
-                        f = functionParser.parseFunction(ast, baseMetadata, executionContext);
+                        f = functionParser.parseFunction(astForParse, baseMetadata, executionContext);
                         if (!(f instanceof WindowFunction af)) {
                             Misc.free(f);
                             throw SqlException.$(ast.position, "non-window function called in window context");
@@ -9436,19 +9518,167 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (isFastPath) {
+                int maxLookahead = 0;
+                int lookaheadFunctionCount = 0;
+                int windowFunctionCount = 0;
+                int lookaheadColumnIndex = -1;
                 for (int i = 0, size = functions.size(); i < size; i++) {
                     Function func = functions.getQuick(i);
-                    if (func instanceof WindowFunction) {
+                    if (func instanceof WindowFunction wf) {
+                        windowFunctionCount++;
+                        int la = wf.getLookahead();
+                        if (la > maxLookahead) {
+                            maxLookahead = la;
+                        }
+                        if (la > 0) {
+                            lookaheadFunctionCount++;
+                            lookaheadColumnIndex = i;
+                        }
                         WindowExpression qc = (WindowExpression) columns.getQuick(i);
                         if (qc.getOrderBy().size() > 0) {
                             chainTypes.clear();
-                            ((WindowFunction) func).initRecordComparator(this, baseMetadata, chainTypes, null,
+                            wf.initRecordComparator(this, baseMetadata, chainTypes, null,
                                     qc.getOrderBy(), qc.getOrderByDirection());
                         }
                     }
                 }
-                return new WindowRecordCursorFactory(base, factoryMetadata, functions);
-            } else {
+
+                if (maxLookahead == 0) {
+                    return new WindowRecordCursorFactory(base, factoryMetadata, functions);
+                }
+
+                // Phase 6 deferred-emit dispatch: at least one positive-lookahead window function, base
+                // random access, and (ringCapacity * leadCount) <= 64 so the cursor's per-slot LEAD
+                // pending-bit mask fits in one long. All window function values must be 8-byte
+                // fixed-width types (Long/Double/Date/Timestamp/Int/Float/Decimal<=64).
+                final int ringCap = maxLookahead + 1;
+                boolean allWindowsAreFit8Bytes = true;
+                if (lookaheadFunctionCount >= 1) {
+                    for (int i = 0, n = functions.size(); i < n; i++) {
+                        Function f = functions.getQuick(i);
+                        if (f instanceof WindowFunction) {
+                            int tag = ColumnType.tagOf(f.getType());
+                            // Only types whose LEAD factory has a streaming variant (ZERO_PASS,
+                            // positive getLookahead(), streamingBackfill / streamingFlushDefault)
+                            // can reach this dispatch. INT and FLOAT are NOT in this list because
+                            // they widen to LONG / DOUBLE at function-resolution time (no
+                            // LeadInt / LeadFloat factory exists), so the function's getType()
+                            // never reports INT or FLOAT here. DECIMAL types are excluded because
+                            // LeadDecimalFunctionFactory inherits the default ONE_PASS, which
+                            // would trip isFastPath further up.
+                            if (!(tag == ColumnType.LONG
+                                    || tag == ColumnType.DOUBLE
+                                    || tag == ColumnType.DATE
+                                    || tag == ColumnType.TIMESTAMP)) {
+                                allWindowsAreFit8Bytes = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                // Shape-gate: only dispatch to streaming when the cached path would do measurably
+                // worse on this query shape. This is a structural check, not a row-count cost model.
+                // - Phase 4 normalisation firing means cached would build a sort tree to satisfy the
+                //   opposing OVER ORDER BY; streaming eliminates that tree.
+                // - When every window function is positive-lookahead (no LAG), cached must
+                //   materialise the full input to look ahead; streaming avoids the materialisation.
+                // - In all other cases (e.g. LAG-only with OVER ORDER BY matching base scan),
+                //   cached's natural-scan path is already optimal and streaming's per-row overhead
+                //   (map lookup, slot allocation, recordAt) is pure tax.
+                // Worth tightening into a real cost model later (e.g. a min-rowcount guard for the
+                // pure-LEAD branch on tiny tables); for now the shape check is the entire gate.
+                boolean isStreamingDispatchEligible = hasNormalisationFiredAnywhere
+                        || lookaheadFunctionCount == windowFunctionCount;
+                // The cursor maintains a single per-partition map keyed by ONE window expression's
+                // PARTITION BY clause. All window functions in the query must agree on partition
+                // semantics, otherwise their slots share the wrong partition state and produce
+                // wrong values. Compare every window column's PARTITION BY against the first
+                // column's; bail to cached on any divergence.
+                boolean allWindowsShareSamePartitionBy = true;
+                if (lookaheadFunctionCount >= 1) {
+                    ObjList<ExpressionNode> sharedPartitionBy = null;
+                    boolean isSharedInitialised = false;
+                    for (int i = 0, n = columns.size(); i < n && allWindowsShareSamePartitionBy; i++) {
+                        QueryColumn qc = columns.getQuick(i);
+                        if (!qc.isWindowExpression()) {
+                            continue;
+                        }
+                        ObjList<ExpressionNode> pb = ((WindowExpression) qc).getPartitionBy();
+                        if (!isSharedInitialised) {
+                            sharedPartitionBy = pb;
+                            isSharedInitialised = true;
+                            continue;
+                        }
+                        if (sharedPartitionBy.size() != pb.size()) {
+                            allWindowsShareSamePartitionBy = false;
+                            break;
+                        }
+                        for (int j = 0, m = pb.size(); j < m; j++) {
+                            if (!ExpressionNode.compareNodesExact(sharedPartitionBy.getQuick(j), pb.getQuick(j))) {
+                                allWindowsShareSamePartitionBy = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (lookaheadFunctionCount >= 1
+                        && allWindowsAreFit8Bytes
+                        && (long) ringCap * lookaheadFunctionCount <= 64
+                        && base.recordCursorSupportsRandomAccess()
+                        && isStreamingDispatchEligible
+                        && allWindowsShareSamePartitionBy) {
+                    // The lookahead window function has already parsed its PARTITION BY clause in the
+                    // first pass above. Reuse those Function instances directly for the cursor's
+                    // partition record instead of parsing the same expressions a second time. The
+                    // cursor wraps the shared function list in its own VirtualRecord so both records
+                    // can call .of() independently; Misc.freeObjList tolerates re-frees by null-checking
+                    // each entry, so closing either VirtualRecord first leaves the second close a no-op.
+                    VirtualRecord cursorPartitionByRecord = null;
+                    RecordSink cursorPartitionBySink = null;
+                    io.questdb.cairo.map.Map cursorPartitionMap = null;
+                    int maxPartitions = configuration.getSqlWindowStreamingMaxPartitions();
+                    final WindowExpression leadCol = (WindowExpression) columns.getQuick(lookaheadColumnIndex);
+                    final int psz = leadCol.getPartitionBy().size();
+                    try {
+                        if (psz > 0) {
+                            final Function lookaheadFunc = functions.getQuick(lookaheadColumnIndex);
+                            if (!(lookaheadFunc instanceof BasePartitionedWindowFunction sharedSrc)) {
+                                throw SqlException.$(leadCol.getAst().position, "expected partitioned window function for streaming dispatch");
+                            }
+                            final VirtualRecord sharedPartitionRecord = sharedSrc.getPartitionByRecord();
+                            cursorPartitionByRecord = new VirtualRecord(sharedPartitionRecord.getFunctions());
+                            cursorPartitionBySink = sharedSrc.getPartitionBySink();
+                            final ArrayColumnTypes leadKeyTypes = new ArrayColumnTypes();
+                            for (int j = 0; j < psz; j++) {
+                                leadKeyTypes.add(sharedPartitionRecord.getFunctions().getQuick(j).getType());
+                            }
+                            // Reserve 3 extra LONG slots per LAG function in the partition value layout
+                            // so streaming LAG variants can store their (startOffset, firstIdx, count)
+                            // tuple inline and skip a second hash probe per row.
+                            final int lagFnCount = windowFunctionCount - lookaheadFunctionCount;
+                            cursorPartitionMap = MapFactory.createUnorderedMap(
+                                    configuration,
+                                    leadKeyTypes,
+                                    DeferredEmitWindowRecordCursorFactory.buildPartitionValueTypes(lagFnCount)
+                            );
+                        }
+                        return new DeferredEmitWindowRecordCursorFactory(
+                                base, factoryMetadata, functions,
+                                cursorPartitionByRecord, cursorPartitionBySink, cursorPartitionMap,
+                                maxPartitions
+                        );
+                    } catch (Throwable t) {
+                        // cursorPartitionByRecord wraps a list owned by sharedSrc; do not free it
+                        // here or sharedSrc.close() would later double-free. base and functions
+                        // are freed by the outer catch in this method.
+                        Misc.free(cursorPartitionMap);
+                        throw t;
+                    }
+                }
+
+                isFastPath = false;
+            }
+            if (!isFastPath) {
                 factoryMetadata.clear();
                 Misc.freeObjListAndClear(functions);
             }
