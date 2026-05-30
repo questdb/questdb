@@ -40,12 +40,12 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(23451.000000m), (23451.000000m), (23451.000000m), " +
                 "(23452.000000m), (23452.000000m), (23452.000000m)");
 
-        assertQuery("bigval\tcount\n" +
+        assertQuery("select bigval, count(*) from dec128test group by bigval order by bigval")
+                .expectSize()
+                .returns("bigval\tcount\n" +
                         "23450.000000\t3\n" +
                         "23451.000000\t3\n" +
-                        "23452.000000\t3\n",
-                "select bigval, count(*) from dec128test group by bigval order by bigval",
-                null, null, true, true);
+                        "23452.000000\t3\n");
     }
 
     @Test
@@ -57,11 +57,11 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(11.00m), (11.00m), (11.00m), (11.00m), (11.00m), " +
                 "(11.00m), (11.00m), (11.00m), (11.00m), (11.00m)");
 
-        assertQuery("amount\tcount\n" +
+        assertQuery("select amount, count(*) from dec16test group by amount order by amount")
+                .expectSize()
+                .returns("amount\tcount\n" +
                         "10.00\t10\n" +
-                        "11.00\t10\n",
-                "select amount, count(*) from dec16test group by amount order by amount",
-                null, null, true, true);
+                        "11.00\t10\n");
     }
 
     @Test
@@ -72,12 +72,12 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(23451m), (23451m), (23451m), " +
                 "(23452m), (23452m), (23452m)");
 
-        assertQuery("hugeval\tcount\n" +
+        assertQuery("select hugeval, count(*) from dec256test group by hugeval order by hugeval")
+                .expectSize()
+                .returns("hugeval\tcount\n" +
                         "23450\t3\n" +
                         "23451\t3\n" +
-                        "23452\t3\n",
-                "select hugeval, count(*) from dec256test group by hugeval order by hugeval",
-                null, null, true, true);
+                        "23452\t3\n");
     }
 
     @Test
@@ -88,12 +88,12 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(23451.000m, 4), (23451.000m, 5), (23451.000m, 6), " +
                 "(23452.000m, 7), (23452.000m, 8), (23452.000m, 9)");
 
-        assertQuery("value\tminx\tmaxx\n" +
+        assertQuery("select value, min(x) as minx, max(x) as maxx from dec32test group by value order by value")
+                .expectSize()
+                .returns("value\tminx\tmaxx\n" +
                         "23450.000\t1\t3\n" +
                         "23451.000\t4\t6\n" +
-                        "23452.000\t7\t9\n",
-                "select value, min(x) as minx, max(x) as maxx from dec32test group by value order by value",
-                null, null, true, true);
+                        "23452.000\t7\t9\n");
     }
 
     @Test
@@ -104,12 +104,12 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(23451.000000m, 4), (23451.000000m, 5), (23451.000000m, 6), " +
                 "(23452.000000m, 7), (23452.000000m, 8), (23452.000000m, 9)");
 
-        assertQuery("balance\tcount\tsum_id\n" +
+        assertQuery("select balance, count(*), sum(id) as sum_id from dec64test group by balance order by balance")
+                .expectSize()
+                .returns("balance\tcount\tsum_id\n" +
                         "23450.000000\t3\t6\n" +
                         "23451.000000\t3\t15\n" +
-                        "23452.000000\t3\t24\n",
-                "select balance, count(*), sum(id) as sum_id from dec64test group by balance order by balance",
-                null, null, true, true);
+                        "23452.000000\t3\t24\n");
     }
 
     @Test
@@ -121,11 +121,11 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(2.0m), (2.0m), (2.0m), (2.0m), (2.0m), " +
                 "(2.0m), (2.0m), (2.0m), (2.0m), (2.0m)");
 
-        assertQuery("price\tcount\n" +
+        assertQuery("select price, count(*) from dec8test group by price order by price")
+                .expectSize()
+                .returns("price\tcount\n" +
                         "1.0\t10\n" +
-                        "2.0\t10\n",
-                "select price, count(*) from dec8test group by price order by price",
-                null, null, true, true);
+                        "2.0\t10\n");
     }
 
     @Test
@@ -137,13 +137,13 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "('A', 20.0m, 2.5), ('B', 20.0m, 3.0), " +
                 "('A', 20.0m, 3.5), ('B', 20.0m, 4.0)");
 
-        assertQuery("category\tprice\ttotal\n" +
+        assertQuery("select category, price, sum(qty) as total from mixedtest group by category, price order by category, price")
+                .expectSize()
+                .returns("category\tprice\ttotal\n" +
                         "A\t10.0\t2.0\n" +
                         "A\t20.0\t6.0\n" +
                         "B\t10.0\t3.0\n" +
-                        "B\t20.0\t7.0\n",
-                "select category, price, sum(qty) as total from mixedtest group by category, price order by category, price",
-                null, null, true, true);
+                        "B\t20.0\t7.0\n");
     }
 
     @Test
@@ -156,14 +156,14 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(4.00m), (4.00m), " +
                 "(5.00m), (5.00m)");
 
-        assertQuery("dec_val\tcount\n" +
+        assertQuery("select dec_val, count(*) from casttest group by dec_val order by dec_val")
+                .expectSize()
+                .returns("dec_val\tcount\n" +
                         "1.00\t2\n" +
                         "2.00\t2\n" +
                         "3.00\t2\n" +
                         "4.00\t2\n" +
-                        "5.00\t2\n",
-                "select dec_val, count(*) from casttest group by dec_val order by dec_val",
-                null, null, true, true);
+                        "5.00\t2\n");
     }
 
     @Test
@@ -175,13 +175,13 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(69.00m), (69.00m), (69.00m), " +
                 "(99.00m), (99.00m), (99.00m)");
 
-        assertQuery("price\tcount\n" +
+        assertQuery("select price, count(*) from distincttest group by price order by price")
+                .expectSize()
+                .returns("price\tcount\n" +
                         "9.00\t3\n" +
                         "39.00\t3\n" +
                         "69.00\t3\n" +
-                        "99.00\t3\n",
-                "select price, count(*) from distincttest group by price order by price",
-                null, null, true, true);
+                        "99.00\t3\n");
     }
 
     @Test
@@ -199,15 +199,15 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(1.00m, 9), " +
                 "(1.00m, 10)");
 
-        assertQuery("amount\tcount\tid_sum\n" +
+        assertQuery("select amount, count(*), sum(id) as id_sum from boundaries group by amount order by amount")
+                .expectSize()
+                .returns("amount\tcount\tid_sum\n" +
                         "-99.99\t1\t2\n" +
                         "-0.01\t1\t5\n" +
                         "0.00\t1\t3\n" +
                         "0.01\t1\t4\n" +
                         "1.00\t5\t40\n" +
-                        "99.99\t1\t1\n",
-                "select amount, count(*), sum(id) as id_sum from boundaries group by amount order by amount",
-                null, null, true, true);
+                        "99.99\t1\t1\n");
     }
 
     @Test
@@ -217,10 +217,10 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(99m, 9999m, 999999999m, 999999999999999999m, 99999999999999999999999999999999999999m), " +
                 "(99m, 9999m, 999999999m, 999999999999999999m, 99999999999999999999999999999999999999m)");
 
-        assertQuery("d2\td4\td9\td18\td38\tcount\n" +
-                        "99\t9999\t999999999\t999999999999999999\t99999999999999999999999999999999999999\t2\n",
-                "select d2, d4, d9, d18, d38, count(*) from boundtest group by d2, d4, d9, d18, d38",
-                null, null, true, true);
+        assertQuery("select d2, d4, d9, d18, d38, count(*) from boundtest group by d2, d4, d9, d18, d38")
+                .expectSize()
+                .returns("d2\td4\td9\td18\td38\tcount\n" +
+                        "99\t9999\t999999999\t999999999999999999\t99999999999999999999999999999999999999\t2\n");
     }
 
     @Test
@@ -233,13 +233,13 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "('2024-01-01T03:00:00.000000Z', 101.25m, 3000), " +
                 "('2024-01-01T04:00:00.000000Z', 102.00m, 2500)");
 
-        assertQuery("price\ttotal_volume\thours\n" +
+        assertQuery("select price, sum(volume) as total_volume, count(*) as hours " +
+                        "from timeseries group by price order by price")
+                .expectSize()
+                .returns("price\ttotal_volume\thours\n" +
                         "100.50\t3000\t2\n" +
                         "101.25\t4500\t2\n" +
-                        "102.00\t2500\t1\n",
-                "select price, sum(volume) as total_volume, count(*) as hours " +
-                        "from timeseries group by price order by price",
-                null, null, true, true);
+                        "102.00\t2500\t1\n");
     }
 
     @Test
@@ -250,12 +250,12 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(2.000m, 4), (2.000m, 5), (2.000m, 6), " +
                 "(3.000m, 7), (3.000m, 8), (3.000m, 9)");
 
-        assertQuery("grp\tcount\tsum_x\n" +
+        assertQuery("select grp, count(*), sum(x) as sum_x from scaletest group by grp order by grp")
+                .expectSize()
+                .returns("grp\tcount\tsum_x\n" +
                         "1.000\t3\t6\n" +
                         "2.000\t3\t15\n" +
-                        "3.000\t3\t24\n",
-                "select grp, count(*), sum(x) as sum_x from scaletest group by grp order by grp",
-                null, null, true, true);
+                        "3.000\t3\t24\n");
     }
 
     @Test
@@ -268,11 +268,11 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(131.50m), (131.50m), " +
                 "(142.00m), (142.00m)");
 
-        assertQuery("price\tcount\n" +
+        assertQuery("select price, count(*) from ordertest group by price order by price limit 2")
+                .expectSize()
+                .returns("price\tcount\n" +
                         "100.00\t2\n" +
-                        "110.50\t2\n",
-                "select price, count(*) from ordertest group by price order by price limit 2",
-                null, null, true, true);
+                        "110.50\t2\n");
     }
 
     @Test
@@ -283,13 +283,13 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(1.0m, 5), (2.0m, 6), (3.0m, 7), (null, 8), " +
                 "(1.0m, 9), (2.0m, 10), (3.0m, 11), (null, 12)");
 
-        assertQuery("amount\tcount\n" +
+        assertQuery("select amount, count(*) from nulltest group by amount order by amount")
+                .expectSize()
+                .returns("amount\tcount\n" +
                         "\t3\n" +
                         "1.0\t3\n" +
                         "2.0\t3\n" +
-                        "3.0\t3\n",
-                "select amount, count(*) from nulltest group by amount order by amount",
-                null, null, true, true);
+                        "3.0\t3\n");
     }
 
     @Test
@@ -299,14 +299,14 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(100.00m), (110.50m), (121.00m), (131.50m), (142.00m), " +
                 "(100.00m), (110.50m), (121.00m), (131.50m), (142.00m)");
 
-        assertQuery("price\tcount\n" +
+        assertQuery("select price, count(*) from ordertest group by price order by price")
+                .expectSize()
+                .returns("price\tcount\n" +
                         "100.00\t2\n" +
                         "110.50\t2\n" +
                         "121.00\t2\n" +
                         "131.50\t2\n" +
-                        "142.00\t2\n",
-                "select price, count(*) from ordertest group by price order by price",
-                null, null, true, true);
+                        "142.00\t2\n");
     }
 
     @Test
@@ -318,12 +318,12 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "(10.5m, 200.00m), (10.5m, 200.00m), " +
                 "(20.5m, 200.00m), (20.5m, 200.00m)");
 
-        assertQuery("price\tqty\tcount\n" +
+        assertQuery("select price, qty, count(*) from multidectest group by price, qty order by price, qty")
+                .expectSize()
+                .returns("price\tqty\tcount\n" +
                         "10.5\t100.00\t2\n" +
                         "10.5\t200.00\t2\n" +
                         "20.5\t100.00\t2\n" +
-                        "20.5\t200.00\t2\n",
-                "select price, qty, count(*) from multidectest group by price, qty order by price, qty",
-                null, null, true, true);
+                        "20.5\t200.00\t2\n");
     }
 }
