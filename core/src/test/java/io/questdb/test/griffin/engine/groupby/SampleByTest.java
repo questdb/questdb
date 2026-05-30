@@ -192,8 +192,18 @@ public class SampleByTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT " +
+                            "  ts, symbol, " +
+                            "  CASE " +
+                            "    WHEN symbol = 'BTC-USD' THEN first(price) " +
+                            "    ELSE last(price) " +
+                            "  END " +
+                            "FROM trades " +
+                            "SAMPLE BY 1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tsymbol\tswitch
                             1970-01-03T00:00:00.000000Z\tBTC-USD\t101.0
                             1970-01-03T00:00:00.000000Z\tETH-USD\t202.0
@@ -203,23 +213,23 @@ public class SampleByTest extends AbstractCairoTest {
                             1970-01-03T02:00:00.000000Z\tETH-USD\t206.0
                             1970-01-03T03:00:00.000000Z\tBTC-USD\t107.0
                             1970-01-03T03:00:00.000000Z\tETH-USD\t208.0
-                            """,
-                    "SELECT " +
+                            """);
+
+            // Same query, but with additionally SELECTed aggregates
+            assertQuery("SELECT " +
                             "  ts, symbol, " +
+                            "  first(price) as first_price, " +
+                            "  last(price) as last_price, " +
                             "  CASE " +
                             "    WHEN symbol = 'BTC-USD' THEN first(price) " +
                             "    ELSE last(price) " +
                             "  END " +
                             "FROM trades " +
-                            "SAMPLE BY 1h",
-                    "ts",
-                    true,
-                    true
-            );
-
-            // Same query, but with additionally SELECTed aggregates
-            assertQueryNoLeakCheck(
-                    """
+                            "SAMPLE BY 1h ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tsymbol\tfirst_price\tlast_price\tswitch
                             1970-01-03T00:00:00.000000Z\tBTC-USD\t101.0\t102.0\t101.0
                             1970-01-03T00:00:00.000000Z\tETH-USD\t201.0\t202.0\t202.0
@@ -229,21 +239,7 @@ public class SampleByTest extends AbstractCairoTest {
                             1970-01-03T02:00:00.000000Z\tETH-USD\t205.0\t206.0\t206.0
                             1970-01-03T03:00:00.000000Z\tBTC-USD\t107.0\t108.0\t107.0
                             1970-01-03T03:00:00.000000Z\tETH-USD\t207.0\t208.0\t208.0
-                            """,
-                    "SELECT " +
-                            "  ts, symbol, " +
-                            "  first(price) as first_price, " +
-                            "  last(price) as last_price, " +
-                            "  CASE " +
-                            "    WHEN symbol = 'BTC-USD' THEN first(price) " +
-                            "    ELSE last(price) " +
-                            "  END " +
-                            "FROM trades " +
-                            "SAMPLE BY 1h ALIGN TO CALENDAR",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -345,8 +341,9 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_sb_l256 (k LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t_sb_l256 VALUES ('0x01'::LONG256, 0), ('0x02'::LONG256, 60_000_000), ('0x01'::LONG256, 900_000_000)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT k, count() AS cnt, ts FROM t_sb_l256 SAMPLE BY 1m FILL(NULL) ORDER BY k, ts")
+                    .noLeakCheck()
+                    .returns("""
                             k\tcnt\tts
                             0x01\t1\t1970-01-01T00:00:00.000000Z
                             0x01\tnull\t1970-01-01T00:01:00.000000Z
@@ -380,12 +377,7 @@ public class SampleByTest extends AbstractCairoTest {
                             0x02\tnull\t1970-01-01T00:13:00.000000Z
                             0x02\tnull\t1970-01-01T00:14:00.000000Z
                             0x02\tnull\t1970-01-01T00:15:00.000000Z
-                            """,
-                    "SELECT k, count() AS cnt, ts FROM t_sb_l256 SAMPLE BY 1m FILL(NULL) ORDER BY k, ts",
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -407,8 +399,17 @@ public class SampleByTest extends AbstractCairoTest {
 
             // todo: return values for "prev" function are incorrect. This is a bug.
             // [nwoolmer] I think I've fixed this now, dirty state in SimpleMapValuePeeker
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                            select created, avg(latency) avg, last(latency) latency
+                              from telem
+                              sample by 2s
+                              FROM timestamp_floor('2s', '2025-01-20T13:56:50Z')
+                              TO timestamp_floor('2s', '2025-01-20T14:01:52Z')
+                              fill(0,prev);""")
+                    .timestamp("created")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             created\tavg\tlatency
                             2025-01-20T13:56:50.000000Z\t0.0\t0.0
                             2025-01-20T13:56:52.000000Z\t0.0\t0.0
@@ -561,16 +562,7 @@ public class SampleByTest extends AbstractCairoTest {
                             2025-01-20T14:01:46.000000Z\t0.0\t0.26648957155568953
                             2025-01-20T14:01:48.000000Z\t0.0\t0.26648957155568953
                             2025-01-20T14:01:50.000000Z\t0.0\t0.26648957155568953
-                            """,
-                    """
-                            select created, avg(latency) avg, last(latency) latency
-                              from telem
-                              sample by 2s
-                              FROM timestamp_floor('2s', '2025-01-20T13:56:50Z')
-                              TO timestamp_floor('2s', '2025-01-20T14:01:52Z')
-                              fill(0,prev);""",
-                    "created"
-            );
+                            """);
         });
     }
 
@@ -644,8 +636,17 @@ public class SampleByTest extends AbstractCairoTest {
                             " from generate_series('2025-01-20T13:57:14.000000Z', dateadd('u', 2500 * 100_000, '2025-01-20T13:57:14.000000Z') - 1, 2500)"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                            select created, approx_percentile(latency, 0.9, 3) latency
+                              from telem
+                              sample by 2s
+                              FROM timestamp_floor('2s', '2025-01-20T13:56:50Z')
+                              TO timestamp_floor('2s', '2025-01-20T14:01:52Z')
+                              fill(0);""")
+                    .timestamp("created")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             created\tlatency
                             2025-01-20T13:56:50.000000Z\t0.0
                             2025-01-20T13:56:52.000000Z\t0.0
@@ -798,16 +799,7 @@ public class SampleByTest extends AbstractCairoTest {
                             2025-01-20T14:01:46.000000Z\t0.0
                             2025-01-20T14:01:48.000000Z\t0.0
                             2025-01-20T14:01:50.000000Z\t0.0
-                            """,
-                    """
-                            select created, approx_percentile(latency, 0.9, 3) latency
-                              from telem
-                              sample by 2s
-                              FROM timestamp_floor('2s', '2025-01-20T13:56:50Z')
-                              TO timestamp_floor('2s', '2025-01-20T14:01:52Z')
-                              fill(0);""",
-                    "created"
-            );
+                            """);
         });
     }
 
@@ -2945,21 +2937,11 @@ public class SampleByTest extends AbstractCairoTest {
             execute("create table xx (lat double, lon double, s symbol, k timestamp)" +
                     ", index(s capacity 256) timestamp(k) partition by DAY");
 
-            assertQueryNoLeakCheck(
-                    """
-                            s\tlat\tlon
-                            a\t-2.0\t2.0
-                            a\t-32.0\t32.0
-                            a\t-62.0\t62.0
-                            a\t-92.0\t92.0
-                            a\t-122.0\t122.0
-                            a\t-152.0\t152.0
-                            """,
-                    "select s, first(lat) lat, first(lon) lon " +
+            assertQuery("select s, first(lat) lat, first(lon) lon " +
                             "from xx " +
                             "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                            "sample by 2h align to first observation",
-                    """
+                            "sample by 2h align to first observation")
+                    .ddl("""
                             insert into xx \
                             select -x lat,
                             x lon,
@@ -2967,11 +2949,18 @@ public class SampleByTest extends AbstractCairoTest {
                             timestamp_sequence(0, 10 * 60 * 1000000L) k
                             from
                             long_sequence(180)
-                            """,
-                    null,
-                    false,
-                    false
-            );
+                            """)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tlat\tlon
+                            a\t-2.0\t2.0
+                            a\t-32.0\t32.0
+                            a\t-62.0\t62.0
+                            a\t-92.0\t92.0
+                            a\t-122.0\t122.0
+                            a\t-152.0\t152.0
+                            """);
 
             execute("alter table xx drop column s", sqlExecutionContext);
             execute("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
@@ -4144,8 +4133,12 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM long_sequence(48);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT min(i), max(i), count(), ts FROM x " +
+                            "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tcount\tts
                             1\t5\t5\t2021-03-01T00:15:00.000000Z
                             6\t7\t2\t2021-03-01T00:42:00.000000Z
@@ -4164,13 +4157,7 @@ public class SampleByTest extends AbstractCairoTest {
                             41\t42\t2\t2021-03-01T06:33:00.000000Z
                             43\t45\t3\t2021-03-01T07:00:00.000000Z
                             46\t48\t3\t2021-03-01T07:27:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), count(), ts FROM x " +
-                            "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4189,8 +4176,12 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM long_sequence(48);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT min(i), max(i), count(), ts FROM x " +
+                            "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tcount\tts
                             1\t3\t3\t2021-03-14T08:58:00.000000Z
                             4\t6\t3\t2021-03-14T09:25:00.000000Z
@@ -4210,13 +4201,7 @@ public class SampleByTest extends AbstractCairoTest {
                             42\t43\t2\t2021-03-14T15:43:00.000000Z
                             44\t46\t3\t2021-03-14T16:10:00.000000Z
                             47\t48\t2\t2021-03-14T16:37:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), count(), ts FROM x " +
-                            "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4255,8 +4240,11 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             // 17m
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             2821\t2822\t2021-03-27T22:45:00.000000Z
                             2823\t2839\t2021-03-27T23:02:00.000000Z
@@ -4269,17 +4257,17 @@ public class SampleByTest extends AbstractCairoTest {
                             2942\t2958\t2021-03-28T01:01:00.000000Z
                             2959\t2975\t2021-03-28T01:18:00.000000Z
                             2976\t2983\t2021-03-28T01:35:00.000000Z
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             // The timestamps in the second query must not be before the ones from the first query.
             // If we wouldn't be doing DST gap hour check when flooring the timestamps, that would not hold.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(i), max(i), ts from x " +
+                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
+                            "sample by 17m align to calendar time zone 'Europe/Berlin';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             2984\t2992\t2021-03-28T01:35:00.000000Z
                             2993\t3009\t2021-03-28T01:52:00.000000Z
@@ -4318,18 +4306,16 @@ public class SampleByTest extends AbstractCairoTest {
                             3554\t3570\t2021-03-28T11:13:00.000000Z
                             3571\t3587\t2021-03-28T11:30:00.000000Z
                             3588\t3596\t2021-03-28T11:47:00.000000Z
-                            """,
-                    "select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
-                            "sample by 17m align to calendar time zone 'Europe/Berlin';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             // 5m
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(i), max(i), ts from x " +
+                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
+                            "sample by 5m align to calendar time zone 'Europe/Berlin';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             2821\t2825\t2021-03-27T23:00:00.000000Z
                             2826\t2830\t2021-03-27T23:05:00.000000Z
@@ -4364,17 +4350,15 @@ public class SampleByTest extends AbstractCairoTest {
                             2971\t2975\t2021-03-28T01:30:00.000000Z
                             2976\t2980\t2021-03-28T01:35:00.000000Z
                             2981\t2983\t2021-03-28T01:40:00.000000Z
-                            """,
-                    "select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
-                            "sample by 5m align to calendar time zone 'Europe/Berlin';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(i), max(i), ts from x " +
+                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
+                            "sample by 5m align to calendar time zone 'Europe/Berlin';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             2984\t2985\t2021-03-28T01:40:00.000000Z
                             2986\t2990\t2021-03-28T01:45:00.000000Z
@@ -4500,18 +4484,16 @@ public class SampleByTest extends AbstractCairoTest {
                             3586\t3590\t2021-03-28T11:45:00.000000Z
                             3591\t3595\t2021-03-28T11:50:00.000000Z
                             3596\t3596\t2021-03-28T11:55:00.000000Z
-                            """,
-                    "select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
-                            "sample by 5m align to calendar time zone 'Europe/Berlin';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             // 15m
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(i), max(i), ts from x " +
+                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
+                            "sample by 15m align to calendar time zone 'Europe/Berlin';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             2821\t2835\t2021-03-27T23:00:00.000000Z
                             2836\t2850\t2021-03-27T23:15:00.000000Z
@@ -4524,17 +4506,15 @@ public class SampleByTest extends AbstractCairoTest {
                             2941\t2955\t2021-03-28T01:00:00.000000Z
                             2956\t2970\t2021-03-28T01:15:00.000000Z
                             2971\t2983\t2021-03-28T01:30:00.000000Z
-                            """,
-                    "select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
-                            "sample by 15m align to calendar time zone 'Europe/Berlin';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(i), max(i), ts from x " +
+                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
+                            "sample by 15m align to calendar time zone 'Europe/Berlin';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             2984\t2985\t2021-03-28T01:30:00.000000Z
                             2986\t3000\t2021-03-28T01:45:00.000000Z
@@ -4578,18 +4558,16 @@ public class SampleByTest extends AbstractCairoTest {
                             3556\t3570\t2021-03-28T11:15:00.000000Z
                             3571\t3585\t2021-03-28T11:30:00.000000Z
                             3586\t3596\t2021-03-28T11:45:00.000000Z
-                            """,
-                    "select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
-                            "sample by 15m align to calendar time zone 'Europe/Berlin';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             // 30m
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(i), max(i), ts from x " +
+                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
+                            "sample by 30m align to calendar time zone 'Europe/Berlin';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             2821\t2850\t2021-03-27T23:00:00.000000Z
                             2851\t2880\t2021-03-27T23:30:00.000000Z
@@ -4597,17 +4575,15 @@ public class SampleByTest extends AbstractCairoTest {
                             2911\t2940\t2021-03-28T00:30:00.000000Z
                             2941\t2970\t2021-03-28T01:00:00.000000Z
                             2971\t2983\t2021-03-28T01:30:00.000000Z
-                            """,
-                    "select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
-                            "sample by 30m align to calendar time zone 'Europe/Berlin';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(i), max(i), ts from x " +
+                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
+                            "sample by 30m align to calendar time zone 'Europe/Berlin';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             2984\t3000\t2021-03-28T01:30:00.000000Z
                             3001\t3030\t2021-03-28T02:00:00.000000Z
@@ -4630,14 +4606,7 @@ public class SampleByTest extends AbstractCairoTest {
                             3511\t3540\t2021-03-28T10:30:00.000000Z
                             3541\t3570\t2021-03-28T11:00:00.000000Z
                             3571\t3596\t2021-03-28T11:30:00.000000Z
-                            """,
-                    "select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
-                            "sample by 30m align to calendar time zone 'Europe/Berlin';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4654,8 +4623,14 @@ public class SampleByTest extends AbstractCairoTest {
                             "from long_sequence(4 * 24 * 60);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(i), max(i), count(), ts from  x " +
+                            "where ts between '2021-03-28T00:45:00.000000Z' and '2021-03-28T06:59:59.999999Z' " +
+                            "sample by 29m align to calendar time zone 'Europe/Berlin' " +
+                            "with offset '00:15';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tcount\tts
                             2926\t2954\t29\t2021-03-28T00:45:00.000000Z
                             2955\t2983\t29\t2021-03-28T01:14:00.000000Z
@@ -4670,30 +4645,20 @@ public class SampleByTest extends AbstractCairoTest {
                             3216\t3244\t29\t2021-03-28T05:35:00.000000Z
                             3245\t3273\t29\t2021-03-28T06:04:00.000000Z
                             3274\t3300\t27\t2021-03-28T06:33:00.000000Z
-                            """,
-                    "select min(i), max(i), count(), ts from  x " +
-                            "where ts between '2021-03-28T00:45:00.000000Z' and '2021-03-28T06:59:59.999999Z' " +
-                            "sample by 29m align to calendar time zone 'Europe/Berlin' " +
-                            "with offset '00:15';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(i), max(i), count(), ts from  x " +
+                            "where ts between '2021-03-27T21:17:00' and '2021-03-28T04:42:59.999999' " +
+                            "sample by 253m align to calendar time zone 'Europe/Berlin' " +
+                            "with offset '00:15';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tcount\tts
                             2718\t2970\t253\t2021-03-27T21:17:00.000000Z
                             2971\t3163\t193\t2021-03-28T01:30:00.000000Z
-                            """,
-                    "select min(i), max(i), count(), ts from  x " +
-                            "where ts between '2021-03-27T21:17:00' and '2021-03-28T04:42:59.999999' " +
-                            "sample by 253m align to calendar time zone 'Europe/Berlin' " +
-                            "with offset '00:15';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4710,8 +4675,13 @@ public class SampleByTest extends AbstractCairoTest {
                             "from long_sequence(4 * 24 * 60);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(i), max(i), ts from x " +
+                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
+                            "sample by 17m from '2021-03-27' align to calendar time zone 'Europe/Berlin';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             2821\t2825\t2021-03-27T22:48:00.000000Z
                             2826\t2842\t2021-03-27T23:05:00.000000Z
@@ -4724,19 +4694,17 @@ public class SampleByTest extends AbstractCairoTest {
                             2945\t2961\t2021-03-28T01:04:00.000000Z
                             2962\t2978\t2021-03-28T01:21:00.000000Z
                             2979\t2983\t2021-03-28T01:38:00.000000Z
-                            """,
-                    "select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
-                            "sample by 17m from '2021-03-27' align to calendar time zone 'Europe/Berlin';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             // Verify no backward timestamp jumps within each query.
             // With sub-day strides, to_utc converts FROM to UTC and bucketing is pure UTC.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select min(i), max(i), ts from x " +
+                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
+                            "sample by 17m from '2021-03-28' align to calendar time zone 'Europe/Berlin';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             2984\t2990\t2021-03-28T01:33:00.000000Z
                             2991\t3007\t2021-03-28T01:50:00.000000Z
@@ -4775,14 +4743,7 @@ public class SampleByTest extends AbstractCairoTest {
                             3552\t3568\t2021-03-28T11:11:00.000000Z
                             3569\t3585\t2021-03-28T11:28:00.000000Z
                             3586\t3596\t2021-03-28T11:45:00.000000Z
-                            """,
-                    "select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
-                            "sample by 17m from '2021-03-28' align to calendar time zone 'Europe/Berlin';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5169,18 +5130,16 @@ public class SampleByTest extends AbstractCairoTest {
                             ") timestamp(timestamp) PARTITION BY DAY;"
             );
 
-            assertExceptionNoLeakCheck(
-                    "SELECT " +
+            assertQuery("SELECT " +
                             "    min(price) AS min_ltp, " +
                             "    max(price) AS max_ltp, " +
                             "    timestamp(timestamp) AS hour " +
                             "FROM trades " +
                             "WHERE timestamp > '2021-03-21' and symbol='ETH-USD' " +
                             "SAMPLE BY 1h " +
-                            "ORDER BY hour ASC;",
-                    65,
-                    "unknown function name: timestamp(TIMESTAMP)"
-            );
+                            "ORDER BY hour ASC;")
+                    .noLeakCheck()
+                    .fails(65, "unknown function name: timestamp(TIMESTAMP)");
         });
     }
 
@@ -5227,21 +5186,19 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM long_sequence(100);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT min(i), max(i), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-10-30' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             1\t24\t2021-10-29T22:00:00.000000Z
                             25\t49\t2021-10-30T22:00:00.000000Z
                             50\t73\t2021-10-31T23:00:00.000000Z
                             74\t97\t2021-11-01T23:00:00.000000Z
                             98\t100\t2021-11-02T23:00:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-10-30' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5265,21 +5222,19 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM long_sequence(100);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT min(i), max(i), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             1\t24\t2021-03-26T23:00:00.000000Z
                             25\t47\t2021-03-27T23:00:00.000000Z
                             48\t71\t2021-03-28T22:00:00.000000Z
                             72\t95\t2021-03-29T22:00:00.000000Z
                             96\t100\t2021-03-30T22:00:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5303,21 +5258,19 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM long_sequence(120);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT min(i), max(i), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-04-03' ALIGN TO CALENDAR TIME ZONE 'Pacific/Chatham';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             1\t24\t2021-04-02T10:15:00.000000Z
                             25\t49\t2021-04-03T10:15:00.000000Z
                             50\t73\t2021-04-04T11:15:00.000000Z
                             74\t97\t2021-04-05T11:15:00.000000Z
                             98\t120\t2021-04-06T11:15:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-04-03' ALIGN TO CALENDAR TIME ZONE 'Pacific/Chatham';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5343,8 +5296,12 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM long_sequence(120);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT min(i), max(i), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-09-24' ALIGN TO CALENDAR TIME ZONE 'Pacific/Chatham';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             1\t24\t2021-09-23T11:15:00.000000Z
                             25\t48\t2021-09-24T11:15:00.000000Z
@@ -5352,13 +5309,7 @@ public class SampleByTest extends AbstractCairoTest {
                             72\t95\t2021-09-26T10:15:00.000000Z
                             96\t119\t2021-09-27T10:15:00.000000Z
                             120\t120\t2021-09-28T10:15:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-09-24' ALIGN TO CALENDAR TIME ZONE 'Pacific/Chatham';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5372,21 +5323,19 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM long_sequence(120);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT min(i), max(i), count(), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tcount\tts
                             1\t25\t25\t2021-03-01T00:15:00.000000Z
                             26\t49\t24\t2021-03-02T00:15:00.000000Z
                             50\t73\t24\t2021-03-03T00:15:00.000000Z
                             74\t97\t24\t2021-03-04T00:15:00.000000Z
                             98\t120\t23\t2021-03-05T00:15:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), count(), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5405,8 +5354,12 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM long_sequence(120);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT min(i), max(i), count(), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tcount\tts
                             1\t24\t24\t2021-03-12T08:40:00.000000Z
                             25\t48\t24\t2021-03-13T08:40:00.000000Z
@@ -5414,13 +5367,7 @@ public class SampleByTest extends AbstractCairoTest {
                             72\t95\t24\t2021-03-15T07:40:00.000000Z
                             96\t119\t24\t2021-03-16T07:40:00.000000Z
                             120\t120\t1\t2021-03-17T07:40:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), count(), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5561,23 +5508,21 @@ public class SampleByTest extends AbstractCairoTest {
                         ('2024-03-10T09:00:00.000000Z', 8.0),
                         ('2024-03-10T10:00:00.000000Z', 8.0),
                         ('2024-03-11T10:00:00.000000Z', 16.0)""");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT timestamp, sum(amount) FROM (" +
+                            " SELECT timestamp, amount FROM trades" +
+                            " WHERE timestamp IN '2024-03-08'" +
+                            " OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')" +
+                            ") SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             timestamp\tsum
                             2024-03-07T05:00:00.000000Z\t1.0
                             2024-03-08T05:00:00.000000Z\t2.0
                             2024-03-10T05:00:00.000000Z\t24.0
                             2024-03-11T04:00:00.000000Z\t16.0
-                            """,
-                    "SELECT timestamp, sum(amount) FROM (" +
-                            " SELECT timestamp, amount FROM trades" +
-                            " WHERE timestamp IN '2024-03-08'" +
-                            " OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')" +
-                            ") SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
-                    "timestamp",
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -5620,7 +5565,11 @@ public class SampleByTest extends AbstractCairoTest {
                     select dateadd('m', 11*x::int, '2022-12-01T01:00:00.000000Z') ts, x v, rnd_str('A', 'B') s
                     from long_sequence(6) ) timestamp(ts)""");
 
-            assertQueryNoLeakCheck("""
+            assertQuery("select * from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tv\ts
                             2022-12-01T01:11:00.000000Z\t1\tA
                             2022-12-01T01:22:00.000000Z\t2\tA
@@ -5628,12 +5577,7 @@ public class SampleByTest extends AbstractCairoTest {
                             2022-12-01T01:44:00.000000Z\t4\tB
                             2022-12-01T01:55:00.000000Z\t5\tB
                             2022-12-01T02:06:00.000000Z\t6\tB
-                            """,
-                    "select * from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             assertPlanNoLeakCheck(
                     "select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B'",
@@ -5650,16 +5594,15 @@ public class SampleByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B' ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\ts\tfirst
                             2022-12-01T01:11:00.000000Z\tB\t3
                             2022-12-01T01:41:00.000000Z\tB\t4
-                            """,
-                    "select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B' ",
-                    "ts",
-                    false
-            );
+                            """);
         });
     }
 
@@ -5687,15 +5630,14 @@ public class SampleByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000Z' ")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tfirst
                             2022-12-01T01:40:00.000000Z\t4
-                            """,
-                    "select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000Z' ",
-                    "ts",
-                    false
-            );
+                            """);
         });
     }
 
@@ -6019,8 +5961,19 @@ public class SampleByTest extends AbstractCairoTest {
                     ) timestamp(ts) partition by day
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                            select ts, sym, last_dec8, last_dec16, last_dec32, last_dec64, last_dec128, last_dec256
+                            from (
+                              select ts, sym, last(dec8) last_dec8, last(dec16) last_dec16, last(dec32) last_dec32, last(dec64) last_dec64, last(dec128) last_dec128, last(dec256) last_dec256
+                              from test
+                              sample by 1d fill(null)
+                            )
+                            where last_dec8 is null
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tsym\tlast_dec8\tlast_dec16\tlast_dec32\tlast_dec64\tlast_dec128\tlast_dec256
                             1970-01-01T00:00:00.000000Z\tX\t\t\t\t\t\t
                             1970-01-02T00:00:00.000000Z\tY\t\t\t\t\t\t
@@ -6035,22 +5988,20 @@ public class SampleByTest extends AbstractCairoTest {
                             1970-01-08T00:00:00.000000Z\tY\t\t\t\t\t\t
                             1970-01-08T00:00:00.000000Z\tX\t\t\t\t\t\t
                             1970-01-09T00:00:00.000000Z\tY\t\t\t\t\t\t
-                            """,
-                    """
-                            select ts, sym, last_dec8, last_dec16, last_dec32, last_dec64, last_dec128, last_dec256
+                            """);
+
+            assertQuery("""
+                            select ts, last_dec8, last_dec16, last_dec32, last_dec64, last_dec128, last_dec256
                             from (
-                              select ts, sym, last(dec8) last_dec8, last(dec16) last_dec16, last(dec32) last_dec32, last(dec64) last_dec64, last(dec128) last_dec128, last(dec256) last_dec256
+                              select ts, last(dec8) last_dec8, last(dec16) last_dec16, last(dec32) last_dec32, last(dec64) last_dec64, last(dec128) last_dec128, last(dec256) last_dec256
                               from test
                               sample by 1d fill(null)
                             )
-                            where last_dec8 is null
-                            """,
-                    "ts",
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tlast_dec8\tlast_dec16\tlast_dec32\tlast_dec64\tlast_dec128\tlast_dec256
                             1970-01-01T00:00:00.000000Z\t26\t8174\t92859676\t5638984090602703\t10881618612921458465419298532558\t1267875639627833057844730550783849186037266781416574952372186513
                             1970-01-02T00:00:00.000000Z\t\t\t\t\t\t
@@ -6061,19 +6012,7 @@ public class SampleByTest extends AbstractCairoTest {
                             1970-01-07T00:00:00.000000Z\t39\t557\t37969477\t5595184115760814\t17298862804614406683231040975838\t1933902402758066896902305640944308769817849744318427294536832519
                             1970-01-08T00:00:00.000000Z\t\t\t\t\t\t
                             1970-01-09T00:00:00.000000Z\t47\t597\t26010670\t3335833712179838\t5583683039033373121859683324280\t5446643541983917307096923744112641495802371760351626258897724112
-                            """,
-                    """
-                            select ts, last_dec8, last_dec16, last_dec32, last_dec64, last_dec128, last_dec256
-                            from (
-                              select ts, last(dec8) last_dec8, last(dec16) last_dec16, last(dec32) last_dec32, last(dec64) last_dec64, last(dec128) last_dec128, last(dec256) last_dec256
-                              from test
-                              sample by 1d fill(null)
-                            )
-                            """,
-                    "ts",
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -6886,8 +6825,18 @@ public class SampleByTest extends AbstractCairoTest {
         // bucket emits the full key set.
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                            SELECT ts, count(*) rows, count_distinct(x) keys FROM (
+                                SELECT ts, avg(x), first(x), last(x), x FROM fromto
+                                WHERE s != '5'
+                                SAMPLE BY 5d FROM '2017-12-20' TO '2018-01-31' FILL(42, 42, 42)
+                            )
+                            GROUP BY ts
+                            ORDER BY ts""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\trows\tkeys
                             2017-12-20T00:00:00.000000Z\t479\t479
                             2017-12-25T00:00:00.000000Z\t479\t479
@@ -6898,18 +6847,7 @@ public class SampleByTest extends AbstractCairoTest {
                             2018-01-19T00:00:00.000000Z\t479\t479
                             2018-01-24T00:00:00.000000Z\t479\t479
                             2018-01-29T00:00:00.000000Z\t479\t479
-                            """,
-                    """
-                            SELECT ts, count(*) rows, count_distinct(x) keys FROM (
-                                SELECT ts, avg(x), first(x), last(x), x FROM fromto
-                                WHERE s != '5'
-                                SAMPLE BY 5d FROM '2017-12-20' TO '2018-01-31' FILL(42, 42, 42)
-                            )
-                            GROUP BY ts
-                            ORDER BY ts""",
-                    "ts",
-                    false
-            );
+                            """);
         });
     }
 
@@ -7118,8 +7056,12 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM long_sequence(96);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT min(i), max(i), ts FROM x " +
+                            "SAMPLE BY 1h FROM '2021-10-30' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             1\t6\t2021-10-30T21:00:00.000000Z
                             7\t12\t2021-10-30T22:00:00.000000Z
@@ -7137,13 +7079,7 @@ public class SampleByTest extends AbstractCairoTest {
                             79\t84\t2021-10-31T10:00:00.000000Z
                             85\t90\t2021-10-31T11:00:00.000000Z
                             91\t96\t2021-10-31T12:00:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1h FROM '2021-10-30' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7160,8 +7096,12 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM long_sequence(96);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT min(i), max(i), ts FROM x " +
+                            "SAMPLE BY 1h FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             min\tmax\tts
                             1\t6\t2021-03-27T21:00:00.000000Z
                             7\t12\t2021-03-27T22:00:00.000000Z
@@ -7179,13 +7119,7 @@ public class SampleByTest extends AbstractCairoTest {
                             79\t84\t2021-03-28T10:00:00.000000Z
                             85\t90\t2021-03-28T11:00:00.000000Z
                             91\t96\t2021-03-28T12:00:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1h FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -7449,29 +7383,29 @@ public class SampleByTest extends AbstractCairoTest {
                     ('1968-10-02T01:00:00.0Z', 10),
                     ('1968-10-03T01:00:00.0Z', 15),
                     ('1968-10-04T01:00:00.0Z', 20);""");
-        assertQueryNoLeakCheck(
-                """
+        assertQuery("SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL);")
+                .timestamp("ts")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("""
                         ts\tavg
                         1968-10-01T00:00:00.000000Z\t5.0
                         1968-10-02T00:00:00.000000Z\t10.0
                         1968-10-03T00:00:00.000000Z\t15.0
                         1968-10-04T00:00:00.000000Z\t20.0
-                        """,
-                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL);",
-                "ts"
-        );
-        assertQueryNoLeakCheck(
-                """
+                        """);
+        assertQuery("SELECT ts, avg(value) FROM(select ts, value from test order by ts asc)" +
+                        " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';")
+                .timestamp("ts")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("""
                         ts\tavg
                         1968-09-30T02:00:00.000000Z\t5.0
                         1968-10-01T02:00:00.000000Z\t10.0
                         1968-10-02T02:00:00.000000Z\t15.0
                         1968-10-03T02:00:00.000000Z\t20.0
-                        """,
-                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc)" +
-                        " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';",
-                "ts"
-        );
+                        """);
     }
 
     @Test
@@ -7484,25 +7418,25 @@ public class SampleByTest extends AbstractCairoTest {
                     ('1970-01-01T01:00:00.0Z', 15),
                     ('1970-01-01T02:00:00.0Z', 20),\
                     ('1970-01-01T03:00:00.0Z', 25);""");
-        assertQueryNoLeakCheck(
-                """
+        assertQuery("SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL);")
+                .timestamp("ts")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("""
                         ts\tavg
                         1969-12-31T00:00:00.000000Z\t5.0
                         1970-01-01T00:00:00.000000Z\t17.5
-                        """,
-                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL);",
-                "ts"
-        );
-        assertQueryNoLeakCheck(
-                """
+                        """);
+        assertQuery("SELECT ts, avg(value) FROM(select ts, value from test order by ts asc)" +
+                        " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';")
+                .timestamp("ts")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("""
                         ts\tavg
                         1969-12-31T02:00:00.000000Z\t10.0
                         1970-01-01T02:00:00.000000Z\t22.5
-                        """,
-                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc)" +
-                        " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';",
-                "ts"
-        );
+                        """);
     }
 
     @Test
@@ -8167,18 +8101,16 @@ public class SampleByTest extends AbstractCairoTest {
             final String query = "select ts1, ts2, ts1 - ts2 as ts_diff, count() " +
                     "from x " +
                     "sample by 2m";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("ts1")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts1\tts2\tts_diff\tcount
                             2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:01.000000Z\t-1000000\t2
                             2020-01-01T00:00:00.000000Z\t2020-01-01T00:01:01.000000Z\t-61000000\t1
                             2020-01-01T00:02:00.000000Z\t2020-01-01T00:02:01.000000Z\t-1000000\t1
-                            """,
-                    query,
-                    "ts1",
-                    true,
-                    true
-            );
+                            """);
             assertPlanNoLeakCheck(
                     query,
                     """
@@ -8200,18 +8132,16 @@ public class SampleByTest extends AbstractCairoTest {
             final String query2 = "select ts1, ts1 - ts2 as ts_diff, count() " +
                     "from x " +
                     "sample by 2m";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query2)
+                    .timestamp("ts1")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts1\tts_diff\tcount
                             2020-01-01T00:00:00.000000Z\t-1000000\t2
                             2020-01-01T00:00:00.000000Z\t-61000000\t1
                             2020-01-01T00:02:00.000000Z\t-1000000\t1
-                            """,
-                    query2,
-                    "ts1",
-                    true,
-                    true
-            );
+                            """);
             assertPlanNoLeakCheck(
                     query2,
                     """
@@ -8250,18 +8180,16 @@ public class SampleByTest extends AbstractCairoTest {
                     FROM 'x'
                     SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Copenhagen';
                     """;
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tCoverage
                             2009-12-31T23:00:00.000000Z\t0.041666666666666664
                             2019-12-31T23:00:00.000000Z\t0.041666666666666664
                             2029-12-31T23:00:00.000000Z\t0.041666666666666664
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
             assertPlanNoLeakCheck(
                     query,
                     """
@@ -8285,18 +8213,16 @@ public class SampleByTest extends AbstractCairoTest {
                     FROM 'x'
                     SAMPLE BY 1d;
                     """;
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcount\tts_divided
                             2010-01-01T00:00:00.000000Z\t1\t1262307600000000
                             2020-01-01T00:00:00.000000Z\t1\t1577840400000000
                             2030-01-01T00:00:00.000000Z\t1\t1893459600000000
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
             assertPlanNoLeakCheck(
                     query,
                     """
@@ -8320,18 +8246,16 @@ public class SampleByTest extends AbstractCairoTest {
                     FROM 'x'
                     SAMPLE BY 1h;
                     """;
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tdiff1\tdiff2
                             2010-01-01T01:00:00.000000Z\t1\t0
                             2020-01-01T01:00:00.000000Z\t43824\t1826
                             2030-01-01T01:00:00.000000Z\t58440\t2435
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
             assertPlanNoLeakCheck(
                     query,
                     """
@@ -8355,18 +8279,16 @@ public class SampleByTest extends AbstractCairoTest {
                     FROM 'x'
                     SAMPLE BY 1h;
                     """;
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tdiff1\tdiff2
                             2010-01-01T01:00:00.000000Z\t61\t61
                             2020-01-01T01:00:00.000000Z\t5258942\t5258942
                             2030-01-01T01:00:00.000000Z\t10519263\t10519263
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
             assertPlanNoLeakCheck(
                     query,
                     """
@@ -8390,18 +8312,16 @@ public class SampleByTest extends AbstractCairoTest {
                     FROM 'x'
                     SAMPLE BY 1h;
                     """;
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tmax\tdiff1\tdiff2
                             2010-01-01T01:00:00.000000Z\t1\t1\t0
                             2020-01-01T01:00:00.000000Z\t2\t43824\t1826
                             2030-01-01T01:00:00.000000Z\t3\t58440\t2435
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
             assertPlanNoLeakCheck(
                     query,
                     """
@@ -8425,18 +8345,16 @@ public class SampleByTest extends AbstractCairoTest {
                     FROM 'x'
                     SAMPLE BY 12h;
                     """;
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tdiff
                             2010-01-01T00:00:00.000000Z\t1
                             2020-01-01T00:00:00.000000Z\t2
                             2030-01-01T00:00:00.000000Z\t3
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
             assertPlanNoLeakCheck(
                     query,
                     """
@@ -8460,18 +8378,16 @@ public class SampleByTest extends AbstractCairoTest {
                     FROM 'x'
                     SAMPLE BY 12h;
                     """;
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tdiff1\tdiff2
                             2010-01-01T00:00:00.000000Z\t1\t0
                             2020-01-01T00:00:00.000000Z\t2\t120
                             2030-01-01T00:00:00.000000Z\t3\t240
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
             assertPlanNoLeakCheck(
                     query,
                     """
@@ -9004,19 +8920,7 @@ public class SampleByTest extends AbstractCairoTest {
                         ('2024-01-01T00:07:00Z', 13.0, 13);
                     """
             );
-            assertQueryNoLeakCheck(
-                    """
-                            ts	humidity
-                            2024-01-01T00:00:00.000000Z	10
-                            2024-01-01T00:01:00.000000Z	10
-                            2024-01-01T00:02:00.000000Z	10
-                            2024-01-01T00:03:00.000000Z	11
-                            2024-01-01T00:04:00.000000Z	12
-                            2024-01-01T00:05:00.000000Z	12
-                            2024-01-01T00:06:00.000000Z	12
-                            2024-01-01T00:07:00.000000Z	13
-                            """,
-                    """
+            assertQuery("""
                               WITH imputed AS ( \s
                                 SELECT \s
                                     ts,
@@ -9027,23 +8931,23 @@ public class SampleByTest extends AbstractCairoTest {
                             )
                             SELECT ts, humidity
                             FROM imputed
-                            """,
-                    "ts"
-            );
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts	humidity
+                            2024-01-01T00:00:00.000000Z	10
+                            2024-01-01T00:01:00.000000Z	10
+                            2024-01-01T00:02:00.000000Z	10
+                            2024-01-01T00:03:00.000000Z	11
+                            2024-01-01T00:04:00.000000Z	12
+                            2024-01-01T00:05:00.000000Z	12
+                            2024-01-01T00:06:00.000000Z	12
+                            2024-01-01T00:07:00.000000Z	13
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            ts	humidity	temperature
-                            2024-01-01T00:00:00.000000Z	10	10.0
-                            2024-01-01T00:01:00.000000Z	10	10.0
-                            2024-01-01T00:02:00.000000Z	10	10.0
-                            2024-01-01T00:03:00.000000Z	11	11.5
-                            2024-01-01T00:04:00.000000Z	12	12.0
-                            2024-01-01T00:05:00.000000Z	12	12.0
-                            2024-01-01T00:06:00.000000Z	12	12.0
-                            2024-01-01T00:07:00.000000Z	13	13.0
-                            """,
-                    """
+            assertQuery("""
                               WITH imputed AS ( \s
                                 SELECT \s
                                     ts,
@@ -9054,9 +8958,21 @@ public class SampleByTest extends AbstractCairoTest {
                             )
                             SELECT ts, humidity, temperature
                             FROM imputed
-                            """,
-                    "ts"
-            );
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts	humidity	temperature
+                            2024-01-01T00:00:00.000000Z	10	10.0
+                            2024-01-01T00:01:00.000000Z	10	10.0
+                            2024-01-01T00:02:00.000000Z	10	10.0
+                            2024-01-01T00:03:00.000000Z	11	11.5
+                            2024-01-01T00:04:00.000000Z	12	12.0
+                            2024-01-01T00:05:00.000000Z	12	12.0
+                            2024-01-01T00:06:00.000000Z	12	12.0
+                            2024-01-01T00:07:00.000000Z	13	13.0
+                            """);
         });
     }
 
@@ -9101,8 +9017,11 @@ public class SampleByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tv\ts
                             2022-12-01T01:11:00.000000Z\t1\tA
                             2022-12-01T01:22:00.000000Z\t2\tA
@@ -9110,12 +9029,7 @@ public class SampleByTest extends AbstractCairoTest {
                             2022-12-01T01:44:00.000000Z\t4\tB
                             2022-12-01T01:55:00.000000Z\t5\tB
                             2022-12-01T02:06:00.000000Z\t6\tB
-                            """,
-                    "select * from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             String query = "select ts, s, first(v) from tab where s = 'B' and ts > '2022-12-01T00:00:00.000000Z' sample by 30m fill(prev) align to first observation";
 
@@ -9135,16 +9049,15 @@ public class SampleByTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\ts\tfirst
                             2022-12-01T01:33:00.000000Z\tB\t3
                             2022-12-01T02:03:00.000000Z\tB\t6
-                            """,
-                    query,
-                    "ts",
-                    false
-            );
+                            """);
         });
     }
 
@@ -9305,17 +9218,17 @@ public class SampleByTest extends AbstractCairoTest {
                     ", cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime " +
                     "from trades\n" +
                     "sample by 5m";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             symbol\tsum\tvwap\tts\tNYTime
                             aabcd\t0.6390492980774742\t0.3421677972133922\t1.64565E15\t1.6456500000000008E15
                             cabcd\t0.20447441837877756\t0.299199045961845\t1.64565E15\t1.6456500000000002E15
                             babcd\t1.2527510748803818\t0.12497877004395191\t1.64565E15\t1.6456500000000012E15
                             babcd\t0.42215759939956354\t0.33181055449773833\t1.6456503E15\t1.6456503000000005E15
                             cabcd\t2.1714261356369606\t0.5397631964717502\t1.6456503E15\t1.6456503000000022E15
-                            """,
-                    query
-            );
+                            """);
 
             assertSampleByFlavours(
                     """
@@ -10679,8 +10592,11 @@ public class SampleByTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, count() from x sample by 5m align to first observation\n")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcount
                             2024-03-30T12:24:01.000000Z\t10
                             2024-03-30T12:29:01.000000Z\t10
@@ -10692,15 +10608,13 @@ public class SampleByTest extends AbstractCairoTest {
                             2024-03-30T17:04:01.000000Z\t4
                             2024-03-30T17:09:01.000000Z\t10
                             2024-03-30T17:14:01.000000Z\t6
-                            """,
-                    "select ts, count() from x sample by 5m align to first observation\n",
-                    "ts",
-                    false,
-                    false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, count() from x sample by 5m fill(linear) align to first observation\n")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcount
                             2024-03-30T12:24:01.000000Z\t10
                             2024-03-30T12:29:01.000000Z\t10
@@ -10761,15 +10675,13 @@ public class SampleByTest extends AbstractCairoTest {
                             2024-03-30T17:04:01.000000Z\t4
                             2024-03-30T17:09:01.000000Z\t10
                             2024-03-30T17:14:01.000000Z\t6
-                            """,
-                    "select ts, count() from x sample by 5m fill(linear) align to first observation\n",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, count() from x sample by 5m align to calendar\n")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcount
                             2024-03-30T12:20:00.000000Z\t2
                             2024-03-30T12:25:00.000000Z\t10
@@ -10782,15 +10694,13 @@ public class SampleByTest extends AbstractCairoTest {
                             2024-03-30T17:05:00.000000Z\t6
                             2024-03-30T17:10:00.000000Z\t10
                             2024-03-30T17:15:00.000000Z\t4
-                            """,
-                    "select ts, count() from x sample by 5m align to calendar\n",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, count() from x sample by 5m fill(linear) align to calendar\n")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcount
                             2024-03-30T12:20:00.000000Z\t2
                             2024-03-30T12:25:00.000000Z\t10
@@ -10852,12 +10762,7 @@ public class SampleByTest extends AbstractCairoTest {
                             2024-03-30T17:05:00.000000Z\t6
                             2024-03-30T17:10:00.000000Z\t10
                             2024-03-30T17:15:00.000000Z\t4
-                            """,
-                    "select ts, count() from x sample by 5m fill(linear) align to calendar\n",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -13297,8 +13202,11 @@ public class SampleByTest extends AbstractCairoTest {
                     " from" +
                     " long_sequence(5)" +
                     ") timestamp(k) partition by NONE");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select a,b,c,d,e,f,g,i,j,l,m,p,vch,sum(o), k from x sample by 3h fill(prev)")
+                    .timestamp("k")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             a\tb\tc\td\te\tf\tg\ti\tj\tl\tm\tp\tvch\tsum\tk
                             1569490116\tfalse\tZ\tnull\t0.7611029\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\tjFxO]0L#Y\t0.15786635599554755\t1970-01-03T00:00:00.000000Z
                             -2002373666\ttrue\tU\t0.7883065830055033\t0.76642567\t401\t2015-09-20T21:49:18.129Z\t\t5334238747895433003\t10\t00000000 8e 78 b5 b9 11 53 d0 fb 64 bb 1a d4 f0 2d 40 e2
@@ -13314,11 +13222,7 @@ public class SampleByTest extends AbstractCairoTest {
                             00000010 4b b1 3e\t1970-01-01T01:00:00.000000Z\tЃَᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OFг\uDBAE\uDD12ɜ|\\軦\t0.09750574414434399\t1970-01-03T03:00:00.000000Z
                             -283321892\tfalse\t\t0.8438459563914771\t0.13006097\t736\t2015-01-13T04:07:44.289Z\tPEHN\t5398991075259361292\t4\t00000000 63 b7 c2 9f 29 8e 29 5e 69 c6 eb ea c3 c9 73 93
                             00000010 46 fe\t1970-01-01T02:00:00.000000Z\tG -$}\t0.22631523434159562\t1970-01-03T03:00:00.000000Z
-                            """,
-                    "select a,b,c,d,e,f,g,i,j,l,m,p,vch,sum(o), k from x sample by 3h fill(prev)",
-                    "k",
-                    false
-            );
+                            """);
         });
     }
 
@@ -13492,8 +13396,10 @@ public class SampleByTest extends AbstractCairoTest {
             String query = "SELECT * FROM (select b, sum(a), k, k from x sample by 3h fill(prev)) ORDER BY k, b";
             // Designated timestamp of the outer sort is the first k (idx 2),
             // not the auto-aliased k1 (idx 3).
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("k")
+                    .noLeakCheck()
+                    .returns("""
                             b\tsum\tk\tk1
                             \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
                             HYRX\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
@@ -13530,11 +13436,7 @@ public class SampleByTest extends AbstractCairoTest {
                             PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
                             RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
                             VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                            """,
-                    query,
-                    "k",
-                    true
-            );
+                            """);
 
             execute("insert into x select * from (" +
                     "select" +
@@ -13545,8 +13447,10 @@ public class SampleByTest extends AbstractCairoTest {
                     " long_sequence(5)" +
                     ") timestamp(k)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("k")
+                    .noLeakCheck()
+                    .returns("""
                             b\tsum\tk\tk1
                             \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
                             HYRX\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
@@ -13632,11 +13536,7 @@ public class SampleByTest extends AbstractCairoTest {
                             RXGZ\t23.90529010846525\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
                             UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
                             VTJW\t48.820511018586934\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                            """,
-                    query,
-                    "k",
-                    true
-            );
+                            """);
         });
     }
 
@@ -13657,8 +13557,10 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE");
 
             String query = "SELECT * FROM (select b, sum(a), k k1, k from x sample by 3h fill(prev)) ORDER BY k1, b";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("k1")
+                    .noLeakCheck()
+                    .returns("""
                             b\tsum\tk1\tk
                             \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
                             HYRX\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
@@ -13695,11 +13597,7 @@ public class SampleByTest extends AbstractCairoTest {
                             PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
                             RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
                             VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                            """,
-                    query,
-                    "k1",
-                    true
-            );
+                            """);
 
             execute("insert into x select * from (" +
                     "select" +
@@ -13710,8 +13608,10 @@ public class SampleByTest extends AbstractCairoTest {
                     " long_sequence(5)" +
                     ") timestamp(k)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("k1")
+                    .noLeakCheck()
+                    .returns("""
                             b\tsum\tk1\tk
                             \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
                             HYRX\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
@@ -13797,11 +13697,7 @@ public class SampleByTest extends AbstractCairoTest {
                             RXGZ\t23.90529010846525\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
                             UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
                             VTJW\t48.820511018586934\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                            """,
-                    query,
-                    "k1",
-                    true
-            );
+                            """);
         });
     }
 
@@ -15756,11 +15652,9 @@ public class SampleByTest extends AbstractCairoTest {
                     " from" +
                     " long_sequence(20)" +
                     ") timestamp(k) partition by NONE");
-            assertExceptionNoLeakCheck(
-                    "select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, none, 0, 0, 0)",
-                    94,
-                    "FILL(NONE) cannot be combined with other fill values"
-            );
+            assertQuery("select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, none, 0, 0, 0)")
+                    .noLeakCheck()
+                    .fails(94, "FILL(NONE) cannot be combined with other fill values");
         });
     }
 
@@ -16653,8 +16547,11 @@ public class SampleByTest extends AbstractCairoTest {
                                                 Row forward scan
                                                 Frame forward scan on: x
                             """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .timestamp("k")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tk\tkz
                             1\t2021-10-30T23:55:00.000000Z\t2021-10-31T05:40:00.000000Z
                             9999\t2021-10-31T00:25:00.000000Z\t2021-10-31T06:10:00.000000Z
@@ -16731,11 +16628,7 @@ public class SampleByTest extends AbstractCairoTest {
                             1\t2021-11-01T11:55:00.000000Z\t2021-11-01T17:40:00.000000Z
                             9999\t2021-11-01T12:25:00.000000Z\t2021-11-01T18:10:00.000000Z
                             1\t2021-11-01T12:55:00.000000Z\t2021-11-01T18:40:00.000000Z
-                            """,
-                    query,
-                    "k",
-                    false
-            );
+                            """);
         });
     }
 
@@ -16845,29 +16738,27 @@ public class SampleByTest extends AbstractCairoTest {
 
             String query2 = "select ts, avg(x) from fromto\n" +
                     "sample by 1w fill(null)";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query2)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tavg
                             2018-01-01T00:00:00.000000Z\t168.5
                             2018-01-08T00:00:00.000000Z\t408.5
-                            """,
-                    query2,
-                    "ts",
-                    false
-            );
+                            """);
 
             String query3 = query1.replace("1w", "2w");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query3)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tavg
                             2017-12-20T00:00:00.000000Z\t48.5
                             2018-01-03T00:00:00.000000Z\t288.5
                             2018-01-17T00:00:00.000000Z\tnull
-                            """,
-                    query3,
-                    "ts",
-                    false
-            );
+                            """);
         });
     }
 
@@ -17033,37 +16924,35 @@ public class SampleByTest extends AbstractCairoTest {
             execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQueryNoLeakCheck(
-                    """
-                            time\tsum\tsum1\tsum2
-                            1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886
-                            1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456
-                            """,
-                    """
+            assertQuery("""
                             SELECT a.ts as time, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
                             FROM 'eloverblik' as a, 'ap_systems' as b
                             WHERE a.ts = b.ts
                             SAMPLE BY 1h align to first observation
-                            """,
-                    "time"
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .timestamp("time")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             time\tsum\tsum1\tsum2
                             1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886
                             1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456
-                            """,
-                    """
+                            """);
+
+            assertQuery("""
                             SELECT a.ts as time, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
                             FROM 'eloverblik' as a, 'ap_systems' as b
                             WHERE a.ts = b.ts
                             SAMPLE BY 1h align to calendar
-                            """,
-                    "time",
-                    true,
-                    true
-            );
+                            """)
+                    .timestamp("time")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            time\tsum\tsum1\tsum2
+                            1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886
+                            1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456
+                            """);
         });
     }
 
@@ -17076,37 +16965,35 @@ public class SampleByTest extends AbstractCairoTest {
             execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQueryNoLeakCheck(
-                    """
-                            sum\tsum1\tsum2\ttime
-                            33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z
-                            20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z
-                            """,
-                    """
+            assertQuery("""
                             SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time
                             FROM 'eloverblik' as a, 'ap_systems' as b
                             WHERE a.ts = b.ts
                             SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
-                            """,
-                    "time"
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .timestamp("time")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tsum1\tsum2\ttime
                             33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z
                             20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z
-                            """,
-                    """
+                            """);
+
+            assertQuery("""
                             SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time
                             FROM 'eloverblik' as a, 'ap_systems' as b
                             WHERE a.ts = b.ts
                             SAMPLE BY 1h ALIGN TO CALENDAR
-                            """,
-                    "time",
-                    true,
-                    true
-            );
+                            """)
+                    .timestamp("time")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            sum\tsum1\tsum2\ttime
+                            33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z
+                            20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z
+                            """);
         });
     }
 
@@ -17119,37 +17006,35 @@ public class SampleByTest extends AbstractCairoTest {
             execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQueryNoLeakCheck(
-                    """
-                            sum\ttime\tsum1\tsum2
-                            33.423793766512645\t1970-01-01T00:00:00.000000Z\t28.964416248629917\t32.11038924761886
-                            20.686394200400652\t1970-01-01T01:00:00.000000Z\t18.863001213785466\t21.027598662521456
-                            """,
-                    """
+            assertQuery("""
                             SELECT sum(a.to_grid), a.ts as time, sum(a.from_grid), sum(b.hourly_production)
                             FROM 'eloverblik' as a, 'ap_systems' as b
                             WHERE a.ts = b.ts
                             SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
-                            """,
-                    "time"
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .timestamp("time")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             sum\ttime\tsum1\tsum2
                             33.423793766512645\t1970-01-01T00:00:00.000000Z\t28.964416248629917\t32.11038924761886
                             20.686394200400652\t1970-01-01T01:00:00.000000Z\t18.863001213785466\t21.027598662521456
-                            """,
-                    """
+                            """);
+
+            assertQuery("""
                             SELECT sum(a.to_grid), a.ts as time, sum(a.from_grid), sum(b.hourly_production)
                             FROM 'eloverblik' as a, 'ap_systems' as b
                             WHERE a.ts = b.ts
                             SAMPLE BY 1h ALIGN TO CALENDAR
-                            """,
-                    "time",
-                    true,
-                    true
-            );
+                            """)
+                    .timestamp("time")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            sum\ttime\tsum1\tsum2
+                            33.423793766512645\t1970-01-01T00:00:00.000000Z\t28.964416248629917\t32.11038924761886
+                            20.686394200400652\t1970-01-01T01:00:00.000000Z\t18.863001213785466\t21.027598662521456
+                            """);
         });
     }
 
@@ -17162,37 +17047,35 @@ public class SampleByTest extends AbstractCairoTest {
             execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tsum\tsum1\tsum2
-                            1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886
-                            1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456
-                            """,
-                    """
+            assertQuery("""
                             SELECT a.ts, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
                             FROM 'eloverblik' as a, 'ap_systems' as b
                             WHERE a.ts = b.ts
                             SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
-                            """,
-                    "ts"
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tsum\tsum1\tsum2
                             1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886
                             1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456
-                            """,
-                    """
+                            """);
+
+            assertQuery("""
                             SELECT a.ts, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
                             FROM 'eloverblik' as a, 'ap_systems' as b
                             WHERE a.ts = b.ts
                             SAMPLE BY 1h ALIGN TO CALENDAR
-                            """,
-                    "ts",
-                    true,
-                    true
-            );
+                            """)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tsum\tsum1\tsum2
+                            1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886
+                            1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456
+                            """);
         });
     }
 
@@ -17205,37 +17088,35 @@ public class SampleByTest extends AbstractCairoTest {
             execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQueryNoLeakCheck(
-                    """
-                            sum\tsum1\tsum2\tts
-                            33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z
-                            20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z
-                            """,
-                    """
+            assertQuery("""
                             SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts
                             FROM 'eloverblik' as a, 'ap_systems' as b
                             WHERE a.ts = b.ts
                             SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
-                            """,
-                    "ts"
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tsum1\tsum2\tts
                             33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z
                             20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z
-                            """,
-                    """
+                            """);
+
+            assertQuery("""
                             SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts
                             FROM 'eloverblik' as a, 'ap_systems' as b
                             WHERE a.ts = b.ts
                             SAMPLE BY 1h ALIGN TO CALENDAR
-                            """,
-                    "ts",
-                    true,
-                    true
-            );
+                            """)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            sum\tsum1\tsum2\tts
+                            33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z
+                            20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z
+                            """);
         });
     }
 
@@ -17248,37 +17129,35 @@ public class SampleByTest extends AbstractCairoTest {
             execute("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQueryNoLeakCheck(
-                    """
-                            sum\tsum1\tsum2\ttime
-                            33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z
-                            20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z
-                            """,
-                    """
+            assertQuery("""
                             SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time
                             FROM 'eloverblik' as a, 'ap_systems' as b
                             WHERE a.ts = b.ts
                             SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
-                            """,
-                    "time"
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .timestamp("time")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tsum1\tsum2\ttime
                             33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z
                             20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z
-                            """,
-                    """
+                            """);
+
+            assertQuery("""
                             SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time
                             FROM 'eloverblik' as a, 'ap_systems' as b
                             WHERE a.ts = b.ts
                             SAMPLE BY 1h ALIGN TO CALENDAR
-                            """,
-                    "time",
-                    true,
-                    true
-            );
+                            """)
+                    .timestamp("time")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            sum\tsum1\tsum2\ttime
+                            33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z
+                            20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z
+                            """);
         });
     }
 
