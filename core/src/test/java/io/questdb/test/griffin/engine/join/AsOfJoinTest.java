@@ -188,24 +188,20 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     AA\t339631474\t339631474\t1970-01-03T00:54:00.000000%1$s\t1970-01-03T00:54:00.000000%1$s
                     """);
 
-            assertQuery(
-                    "tag\thi\tlo\tts\tts1\n",
-                    "select a.tag, a.seq hi, b.seq lo,  a.ts, b.ts from tab a asof join tab b on (tag)",
-                    "create table tab (\n" +
+            assertQuery("select a.tag, a.seq hi, b.seq lo,  a.ts, b.ts from tab a asof join tab b on (tag)")
+                    .ddl("create table tab (\n" +
                             "    tag symbol index,\n" +
                             "    seq int,\n" +
                             "    ts " + leftTableTimestampType.getTypeName() + "\n" +
-                            ") timestamp(ts) partition by DAY",
-                    "ts",
-                    "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
+                            ") timestamp(ts) partition by DAY")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .mutateWith("insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
                             "        rnd_int() seq, \n" +
                             "        timestamp_sequence(172800000000, 360000000)::" + leftTableTimestampType.getTypeName() + " ts \n" +
-                            "    from long_sequence(10)) timestamp (ts)",
-                    expected,
-                    false,
-                    true,
-                    false
-            );
+                            "    from long_sequence(10)) timestamp (ts)")
+                    .returns("tag\thi\tlo\tts\tts1\n", expected);
         });
     }
 
@@ -234,12 +230,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ) timestamp(ts) partition by DAY""",
                 leftTableTimestampType.getTypeName());
 
-        assertQuery("tag\thi\tlo\n",
-                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
-                null,
-                false,
-                true
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("tag\thi\tlo\n");
         execute(
                 """
                         insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,\s
@@ -248,12 +242,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             from long_sequence(10)) timestamp (ts)"""
 
         );
-        assertQuery(expected,
-                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
-                null,
-                false,
-                true
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -295,23 +287,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 "create table test(seq long, ts #TIMESTAMP) timestamp(ts)",
                 leftTableTimestampType.getTypeName());
 
-        assertQuery("hi\tlo\n",
-                "(select a.seq hi, b.seq lo from test a lt join test b) where lo != null",
-                null,
-                false,
-                false
-        );
+        assertQuery("(select a.seq hi, b.seq lo from test a lt join test b) where lo != null")
+                .noRandomAccess()
+                .returns("hi\tlo\n");
         executeWithRewriteTimestamp(
                 "insert into test select x, cast(x+10 as #TIMESTAMP) from (select x, rnd_double() rnd from long_sequence(30)) where rnd<0.9999",
                 leftTableTimestampType.getTypeName()
 
         );
-        assertQuery(expected,
-                "(select a.seq hi, b.seq lo from test a lt join test b) where lo != null",
-                null,
-                false,
-                false
-        );
+        assertQuery("(select a.seq hi, b.seq lo from test a lt join test b) where lo != null")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -327,12 +313,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ) timestamp(ts) partition by DAY""",
                 leftTableTimestampType.getTypeName());
 
-        assertQuery(expected,
-                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq",
-                null,
-                false,
-                false
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq")
+                .noRandomAccess()
+                .returns(expected);
         execute(
                 """
                         insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,
@@ -341,12 +324,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             from long_sequence(10)) timestamp (ts)"""
 
         );
-        assertQuery(expected,
-                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq",
-                null,
-                false,
-                false
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -1135,26 +1115,20 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             ) timestamp(ts) partition by DAY""",
                     leftTableTimestampType.getTypeName()
             );
-            assertQuery(
-                    "tag\thi\tlo\n",
-                    "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("tag\thi\tlo\n");
             execute("""
                     insert into tab select * from (select rnd_symbol('AA', 'BB', null) tag,\s
                             rnd_int() seq,\s
                             timestamp_sequence(172800000000, 360000000) ts\s
                         from long_sequence(10)) timestamp (ts)"""
             );
-            assertQuery(
-                    expected,
-                    "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute("create table tab2 as (select * from tab where tag is not null)");
             assertQueryNoLeakCheck("""
@@ -3195,9 +3169,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
                       ('HRK', 'buy', 1.11, 3.0, '2025-11-01T02');
                     """);
             assertQuery("""
-                    bid_ts	symbol	bid_size	ask_price	ask_size
-                    2025-11-01T02:00:00.000000Z	HRK	3.0	2.22	2.0
-                    """, """
                     WITH bids AS (
                       SELECT timestamp AS bid_ts, symbol, amount AS bid_size
                       FROM trades WHERE side = 'buy'
@@ -3208,7 +3179,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     )
                     SELECT bid_ts, bids.symbol, bid_size, ask_price, ask_size
                     FROM bids ASOF JOIN asks ON (symbol)
-                    """, null, "bid_ts", false, false);
+                    """)
+                    .timestamp("bid_ts")
+                    .noRandomAccess()
+                    .returns("""
+                    bid_ts	symbol	bid_size	ask_price	ask_size
+                    2025-11-01T02:00:00.000000Z	HRK	3.0	2.22	2.0
+                    """);
         });
     }
 
@@ -3234,14 +3211,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("insert into t2 values (6, '2023-10-05T09:00:00.000000Z')");
 
             String leftSuffix = getTimestampSuffix(leftTsTypeName);
-            assertQuery(String.format("""
+            assertQuery("select ts from t1 asof join (select x from t2)")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(String.format("""
                             ts
                             2022-10-05T08:15:00.000000%1$s
                             2022-10-05T08:17:00.000000%1$s
                             2022-10-05T08:21:00.000000%1$s
-                            """, leftSuffix),
-                    "select ts from t1 asof join (select x from t2)",
-                    null, "ts", false, true);
+                            """, leftSuffix));
         });
     }
 
@@ -3682,20 +3661,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 91369\t91367
                 """;
         executeWithRewriteTimestamp("create table test(seq long, ts #TIMESTAMP) timestamp(ts)", leftTableTimestampType.getTypeName());
-        assertQuery(
-                "hi\tlo\n",
-                "(select a.seq hi, b.seq lo from test a lt join test b) where hi > lo + 1",
-                null,
-                false
-        );
+        assertQuery("(select a.seq hi, b.seq lo from test a lt join test b) where hi > lo + 1")
+                .noRandomAccess()
+                .returns("hi\tlo\n");
         execute("insert into test select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(100000)) where rnd<0.9999");
 
-        assertQuery(
-                expected,
-                "(select a.seq hi, b.seq lo from test a lt join test b) where hi > lo + 1",
-                null,
-                false
-        );
+        assertQuery("(select a.seq hi, b.seq lo from test a lt join test b) where hi > lo + 1")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -3876,13 +3849,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ) timestamp(ts) partition by DAY""",
                 leftTableTimestampType.getTypeName()
         );
-        assertQuery(
-                "tag\thi\tlo\tts\tts1\n",
-                "select a.tag, a.seq hi, b.seq lo , a.ts, b.ts from tab a lt join tab b on (tag)",
-                "ts",
-                false,
-                true
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo , a.ts, b.ts from tab a lt join tab b on (tag)")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("tag\thi\tlo\tts\tts1\n");
         execute(
                 """
                         insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,\s
@@ -3890,13 +3861,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                 timestamp_sequence(172800000000, 360000000) ts\s
                             from long_sequence(10)) timestamp (ts)"""
         );
-        assertQuery(
-                expected,
-                "select a.tag, a.seq hi, b.seq lo , a.ts, b.ts from tab a lt join tab b on (tag)",
-                "ts",
-                false,
-                true
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo , a.ts, b.ts from tab a lt join tab b on (tag)")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -3964,26 +3933,20 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ) timestamp(ts) partition by DAY""",
                 leftTableTimestampType.getTypeName()
         );
-        assertQuery(
-                "tag\thi\tlo\n",
-                "select a.tag, a.seq hi, b.seq lo from tab a lt join tab b on (tag)",
-                null,
-                false,
-                true
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a lt join tab b on (tag)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("tag\thi\tlo\n");
         execute("""
                 insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,\s
                         rnd_int() seq,\s
                         timestamp_sequence(172800000000, 360000000) ts\s
                     from long_sequence(10)) timestamp (ts)"""
         );
-        assertQuery(
-                expected,
-                "select a.tag, a.seq hi, b.seq lo from tab a lt join tab b on (tag)",
-                null,
-                false,
-                true
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a lt join tab b on (tag)")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -4181,24 +4144,18 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ) timestamp(ts) partition by DAY""",
                 leftTableTimestampType.getTypeName()
         );
-        assertQuery(
-                "tag\thi\tlo\n",
-                "select a.tag, a.seq hi, b.seq lo from tab a lt join tab b where a.seq > b.seq + 1",
-                null,
-                false
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a lt join tab b where a.seq > b.seq + 1")
+                .noRandomAccess()
+                .returns("tag\thi\tlo\n");
         execute("""
                 insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,\s
                         rnd_int() seq,\s
                         timestamp_sequence(172800000000, 360000000) ts\s
                     from long_sequence(10)) timestamp (ts)"""
         );
-        assertQuery(
-                expected,
-                "select a.tag, a.seq hi, b.seq lo from tab a lt join tab b where a.seq > b.seq + 1",
-                null,
-                false
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a lt join tab b where a.seq > b.seq + 1")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -5531,7 +5488,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "('BTC-USD', '2000-06-01T00:00:00.000000Z', 6)"
             );
 
-            assertQuery(replaceTimestampSuffix("""
+            assertQuery("""
+                            select * from trades
+                            asof join (
+                              select * from trades
+                              where ts in '2000-03'
+                            ) t;""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             pair\tts\tprice\tpair1\tts1\tprice1
                             BTC-USD\t2000-01-01T00:00:00.000000Z\t1\t\t\tnull
                             BTC-USD\t2000-02-01T00:00:00.000000Z\t2\t\t\tnull
@@ -5539,21 +5505,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             BTC-USD\t2000-04-01T00:00:00.000000Z\t4\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3
                             BTC-USD\t2000-05-01T00:00:00.000000Z\t5\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3
                             BTC-USD\t2000-06-01T00:00:00.000000Z\t6\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3
-                            """, leftTableTimestampType.getTypeName()),
-                    """
-                            select * from trades
-                            asof join (
-                              select * from trades
-                              where ts in '2000-03'
-                            ) t;""",
-                    null,
-                    "ts",
-                    null,
-                    null,
-                    false,
-                    true,
-                    false
-            );
+                            """, leftTableTimestampType.getTypeName()));
         });
     }
 
@@ -5654,16 +5606,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {
-        assertQuery(
-                "ts\ty\tts1\ty1\n",
-                "select * from " +
+        assertQuery("select * from " +
                         "(select * from (select * from x where y = 10 order by ts desc limit 20) order by ts ) a " +
                         joinType +
-                        "(select * from x order by ts limit 5) b",
-                "create table x (ts timestamp, y int) timestamp(ts)",
-                timestamp,
-                false
-        );
+                        "(select * from x order by ts limit 5) b")
+                .ddl("create table x (ts timestamp, y int) timestamp(ts)")
+                .timestamp(timestamp)
+                .noRandomAccess()
+                .returns("ts\ty\tts1\ty1\n");
     }
 
     private void testFullJoinDoesNotConvertSymbolKeyToString(String joinType) throws Exception {
