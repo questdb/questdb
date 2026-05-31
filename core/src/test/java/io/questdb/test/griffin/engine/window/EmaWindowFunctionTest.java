@@ -46,20 +46,19 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x from long_sequence(5)");
 
             // alpha=1 means EMA = 1*current + 0*previous = current
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'alpha', 1.0) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
                             1970-01-01T00:00:00.000001Z\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t2.0\t2.0
                             1970-01-01T00:00:00.000003Z\t3.0\t3.0
                             1970-01-01T00:00:00.000004Z\t4.0\t4.0
                             1970-01-01T00:00:00.000005Z\t5.0\t5.0
-                            """),
-                    "select ts, val, avg(val, 'alpha', 1.0) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -76,20 +75,19 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             // row 3: ema = 0.5 * 3 + 0.5 * 1.5 = 2.25
             // row 4: ema = 0.5 * 4 + 0.5 * 2.25 = 3.125
             // row 5: ema = 0.5 * 5 + 0.5 * 3.125 = 4.0625
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
                             1970-01-01T00:00:00.000001Z\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t2.0\t1.5
                             1970-01-01T00:00:00.000003Z\t3.0\t2.25
                             1970-01-01T00:00:00.000004Z\t4.0\t3.125
                             1970-01-01T00:00:00.000005Z\t5.0\t4.0625
-                            """),
-                    "select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -108,8 +106,12 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             //   row 1 (val=1): ema = 1
             //   row 2 (val=3): ema = 0.5 * 3 + 0.5 * 1 = 2
             //   row 3 (val=5): ema = 0.5 * 5 + 0.5 * 2 = 3.5
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, avg(val, 'alpha', 0.5) over (partition by i order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tavg
                             1970-01-01T00:00:00.000001Z\t1\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t0\t2.0\t2.0
@@ -117,12 +119,7 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t0\t4.0\t3.0
                             1970-01-01T00:00:00.000005Z\t1\t5.0\t3.5
                             1970-01-01T00:00:00.000006Z\t0\t6.0\t4.5
-                            """),
-                    "select ts, i, val, avg(val, 'alpha', 0.5) over (partition by i order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -136,24 +133,22 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                     "('1970-01-01T00:00:03.000000Z'::timestamp, 3, 0, 20.0), " +
                     "('1970-01-01T00:00:04.000000Z'::timestamp, 4, 1, 200.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, sort_key, i, val, " +
+                            "avg(val, 'period', 3) over (order by sort_key) ema_period, " +
+                            "avg(val, 'period', 3) over (partition by i order by sort_key) ema_period_part, " +
+                            "avg(val, 'second', 1) over (order by sort_key) ema_second, " +
+                            "avg(val, 'second', 1) over (partition by i order by sort_key) ema_second_part " +
+                            "from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tsort_key\ti\tval\tema_period\tema_period_part\tema_second\tema_second_part
                             1970-01-01T00:00:01.000000Z\t1\t0\t10.0\t10.0\t10.0\t10.0\t10.0
                             1970-01-01T00:00:02.000000Z\t2\t1\t100.0\t55.0\t100.0\t66.89085029457019\t100.0
                             1970-01-01T00:00:03.000000Z\t3\t0\t20.0\t37.5\t15.0\t37.25017980242024\t18.646647167633873
                             1970-01-01T00:00:04.000000Z\t4\t1\t200.0\t118.75\t150.0\t140.12768709496163\t186.46647167633873
-                            """),
-                    "select ts, sort_key, i, val, " +
-                            "avg(val, 'period', 3) over (order by sort_key) ema_period, " +
-                            "avg(val, 'period', 3) over (partition by i order by sort_key) ema_period_part, " +
-                            "avg(val, 'second', 1) over (order by sort_key) ema_second, " +
-                            "avg(val, 'second', 1) over (partition by i order by sort_key) ema_second_part " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -177,23 +172,21 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             //     -> NULL, 10, 20, 60, 60
             //   partition i=1: (sk=1,NULL) (sk=2,10) -> NULL (first row NULL), 10 (first valid)
             //   partition i=0: (sk=3,30)  (sk=4,100) (sk=5,NULL) -> 30, 65, 65
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, sort_key, i, val, " +
+                            "avg(val, 'period', 3) over (order by sort_key) ema_no_part, " +
+                            "avg(val, 'period', 3) over (partition by i order by sort_key) ema_part " +
+                            "from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tsort_key\ti\tval\tema_no_part\tema_part
                             1970-01-01T00:00:01.000000Z\t3\t0\t30.0\t20.0\t30.0
                             1970-01-01T00:00:02.000000Z\t2\t1\t10.0\t10.0\t10.0
                             1970-01-01T00:00:03.000000Z\t5\t0\tnull\t60.0\t65.0
                             1970-01-01T00:00:04.000000Z\t1\t1\tnull\tnull\tnull
                             1970-01-01T00:00:05.000000Z\t4\t0\t100.0\t60.0\t65.0
-                            """),
-                    "select ts, sort_key, i, val, " +
-                            "avg(val, 'period', 3) over (order by sort_key) ema_no_part, " +
-                            "avg(val, 'period', 3) over (partition by i order by sort_key) ema_part " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -203,15 +196,14 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
-                            """),
-                    "select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -433,8 +425,12 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
 
             // Partition 1: 10, NULL, 30 -> ema: 10, 10, 0.5*30+0.5*10=20
             // Partition 2: NULL, 20, NULL -> ema: NaN, 20, 20
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, avg(val, 'alpha', 0.5) over (partition by i order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tavg
                             1970-01-01T00:00:00.000001Z\t1\t10.0\t10.0
                             1970-01-01T00:00:00.000002Z\t2\tnull\tnull
@@ -442,12 +438,7 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t20.0\t20.0
                             1970-01-01T00:00:00.000005Z\t1\t30.0\t20.0
                             1970-01-01T00:00:00.000006Z\t2\tnull\t20.0
-                            """),
-                    "select ts, i, val, avg(val, 'alpha', 0.5) over (partition by i order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -468,20 +459,19 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             // row 3 (val=20): ema = 0.5 * 20 + 0.5 * 10 = 15
             // row 4 (val=NULL): ema = 15 (keep previous)
             // row 5 (val=30): ema = 0.5 * 30 + 0.5 * 15 = 22.5
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
                             1970-01-01T00:00:00.000001Z\t10.0\t10.0
                             1970-01-01T00:00:00.000002Z\tnull\t10.0
                             1970-01-01T00:00:00.000003Z\t20.0\t15.0
                             1970-01-01T00:00:00.000004Z\tnull\t15.0
                             1970-01-01T00:00:00.000005Z\t30.0\t22.5
-                            """),
-                    "select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -496,18 +486,17 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
 
             // Partition 1 has all NULLs -> EMA should be NaN
             // Partition 2 has a value -> EMA should be 10
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, avg(val, 'alpha', 0.5) over (partition by i order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tavg
                             1970-01-01T00:00:00.000001Z\t1\tnull\tnull
                             1970-01-01T00:00:00.000002Z\t1\tnull\tnull
                             1970-01-01T00:00:00.000003Z\t2\t10.0\t10.0
-                            """),
-                    "select ts, i, val, avg(val, 'alpha', 0.5) over (partition by i order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -524,18 +513,17 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             // Row 1: val=NULL -> ema=NaN
             // Row 2: val=10, first valid -> ema=10
             // Row 3: val=20, alpha=0.5 -> ema = 0.5*20 + 0.5*10 = 15
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, avg(val, 'alpha', 0.5) over (partition by i order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tavg
                             1970-01-01T00:00:00.000001Z\t1\tnull\tnull
                             1970-01-01T00:00:00.000002Z\t1\t10.0\t10.0
                             1970-01-01T00:00:00.000003Z\t1\t20.0\t15.0
-                            """),
-                    "select ts, i, val, avg(val, 'alpha', 0.5) over (partition by i order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -551,8 +539,11 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                     "(5::timestamp, 3, 0, 30.0), " +
                     "(6::timestamp, 1, 1, 200.0)");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, sort_key, i, val, avg(val, 'period', 3) over (partition by i order by sort_key) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tsort_key\ti\tval\tavg
                             1970-01-01T00:00:00.000001Z\t2\t0\t10.0\t15.0
                             1970-01-01T00:00:00.000002Z\t2\t1\t100.0\t150.0
@@ -560,12 +551,7 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t3\t1\t300.0\t225.0
                             1970-01-01T00:00:00.000005Z\t3\t0\t30.0\t22.5
                             1970-01-01T00:00:00.000006Z\t1\t1\t200.0\t200.0
-                            """),
-                    "select ts, sort_key, i, val, avg(val, 'period', 3) over (partition by i order by sort_key) from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
         });
     }
 
@@ -577,20 +563,19 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x from long_sequence(5)");
 
             // EMA with period=3 means alpha = 2/(3+1) = 0.5 (same as alpha=0.5 test)
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'period', 3) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
                             1970-01-01T00:00:00.000001Z\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t2.0\t1.5
                             1970-01-01T00:00:00.000003Z\t3.0\t2.25
                             1970-01-01T00:00:00.000004Z\t4.0\t3.125
                             1970-01-01T00:00:00.000005Z\t5.0\t4.0625
-                            """),
-                    "select ts, val, avg(val, 'period', 3) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -602,8 +587,12 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x%2, x from long_sequence(6)");
 
             // period=3 means alpha = 0.5 (same as alpha mode partition test)
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, avg(val, 'period', 3) over (partition by i order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tavg
                             1970-01-01T00:00:00.000001Z\t1\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t0\t2.0\t2.0
@@ -611,12 +600,7 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t0\t4.0\t3.0
                             1970-01-01T00:00:00.000005Z\t1\t5.0\t3.5
                             1970-01-01T00:00:00.000006Z\t0\t6.0\t4.5
-                            """),
-                    "select ts, i, val, avg(val, 'period', 3) over (partition by i order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -628,20 +612,19 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x from long_sequence(5)");
 
             // period=1 -> alpha=1 -> EMA equals current value
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'period', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
                             1970-01-01T00:00:00.000001Z\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t2.0\t2.0
                             1970-01-01T00:00:00.000003Z\t3.0\t3.0
                             1970-01-01T00:00:00.000004Z\t4.0\t4.0
                             1970-01-01T00:00:00.000005Z\t5.0\t5.0
-                            """),
-                    "select ts, val, avg(val, 'period', 1) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -653,32 +636,30 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x from long_sequence(3)");
 
             // First query
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
                             1970-01-01T00:00:00.000001Z\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t2.0\t1.5
                             1970-01-01T00:00:00.000003Z\t3.0\t2.25
-                            """),
-                    "select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Second query should produce same results (state was reset)
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
                             1970-01-01T00:00:00.000001Z\t1.0\t1.0
                             1970-01-01T00:00:00.000002Z\t2.0\t1.5
                             1970-01-01T00:00:00.000003Z\t3.0\t2.25
-                            """),
-                    "select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -693,18 +674,17 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('1970-01-01T00:00:01.000000Z'::timestamp, 30.0)");
 
             // All same timestamps -> dt=0 -> alpha=1 -> EMA just equals current value
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'second', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
                             1970-01-01T00:00:01.000000Z\t10.0\t10.0
                             1970-01-01T00:00:01.000000Z\t20.0\t20.0
                             1970-01-01T00:00:01.000000Z\t30.0\t30.0
-                            """),
-                    "select ts, val, avg(val, 'second', 1) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -716,16 +696,15 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1::timestamp, 42.0)");
 
             // Single row -> EMA equals the value itself
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
                             1970-01-01T00:00:00.000001Z\t42.0\t42.0
-                            """),
-                    "select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -742,10 +721,30 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000000Z\t10.0\t10.0
                     1970-01-02T00:00:00.000000Z\t20.0\t16.321205588285576
                     """);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'day', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'days', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'DAY', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Days', 1) over (order by ts) from tab", "ts", false, true);
+            assertQuery("select ts, val, avg(val, 'day', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'days', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'DAY', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'Days', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -762,10 +761,30 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000000Z\t10.0\t10.0
                     1970-01-01T01:00:00.000000Z\t20.0\t16.321205588285576
                     """);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'hour', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'hours', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'HOUR', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Hours', 1) over (order by ts) from tab", "ts", false, true);
+            assertQuery("select ts, val, avg(val, 'hour', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'hours', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'HOUR', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'Hours', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -782,10 +801,30 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000000Z\t10.0\t10.0
                     1970-01-01T00:00:00.000001Z\t20.0\t16.321205588285576
                     """);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'microsecond', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'microseconds', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'MICROSECOND', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Microseconds', 1) over (order by ts) from tab", "ts", false, true);
+            assertQuery("select ts, val, avg(val, 'microsecond', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'microseconds', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'MICROSECOND', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'Microseconds', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -802,10 +841,30 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000000Z\t10.0\t10.0
                     1970-01-01T00:00:00.001000Z\t20.0\t16.321205588285576
                     """);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'millisecond', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'milliseconds', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'MILLISECOND', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Milliseconds', 1) over (order by ts) from tab", "ts", false, true);
+            assertQuery("select ts, val, avg(val, 'millisecond', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'milliseconds', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'MILLISECOND', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'Milliseconds', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -822,10 +881,30 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000000Z\t10.0\t10.0
                     1970-01-01T00:01:00.000000Z\t20.0\t16.321205588285576
                     """);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'minute', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'minutes', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'MINUTE', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Minutes', 1) over (order by ts) from tab", "ts", false, true);
+            assertQuery("select ts, val, avg(val, 'minute', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'minutes', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'MINUTE', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'Minutes', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -842,10 +921,30 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000000Z\t10.0\t10.0
                     1970-01-01T00:00:01.000000Z\t20.0\t16.321205588285576
                     """);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'second', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'seconds', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'SECOND', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Seconds', 1) over (order by ts) from tab", "ts", false, true);
+            assertQuery("select ts, val, avg(val, 'second', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'seconds', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'SECOND', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'Seconds', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -862,10 +961,30 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000000Z\t10.0\t10.0
                     1970-01-08T00:00:00.000000Z\t20.0\t16.321205588285576
                     """);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'week', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'weeks', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'WEEK', 1) over (order by ts) from tab", "ts", false, true);
-            assertQueryNoLeakCheck(expected, "select ts, val, avg(val, 'Weeks', 1) over (order by ts) from tab", "ts", false, true);
+            assertQuery("select ts, val, avg(val, 'week', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'weeks', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'WEEK', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select ts, val, avg(val, 'Weeks', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -881,30 +1000,28 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('1970-01-01T00:00:02.000000Z'::timestamp, 20.0)");
 
             // tau = 1 second, dt = 1 second, so alpha = 1 - exp(-1) ≈ 0.6321
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'second', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
                             1970-01-01T00:00:01.000000Z\t10.0\t10.0
                             1970-01-01T00:00:02.000000Z\t20.0\t16.321205588285576
-                            """),
-                    "select ts, val, avg(val, 'second', 1) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
 
             // Also test plural form
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'seconds', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
                             1970-01-01T00:00:01.000000Z\t10.0\t10.0
                             1970-01-01T00:00:02.000000Z\t20.0\t16.321205588285576
-                            """),
-                    "select ts, val, avg(val, 'seconds', 1) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -924,18 +1041,17 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             // row 1: ema = 10
             // row 2: alpha = 1 - exp(-1) ≈ 0.6321; ema = 0.6321 * 20 + 0.3679 * 10 ≈ 16.321
             // row 3: alpha = 1 - exp(-1) ≈ 0.6321; ema = 0.6321 * 30 + 0.3679 * 16.321 ≈ 24.967
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'second', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
                             1970-01-01T00:00:01.000000Z\t10.0\t10.0
                             1970-01-01T00:00:02.000000Z\t20.0\t16.321205588285576
                             1970-01-01T00:00:03.000000Z\t30.0\t24.967852755919452
-                            """),
-                    "select ts, val, avg(val, 'second', 1) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -957,19 +1073,18 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             // i=1: ts=2s val=100, ts=4s val=200 (dt=2s)
             //   row 1: ema = 100
             //   row 2: alpha = 1 - exp(-2) ≈ 0.8647; ema = 0.8647 * 200 + 0.1353 * 100 ≈ 186.47
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tavg
                             1970-01-01T00:00:01.000000Z\t0\t10.0\t10.0
                             1970-01-01T00:00:02.000000Z\t1\t100.0\t100.0
                             1970-01-01T00:00:03.000000Z\t0\t20.0\t18.646647167633873
                             1970-01-01T00:00:04.000000Z\t1\t200.0\t186.46647167633873
-                            """),
-                    "select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -986,18 +1101,17 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             // Row 1: val=10 -> ema=10
             // Row 2: val=NULL -> ema=10 (keeps previous, L586 updates timestamp)
             // Row 3: val=20, dt=1s (from t=2s to t=3s), alpha=1-exp(-1)≈0.6321 -> ema≈16.32
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, val, avg(val, 'second', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\tval\tavg
                             1970-01-01T00:00:01.000000Z\t10.0\t10.0
                             1970-01-01T00:00:02.000000Z\tnull\t10.0
                             1970-01-01T00:00:03.000000Z\t20.0\t16.321205588285576
-                            """),
-                    "select ts, val, avg(val, 'second', 1) over (order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -1015,18 +1129,17 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             // Row 1: val=NULL -> ema=NaN (L391-394)
             // Row 2: val=10, first valid value (L417) -> ema=10
             // Row 3: val=20, dt=1s, alpha=1-exp(-1)≈0.6321 -> ema≈16.32
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tavg
                             1970-01-01T00:00:01.000000Z\t1\tnull\tnull
                             1970-01-01T00:00:02.000000Z\t1\t10.0\t10.0
                             1970-01-01T00:00:03.000000Z\t1\t20.0\t16.321205588285576
-                            """),
-                    "select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -1065,18 +1178,17 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             // Row 1: val=10 -> ema=10
             // Row 2: val=NULL -> ema=10 (keeps previous, L425-426)
             // Row 3: val=20, dt=1s (from t=2s to t=3s), alpha=1-exp(-1)≈0.6321 -> ema≈16.32
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tavg
                             1970-01-01T00:00:01.000000Z\t1\t10.0\t10.0
                             1970-01-01T00:00:02.000000Z\t1\tnull\t10.0
                             1970-01-01T00:00:03.000000Z\t1\t20.0\t16.321205588285576
-                            """),
-                    "select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
@@ -1091,18 +1203,17 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('1970-01-01T00:00:01.000000Z'::timestamp, 1, 30.0)");
 
             // All same timestamps in partition -> dt=0 -> alpha=1 -> EMA equals current value (L409)
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             ts\ti\tval\tavg
                             1970-01-01T00:00:01.000000Z\t1\t10.0\t10.0
                             1970-01-01T00:00:01.000000Z\t1\t20.0\t20.0
                             1970-01-01T00:00:01.000000Z\t1\t30.0\t30.0
-                            """),
-                    "select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
