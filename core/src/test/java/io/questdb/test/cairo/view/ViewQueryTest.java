@@ -1201,19 +1201,17 @@ public class ViewQueryTest extends AbstractViewTest {
                     (view1 order by timestamp) timestamp(timestamp)
                     """);
 
-            assertQueryAndCache(
-                    """
-                            timestamp\tcount
-                            1970-01-01T00:00:00.000000Z\t1
-                            """,
-                    """
+            assertQuery("""
                             select timestamp, count() from view2
                             sample by 10m
-                            """,
-                    "timestamp",
-                    false,
-                    false
-            );
+                            """)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .returns("""
+                            timestamp\tcount
+                            1970-01-01T00:00:00.000000Z\t1
+                            """);
         });
     }
 

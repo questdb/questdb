@@ -1416,7 +1416,6 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 .returns(expected);
 
         assertQuery(query)
-                .ddl(null)
                 .timestamp("k")
                 .expectSize()
                 .returns(expected);
@@ -5196,7 +5195,6 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         """);
 
         assertQuery("select sum(a), k from x sample by 100T fill(none) align to calendar")
-                .ddl(null)
                 .timestamp("k")
                 .expectSize()
                 .returns("""
@@ -14742,9 +14740,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     timestamp\tcount
                     1970-01-01T00:00:00.000000000Z\t1
                     """;
-            assertQueryAndCache(
-                    expected,
-                    """
+            assertQuery("""
                             select timestamp, count()
                             from (
                                 (
@@ -14756,15 +14752,13 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                 order by timestamp
                             )
                             sample by 10m
-                            """,
-                    "timestamp",
-                    false,
-                    false
-            );
+                            """)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .returns(expected);
 
-            assertQueryAndCache(
-                    expected,
-                    """
+            assertQuery("""
                             select timestamp, count()
                             from (
                                 (
@@ -14776,11 +14770,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                 order by timestamp
                             )
                             sample by 10m
-                            """,
-                    "timestamp",
-                    false,
-                    false
-            );
+                            """)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -15104,12 +15098,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         };
     }
 
-    // sql is a parameter and its sample-by result's designated-timestamp column varies
-    // across callers (e.g. testSampleByWithProjection projects to NYTime, not "timestamp"),
-    // so a single builder chain cannot express the per-call timestamp - stays on assertSql.
-    private void assertSampleByFlavours(String expected, String sql) throws SqlException {
-        assertSql(expected, sql);
-        assertSql(expected, sql + " ALIGN TO FIRST OBSERVATION;");
+    private void assertSampleByFlavours(String expected, String sql) throws Exception {
+        // returnsOnce() does a single cursor pass without asserting the designated timestamp, which varies
+        // per caller (e.g. testSampleByWithProjection projects to NYTime), so one chain fits every caller.
+        assertQuery(sql).noLeakCheck().returnsOnce(expected);
+        assertQuery(sql + " ALIGN TO FIRST OBSERVATION;").noLeakCheck().returnsOnce(expected);
     }
 
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
@@ -15292,12 +15285,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             "   long_sequence(100)" +
                             "), index(s) timestamp(k) partition by DAY"
             );
-            try {
-                assertExceptionNoLeakCheck(query);
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), errorContains);
-                Assert.assertEquals(errorPosition, ex.getPosition());
-            }
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fails(errorPosition, errorContains);
         });
     }
 

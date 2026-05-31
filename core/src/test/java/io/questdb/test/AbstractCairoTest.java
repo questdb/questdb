@@ -1426,6 +1426,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     /**
      * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
+    // todo: remove
     protected static void assertQueryNoLeakCheck(
             CharSequence expected,
             CharSequence query,
@@ -2001,22 +2002,27 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess));
     }
 
+    // todo: remove
     protected void assertQuery(String expected, String query, String expectedTimestamp) throws Exception {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(expected, query, expectedTimestamp, false));
     }
 
+    // todo: remove
     protected void assertQuery(String expected, String query, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
         assertQueryFullFatNoLeakCheck(expected, query, null, supportsRandomAccess, expectSize, false);
     }
 
+    // todo: remove
     protected void assertQueryAndCache(String expected, String query, String expectedTimestamp, boolean expectSize) throws SqlException {
         assertQueryAndCache(expected, query, expectedTimestamp, false, expectSize);
     }
 
+    // todo: remove
     protected void assertQueryAndCache(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
         assertQueryAndCacheFullFat(expected, query, expectedTimestamp, supportsRandomAccess, expectSize);
     }
 
+    // todo: remove
     protected void assertQueryAndCacheFullFat(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
         snapshotMemoryUsage();
         try (final RecordCursorFactory factory = select(query)) {
@@ -2371,7 +2377,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
      * <p>
      * This replaces the large family of positional {@code assertQuery} / {@code assertQueryNoLeakCheck} /
      * {@code assertException} overloads: every option is a named step rather than a positional boolean,
-     * and cross-cutting concerns ({@link #noLeakCheck()}, {@link #fullFatJoins()}, {@link #cached()},
+     * and cross-cutting concerns ({@link #noLeakCheck()}, {@link #fullFatJoins()},
      * {@link #withPlan}) compose instead of multiplying method names. Each step only records intent; the
      * terminal step performs the assertion by delegating to the corresponding legacy workhorse, so the
      * semantics are identical to the hand-written positional call.
@@ -2381,7 +2387,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
      */
     protected class QueryAssertion {
         private final CharSequence query;
-        private boolean cached;
         private SqlExecutionContext context;
         private CharSequence ddl;
         private CharSequence ddl2;
@@ -2396,16 +2401,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
         private QueryAssertion(CharSequence query) {
             this.query = query;
-        }
-
-        /**
-         * Compile the query once and assert the result twice from the cached factory, exercising the
-         * full-fat cursor path. Supports only {@link #timestamp}, {@link #expectSize} and
-         * {@link #noRandomAccess}.
-         */
-        public QueryAssertion cached() {
-            this.cached = true;
-            return this;
         }
 
         /**
@@ -2653,8 +2648,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
         /**
          * Also assert the query's execution plan (EXPLAIN output) matches {@code expectedPlan} exactly.
-         * Implies a leak check; cannot be combined with {@link #noLeakCheck()}, {@link #fullFatJoins()}
-         * or {@link #cached()}.
+         * Implies a leak check; cannot be combined with {@link #noLeakCheck()} or {@link #fullFatJoins()}.
          */
         public QueryAssertion withPlan(CharSequence expectedPlan) {
             this.expectedPlan = expectedPlan;
@@ -2664,8 +2658,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         /**
          * Also assert the query's execution plan (EXPLAIN output) contains every one of {@code fragments}.
          * Use when a test cares only about parts of the plan rather than the whole text. Implies a leak
-         * check; cannot be combined with {@link #noLeakCheck()}, {@link #fullFatJoins()} or
-         * {@link #cached()}.
+         * check; cannot be combined with {@link #noLeakCheck()} or {@link #fullFatJoins()}.
          */
         public QueryAssertion withPlanContaining(CharSequence... fragments) {
             final ObjList<CharSequence> list = new ObjList<>(fragments.length);
@@ -2679,8 +2672,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         private void dispatch(CharSequence expected, CharSequence expected2) throws Exception {
             prepareForQueryAssertion();
             if (expectedPlan != null || planFragments != null) {
-                if (!leakCheck || fullFatJoins || cached) {
-                    throw new IllegalStateException("withPlan(...)/withPlanContaining(...) cannot be combined with noLeakCheck()/fullFatJoins()/cached()");
+                if (!leakCheck || fullFatJoins) {
+                    throw new IllegalStateException("withPlan(...)/withPlanContaining(...) cannot be combined with noLeakCheck()/fullFatJoins()");
                 }
                 final CharSequence exactPlan = expectedPlan;
                 final ObjList<CharSequence> fragments = planFragments;
@@ -2693,19 +2686,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                         assertPlanContainsNoLeakCheck(query, fragments);
                     }
                 });
-                return;
-            }
-            if (cached) {
-                if (ddl != null || ddl2 != null || sizeCanBeVariable || fullFatJoins) {
-                    throw new IllegalStateException("cached() supports only timestamp()/expectSize()/noRandomAccess()");
-                }
-                final String exp = expected.toString();
-                final String ts = expectedTimestamp == null ? null : expectedTimestamp.toString();
-                if (leakCheck) {
-                    assertMemoryLeak(() -> assertQueryAndCacheFullFat(exp, query.toString(), ts, supportsRandomAccess, expectSize));
-                } else {
-                    assertQueryAndCacheFullFat(exp, query.toString(), ts, supportsRandomAccess, expectSize);
-                }
                 return;
             }
             if (fullFatJoins) {
@@ -2733,13 +2713,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
 
         private void requireRecordPathCompatible() {
-            if (!leakCheck || fullFatJoins || cached || expectedPlan != null || planFragments != null || sizeCanBeVariable || !supportsRandomAccess || context != null) {
+            if (!leakCheck || fullFatJoins || expectedPlan != null || planFragments != null || sizeCanBeVariable || !supportsRandomAccess || context != null) {
                 throw new IllegalStateException("returnsRecords(...) supports only ddl()/timestamp()/mutateWith()/expectSize()");
             }
         }
 
         private void requireSingleShotCompatible() {
-            if (expectSize || expectedTimestamp != null || ddl2 != null || cached || fullFatJoins || expectedPlan != null || planFragments != null || !supportsRandomAccess || sizeCanBeVariable) {
+            if (expectSize || expectedTimestamp != null || ddl2 != null || fullFatJoins || expectedPlan != null || planFragments != null || !supportsRandomAccess || sizeCanBeVariable) {
                 throw new IllegalStateException("returnsOnce(...) supports only ddl()/noLeakCheck()/withContext()");
             }
         }
