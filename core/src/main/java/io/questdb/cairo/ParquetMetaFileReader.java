@@ -34,6 +34,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * File reader for the _pm files, which are sidecar files for the `.parquet` format.
@@ -502,6 +503,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * omits the explicit array and means a single sort column (the ascending
      * designated timestamp).
      */
+    @TestOnly
     public int getSortingColumnCount() {
         if ((Unsafe.getLong(addr + HEADER_FEATURE_FLAGS_OFF) & SORTING_IS_DTS_ASC_FEATURE_FLAG) != 0) {
             return 1;
@@ -515,6 +517,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      * array). {@code sortingColumnIndex} must be in {@code [0, getSortingColumnCount())};
      * the assertion guards the unchecked native read on the explicit-array branch.
      */
+    @TestOnly
     public int getSortingColumnIndex(int sortingColumnIndex) {
         assert sortingColumnIndex >= 0 && sortingColumnIndex < getSortingColumnCount();
         if ((Unsafe.getLong(addr + HEADER_FEATURE_FLAGS_OFF) & SORTING_IS_DTS_ASC_FEATURE_FLAG) != 0) {
@@ -769,6 +772,15 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
                     .put("unsupported required _pm feature flags [flags=0x")
                     .put(Long.toHexString(unknownRequired))
                     .put(']');
+        }
+        if ((featureFlags & SORTING_IS_DTS_ASC_FEATURE_FLAG) == 0) {
+            long sortingColumnCountLong = Integer.toUnsignedLong(Unsafe.getInt(addr + HEADER_SORTING_COL_CNT_OFF));
+            if (headerEndOffset + sortingColumnCountLong * Integer.BYTES > parquetMetaFileSize) {
+                throw CairoException.critical(0)
+                        .put("invalid _pm sorting column count [count=").put(sortingColumnCountLong)
+                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                        .put(']');
+            }
         }
         long footerFeatureFlags = Unsafe.getLong(footerAddr + FOOTER_FEATURE_FLAGS_OFF);
         long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK;

@@ -224,12 +224,11 @@ impl ParquetUpdater {
             }
         };
 
-        // The caller's `sorting_columns` come from the raw timestamp slot, stale
-        // after a DROP COLUMN. Recompute the sort column from the dense designated
-        // position in the source metadata, but only when both the caller and the
-        // source agree there is one. Schema-change rewrites recompute it again in
-        // set_target_schema from the dense target schema.
-        let sorting_columns = sorting_columns.and(designated_sorting_columns(&source_qdb_meta));
+        // The caller's `sorting_columns` use the raw timestamp slot, stale after a
+        // DROP COLUMN; recompute from the dense designated position in the source
+        // qdb_meta, keeping a sort column only when both the caller and source have
+        // one. Schema-change rewrites recompute it again in set_target_schema.
+        let sorting_columns = sorting_columns.and(designated_ts_sorting_columns(&source_qdb_meta));
 
         // Detect which columns had bloom filters in the original file.
         let bloom_filter_columns = if let Some(first_rg) = metadata.row_groups.first() {
@@ -681,7 +680,7 @@ impl ParquetUpdater {
         // can shift the timestamp index. Must run before the copy/insert calls
         // that follow, which read sorting_columns().
         self.parquet_file
-            .set_sorting_columns(designated_sorting_columns(&qdb_meta));
+            .set_sorting_columns(designated_ts_sorting_columns(&qdb_meta));
 
         self.target_qdb_meta = Some(qdb_meta);
         Ok(())
@@ -1187,14 +1186,11 @@ fn adjust_column_chunk_offsets(col: &mut ColumnChunk, offset_delta: i64) {
     col.offset_index_length = None;
 }
 
-/// The file-level `sorting_columns` for a QuestDB parquet file: one entry at the
-/// dense column position of the designated timestamp, or `None` when there is
-/// none. The dense position comes from the `qdb_meta` flag rather than the
-/// table's raw timestamp slot, which goes stale after a DROP COLUMN leaves a
-/// tombstone. Direction is always ascending, matching the encode paths that
-/// produce these files (COPY export, the only descending writer, never reaches
-/// `ParquetUpdater`).
-fn designated_sorting_columns(qdb_meta: &QdbMeta) -> Option<Vec<SortingColumn>> {
+/// File-level `sorting_columns` for a QuestDB parquet file: the designated
+/// timestamp at its dense `qdb_meta` position (not the raw timestamp slot, which
+/// goes stale after a DROP COLUMN), or `None` when there is none. Always
+/// ascending; QuestDB does not write a descending designated timestamp.
+fn designated_ts_sorting_columns(qdb_meta: &QdbMeta) -> Option<Vec<SortingColumn>> {
     qdb_meta
         .schema
         .iter()
@@ -2422,7 +2418,7 @@ mod tests {
         let src_len = src.as_file().metadata()?.len();
 
         // Rewrite-mode updater. The constructor already reduces the caller's index
-        // to the source's designated position (1) via designated_sorting_columns;
+        // to the source's designated position (1) via designated_ts_sorting_columns;
         // the test's job is to prove set_target_schema then recomputes it to the
         // dense target position (0) rather than keeping the source's 1.
         let target_sorting = || Some(vec![SortingColumn::new(0, false, false)]);

@@ -770,13 +770,10 @@ fn designated_sorting_col(qdb_meta: &QdbMeta) -> Option<SortingCol> {
         })
 }
 
-/// Sort columns for `_pm` generation, read from the parquet footer. A
-/// converted-then-O3-merged partition upgraded across the dense-index fix can
-/// declare conflicting sort indices across row groups (a cached group's stale
-/// index vs. a freshly appended group's corrected one). The read path resolves
-/// sorting from qdb_meta and ignores the footer, so on such a conflict fall back
-/// to qdb_meta's designated timestamp instead of aborting `_pm` generation -- and
-/// replica bootstrap with it.
+/// Sort columns for `_pm` generation, from the parquet footer -- falling back to
+/// qdb_meta's designated timestamp when the footer's row groups declare
+/// conflicting indices (which an O3-merged partition can across the dense-index
+/// fix). The read path trusts qdb_meta over the footer, so this never aborts.
 pub(crate) fn resolve_sorting_columns(
     file_metadata: &FileMetaData,
     qdb_meta: Option<&QdbMeta>,
