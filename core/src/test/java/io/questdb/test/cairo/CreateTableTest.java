@@ -404,36 +404,28 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectIndexSupportedColumnTypeAfterCast() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from tab")
+                .ddl("CREATE TABLE tab AS (" +
+                        "SELECT CAST(x as SYMBOL) AS x FROM long_sequence(1)" +
+                        "), INDEX(x)")
+                .expectSize()
+                .returns("""
                         x
                         1
-                        """,
-                "select * from tab",
-                "CREATE TABLE tab AS (" +
-                        "SELECT CAST(x as SYMBOL) AS x FROM long_sequence(1)" +
-                        "), INDEX(x)",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testCreateTableAsSelectIndexSupportedColumnTypeAfterCast2() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from tab")
+                .ddl("CREATE TABLE tab AS (" +
+                        "SELECT CAST(x as STRING) AS x FROM long_sequence(1)" +
+                        "), CAST(x as SYMBOL), INDEX(x)")
+                .expectSize()
+                .returns("""
                         x
                         1
-                        """,
-                "select * from tab",
-                "CREATE TABLE tab AS (" +
-                        "SELECT CAST(x as STRING) AS x FROM long_sequence(1)" +
-                        "), CAST(x as SYMBOL), INDEX(x)",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
