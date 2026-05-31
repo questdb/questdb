@@ -66,27 +66,29 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery("""
+        assertQuery("select sum(f) from tab")
+                .ddl("create table tab as (select cast(null as double) f from long_sequence(33))")
+                .mutateWith("insert into tab select 0.9822 from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                 sum
                 null
-                """, "select sum(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 0.9822 from long_sequence(1)", """
+                """, """
                 sum
                 0.9822
-                """, false, true, false);
+                """);
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select round(sum(f), 12) sum from tab")
+                .ddl("create table tab as (select rnd_double(2) f from long_sequence(131))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sum
                         59.886261325258
-                        """,
-                "select round(sum(f), 12) sum from tab",
-                "create table tab as (select rnd_double(2) f from long_sequence(131))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 }
