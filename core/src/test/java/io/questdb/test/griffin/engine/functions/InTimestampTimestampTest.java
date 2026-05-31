@@ -184,22 +184,16 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     public void testListOfTimestampsInvalidInput() throws Exception {
         execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
-        assertException(
-                "test where ts in ('1970-01-01T00:00:0.070000Z', 'abc')",
-                18,
-                "Invalid date [str=1970-01-01T00:00:0.070000Z]"
-        );
+        assertQuery("test where ts in ('1970-01-01T00:00:0.070000Z', 'abc')")
+                .fails(18, "Invalid date [str=1970-01-01T00:00:0.070000Z]");
     }
 
     @Test
     public void testListOfTimestampsUnsupportedType() throws Exception {
         execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
-        assertException(
-                "test where ts in ('1970-01-01T00:00:00.070000Z', true)",
-                49,
-                "cannot compare TIMESTAMP with type BOOLEAN"
-        );
+        assertQuery("test where ts in ('1970-01-01T00:00:00.070000Z', true)")
+                .fails(49, "cannot compare TIMESTAMP with type BOOLEAN");
     }
 
     @Test

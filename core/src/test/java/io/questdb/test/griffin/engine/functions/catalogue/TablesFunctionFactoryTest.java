@@ -145,11 +145,8 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
                 filesFacade.remove(path.$());
             }
 
-            assertException(
-                    "select hydrate_table_metadata('*')",
-                    7,
-                    "could not open, file does not exist"
-            );
+            assertQuery("select hydrate_table_metadata('*')")
+                    .fails(7, "could not open, file does not exist");
         });
     }
 

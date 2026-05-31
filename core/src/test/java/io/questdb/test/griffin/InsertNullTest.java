@@ -129,17 +129,11 @@ public class InsertNullTest extends AbstractCairoTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery(
-                        "value\n",
-                        "x where value is not null",
-                        String.format("create table x (value %s)", type[0]),
-                        null,
-                        String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
-                        expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
-                        true,
-                        isNotNullable(type[0]),
-                        false
-                );
+                assertQuery("x where value is not null")
+                        .ddl(String.format("create table x (value %s)", type[0]))
+                        .mutateWith(String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS))
+                        .expectSize(isNotNullable(type[0]))
+                        .returns("value\n", expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])));
             } finally {
                 tearDown();
             }
@@ -172,17 +166,11 @@ public class InsertNullTest extends AbstractCairoTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery(
-                        "value\n",
-                        "x where value != null",
-                        String.format("create table x (value %s)", type[0]),
-                        null,
-                        String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
-                        expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
-                        true,
-                        isNotNullable(type[0]),
-                        false
-                );
+                assertQuery("x where value != null")
+                        .ddl(String.format("create table x (value %s)", type[0]))
+                        .mutateWith(String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS))
+                        .expectSize(isNotNullable(type[0]))
+                        .returns("value\n", expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])));
             } finally {
                 tearDown();
             }

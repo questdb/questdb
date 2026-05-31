@@ -330,24 +330,24 @@ public class CastDecimalToDecimalFunctionFactoryTest extends BaseFunctionFactory
     }
 
     private void testConstantCast(String inputDecimal, String expectedOutput, String targetType) throws Exception {
-        assertSql(
-                "cast\n" + expectedOutput + "\n",
-                "SELECT cast(" + inputDecimal + " as " + targetType + ")"
-        );
+        assertQuery("SELECT cast(" + inputDecimal + " as " + targetType + ")")
+                .noLeakCheck()
+                .expectSize()
+                .returns("cast\n" + expectedOutput + "\n");
     }
 
     private void testNullCast(String sourceType, String targetType) throws Exception {
-        assertSql(
-                "cast\n\n",
-                "WITH data AS (SELECT (cast(null as " + sourceType + ")) AS value) SELECT cast(value as " + targetType + ") FROM data"
-        );
+        assertQuery("WITH data AS (SELECT (cast(null as " + sourceType + ")) AS value) SELECT cast(value as " + targetType + ") FROM data")
+                .noLeakCheck()
+                .expectSize()
+                .returns("cast\n\n");
     }
 
     private void testRuntimeCast(String inputDecimal, String expectedOutput, String targetType) throws Exception {
-        assertSql(
-                "cast\n" + expectedOutput + "\n",
-                "WITH data AS (SELECT (" + inputDecimal + ") AS value) SELECT cast(value as " + targetType + ") FROM data"
-        );
+        assertQuery("WITH data AS (SELECT (" + inputDecimal + ") AS value) SELECT cast(value as " + targetType + ") FROM data")
+                .noLeakCheck()
+                .expectSize()
+                .returns("cast\n" + expectedOutput + "\n");
     }
 
     private void testRuntimeCastOverflow(String inputDecimal, String targetType, String expectedErrorFragment) throws Exception {

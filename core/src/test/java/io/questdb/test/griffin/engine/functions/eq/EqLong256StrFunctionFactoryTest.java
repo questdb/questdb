@@ -44,8 +44,10 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
             sqlExecutionContext.getBindVariableService().setStr(0, "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651");
             assertQuery("x where l = $1")
                     .noLeakCheck()
-                    .returns("l\n" +
-                            "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651\n");
+                    .returns("""
+                            l
+                            0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651
+                            """);
         });
     }
 
@@ -95,13 +97,10 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
     public void testLong256GarbageDecode1() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQueryNoLeakCheck(
-                        "rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n",
-                        "xxxx where rnd_long256!='0xG56'",
-                        "create table xxxx as (select rnd_long256() from long_sequence(1));",
-                        null,
-                        true
-                );
+                assertQuery("xxxx where rnd_long256!='0xG56'")
+                        .noLeakCheck()
+                        .ddl("create table xxxx as (select rnd_long256() from long_sequence(1));")
+                        .returns("rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n");
                 Assert.fail();
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `0xG56` [STRING -> LONG256]");
@@ -135,9 +134,11 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
             sqlExecutionContext.getBindVariableService().setStr("l256", "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652");
             assertQuery("x where l != :l256")
                     .noLeakCheck()
-                    .returns("l\n" +
-                            "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n" +
-                            "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651\n");
+                    .returns("""
+                            l
+                            0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650
+                            0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651
+                            """);
         });
     }
 

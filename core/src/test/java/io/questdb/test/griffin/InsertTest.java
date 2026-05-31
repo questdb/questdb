@@ -1537,16 +1537,21 @@ public class InsertTest extends AbstractCairoTest {
                 BB\t339631474\t1970-01-03T00:54:00.000000Z
                 """;
 
-        assertQuery("sym\tid\tts\n", "x", """
+        assertQuery("x")
+                .ddl("""
                 create table x (
                     sym symbol index,
                     id int,
                     ts timestamp
-                ) timestamp(ts) partition by DAY""", "ts", """
+                ) timestamp(ts) partition by DAY""")
+                .timestamp("ts")
+                .mutateWith("""
                 insert into x select * from (select rnd_symbol('A', 'BB', 'CC', 'DDD') sym,\s
                         rnd_int() id,\s
                         timestamp_sequence(172800000000, 360000000) ts\s
-                    from long_sequence(10)) timestamp (ts)""", expected, true, true, false);
+                    from long_sequence(10)) timestamp (ts)""")
+                .expectSize()
+                .returns("sym\tid\tts\n", expected);
     }
 
     @Test
@@ -1585,10 +1590,13 @@ public class InsertTest extends AbstractCairoTest {
             assertQueryCheckWal(expected);
 
             // check symbol null was inserted as a null varch and not as an empty varchar
-            assertQuery("""
+            assertQuery("select * from dest where vch is null")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                     ts\tvch
                     1970-01-01T00:00:00.020000Z\t
-                    """, "select * from dest where vch is null", "ts", true, false);
+                    """);
         });
     }
 
@@ -1936,10 +1944,13 @@ public class InsertTest extends AbstractCairoTest {
             assertQueryCheckWal(expected);
 
             // check symbol null was inserted as a null varch and not as an empty varchar
-            assertQuery("""
+            assertQuery("select * from dest where vch is null")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                     ts\tvch
                     1970-01-01T00:00:00.020000Z\t
-                    """, "select * from dest where vch is null", "ts", true, false);
+                    """);
         });
     }
 
@@ -1980,10 +1991,13 @@ public class InsertTest extends AbstractCairoTest {
             assertQueryCheckWal(expected);
 
             // check varchar null was inserted as a null string and not as an empty string
-            assertQuery("""
+            assertQuery("select * from dest where s is null")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                     ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym
                     1970-01-01T00:00:00.020000Z\t\tnull\t0\tnull\t0\t\tnull\tnull\t\t\t\t
-                    """, "select * from dest where s is null", "ts", true, false);
+                    """);
         });
     }
 
@@ -2024,7 +2038,12 @@ public class InsertTest extends AbstractCairoTest {
         if (walEnabled) {
             drainWalQueue();
         }
-        assertQuery("seq\tts\n", "tab", "create table tab(seq long, ts timestamp) timestamp(ts);", "ts", "insert into tab select x ac, timestamp_sequence(0, x) ts from long_sequence(10)", expected, true, true, false);
+        assertQuery("tab")
+                .ddl("create table tab(seq long, ts timestamp) timestamp(ts);")
+                .timestamp("ts")
+                .mutateWith("insert into tab select x ac, timestamp_sequence(0, x) ts from long_sequence(10)")
+                .expectSize()
+                .returns("seq\tts\n", expected);
     }
 
     @Test
