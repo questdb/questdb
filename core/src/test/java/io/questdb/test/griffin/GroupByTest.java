@@ -3705,17 +3705,11 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     private void assertError(String query, String errorMessage) throws Exception {
-        try {
-            assertQuery(
-                    null,
-                    query,
-                    null,
-                    true,
-                    true
-            );
-            Assert.fail();
-        } catch (SqlException sqle) {
-            Assert.assertEquals(errorMessage, sqle.getMessage());
-        }
+        // errorMessage is the full position-prefixed message, e.g. "[48] aggregate functions ...".
+        // SqlException.getMessage() == "[" + position + "] " + flyweightMessage, so split it into the
+        // position and the flyweight message and assert both via the builder's fails() terminal.
+        final int close = errorMessage.indexOf(']');
+        final int position = Integer.parseInt(errorMessage.substring(1, close));
+        assertQuery(query).fails(position, errorMessage.substring(close + 2));
     }
 }
