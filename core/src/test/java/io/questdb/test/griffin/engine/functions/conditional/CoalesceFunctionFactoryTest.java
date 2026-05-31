@@ -239,12 +239,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\tx\n" +
-                        "127.0.0.1\t127.0.0.1\t\n" +
-                        "1.1.96.238\t127.0.0.1\t1.1.96.238\n" +
-                        "127.0.0.1\t127.0.0.1\t\n" +
-                        "127.0.0.1\t127.0.0.1\t\n" +
-                        "127.0.0.1\t127.0.0.1\t\n");
+                .returns("""
+                        c1\tc2\tx
+                        127.0.0.1\t127.0.0.1\t
+                        1.1.96.238\t127.0.0.1\t1.1.96.238
+                        127.0.0.1\t127.0.0.1\t
+                        127.0.0.1\t127.0.0.1\t
+                        127.0.0.1\t127.0.0.1\t
+                        """);
     }
 
     @Test
@@ -256,12 +258,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\tx\n" +
-                        "127.0.0.1\t127.0.0.1\t\n" +
-                        "1.1.96.238\t127.0.0.1\t1.1.96.238\n" +
-                        "127.0.0.1\t127.0.0.1\t\n" +
-                        "127.0.0.1\t127.0.0.1\t\n" +
-                        "127.0.0.1\t127.0.0.1\t\n");
+                .returns("""
+                        c1\tc2\tx
+                        127.0.0.1\t127.0.0.1\t
+                        1.1.96.238\t127.0.0.1\t1.1.96.238
+                        127.0.0.1\t127.0.0.1\t
+                        127.0.0.1\t127.0.0.1\t
+                        127.0.0.1\t127.0.0.1\t
+                        """);
     }
 
     @Test
@@ -275,12 +279,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\ta\tb\tx\n" +
-                        "0x1408db63570045c42b9133f96d5ac9b49395464592076d7cc536ccc3235f0a72\t0x1408db63570045c42b9133f96d5ac9b49395464592076d7cc536ccc3235f0a72\t\t0x1408db63570045c42b9133f96d5ac9b49395464592076d7cc536ccc3235f0a72\t\n" +
-                        "0xa4cdac45d508383f9c0a1370d099b7237e25b91255572a8f86fd0ebdb6707e47\t\t\t\t0xa4cdac45d508383f9c0a1370d099b7237e25b91255572a8f86fd0ebdb6707e47\n" +
-                        "\t\t\t\t\n" +
-                        "0x2000c672c7af13b68f38b4e22684beea970e01b3e4aca8b29e144cd789d939f0\t0x2000c672c7af13b68f38b4e22684beea970e01b3e4aca8b29e144cd789d939f0\t0x2000c672c7af13b68f38b4e22684beea970e01b3e4aca8b29e144cd789d939f0\t\t0x9ec31d67e4bc804a761b47dbe5d724a075234fffc7e1e6917d2037c10d3c9d2e\n" +
-                        "0x2ab49a7d2ed9aec81233ce62b3c6cf03600e7d2ef68eeb777b8273a492471abc\t0x2ab49a7d2ed9aec81233ce62b3c6cf03600e7d2ef68eeb777b8273a492471abc\t\t0x2ab49a7d2ed9aec81233ce62b3c6cf03600e7d2ef68eeb777b8273a492471abc\t\n");
+                .returns("""
+                        c1\tc2\ta\tb\tx
+                        0x1408db63570045c42b9133f96d5ac9b49395464592076d7cc536ccc3235f0a72\t0x1408db63570045c42b9133f96d5ac9b49395464592076d7cc536ccc3235f0a72\t\t0x1408db63570045c42b9133f96d5ac9b49395464592076d7cc536ccc3235f0a72\t
+                        0xa4cdac45d508383f9c0a1370d099b7237e25b91255572a8f86fd0ebdb6707e47\t\t\t\t0xa4cdac45d508383f9c0a1370d099b7237e25b91255572a8f86fd0ebdb6707e47
+                        \t\t\t\t
+                        0x2000c672c7af13b68f38b4e22684beea970e01b3e4aca8b29e144cd789d939f0\t0x2000c672c7af13b68f38b4e22684beea970e01b3e4aca8b29e144cd789d939f0\t0x2000c672c7af13b68f38b4e22684beea970e01b3e4aca8b29e144cd789d939f0\t\t0x9ec31d67e4bc804a761b47dbe5d724a075234fffc7e1e6917d2037c10d3c9d2e
+                        0x2ab49a7d2ed9aec81233ce62b3c6cf03600e7d2ef68eeb777b8273a492471abc\t0x2ab49a7d2ed9aec81233ce62b3c6cf03600e7d2ef68eeb777b8273a492471abc\t\t0x2ab49a7d2ed9aec81233ce62b3c6cf03600e7d2ef68eeb777b8273a492471abc\t
+                        """);
     }
 
     @Test
@@ -294,12 +300,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\ta\tb\tx\n" +
-                        "0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\t\t0010cde8-12ce-40ee-8010-a928bb8b9650\t\n" +
-                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\t\t\t\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
-                        "\t\t\t\t\n" +
-                        "b5b2159a-2356-4217-965d-4c984f0ffa8a\tb5b2159a-2356-4217-965d-4c984f0ffa8a\tb5b2159a-2356-4217-965d-4c984f0ffa8a\t\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
-                        "e8beef38-cd7b-43d8-9b2d-34586f6275fa\te8beef38-cd7b-43d8-9b2d-34586f6275fa\t\te8beef38-cd7b-43d8-9b2d-34586f6275fa\t\n");
+                .returns("""
+                        c1\tc2\ta\tb\tx
+                        0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\t\t0010cde8-12ce-40ee-8010-a928bb8b9650\t
+                        9f9b2131-d49f-4d1d-ab81-39815c50d341\t\t\t\t9f9b2131-d49f-4d1d-ab81-39815c50d341
+                        \t\t\t\t
+                        b5b2159a-2356-4217-965d-4c984f0ffa8a\tb5b2159a-2356-4217-965d-4c984f0ffa8a\tb5b2159a-2356-4217-965d-4c984f0ffa8a\t\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15
+                        e8beef38-cd7b-43d8-9b2d-34586f6275fa\te8beef38-cd7b-43d8-9b2d-34586f6275fa\t\te8beef38-cd7b-43d8-9b2d-34586f6275fa\t
+                        """);
     }
 
     @Test
@@ -329,12 +337,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\tx\n" +
-                        "\t\t\n" +
-                        "0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
-                        "\t\t\n" +
-                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
-                        "\t\t\n");
+                .returns("""
+                        c1\tc2\tx
+                        \t\t
+                        0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650
+                        \t\t
+                        9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341
+                        \t\t
+                        """);
     }
 
     @Test
@@ -346,12 +356,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\tx\n" +
-                        "00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t\n" +
-                        "0010cde8-12ce-40ee-8010-a928bb8b9650\t00000000-0000-0000-0000-000000000000\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
-                        "00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t\n" +
-                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\t00000000-0000-0000-0000-000000000000\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
-                        "00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t\n");
+                .returns("""
+                        c1\tc2\tx
+                        00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t
+                        0010cde8-12ce-40ee-8010-a928bb8b9650\t00000000-0000-0000-0000-000000000000\t0010cde8-12ce-40ee-8010-a928bb8b9650
+                        00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t
+                        9f9b2131-d49f-4d1d-ab81-39815c50d341\t00000000-0000-0000-0000-000000000000\t9f9b2131-d49f-4d1d-ab81-39815c50d341
+                        00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t
+                        """);
     }
 
     @Test
@@ -363,12 +375,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\tx\n" +
-                        "00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t\n" +
-                        "0010cde8-12ce-40ee-8010-a928bb8b9650\t00000000-0000-0000-0000-000000000000\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
-                        "00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t\n" +
-                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\t00000000-0000-0000-0000-000000000000\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
-                        "00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t\n");
+                .returns("""
+                        c1\tc2\tx
+                        00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t
+                        0010cde8-12ce-40ee-8010-a928bb8b9650\t00000000-0000-0000-0000-000000000000\t0010cde8-12ce-40ee-8010-a928bb8b9650
+                        00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t
+                        9f9b2131-d49f-4d1d-ab81-39815c50d341\t00000000-0000-0000-0000-000000000000\t9f9b2131-d49f-4d1d-ab81-39815c50d341
+                        00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t
+                        """);
     }
 
     @Test
@@ -382,37 +396,42 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\ta\tb\tx\n" +
-                        "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t\n" +
-                        "8#3TsZ\t\t\t\t8#3TsZ\n" +
-                        "\t\t\t\t\n" +
-                        "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\tṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\tṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t\tzV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
-                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t\t\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t\n");
+                .returns("""
+                        c1\tc2\ta\tb\tx
+                        &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t
+                        8#3TsZ\t\t\t\t8#3TsZ
+                        \t\t\t\t
+                        ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\tṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\tṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t\tzV衞͛Ԉ龘и\uDA89\uDFA4~
+                        \uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t\t\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t
+                        """);
     }
 
     @Test
     public void testDateCoalesce() throws Exception {
         assertQuery("select coalesce(a, b, x) as c1, coalesce(a, b) c2, a, x \n" +
                         "from alex")
-                .ddl("create table alex as (" +
-                        "WITH tx as (\n" +
-                        "select CAST(dateadd('d', CAST(x as INT), CAST(0 AS DATE)) AS DATE) as x, \n" +
-                        "CAST(dateadd('d', CAST(x as INT) * 10, CAST(0 AS DATE)) AS DATE) as xx, \n" +
-                        "CAST(x AS DATE) xxx," +
-                        "x as n from long_sequence(5))\n" +
-                        "select " +
-                        "CASE WHEN n > 3 THEN xxx ELSE CAST(NULL as DATE) END as x, \n" +
-                        "CASE WHEN n % 3 = 0 THEN xx ELSE CAST(NULL as DATE) END as a, \n" +
-                        "CASE WHEN n % 3 = 1 THEN xx ELSE CAST(NULL as DATE) END as b \n" +
-                        "from tx " +
-                        ")")
+                .ddl("""
+                        create table alex as (\
+                        WITH tx as (
+                        select CAST(dateadd('d', CAST(x as INT), CAST(0 AS DATE)) AS DATE) as x,\s
+                        CAST(dateadd('d', CAST(x as INT) * 10, CAST(0 AS DATE)) AS DATE) as xx,\s
+                        CAST(x AS DATE) xxx,\
+                        x as n from long_sequence(5))
+                        select \
+                        CASE WHEN n > 3 THEN xxx ELSE CAST(NULL as DATE) END as x,\s
+                        CASE WHEN n % 3 = 0 THEN xx ELSE CAST(NULL as DATE) END as a,\s
+                        CASE WHEN n % 3 = 1 THEN xx ELSE CAST(NULL as DATE) END as b\s
+                        from tx \
+                        )""")
                 .expectSize()
-                .returns("c1\tc2\ta\tx\n" +
-                        "1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000Z\t\t\n" +
-                        "\t\t\t\n" +
-                        "1970-01-31T00:00:00.000Z\t1970-01-31T00:00:00.000Z\t1970-01-31T00:00:00.000Z\t\n" +
-                        "1970-02-10T00:00:00.000Z\t1970-02-10T00:00:00.000Z\t\t1970-01-01T00:00:00.004Z\n" +
-                        "1970-01-01T00:00:00.005Z\t\t\t1970-01-01T00:00:00.005Z\n");
+                .returns("""
+                        c1\tc2\ta\tx
+                        1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000Z\t\t
+                        \t\t\t
+                        1970-01-31T00:00:00.000Z\t1970-01-31T00:00:00.000Z\t1970-01-31T00:00:00.000Z\t
+                        1970-02-10T00:00:00.000Z\t1970-02-10T00:00:00.000Z\t\t1970-01-01T00:00:00.004Z
+                        1970-01-01T00:00:00.005Z\t\t\t1970-01-01T00:00:00.005Z
+                        """);
     }
 
     @Test
@@ -426,13 +445,15 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(6)" +
                         ")")
                 .expectSize()
-                .returns("coalesce\n" +
-                        "10.0\n" +
-                        "null\n" +
-                        "0.5\n" +
-                        "10.0\n" +
-                        "null\n" +
-                        "0.5\n");
+                .returns("""
+                        coalesce
+                        10.0
+                        null
+                        0.5
+                        10.0
+                        null
+                        0.5
+                        """);
     }
 
     @Test
@@ -446,12 +467,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\ta\tb\tx\n" +
-                        "10.0\t10.0\tnull\t10.0\t0.1\n" +
-                        "0.2\tnull\tnull\tnull\t0.2\n" +
-                        "100.0\t100.0\t100\tnull\t0.3\n" +
-                        "10.0\t10.0\tnull\t10.0\t0.4\n" +
-                        "0.5\tnull\tnull\tnull\t0.5\n");
+                .returns("""
+                        c1\tc2\ta\tb\tx
+                        10.0\t10.0\tnull\t10.0\t0.1
+                        0.2\tnull\tnull\tnull\t0.2
+                        100.0\t100.0\t100\tnull\t0.3
+                        10.0\t10.0\tnull\t10.0\t0.4
+                        0.5\tnull\tnull\tnull\t0.5
+                        """);
     }
 
     @Test
@@ -503,12 +526,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\ta\tb\tx\n" +
-                        "10.0\t10.0\tnull\t10.0\tnull\n" +
-                        "null\tnull\tnull\tnull\tnull\n" +
-                        "0.5\t0.5\t0.5\tnull\tnull\n" +
-                        "10.0\t10.0\tnull\t10.0\t4.0\n" +
-                        "5.0\tnull\tnull\tnull\t5.0\n");
+                .returns("""
+                        c1\tc2\ta\tb\tx
+                        10.0\t10.0\tnull\t10.0\tnull
+                        null\tnull\tnull\tnull\tnull
+                        0.5\t0.5\t0.5\tnull\tnull
+                        10.0\t10.0\tnull\t10.0\t4.0
+                        5.0\tnull\tnull\tnull\t5.0
+                        """);
     }
 
     @Test
@@ -523,12 +548,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\ta\tb\tx\n" +
-                        "54.98.173.21\t54.98.173.21\t\t54.98.173.21\t1.1.96.238\n" +
-                        "54.132.76.40\t54.132.76.40\t\t54.132.76.40\t1.1.250.138\n" +
-                        "3.7.4.15\t3.7.4.15\t3.7.4.15\t\t1.1.20.236\n" +
-                        "54.62.93.114\t54.62.93.114\t\t54.62.93.114\t1.1.132.196\n" +
-                        "3.7.4.252\t3.7.4.252\t3.7.4.252\t54.22.249.199\t\n");
+                .returns("""
+                        c1\tc2\ta\tb\tx
+                        54.98.173.21\t54.98.173.21\t\t54.98.173.21\t1.1.96.238
+                        54.132.76.40\t54.132.76.40\t\t54.132.76.40\t1.1.250.138
+                        3.7.4.15\t3.7.4.15\t3.7.4.15\t\t1.1.20.236
+                        54.62.93.114\t54.62.93.114\t\t54.62.93.114\t1.1.132.196
+                        3.7.4.252\t3.7.4.252\t3.7.4.252\t54.22.249.199\t
+                        """);
     }
 
     @Test
@@ -543,12 +570,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\ta\tb\tx\n" +
-                        "10\t10\tnull\t10\tnull\n" +
-                        "null\tnull\tnull\tnull\tnull\n" +
-                        "6\t6\t6\tnull\tnull\n" +
-                        "40\t40\tnull\t40\t4\n" +
-                        "5\tnull\tnull\tnull\t5\n");
+                .returns("""
+                        c1\tc2\ta\tb\tx
+                        10\t10\tnull\t10\tnull
+                        null\tnull\tnull\tnull\tnull
+                        6\t6\t6\tnull\tnull
+                        40\t40\tnull\t40\t4
+                        5\tnull\tnull\tnull\t5
+                        """);
     }
 
     @Test
@@ -562,13 +591,15 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(6)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\ta\tb\tx\n" +
-                        "3\t3\tnull\t3\t1\n" +
-                        "null\tnull\tnull\tnull\tnull\n" +
-                        "6\t6\t6\tnull\t3\n" +
-                        "12\t12\tnull\t12\tnull\n" +
-                        "5\tnull\tnull\tnull\t5\n" +
-                        "12\t12\t12\tnull\tnull\n");
+                .returns("""
+                        c1\tc2\ta\tb\tx
+                        3\t3\tnull\t3\t1
+                        null\tnull\tnull\tnull\tnull
+                        6\t6\t6\tnull\t3
+                        12\t12\tnull\t12\tnull
+                        5\tnull\tnull\tnull\t5
+                        12\t12\t12\tnull\tnull
+                        """);
     }
 
     @Test
@@ -582,13 +613,15 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(6)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\ta\tb\tx\n" +
-                        "3\t3\tnull\t3\t1\n" +
-                        "null\tnull\tnull\tnull\tnull\n" +
-                        "6\t6\t6\tnull\t3\n" +
-                        "12\t12\tnull\t12\tnull\n" +
-                        "5\tnull\tnull\tnull\t5\n" +
-                        "12\t12\t12\tnull\tnull\n");
+                .returns("""
+                        c1\tc2\ta\tb\tx
+                        3\t3\tnull\t3\t1
+                        null\tnull\tnull\tnull\tnull
+                        6\t6\t6\tnull\t3
+                        12\t12\tnull\t12\tnull
+                        5\tnull\tnull\tnull\t5
+                        12\t12\t12\tnull\tnull
+                        """);
     }
 
     @Test
@@ -604,188 +637,224 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     public void testStr3Args() throws Exception {
         assertQuery("select coalesce(x, a, b) c1, coalesce(x, a) c2, x, a, b\n" +
                         "from alex")
-                .ddl("create table alex as (" +
-                        "SELECT rnd_str('X',NULL,NULL) as x\n" +
-                        ", rnd_str('A','AA',NULL,NULL) as a\n" +
-                        ", rnd_str('B',NULL) as b\n" +
-                        "from long_sequence(5)" +
-                        ")")
+                .ddl("""
+                        create table alex as (\
+                        SELECT rnd_str('X',NULL,NULL) as x
+                        , rnd_str('A','AA',NULL,NULL) as a
+                        , rnd_str('B',NULL) as b
+                        from long_sequence(5)\
+                        )""")
                 .expectSize()
-                .returns("c1\tc2\tx\ta\tb\n" +
-                        "X\tX\tX\t\t\n" +
-                        "AA\tAA\t\tAA\t\n" +
-                        "B\t\t\t\tB\n" +
-                        "A\tA\t\tA\tB\n" +
-                        "\t\t\t\t\n");
+                .returns("""
+                        c1\tc2\tx\ta\tb
+                        X\tX\tX\t\t
+                        AA\tAA\t\tAA\t
+                        B\t\t\t\tB
+                        A\tA\t\tA\tB
+                        \t\t\t\t
+                        """);
     }
 
     @Test
     public void testStrCoalesceSymbolNocacheSorted() throws Exception {
-        assertQuery("select coalesce(x, a) as coalesce, x, a\n" +
-                        "from t\n" +
-                        "order by 1")
+        assertQuery("""
+                select coalesce(x, a) as coalesce, x, a
+                from t
+                order by 1""")
                 .ddl("create table t (x string, a symbol nocache)")
-                .mutateWith("insert into t select " +
-                        " rnd_str(NULL, 'X', 'Y') as x,\n" +
-                        " rnd_symbol('A', 'B', NULL) as a\n" +
-                        "from long_sequence(5)")
+                .mutateWith("""
+                        insert into t select \
+                         rnd_str(NULL, 'X', 'Y') as x,
+                         rnd_symbol('A', 'B', NULL) as a
+                        from long_sequence(5)""")
                 .expectSize()
-                .returns("coalesce\tx\ta\n", "coalesce\tx\ta\n" +
-                        "A\t\tA\n" +
-                        "B\t\tB\n" +
-                        "X\tX\t\n" +
-                        "Y\tY\t\n" +
-                        "Y\tY\tB\n");
+                .returns("coalesce\tx\ta\n", """
+                        coalesce\tx\ta
+                        A\t\tA
+                        B\t\tB
+                        X\tX\t
+                        Y\tY\t
+                        Y\tY\tB
+                        """);
     }
 
     @Test
     public void testSymbol3Args() throws Exception {
         assertQuery("select coalesce(x, a, b) c1, coalesce(x, a) c2, x, a, b " +
                         "from alex")
-                .ddl("create table alex as (" +
-                        "SELECT rnd_symbol('X',NULL,NULL) as x\n" +
-                        ", rnd_symbol('A','AA', NULL) as a\n" +
-                        ", rnd_symbol('B','BB') as b\n" +
-                        "from long_sequence(5)" +
-                        ")")
+                .ddl("""
+                        create table alex as (\
+                        SELECT rnd_symbol('X',NULL,NULL) as x
+                        , rnd_symbol('A','AA', NULL) as a
+                        , rnd_symbol('B','BB') as b
+                        from long_sequence(5)\
+                        )""")
                 .expectSize()
-                .returns("c1\tc2\tx\ta\tb\n" +
-                        "X\tX\tX\tA\tBB\n" +
-                        "BB\t\t\t\tBB\n" +
-                        "AA\tAA\t\tAA\tB\n" +
-                        "AA\tAA\t\tAA\tB\n" +
-                        "AA\tAA\t\tAA\tBB\n");
+                .returns("""
+                        c1\tc2\tx\ta\tb
+                        X\tX\tX\tA\tBB
+                        BB\t\t\t\tBB
+                        AA\tAA\t\tAA\tB
+                        AA\tAA\t\tAA\tB
+                        AA\tAA\t\tAA\tBB
+                        """);
     }
 
     @Test
     public void testSymbolCoalesceCharAndString() throws Exception {
-        assertQuery("select coalesce(x, a) as coalesce, x, a\n" +
-                        "from alex\n" +
-                        "order by 1")
-                .ddl("create table alex as (" +
-                        "SELECT rnd_str('X',NULL) as x\n" +
-                        ", rnd_char() as a\n" +
-                        "from long_sequence(5)" +
-                        ")")
+        assertQuery("""
+                select coalesce(x, a) as coalesce, x, a
+                from alex
+                order by 1""")
+                .ddl("""
+                        create table alex as (\
+                        SELECT rnd_str('X',NULL) as x
+                        , rnd_char() as a
+                        from long_sequence(5)\
+                        )""")
                 .expectSize()
-                .returns("coalesce\tx\ta\n" +
-                        "P\t\tP\n" +
-                        "W\t\tW\n" +
-                        "X\tX\tT\n" +
-                        "X\tX\tW\n" +
-                        "X\tX\tY\n");
+                .returns("""
+                        coalesce\tx\ta
+                        P\t\tP
+                        W\t\tW
+                        X\tX\tT
+                        X\tX\tW
+                        X\tX\tY
+                        """);
     }
 
     @Test
     public void testSymbolCoalesceCharAndVarchar() throws Exception {
-        assertQuery("select coalesce(x, a) as coalesce, x, a\n" +
-                        "from alex\n" +
-                        "order by 1")
-                .ddl("create table alex as (" +
-                        "SELECT rnd_varchar('X',NULL) as x\n" +
-                        ", rnd_char() as a\n" +
-                        "from long_sequence(5)" +
-                        ")")
+        assertQuery("""
+                select coalesce(x, a) as coalesce, x, a
+                from alex
+                order by 1""")
+                .ddl("""
+                        create table alex as (\
+                        SELECT rnd_varchar('X',NULL) as x
+                        , rnd_char() as a
+                        from long_sequence(5)\
+                        )""")
                 .expectSize()
-                .returns("coalesce\tx\ta\n" +
-                        "P\t\tP\n" +
-                        "W\t\tW\n" +
-                        "X\tX\tT\n" +
-                        "X\tX\tW\n" +
-                        "X\tX\tY\n");
+                .returns("""
+                        coalesce\tx\ta
+                        P\t\tP
+                        W\t\tW
+                        X\tX\tT
+                        X\tX\tW
+                        X\tX\tY
+                        """);
     }
 
     @Test
     public void testSymbolCoalesceShortAndByte() throws Exception {
-        assertQuery("select coalesce(x, a) as coalesce1, coalesce(a, x) as coalesce2, x, a\n" +
-                        "from alex\n" +
-                        "order by 1")
-                .ddl("create table alex as (" +
-                        "SELECT CAST(x as BYTE) as x\n" +
-                        ", CAST(x*2 as SHORT) as a\n" +
-                        "from long_sequence(5)" +
-                        ")")
+        assertQuery("""
+                select coalesce(x, a) as coalesce1, coalesce(a, x) as coalesce2, x, a
+                from alex
+                order by 1""")
+                .ddl("""
+                        create table alex as (\
+                        SELECT CAST(x as BYTE) as x
+                        , CAST(x*2 as SHORT) as a
+                        from long_sequence(5)\
+                        )""")
                 .expectSize()
-                .returns("coalesce1\tcoalesce2\tx\ta\n" +
-                        "1\t2\t1\t2\n" +
-                        "2\t4\t2\t4\n" +
-                        "3\t6\t3\t6\n" +
-                        "4\t8\t4\t8\n" +
-                        "5\t10\t5\t10\n");
+                .returns("""
+                        coalesce1\tcoalesce2\tx\ta
+                        1\t2\t1\t2
+                        2\t4\t2\t4
+                        3\t6\t3\t6
+                        4\t8\t4\t8
+                        5\t10\t5\t10
+                        """);
     }
 
     @Test
     public void testSymbolCoalesceStr2() throws Exception {
         assertQuery("select coalesce(x, a) as coalesce, x, a " +
                         "from alex")
-                .ddl("create table alex as (" +
-                        "SELECT rnd_str('X',NULL) as x\n" +
-                        ", rnd_symbol('A', 'AA') as a\n" +
-                        "from long_sequence(5)" +
-                        ")")
+                .ddl("""
+                        create table alex as (\
+                        SELECT rnd_str('X',NULL) as x
+                        , rnd_symbol('A', 'AA') as a
+                        from long_sequence(5)\
+                        )""")
                 .expectSize()
-                .returns("coalesce\tx\ta\n" +
-                        "X\tX\tA\n" +
-                        "AA\t\tAA\n" +
-                        "AA\t\tAA\n" +
-                        "X\tX\tAA\n" +
-                        "X\tX\tA\n");
+                .returns("""
+                        coalesce\tx\ta
+                        X\tX\tA
+                        AA\t\tAA
+                        AA\t\tAA
+                        X\tX\tAA
+                        X\tX\tA
+                        """);
     }
 
     @Test
     public void testSymbolCoalesceStrSorted() throws Exception {
-        assertQuery("select coalesce(x, a) as coalesce, x, a\n" +
-                        "from alex\n" +
-                        "order by 1")
-                .ddl("create table alex as (" +
-                        "SELECT rnd_str('X',NULL) as x\n" +
-                        ", rnd_symbol('A', 'AA') as a\n" +
-                        "from long_sequence(5)" +
-                        ")")
+        assertQuery("""
+                select coalesce(x, a) as coalesce, x, a
+                from alex
+                order by 1""")
+                .ddl("""
+                        create table alex as (\
+                        SELECT rnd_str('X',NULL) as x
+                        , rnd_symbol('A', 'AA') as a
+                        from long_sequence(5)\
+                        )""")
                 .expectSize()
-                .returns("coalesce\tx\ta\n" +
-                        "AA\t\tAA\n" +
-                        "AA\t\tAA\n" +
-                        "X\tX\tA\n" +
-                        "X\tX\tAA\n" +
-                        "X\tX\tA\n");
+                .returns("""
+                        coalesce\tx\ta
+                        AA\t\tAA
+                        AA\t\tAA
+                        X\tX\tA
+                        X\tX\tAA
+                        X\tX\tA
+                        """);
     }
 
     @Test
     public void testSymbolCoalesceVarchar2() throws Exception {
         assertQuery("select coalesce(x, a) as coalesce, x, a " +
                         "from alex")
-                .ddl("create table alex as (" +
-                        "SELECT rnd_varchar('X',NULL) as x\n" +
-                        ", rnd_symbol('A', 'AA') as a\n" +
-                        "from long_sequence(5)" +
-                        ")")
+                .ddl("""
+                        create table alex as (\
+                        SELECT rnd_varchar('X',NULL) as x
+                        , rnd_symbol('A', 'AA') as a
+                        from long_sequence(5)\
+                        )""")
                 .expectSize()
-                .returns("coalesce\tx\ta\n" +
-                        "X\tX\tA\n" +
-                        "AA\t\tAA\n" +
-                        "AA\t\tAA\n" +
-                        "X\tX\tAA\n" +
-                        "X\tX\tA\n");
+                .returns("""
+                        coalesce\tx\ta
+                        X\tX\tA
+                        AA\t\tAA
+                        AA\t\tAA
+                        X\tX\tAA
+                        X\tX\tA
+                        """);
     }
 
     @Test
     public void testSymbolCoalesceVarcharSorted() throws Exception {
-        assertQuery("select coalesce(x, a) as coalesce, x, a\n" +
-                        "from alex\n" +
-                        "order by 1")
-                .ddl("create table alex as (" +
-                        "SELECT rnd_varchar('X',NULL) as x\n" +
-                        ", rnd_symbol('A', 'AA') as a\n" +
-                        "from long_sequence(5)" +
-                        ")")
+        assertQuery("""
+                select coalesce(x, a) as coalesce, x, a
+                from alex
+                order by 1""")
+                .ddl("""
+                        create table alex as (\
+                        SELECT rnd_varchar('X',NULL) as x
+                        , rnd_symbol('A', 'AA') as a
+                        from long_sequence(5)\
+                        )""")
                 .expectSize()
-                .returns("coalesce\tx\ta\n" +
-                        "AA\t\tAA\n" +
-                        "AA\t\tAA\n" +
-                        "X\tX\tA\n" +
-                        "X\tX\tAA\n" +
-                        "X\tX\tA\n");
+                .returns("""
+                        coalesce\tx\ta
+                        AA\t\tAA
+                        AA\t\tAA
+                        X\tX\tA
+                        X\tX\tAA
+                        X\tX\tA
+                        """);
     }
 
     @Test
@@ -794,80 +863,95 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         "from t\n" +
                         "order by 1")
                 .ddl("create table t (x symbol nocache, a symbol nocache, b symbol nocache)")
-                .mutateWith("insert into t select " +
-                        " rnd_symbol('X', 'Y', NULL) as x,\n" +
-                        " rnd_symbol('A', 'AA', NULL) as a,\n" +
-                        " rnd_symbol('B', 'BB', NULL) as b\n" +
-                        "from long_sequence(5)")
+                .mutateWith("""
+                        insert into t select \
+                         rnd_symbol('X', 'Y', NULL) as x,
+                         rnd_symbol('A', 'AA', NULL) as a,
+                         rnd_symbol('B', 'BB', NULL) as b
+                        from long_sequence(5)""")
                 .expectSize()
-                .returns("coalesce\tx\ta\tb\n", "coalesce\tx\ta\tb\n" +
-                        "\t\t\t\n" +
-                        "AA\t\tAA\tB\n" +
-                        "X\tX\tA\tBB\n" +
-                        "Y\tY\tAA\t\n" +
-                        "Y\tY\tAA\tBB\n");
+                .returns("coalesce\tx\ta\tb\n", """
+                        coalesce\tx\ta\tb
+                        \t\t\t
+                        AA\t\tAA\tB
+                        X\tX\tA\tBB
+                        Y\tY\tAA\t
+                        Y\tY\tAA\tBB
+                        """);
     }
 
     @Test
     public void testSymbolNocacheCoalesceSorted() throws Exception {
-        assertQuery("select coalesce(a, x) as coalesce, x, a\n" +
-                        "from t\n" +
-                        "order by 1")
+        assertQuery("""
+                select coalesce(a, x) as coalesce, x, a
+                from t
+                order by 1""")
                 .ddl("create table t (x symbol nocache, a symbol nocache)")
-                .mutateWith("insert into t select " +
-                        " rnd_symbol('X', 'Y', 'Z', NULL) as x,\n" +
-                        " rnd_symbol('A', 'B', 'C', NULL) as a\n" +
-                        "from long_sequence(10)")
+                .mutateWith("""
+                        insert into t select \
+                         rnd_symbol('X', 'Y', 'Z', NULL) as x,
+                         rnd_symbol('A', 'B', 'C', NULL) as a
+                        from long_sequence(10)""")
                 .expectSize()
-                .returns("coalesce\tx\ta\n", "coalesce\tx\ta\n" +
-                        "A\tZ\tA\n" +
-                        "A\tX\tA\n" +
-                        "A\tY\tA\n" +
-                        "B\tX\tB\n" +
-                        "C\tX\tC\n" +
-                        "C\tY\tC\n" +
-                        "Y\tY\t\n" +
-                        "Y\tY\t\n" +
-                        "Z\tZ\t\n" +
-                        "Z\tZ\t\n");
+                .returns("coalesce\tx\ta\n", """
+                        coalesce\tx\ta
+                        A\tZ\tA
+                        A\tX\tA
+                        A\tY\tA
+                        B\tX\tB
+                        C\tX\tC
+                        C\tY\tC
+                        Y\tY\t
+                        Y\tY\t
+                        Z\tZ\t
+                        Z\tZ\t
+                        """);
     }
 
     @Test
     public void testSymbolNocacheCoalesceStrSorted() throws Exception {
-        assertQuery("select coalesce(a, x) as coalesce, x, a\n" +
-                        "from t\n" +
-                        "order by 1")
+        assertQuery("""
+                select coalesce(a, x) as coalesce, x, a
+                from t
+                order by 1""")
                 .ddl("create table t (x string, a symbol nocache)")
-                .mutateWith("insert into t select " +
-                        " rnd_str('X', NULL) as x,\n" +
-                        " rnd_symbol('A', 'AA') as a\n" +
-                        "from long_sequence(5)")
+                .mutateWith("""
+                        insert into t select \
+                         rnd_str('X', NULL) as x,
+                         rnd_symbol('A', 'AA') as a
+                        from long_sequence(5)""")
                 .expectSize()
-                .returns("coalesce\tx\ta\n", "coalesce\tx\ta\n" +
-                        "A\tX\tA\n" +
-                        "A\tX\tA\n" +
-                        "AA\t\tAA\n" +
-                        "AA\t\tAA\n" +
-                        "AA\tX\tAA\n");
+                .returns("coalesce\tx\ta\n", """
+                        coalesce\tx\ta
+                        A\tX\tA
+                        A\tX\tA
+                        AA\t\tAA
+                        AA\t\tAA
+                        AA\tX\tAA
+                        """);
     }
 
     @Test
     public void testSymbolNocacheCoalesceVarcharSorted() throws Exception {
-        assertQuery("select coalesce(a, x) as coalesce, x, a\n" +
-                        "from t\n" +
-                        "order by 1")
+        assertQuery("""
+                select coalesce(a, x) as coalesce, x, a
+                from t
+                order by 1""")
                 .ddl("create table t (x varchar, a symbol nocache)")
-                .mutateWith("insert into t select " +
-                        " rnd_varchar('X', NULL) as x,\n" +
-                        " rnd_symbol('A', 'AA') as a\n" +
-                        "from long_sequence(5)")
+                .mutateWith("""
+                        insert into t select \
+                         rnd_varchar('X', NULL) as x,
+                         rnd_symbol('A', 'AA') as a
+                        from long_sequence(5)""")
                 .expectSize()
-                .returns("coalesce\tx\ta\n", "coalesce\tx\ta\n" +
-                        "A\tX\tA\n" +
-                        "A\tX\tA\n" +
-                        "AA\t\tAA\n" +
-                        "AA\t\tAA\n" +
-                        "AA\tX\tAA\n");
+                .returns("coalesce\tx\ta\n", """
+                        coalesce\tx\ta
+                        A\tX\tA
+                        A\tX\tA
+                        AA\t\tAA
+                        AA\t\tAA
+                        AA\tX\tAA
+                        """);
     }
 
     @Test
@@ -889,12 +973,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\ta\tb\tx\n" +
-                        "1970-01-01T13:53:20.000000Z\t1970-01-01T13:53:20.000000Z\t\t1970-01-01T13:53:20.000000Z\t\n" +
-                        "1970-01-01T00:00:00.000002Z\t\t\t\t1970-01-01T00:00:00.000002Z\n" +
-                        "\t\t\t\t\n" +
-                        "1970-01-01T11:06:40.000000Z\t1970-01-01T11:06:40.000000Z\t1970-01-01T11:06:40.000000Z\t\t1970-01-01T00:00:00.000004Z\n" +
-                        "1970-01-03T21:26:40.000000Z\t1970-01-03T21:26:40.000000Z\t\t1970-01-03T21:26:40.000000Z\t\n");
+                .returns("""
+                        c1\tc2\ta\tb\tx
+                        1970-01-01T13:53:20.000000Z\t1970-01-01T13:53:20.000000Z\t\t1970-01-01T13:53:20.000000Z\t
+                        1970-01-01T00:00:00.000002Z\t\t\t\t1970-01-01T00:00:00.000002Z
+                        \t\t\t\t
+                        1970-01-01T11:06:40.000000Z\t1970-01-01T11:06:40.000000Z\t1970-01-01T11:06:40.000000Z\t\t1970-01-01T00:00:00.000004Z
+                        1970-01-03T21:26:40.000000Z\t1970-01-03T21:26:40.000000Z\t\t1970-01-03T21:26:40.000000Z\t
+                        """);
     }
 
     @Test
@@ -909,12 +995,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\ta\tb\tx\n" +
-                        "1970-01-01T00:00:50.000000000Z\t1970-01-01T00:00:50.000000000Z\t\t1970-01-01T00:00:50.000000000Z\t\n" +
-                        "1970-01-01T00:00:00.000000002Z\t\t\t\t1970-01-01T00:00:00.000000002Z\n" +
-                        "\t\t\t\t\n" +
-                        "1970-01-01T11:06:40.000000000Z\t1970-01-01T11:06:40.000000000Z\t1970-01-01T11:06:40.000000Z\t\t1970-01-01T00:00:00.000000004Z\n" +
-                        "1970-01-01T00:04:10.000000000Z\t1970-01-01T00:04:10.000000000Z\t\t1970-01-01T00:04:10.000000000Z\t\n");
+                .returns("""
+                        c1\tc2\ta\tb\tx
+                        1970-01-01T00:00:50.000000000Z\t1970-01-01T00:00:50.000000000Z\t\t1970-01-01T00:00:50.000000000Z\t
+                        1970-01-01T00:00:00.000000002Z\t\t\t\t1970-01-01T00:00:00.000000002Z
+                        \t\t\t\t
+                        1970-01-01T11:06:40.000000000Z\t1970-01-01T11:06:40.000000000Z\t1970-01-01T11:06:40.000000Z\t\t1970-01-01T00:00:00.000000004Z
+                        1970-01-01T00:04:10.000000000Z\t1970-01-01T00:04:10.000000000Z\t\t1970-01-01T00:04:10.000000000Z\t
+                        """);
 
         assertQuery("select coalesce(a, b) from tango")
                 .ddl("create table tango as (" +
@@ -924,9 +1012,11 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(2)" +
                         ")")
                 .expectSize()
-                .returns("coalesce\n" +
-                        "1970-01-01T00:00:00.000001000Z\n" +
-                        "1970-01-01T00:00:00.000002000Z\n");
+                .returns("""
+                        coalesce
+                        1970-01-01T00:00:00.000001000Z
+                        1970-01-01T00:00:00.000002000Z
+                        """);
     }
 
     @Test
@@ -941,12 +1031,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("c1\tc2\ta\tb\tx\n" +
-                        "1970-01-01T00:00:50.000000000Z\t1970-01-01T00:00:50.000000000Z\t\t1970-01-01T00:00:50.000000000Z\t\n" +
-                        "1970-01-01T00:00:00.000000002Z\t\t\t\t1970-01-01T00:00:00.000000002Z\n" +
-                        "\t\t\t\t\n" +
-                        "1970-01-01T00:00:40.000000000Z\t1970-01-01T00:00:40.000000000Z\t1970-01-01T00:00:40.000000000Z\t\t1970-01-01T00:00:00.000000004Z\n" +
-                        "1970-01-01T00:04:10.000000000Z\t1970-01-01T00:04:10.000000000Z\t\t1970-01-01T00:04:10.000000000Z\t\n");
+                .returns("""
+                        c1\tc2\ta\tb\tx
+                        1970-01-01T00:00:50.000000000Z\t1970-01-01T00:00:50.000000000Z\t\t1970-01-01T00:00:50.000000000Z\t
+                        1970-01-01T00:00:00.000000002Z\t\t\t\t1970-01-01T00:00:00.000000002Z
+                        \t\t\t\t
+                        1970-01-01T00:00:40.000000000Z\t1970-01-01T00:00:40.000000000Z\t1970-01-01T00:00:40.000000000Z\t\t1970-01-01T00:00:00.000000004Z
+                        1970-01-01T00:04:10.000000000Z\t1970-01-01T00:04:10.000000000Z\t\t1970-01-01T00:04:10.000000000Z\t
+                        """);
     }
 
     @Test
@@ -963,38 +1055,45 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     public void testVarchar3Args() throws Exception {
         assertQuery("select coalesce(x, a, b) c1, coalesce(x, a) c2, x, a, b\n" +
                         "from alex")
-                .ddl("create table alex as (" +
-                        "SELECT rnd_varchar('X',NULL,NULL) as x\n" +
-                        ", rnd_varchar('A','AA',NULL,NULL) as a\n" +
-                        ", rnd_varchar('B',NULL) as b\n" +
-                        "from long_sequence(5)" +
-                        ")")
+                .ddl("""
+                        create table alex as (\
+                        SELECT rnd_varchar('X',NULL,NULL) as x
+                        , rnd_varchar('A','AA',NULL,NULL) as a
+                        , rnd_varchar('B',NULL) as b
+                        from long_sequence(5)\
+                        )""")
                 .expectSize()
-                .returns("c1\tc2\tx\ta\tb\n" +
-                        "X\tX\tX\t\t\n" +
-                        "AA\tAA\t\tAA\t\n" +
-                        "B\t\t\t\tB\n" +
-                        "A\tA\t\tA\tB\n" +
-                        "\t\t\t\t\n");
+                .returns("""
+                        c1\tc2\tx\ta\tb
+                        X\tX\tX\t\t
+                        AA\tAA\t\tAA\t
+                        B\t\t\t\tB
+                        A\tA\t\tA\tB
+                        \t\t\t\t
+                        """);
     }
 
     @Test
     public void testVarcharCoalesceSymbolNocacheSorted() throws Exception {
-        assertQuery("select coalesce(x, a) as coalesce, x, a\n" +
-                        "from t\n" +
-                        "order by 1")
+        assertQuery("""
+                select coalesce(x, a) as coalesce, x, a
+                from t
+                order by 1""")
                 .ddl("create table t (x varchar, a symbol nocache)")
-                .mutateWith("insert into t select " +
-                        " rnd_varchar(NULL, 'X', 'Y') as x,\n" +
-                        " rnd_symbol('A', 'B', NULL) as a\n" +
-                        "from long_sequence(5)")
+                .mutateWith("""
+                        insert into t select \
+                         rnd_varchar(NULL, 'X', 'Y') as x,
+                         rnd_symbol('A', 'B', NULL) as a
+                        from long_sequence(5)""")
                 .expectSize()
-                .returns("coalesce\tx\ta\n", "coalesce\tx\ta\n" +
-                        "A\t\tA\n" +
-                        "B\t\tB\n" +
-                        "X\tX\t\n" +
-                        "Y\tY\t\n" +
-                        "Y\tY\tB\n");
+                .returns("coalesce\tx\ta\n", """
+                        coalesce\tx\ta
+                        A\t\tA
+                        B\t\tB
+                        X\tX\t
+                        Y\tY\t
+                        Y\tY\tB
+                        """);
     }
 
     private void assertCoalesce(String value, String expected) throws Exception {
