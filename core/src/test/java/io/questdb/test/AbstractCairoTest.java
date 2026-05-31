@@ -2322,6 +2322,19 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return engine.update(updateSql, sqlExecutionContext, eventSubSeq);
     }
 
+    protected enum SymbolAsFieldMode {
+        WITH_SYMBOLS_AS_FIELD, NO_SYMBOLS_AS_FIELD
+    }
+
+    public enum WalMode {
+        WITH_WAL, NO_WAL
+    }
+
+    @FunctionalInterface
+    protected interface QuestDBNodeTask {
+        void run(QuestDBTestNode node);
+    }
+
     /**
      * Fluent builder for SQL query assertions. Obtain one via {@link #assertQuery(CharSequence)}.
      * <p>
@@ -2509,6 +2522,29 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
 
         /**
+         * Terminal: assert the query prints exactly {@code expected} from a SINGLE cursor pass,
+         * skipping the second read, calculate-size, variable-column and factory-property checks that
+         * {@link #returns(CharSequence)} performs. Use for non-deterministic projections (e.g.
+         * {@code rnd_*} or array functions) whose output is not stable across a re-read, or that throw
+         * on a second pass. This is the builder equivalent of a bare {@code assertSql(expected, query)}.
+         * Supports only {@link #ddl}, {@link #noLeakCheck} and {@link #withContext}.
+         */
+        public void returnsOnce(CharSequence expected) throws Exception {
+            requireSingleShotCompatible();
+            prepareForQueryAssertion();
+            final SqlExecutionContext ctx = context != null ? context : sqlExecutionContext;
+            if (leakCheck) {
+                assertMemoryLeak(() -> {
+                    runDdl();
+                    TestUtils.assertSql(engine, ctx, query, sink, expected);
+                });
+            } else {
+                runDdl();
+                TestUtils.assertSql(engine, ctx, query, sink, expected);
+            }
+        }
+
+        /**
          * Terminal: assert the query produces the given raw records. Always leak-checked (there is no
          * no-leak-check variant for the record path); supports only {@link #ddl}, {@link #timestamp},
          * {@link #mutateWith} and {@link #expectSize}.
@@ -2625,6 +2661,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
         }
 
+        private void requireSingleShotCompatible() {
+            if (expectSize || expectedTimestamp != null || ddl2 != null || cached || fullFatJoins || expectedPlan != null || !supportsRandomAccess || sizeCanBeVariable) {
+                throw new IllegalStateException("returnsOnce(...) supports only ddl()/noLeakCheck()/withContext()");
+            }
+        }
+
         private void runDdl() throws SqlException {
             if (ddl != null) {
                 execute(ddl);
@@ -2633,19 +2675,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 }
             }
         }
-    }
-
-    protected enum SymbolAsFieldMode {
-        WITH_SYMBOLS_AS_FIELD, NO_SYMBOLS_AS_FIELD
-    }
-
-    public enum WalMode {
-        WITH_WAL, NO_WAL
-    }
-
-    @FunctionalInterface
-    protected interface QuestDBNodeTask {
-        void run(QuestDBTestNode node);
     }
 
     static {
