@@ -720,7 +720,11 @@ public class IndexBuilderTest extends AbstractCairoTest {
             }
 
             // The covering query must still return correct rows.
-            assertSql("price\n10.0\n30.0\n", "SELECT price FROM t_reindex_cov WHERE sym = 'A' ORDER BY ts");
+            assertQuery("SELECT price FROM t_reindex_cov WHERE sym = 'A' ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("price\n10.0\n30.0\n");
         });
     }
 

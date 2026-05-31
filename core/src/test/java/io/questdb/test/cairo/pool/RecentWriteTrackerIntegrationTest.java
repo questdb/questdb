@@ -168,10 +168,10 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    "wal_dedup_row_count_since_start\n200\n",
-                    "SELECT wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'wa_dedup'"
-            );
+            assertQuery("SELECT wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'wa_dedup'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("wal_dedup_row_count_since_start\n200\n");
         });
     }
 
@@ -542,13 +542,13 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             Assert.assertEquals("Dedup count should be 0 for unique rows", 0L, stats.getDedupRowCount());
 
             // Also verify via SQL
-            assertSql(
-                    """
+            assertQuery("SELECT table_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'unique_test'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_row_count\twal_dedup_row_count_since_start
                             1000\t0
-                            """,
-                    "SELECT table_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'unique_test'"
-            );
+                            """);
 
             // Now insert actual duplicates - same timestamps as first 200 rows
             execute("INSERT INTO unique_test SELECT (x * 1000000)::timestamp, (x + 2000)::int FROM long_sequence(200)");
@@ -560,10 +560,11 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             Assert.assertEquals("Dedup count should be 200", 200L, stats.getDedupRowCount());
 
             // Verify via SQL
-            assertSql(
-                    "table_row_count\twal_dedup_row_count_since_start\n1000\t200\n",
-                    "SELECT table_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'unique_test'"
-            );
+            assertQuery("SELECT table_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'unique_test'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("table_row_count\twal_dedup_row_count_since_start\n1000\t200\n");
         });
     }
 
@@ -638,25 +639,26 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             execute("INSERT INTO dedup_test SELECT ((500 + x) * 1000000)::timestamp, (500 + x)::int FROM long_sequence(500)");
 
             // Before draining second batch - wal_pending_row_count should be 500 (second batch pending)
-            assertSql(
-                    "wal_pending_row_count\n500\n",
-                    "SELECT wal_pending_row_count FROM tables() WHERE table_name = 'dedup_test'"
-            );
+            assertQuery("SELECT wal_pending_row_count FROM tables() WHERE table_name = 'dedup_test'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("wal_pending_row_count\n500\n");
 
             // Row count should be 500 (first batch applied)
-            assertSql(
-                    "table_row_count\n500\n",
-                    "SELECT table_row_count FROM tables() WHERE table_name = 'dedup_test'"
-            );
+            assertQuery("SELECT table_row_count FROM tables() WHERE table_name = 'dedup_test'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("table_row_count\n500\n");
 
             // Drain the WAL queue to apply second batch
             drainWalQueue();
 
             // After draining - table_row_count should be 1000, wal_pending_row_count should be 0, no dedup yet
-            assertSql(
-                    "table_row_count\twal_pending_row_count\twal_dedup_row_count_since_start\n1000\t0\t0\n",
-                    "SELECT table_row_count, wal_pending_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'dedup_test'"
-            );
+            assertQuery("SELECT table_row_count, wal_pending_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'dedup_test'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("table_row_count\twal_pending_row_count\twal_dedup_row_count_since_start\n1000\t0\t0\n");
 
             // Now insert duplicate data - same timestamps as first 300 rows (1-300 seconds)
             execute("INSERT INTO dedup_test SELECT (x * 1000000)::timestamp, (x + 1000)::int FROM long_sequence(300)");
@@ -668,17 +670,17 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             // - table_row_count should still be 1000 (300 duplicates replaced existing rows)
             // - wal_pending_row_count should be 0
             // - dedup_row_count_since_start should be 300 (cumulative - the 300 duplicates just added)
-            assertSql(
-                    "table_row_count\twal_pending_row_count\twal_dedup_row_count_since_start\n1000\t0\t300\n",
-                    "SELECT table_row_count, wal_pending_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'dedup_test'"
-            );
+            assertQuery("SELECT table_row_count, wal_pending_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'dedup_test'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("table_row_count\twal_pending_row_count\twal_dedup_row_count_since_start\n1000\t0\t300\n");
 
             // Verify the values were actually updated (not just row count unchanged)
             // The first 300 rows should now have v = x + 1000
-            assertSql(
-                    "count\n300\n",
-                    "SELECT count() FROM dedup_test WHERE v > 1000"
-            );
+            assertQuery("SELECT count() FROM dedup_test WHERE v > 1000")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("count\n300\n");
         });
     }
 
@@ -931,10 +933,10 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             // recordMergeStats. The tracker was cleared between drains, so
             // count must stay at 0. Without the fix, the stale counter from
             // drain 1 would inflate amp to ~2000 and bump count to 1.
-            assertSql(
-                    "table_write_amp_count\n0\n",
-                    "SELECT table_write_amp_count FROM tables() WHERE table_name = 'wa_truncate_skip'"
-            );
+            assertQuery("SELECT table_write_amp_count FROM tables() WHERE table_name = 'wa_truncate_skip'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_write_amp_count\n0\n");
         });
     }
 
@@ -962,10 +964,10 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            assertSql(
-                    "table_write_amp_count\n50\n",
-                    "SELECT table_write_amp_count FROM tables() WHERE table_name = 'wa_test'"
-            );
+            assertQuery("SELECT table_write_amp_count FROM tables() WHERE table_name = 'wa_test'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_write_amp_count\n50\n");
 
             // Every commit was append-only, so per-commit amp = 1.0 for all 50 samples.
             // Therefore every percentile and the max must be 1.0 (within histogram

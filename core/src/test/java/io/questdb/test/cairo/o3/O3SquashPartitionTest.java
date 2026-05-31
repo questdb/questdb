@@ -117,10 +117,14 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             rowCount = assertRowCount(1010, rowCount);
 
             // Check that the partition is not split
-            assertSql("""
+            assertQuery("select name from table_partitions('x')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                     name
                     2020-02-03
-                    """, "select name from table_partitions('x')");
+                    """);
 
             // Split at 2020-02-03T01
             execute(
@@ -137,10 +141,13 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             );
 
             // Check that the partition is split
-            assertSql("name\tnumRows\n" +
+            assertQuery("select name,numRows from table_partitions('x')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("name\tnumRows\n" +
                             "2020-02-03\t809\n" +
-                            (TIMESTAMP_NS_TYPE_NAME.equals(timestampType.getTypeName()) ? "2020-02-03T000000-000000001\t211\n" : "2020-02-03T000000-000001\t211\n"),
-                    "select name,numRows from table_partitions('x')");
+                            (TIMESTAMP_NS_TYPE_NAME.equals(timestampType.getTypeName()) ? "2020-02-03T000000-000000001\t211\n" : "2020-02-03T000000-000001\t211\n"));
 
             assertRowCount(211, rowCount);
         });
@@ -765,7 +772,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " from long_sequence(200)"
             );
 
-            Assert.assertEquals(1, getSquashCount("x", "2020-02-04"));
+            Assert.assertEquals(1, getSquashCount());
 
             assertSql(replaceTimestampSuffix1("""
                     minTimestamp\tnumRows\tname
@@ -780,7 +787,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " x + 2 as k" +
                             " from long_sequence(1)"
             );
-            Assert.assertEquals(1, getSquashCount("x", "2020-02-04"));
+            Assert.assertEquals(1, getSquashCount());
 
             // Replace partition 2020-02-04 with a new verion and check that squash count is reset
             execute(
@@ -789,7 +796,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " x + 2 as k" +
                             " from long_sequence(1)"
             );
-            Assert.assertEquals(0, getSquashCount("x", "2020-02-04"));
+            Assert.assertEquals(0, getSquashCount());
         });
     }
 
@@ -1131,12 +1138,16 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
-                assertSql("minTimestamp\tnumRows\tname\n" +
+                assertQuery(partitionsSql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("minTimestamp\tnumRows\tname\n" +
                         replaceTimestampSuffix1("""
                                 2020-02-04T00:00:00.000000Z\t1201\t2020-02-04
                                 2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001
                                 2020-02-05T00:00:00.000000Z\t1320\t2020-02-05
-                                """, timestampType.getTypeName()), partitionsSql);
+                                """, timestampType.getTypeName()));
 
                 execute("alter table x force drop partition list '2020-02-04'",
                         sqlExecutionContext
@@ -1144,21 +1155,29 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
-                assertSql("minTimestamp\tnumRows\tname\n" +
+                assertQuery(partitionsSql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("minTimestamp\tnumRows\tname\n" +
                         replaceTimestampSuffix1("""
                                 2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001
                                 2020-02-05T00:00:00.000000Z\t1320\t2020-02-05
-                                """, timestampType.getTypeName()), partitionsSql);
+                                """, timestampType.getTypeName()));
 
                 // should squash partitions
                 execute("alter table x squash partitions");
 
                 drainWalQueue();
-                assertSql("minTimestamp\tnumRows\tname\n" +
+                assertQuery(partitionsSql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("minTimestamp\tnumRows\tname\n" +
                         replaceTimestampSuffix1("""
                                 2020-02-04T20:01:00.000000Z\t439\t2020-02-04
                                 2020-02-05T00:00:00.000000Z\t1320\t2020-02-05
-                                """, timestampType.getTypeName()), partitionsSql);
+                                """, timestampType.getTypeName()));
             }
         });
     }
@@ -1196,9 +1215,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         }
     }
 
-    private int getSquashCount(String tableName, String partitionDate) {
-        try (TableReader reader = getReader(tableName)) {
-            long timestamp = MicrosTimestampDriver.floor(partitionDate);
+    private int getSquashCount() {
+        try (TableReader reader = getReader("x")) {
+            long timestamp = MicrosTimestampDriver.floor("2020-02-04");
             int partitionIndex = reader.getPartitionIndexByTimestamp(timestamp);
             if (partitionIndex >= 0) {
                 return reader.getTxFile().getPartitionSquashCount(partitionIndex);
@@ -1269,10 +1288,14 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     2020-02-05T18:01:00.000000Z\t200\t2020-02-05
                     """, timestampType.getTypeName()), partitionsSql);
 
-            assertSql("""
+            assertQuery("select count() from x;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                     count
                     400
-                    """, "select count() from x;");
+                    """);
         });
     }
 
@@ -1314,12 +1337,16 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
-                assertSql("minTimestamp\tnumRows\tname\n" +
+                assertQuery(partitionsSql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("minTimestamp\tnumRows\tname\n" +
                         replaceTimestampSuffix1("""
                                 2020-02-04T00:00:00.000000Z\t1201\t2020-02-04
                                 2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001
                                 2020-02-05T00:00:00.000000Z\t1320\t2020-02-05
-                                """, timestampType.getTypeName()), partitionsSql);
+                                """, timestampType.getTypeName()));
 
                 execute(sqlPrefix +
                                 " timestamp_sequence('2020-02-05T18:01', 60*1000000L) ts" +
@@ -1329,23 +1356,31 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
-                assertSql("minTimestamp\tnumRows\tname\n" +
+                assertQuery(partitionsSql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("minTimestamp\tnumRows\tname\n" +
                         replaceTimestampSuffix1("""
                                 2020-02-04T00:00:00.000000Z\t1201\t2020-02-04
                                 2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001
                                 2020-02-05T00:00:00.000000Z\t1081\t2020-02-05
                                 2020-02-05T18:01:00.000000Z\t289\t2020-02-05T180000-000001
-                                """, timestampType.getTypeName()), partitionsSql);
+                                """, timestampType.getTypeName()));
 
                 // should squash partitions
                 execute("alter table x squash partitions");
 
                 drainWalQueue();
-                assertSql("minTimestamp\tnumRows\tname\n" +
+                assertQuery(partitionsSql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("minTimestamp\tnumRows\tname\n" +
                         replaceTimestampSuffix1("""
                                 2020-02-04T00:00:00.000000Z\t1640\t2020-02-04
                                 2020-02-05T00:00:00.000000Z\t1370\t2020-02-05
-                                """, timestampType.getTypeName()), partitionsSql);
+                                """, timestampType.getTypeName()));
 
                 // Insert a few more rows and verify that they're all inserted.
                 sqlPrefix = "insert into x " +
@@ -1363,8 +1398,11 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 );
                 drainWalQueue();
 
-                assertSql("count\n" +
-                        (60 * (23 * 2) + 450) + "\n", "select count() from x;");
+                assertQuery("select count() from x;")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("count\n" +
+                        (60 * (23 * 2) + 450) + "\n");
             }
         });
     }

@@ -178,8 +178,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             // Verify data via SQL
             drainWalQueue();
-            assertSql(
-                    "col_a\tcol_b\n" +
+            assertQuery("SELECT col_a, col_b FROM test_segment_roll ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("col_a\tcol_b\n" +
                             "100\tnull\n" +  // First row (before col_b was added)
                             "1000\t2000\n" +
                             "1001\t2001\n" +
@@ -190,9 +192,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                             "1006\t2006\n" +
                             "1007\t2007\n" +
                             "1008\t2008\n" +
-                            "1009\t2009\n",
-                    "SELECT col_a, col_b FROM test_segment_roll ORDER BY ts"
-            );
+                            "1009\t2009\n");
         });
     }
 
@@ -568,8 +568,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
+            assertQuery("SELECT value FROM test_multi_batch ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             value
                             0
                             10
@@ -581,9 +583,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                             70
                             80
                             90
-                            """,
-                    "SELECT value FROM test_multi_batch ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -624,8 +624,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql("count\n5\n", "SELECT count() FROM test_multi_batch_dedup");
-            assertSql("id\n0\n1\n2\n3\n4\n", "SELECT id FROM test_multi_batch_dedup ORDER BY ts, id");
+            assertQuery("SELECT count() FROM test_multi_batch_dedup")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n5\n");
+            assertQuery("SELECT id FROM test_multi_batch_dedup ORDER BY ts, id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("id\n0\n1\n2\n3\n4\n");
         });
     }
 
@@ -2044,16 +2051,16 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             drainWalQueue();
             // BYTE and SHORT: null sentinel is 0
             // INT, LONG, FLOAT, DOUBLE: null sentinel is distinct (null)
-            assertSql(
-                    """
+            assertQuery("SELECT b, s, i, l, f, d FROM test_bool_num ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             b\ts\ti\tl\tf\td
                             1\t1\t1\t1\t1.0\t1.0
                             0\t0\t0\t0\t0.0\t0.0
                             0\t0\tnull\tnull\tnull\tnull
                             1\t1\t1\t1\t1.0\t1.0
-                            """,
-                    "SELECT b, s, i, l, f, d FROM test_bool_num ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -2084,10 +2091,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\ntrue\nfalse\n\ntrue\n",
-                    "SELECT value FROM test_bool_str ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_bool_str ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\ntrue\nfalse\n\ntrue\n");
         });
     }
 
@@ -2118,10 +2125,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\nfalse\ntrue\n\nfalse\n",
-                    "SELECT value FROM test_bool_vc ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_bool_vc ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\nfalse\ntrue\n\nfalse\n");
         });
     }
 
@@ -2349,14 +2356,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_dec256_to_dec64 ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 123.45
                                 -99.99
-                                """,
-                        "SELECT value FROM test_dec256_to_dec64 ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -2401,14 +2408,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_dec64_to_dec128 ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 123.45
                                 -99.99
-                                """,
-                        "SELECT value FROM test_dec64_to_dec128 ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -2506,10 +2513,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n\n12.34\n\n-99.99\n",
-                        "SELECT value FROM test_dec64_to_dec16_nulls ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_dec64_to_dec16_nulls ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n\n12.34\n\n-99.99\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -2684,10 +2691,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n\n1.5\n\n-2.5\n",
-                        "SELECT value FROM test_dec64_to_dec8_nulls ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_dec64_to_dec8_nulls ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n\n1.5\n\n-2.5\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -2733,14 +2740,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_dec_rescale ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 123.4500
                                 -99.9900
-                                """,
-                        "SELECT value FROM test_dec_rescale ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -2795,10 +2802,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n1.50\n-3.75\n\n",
-                        "SELECT value FROM test_dec_str ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_dec_str ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n1.50\n-3.75\n\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -2851,10 +2858,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n2.50\n\n-1.00\n",
-                        "SELECT value FROM test_dec_vc ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_dec_vc ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n2.50\n\n-1.00\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4223,15 +4230,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_date_str ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 2021-09-06T13:12:01.000Z
                                 1970-01-01T00:00:00.000Z
                                 2023-01-01T00:00:00.000Z
-                                """,
-                        "SELECT value FROM test_date_str ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4276,15 +4283,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_ts_other_str ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 2021-09-06T13:12:01.000Z
                                 1970-01-01T00:00:00.000Z
                                 2023-01-01T00:00:00.000Z
-                                """,
-                        "SELECT value FROM test_ts_other_str ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4329,15 +4336,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_tsn_str ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 2021-09-06T13:12:01.000Z
                                 1970-01-01T00:00:00.000Z
                                 2023-01-01T00:00:00.000Z
-                                """,
-                        "SELECT value FROM test_tsn_str ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4389,15 +4396,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_uuid_str ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 550e8400-e29b-41d4-a716-446655440000
                                 fedcba98-7654-3210-1234-56789abcdef0
                                 00000000-0000-0002-0000-000000000001
-                                """,
-                        "SELECT value FROM test_uuid_str ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4444,10 +4451,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n2021-09-06T13:12:01.000Z\n\n",
-                        "SELECT value FROM test_date_vc ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_date_vc ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n2021-09-06T13:12:01.000Z\n\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4494,10 +4501,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n2021-09-06T13:12:01.000Z\n\n",
-                        "SELECT value FROM test_ts_other_vc ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_ts_other_vc ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n2021-09-06T13:12:01.000Z\n\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4544,10 +4551,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n2021-09-06T13:12:01.000Z\n\n",
-                        "SELECT value FROM test_tsn_vc ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_tsn_vc ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n2021-09-06T13:12:01.000Z\n\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4597,10 +4604,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n550e8400-e29b-41d4-a716-446655440000\n\n",
-                        "SELECT value FROM test_uuid_vc ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_uuid_vc ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n550e8400-e29b-41d4-a716-446655440000\n\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4684,15 +4691,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_fixed_dec16 ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 42.0
                                 -5.0
                                 0.0
-                                """,
-                        "SELECT value FROM test_fixed_dec16 ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4740,10 +4747,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n\n7.0\n\n",
-                        "SELECT value FROM test_fixed_dec16_nulls ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_fixed_dec16_nulls ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n\n7.0\n\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4789,15 +4796,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_fixed_dec8 ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 5.0
                                 -3.0
                                 0.0
-                                """,
-                        "SELECT value FROM test_fixed_dec8 ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4887,10 +4894,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n3.0\n\n-1.0\n",
-                        "SELECT value FROM test_fixed_dec8_nulls ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_fixed_dec8_nulls ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n3.0\n\n-1.0\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4934,15 +4941,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_long_str ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 42
                                 -100
                                 0
-                                """,
-                        "SELECT value FROM test_long_str ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -4986,16 +4993,16 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_long_sym ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 1
                                 2
                                 1
                                 3
-                                """,
-                        "SELECT value FROM test_long_sym ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5042,10 +5049,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n999\n\n-42\n",
-                        "SELECT value FROM test_long_vc ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_long_vc ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n999\n\n-42\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5100,17 +5107,17 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_float_dec16 ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 1.50
                                 2.25
                                 0.00
                                 -3.75
                                 99.00
-                                """,
-                        "SELECT value FROM test_float_dec16 ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5212,10 +5219,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n\n1.50\n\n2.25\n",
-                        "SELECT value FROM test_float_dec16_nulls ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_float_dec16_nulls ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n\n1.50\n\n2.25\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5278,17 +5285,17 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_float_dec8 ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 1.5
                                 2.5
                                 0.0
                                 -3.5
                                 9.0
-                                """,
-                        "SELECT value FROM test_float_dec8 ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5390,10 +5397,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n\n1.5\n\n2.5\n",
-                        "SELECT value FROM test_float_dec8_nulls ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_float_dec8_nulls ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n\n1.5\n\n2.5\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5439,17 +5446,17 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_float_dec ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 1.50
                                 2.25
                                 0.00
                                 -3.75
                                 100.00
-                                """,
-                        "SELECT value FROM test_float_dec ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5550,10 +5557,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n\n1.50\n\n2.25\n",
-                        "SELECT value FROM test_float_dec_nulls ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_float_dec_nulls ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n\n1.50\n\n2.25\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5597,15 +5604,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_dbl_int ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 42
                                 -100
                                 0
-                                """,
-                        "SELECT value FROM test_dbl_int ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5652,15 +5659,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_dbl_byte_null ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 42
                                 0
                                 7
-                                """,
-                        "SELECT value FROM test_dbl_byte_null ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5707,15 +5714,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_flt_dbl_null ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 42.0
                                 null
                                 7.0
-                                """,
-                        "SELECT value FROM test_flt_dbl_null ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5762,15 +5769,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_dbl_long_null ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 42
                                 null
                                 7
-                                """,
-                        "SELECT value FROM test_dbl_long_null ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5817,15 +5824,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_dbl_short_null ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 42
                                 0
                                 7
-                                """,
-                        "SELECT value FROM test_dbl_short_null ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5869,15 +5876,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_dbl_str ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 1.5
                                 -3.14
                                 0.0
-                                """,
-                        "SELECT value FROM test_dbl_str ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5921,15 +5928,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_dbl_sym ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 1.5
                                 2.5
                                 1.5
-                                """,
-                        "SELECT value FROM test_dbl_sym ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -5976,10 +5983,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n3.14\n\n-0.5\n",
-                        "SELECT value FROM test_dbl_vc ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_dbl_vc ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n3.14\n\n-0.5\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -6043,14 +6050,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_geo_short ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 sp
                                 u3
-                                \n""",
-                        "SELECT value FROM test_geo_short ORDER BY ts"
-                );
+                                \n""");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -6099,14 +6106,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_geo_str ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 10110
                                 11111
-                                """,
-                        "SELECT value FROM test_geo_str ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -6159,14 +6166,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_geo_str_char ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 01
                                 11
-                                """,
-                        "SELECT value FROM test_geo_str_char ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -6212,14 +6219,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_geo_vc ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 00001
                                 00000
-                                """,
-                        "SELECT value FROM test_geo_vc ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -6272,14 +6279,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_geo_vc_char ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 01
                                 11
-                                """,
-                        "SELECT value FROM test_geo_vc_char ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -6326,15 +6333,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_long_byte ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 42
                                 0
                                 -10
-                                """,
-                        "SELECT value FROM test_long_byte ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -6378,15 +6385,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_long_dbl ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 42.0
                                 -100.0
                                 0.0
-                                """,
-                        "SELECT value FROM test_long_dbl ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -6433,15 +6440,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_long_float ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 42.0
                                 null
                                 -100.0
-                                """,
-                        "SELECT value FROM test_long_float ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -6488,15 +6495,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_long_int ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 42
                                 null
                                 -100
-                                """,
-                        "SELECT value FROM test_long_int ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -6543,15 +6550,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_long_short ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 100
                                 0
                                 -200
-                                """,
-                        "SELECT value FROM test_long_short ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -6585,17 +6592,17 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
+            assertQuery("SELECT value FROM test_str_bool ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             value
                             true
                             false
                             true
                             false
                             false
-                            """,
-                    "SELECT value FROM test_str_bool ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -6684,10 +6691,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\n1.50\n\n2.25\n\n",
-                    "SELECT value FROM test_str_dec16_nulls ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_str_dec16_nulls ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\n1.50\n\n2.25\n\n");
         });
     }
 
@@ -6719,10 +6726,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\n1.5\n\n2.5\n\n",
-                    "SELECT value FROM test_str_dec8_nulls ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_str_dec8_nulls ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\n1.5\n\n2.5\n\n");
         });
     }
 
@@ -6754,17 +6761,17 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
+            assertQuery("SELECT value FROM test_str_dec ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             value
                             1.50
                             2.25
                             0.00
                             -3.75
                             100.00
-                            """,
-                    "SELECT value FROM test_str_dec ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -6796,10 +6803,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\n1.50\n\n2.25\n\n",
-                    "SELECT value FROM test_str_dec_nulls ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_str_dec_nulls ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\n1.50\n\n2.25\n\n");
         });
     }
 
@@ -6831,10 +6838,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\nsp052\nu33d8\n\n",
-                    "SELECT value FROM test_str_geo ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_str_geo ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\nsp052\nu33d8\n\n");
         });
     }
 
@@ -6866,10 +6873,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\ns\nu\n\n",
-                    "SELECT value FROM test_str_geobyte ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_str_geobyte ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\ns\nu\n\n");
         });
     }
 
@@ -6901,10 +6908,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\nsp052w92p1p8\nu33d8b12dvpp\n\n",
-                    "SELECT value FROM test_str_geolong ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_str_geolong ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\nsp052w92p1p8\nu33d8b12dvpp\n\n");
         });
     }
 
@@ -6936,10 +6943,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\nsp\nu3\n\n",
-                    "SELECT value FROM test_str_geoshort ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_str_geoshort ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\nsp\nu3\n\n");
         });
     }
 
@@ -6970,10 +6977,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\n0x01\n0xff\n\n",
-                    "SELECT value FROM test_str_l256 ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_str_l256 ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\n0x01\n0xff\n\n");
         });
     }
 
@@ -7004,15 +7011,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
+            assertQuery("SELECT value FROM test_str_int ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             value
                             42
                             -100
                             null
-                            """,
-                    "SELECT value FROM test_str_int ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -7043,15 +7050,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
+            assertQuery("SELECT value FROM test_str_long ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             value
                             1000000000
                             -1
                             0
-                            """,
-                    "SELECT value FROM test_str_long ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -7082,10 +7089,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\nalpha\nbeta\n\nalpha\n",
-                    "SELECT value FROM test_str_sym ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_str_sym ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\nalpha\nbeta\n\nalpha\n");
         });
     }
 
@@ -7116,10 +7123,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\n2021-09-06T13:12:01.000000Z\n2023-01-01T00:00:00.000000Z\n\n",
-                    "SELECT value FROM test_str_ts ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_str_ts ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\n2021-09-06T13:12:01.000000Z\n2023-01-01T00:00:00.000000Z\n\n");
         });
     }
 
@@ -7150,10 +7157,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\n550e8400-e29b-41d4-a716-446655440000\n\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                    "SELECT value FROM test_str_uuid ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_str_uuid ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\n550e8400-e29b-41d4-a716-446655440000\n\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n");
         });
     }
 
@@ -7432,10 +7439,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\nhello\n\nworld\n",
-                    "SELECT value FROM test_sym_str ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_sym_str ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\nhello\n\nworld\n");
         });
     }
 
@@ -7472,10 +7479,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\nhello\n\nworld\n",
-                    "SELECT value FROM test_sym_str_delta ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_sym_str_delta ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\nhello\n\nworld\n");
         });
     }
 
@@ -7506,10 +7513,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\nabc\ndef\n\n",
-                    "SELECT value FROM test_sym_vc ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_sym_vc ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\nabc\ndef\n\n");
         });
     }
 
@@ -7546,10 +7553,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "value\nabc\n\ndef\n",
-                    "SELECT value FROM test_sym_vc_delta ORDER BY ts"
-            );
+            assertQuery("SELECT value FROM test_sym_vc_delta ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("value\nabc\n\ndef\n");
         });
     }
 
@@ -7842,15 +7849,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        """
+                assertQuery("SELECT value FROM test_ts_str ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
                                 value
                                 2021-09-06T13:12:01.000Z
                                 1970-01-01T00:00:00.000Z
                                 2023-01-01T00:00:00.000Z
-                                """,
-                        "SELECT value FROM test_ts_str ORDER BY ts"
-                );
+                                """);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -7899,10 +7906,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(
-                        "value\n2021-09-06T13:12:01.000Z\n1970-01-01T00:00:00.000Z\n\n",
-                        "SELECT value FROM test_ts_vc ORDER BY ts"
-                );
+                assertQuery("SELECT value FROM test_ts_vc ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("value\n2021-09-06T13:12:01.000Z\n1970-01-01T00:00:00.000Z\n\n");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }

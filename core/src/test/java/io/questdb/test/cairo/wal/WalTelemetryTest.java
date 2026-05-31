@@ -75,11 +75,14 @@ public class WalTelemetryTest extends AbstractCairoTest {
 
             CharSequence sysPrefix = configuration.getSystemTableNamePrefix();
             // event 109 = WAL_TXN_COMMITTED: first has 2 rows with timestamps, second has 0 rows with NULL timestamps
-            assertSql("""
+            assertQuery(sysPrefix + TelemetryWalTask.TABLE_NAME + " WHERE event = 109")
+                    .noLeakCheck()
+                    .timestamp("created")
+                    .returns("""
                     created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency\tminTimestamp\tmaxTimestamp
                     1970-01-01T00:00:00.005000Z\t109\t5\t1\t1\t2\t2\t0.0\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:01.000000Z
                     1970-01-01T00:00:00.005000Z\t109\t5\t1\t2\t0\t0\t0.0\t\t
-                    """, sysPrefix + TelemetryWalTask.TABLE_NAME + " WHERE event = 109");
+                    """);
         });
     }
 
@@ -109,7 +112,11 @@ public class WalTelemetryTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 setCurrentMicros(4000);
-                assertSql("""
+                assertQuery(tableName)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
                         x\tsym\tts\tsym2
                         1\tAB\t2022-02-24T00:00:00.000000Z\tEF
                         2\tBC\t2022-02-24T00:00:01.000000Z\tFG
@@ -117,13 +124,17 @@ public class WalTelemetryTest extends AbstractCairoTest {
                         4\tCD\t2022-02-24T00:00:03.000000Z\tFG
                         5\tAB\t2022-02-24T00:00:04.000000Z\tDE
                         101\tdfd\t2022-02-24T01:00:00.000000Z\tasd
-                        """, tableName);
+                        """);
 
                 telemetryJob.runSerially();
             }
 
             CharSequence sysPrefix = configuration.getSystemTableNamePrefix();
-            assertSql("""
+            assertQuery(sysPrefix + TelemetryWalTask.TABLE_NAME)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("created")
+                    .returns("""
                     created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency\tminTimestamp\tmaxTimestamp
                     1970-01-01T00:00:00.004000Z\t109\t5\t1\t1\t5\t5\t0.0\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:04.000000Z
                     1970-01-01T00:00:00.004000Z\t109\t5\t1\t2\t1\t1\t0.0\t2022-02-24T01:00:00.000000Z\t2022-02-24T01:00:00.000000Z
@@ -131,13 +142,16 @@ public class WalTelemetryTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.004000Z\t105\t5\t1\t1\t5\t5\t0.0\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:04.000000Z
                     1970-01-01T00:00:00.004000Z\t103\t5\t1\t2\t-1\t-1\t1.0\t2022-02-24T01:00:00.000000Z\t2022-02-24T01:00:00.000000Z
                     1970-01-01T00:00:00.004000Z\t105\t5\t1\t2\t1\t1\t0.0\t2022-02-24T01:00:00.000000Z\t2022-02-24T01:00:00.000000Z
-                    """, sysPrefix + TelemetryWalTask.TABLE_NAME);
+                    """);
 
-            assertSql("""
+            assertQuery(TelemetryTask.TABLE_NAME + " where event >= 0")
+                    .noLeakCheck()
+                    .timestamp("created")
+                    .returns("""
                     created\tevent\torigin
                     1970-01-01T00:00:00.001000Z\t100\t1
                     1970-01-01T00:00:00.004000Z\t101\t1
-                    """, TelemetryTask.TABLE_NAME + " where event >= 0");
+                    """);
         });
     }
 }

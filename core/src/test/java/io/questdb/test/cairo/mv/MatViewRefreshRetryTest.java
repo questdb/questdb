@@ -90,13 +90,14 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
                     false
             );
 
-            assertSql(
-                    """
+            assertQuery("select count() from wal_transactions('price_1h')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             56
-                            """,
-                    "select count() from wal_transactions('price_1h')"
-            );
+                            """);
         });
     }
 

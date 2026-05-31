@@ -470,10 +470,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectInheritsColumnIndex() throws Exception {
         execute("create table old(s string,sym symbol index, ts timestamp)");
         execute("create table new as (select * from old), index(s), cast(s as symbol), cast(ts as date)");
-        assertSql(
-                "s\tsym\tts\n",
-                "select * from new"
-        );
+        assertQuery("select * from new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tsym\tts\n");
 
         assertColumnsIndexed("new", "s");
     }
@@ -482,7 +482,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithCastAndIndexOnTheSameColumn() throws Exception {
         execute("create table old(s string,l long, ts timestamp)");
         execute("create table new as (select * from old), cast(s as symbol), index(s)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
         assertColumnsIndexed("new", "s");
     }
 
@@ -490,7 +493,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithCastAndIndexOnTheSameColumnV2() throws Exception {
         execute("create table old(s string,l long, ts timestamp)");
         execute("create table new as (select * from old), index(s), cast(s as symbol)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
         assertColumnsIndexed("new", "s");
     }
 
@@ -498,7 +504,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithCastAndIndexOnTheSameColumnV3() throws Exception {
         execute("create table old(s string,l long, ts timestamp)");
         execute("create table new as (select * from old), cast(s as symbol), index(s)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
         assertColumnsIndexed("new", "s");
     }
 
@@ -506,7 +515,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithCastAndIndex_v2() throws Exception {
         execute("create table old(s symbol,l long, ts timestamp)");
         execute("create table new as (select * from old), index(s), cast(l as int)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
         assertColumnsIndexed("new", "s");
     }
 
@@ -514,7 +526,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithCastAndSeparateIndex() throws Exception {
         execute("create table old(s symbol,l long, ts timestamp)");
         execute("create table new as (select * from old), cast(l as int), index(s)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
         assertColumnsIndexed("new", "s");
     }
 
@@ -522,28 +537,40 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithCastSymbolToStringAndIndexOnIt() throws Exception {
         execute("create table old(s symbol,l long, ts timestamp)");
         execute("create table new as (select * from old), index(s), cast(s as string)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
     }
 
     @Test(expected = SqlException.class)
     public void testCreateTableAsSelectWithIndexOnSymbolCastedToString() throws Exception {
         execute("create table old(s symbol,l long, ts timestamp)");
         execute("create table new as (select * from old), cast(s as string), index(s)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
     }
 
     @Test
     public void testCreateTableAsSelectWithMultipleCasts() throws Exception {
         execute("create table old(s symbol,l long, ts timestamp)");
         execute("create table new as (select * from old), cast(s as string), cast(l as long), cast(ts as date)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
     }
 
     @Test
     public void testCreateTableAsSelectWithMultipleIndexes() throws Exception {
         execute("create table old(s1 symbol,s2 symbol, s3 symbol)");
         execute("create table new as (select * from old), index(s1), index(s2), index(s3)");
-        assertSql("s1\ts2\ts3\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\ts2\ts3\n");
         assertColumnsIndexed("new", "s1", "s2", "s3");
     }
 
@@ -551,7 +578,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexes() throws Exception {
         execute("create table old(s string,sym symbol, ts timestamp)");
         execute("create table new as (select * from old), cast(s as symbol), index(s), cast(ts as date), index(sym), cast(sym as symbol)");
-        assertSql("s\tsym\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tsym\tts\n");
         assertColumnsIndexed("new", "s", "sym");
     }
 
@@ -559,7 +589,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexesV2() throws Exception {
         execute("create table old(s string,sym symbol, ts timestamp)");
         execute("create table new as (select * from old), cast(s as symbol), index(s), cast(ts as date), index(sym), cast(sym as symbol)");
-        assertSql("s\tsym\tts\n", "select * from new");
+        assertQuery("select * from new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tsym\tts\n");
         assertColumnsIndexed("new", "s", "sym");
     }
 
@@ -567,7 +600,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexesV3() throws Exception {
         execute("create table old(s string,sym symbol, ts timestamp)");
         execute("create table new as (select * from old), index(s), cast(s as symbol), cast(ts as date), index(sym), cast(sym as symbol)");
-        assertSql("s\tsym\tts\n", "select * from new");
+        assertQuery("select * from new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tsym\tts\n");
         assertColumnsIndexed("new", "s", "sym");
     }
 
@@ -575,21 +611,30 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithNoIndex() throws Exception {
         execute("create table old(s1 symbol)");
         execute("create table new as (select * from old)");
-        assertSql("s1\n", "select * from new");
+        assertQuery("select * from new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\n");
     }
 
     @Test
     public void testCreateTableAsSelectWithOneCast() throws Exception {
         execute("create table old(s1 symbol,s2 symbol, s3 symbol)");
         execute("create table new as (select * from old), cast(s1 as string)");
-        assertSql("s1\ts2\ts3\n", "select * from new");
+        assertQuery("select * from new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\ts2\ts3\n");
     }
 
     @Test
     public void testCreateTableAsSelectWithOneIndex() throws Exception {
         execute("create table old(s1 symbol,s2 symbol, s3 symbol)");
         execute("create table new as (select * from old), index(s1)");
-        assertSql("s1\ts2\ts3\n", "select * from new");
+        assertQuery("select * from new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\ts2\ts3\n");
         assertColumnsIndexed("new", "s1");
     }
 
@@ -597,7 +642,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableFromLikeTableWithIndex() throws Exception {
         execute("create table tab (s symbol), index(s)");
         execute("create table x (like tab)");
-        assertSql("s\n", "select * from x");
+        assertQuery("select * from x")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\n");
         assertColumnsIndexed("x", "s");
     }
 
@@ -605,7 +653,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableFromLikeTableWithMultipleIndices() throws Exception {
         execute("create table tab (s1 symbol, s2 symbol, s3 symbol), index(s1), index(s2), index(s3)");
         execute("create table x(like tab)");
-        assertSql("s1\ts2\ts3\n", "select * from x");
+        assertQuery("select * from x")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\ts2\ts3\n");
         assertColumnsIndexed("x", "s1", "s2", "s3");
     }
 
@@ -613,7 +664,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableFromLikeTableWithNoIndex() throws Exception {
         execute("create table y (s1 symbol)");
         execute("create table tab (like y)");
-        assertSql("s1\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\n");
     }
 
     @Test
@@ -624,7 +678,11 @@ public class CreateTableTest extends AbstractCairoTest {
                         "t timestamp) timestamp(t) partition by MONTH"
         );
         execute("create table tab (like x)");
-        assertSql("a\tt\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("t")
+                .returns("a\tt\n");
         assertPartitionAndTimestamp();
     }
 
@@ -721,14 +779,20 @@ public class CreateTableTest extends AbstractCairoTest {
         execute("create table x (s1 symbol)");
         execute("create table y (s2 symbol)");
         execute("create table if not exists x (like y)");
-        assertSql("s1\n", "select * from x");
+        assertQuery("select * from x")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\n");
     }
 
     @Test
     public void testCreateTableIfNotExistsExistingLikeTable() throws Exception {
         execute("create table y (s2 symbol)");
         execute("create table if not exists x (like y)");
-        assertSql("s2\n", "select * from x");
+        assertQuery("select * from x")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s2\n");
     }
 
     @Test
@@ -813,7 +877,10 @@ public class CreateTableTest extends AbstractCairoTest {
 
         execute("create table x (" + getColumnDefinitions(columnTypes) + ")");
         execute("create table tab (like x)");
-        assertSql("a\tb\tc\td\te\tf\tg\th\tt\tn\tx\tz\ty\tl\tu\tgh1\tgh2\n", "tab");
+        assertQuery("tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("a\tb\tc\td\te\tf\tg\th\tt\tn\tx\tz\ty\tl\tu\tgh1\tgh2\n");
         assertColumnTypes(columnTypes);
     }
 
@@ -844,15 +911,15 @@ public class CreateTableTest extends AbstractCairoTest {
                         "DEDUP UPSERT KEYS(ts, a)"
         );
         execute("create table foo_clone ( like foo)");
-        assertSql(
-                """
+        assertQuery("SHOW COLUMNS FROM foo_clone")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
                         column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                         ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
                         a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
                         b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                        """,
-                "SHOW COLUMNS FROM foo_clone"
-        );
+                        """);
     }
 
     @Test
@@ -866,7 +933,11 @@ public class CreateTableTest extends AbstractCairoTest {
         );
         execute("create table tab ( like x)");
 
-        assertSql("a\ty\tt\n", "tab");
+        assertQuery("tab")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("t")
+                .returns("a\ty\tt\n");
         assertSymbolParameters(new SymbolParameters(null, false, true, indexBlockCapacity));
     }
 
@@ -879,7 +950,11 @@ public class CreateTableTest extends AbstractCairoTest {
                         " PARTITION BY DAY" +
                         " WITH maxUncommittedRows = " + maxUncommittedRows + ", o3MaxLag = " + o3MaxLag + "us");
         execute("create table x (like y)");
-        assertSql("s2\tts\n", "select * from x");
+        assertQuery("select * from x")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("s2\tts\n");
         assertWithClauseParameters(maxUncommittedRows, o3MaxLag);
     }
 
@@ -899,7 +974,11 @@ public class CreateTableTest extends AbstractCairoTest {
                         "t timestamp) timestamp(t) partition by MONTH"
         );
         execute("create table tab ( like x)");
-        assertSql("a\ty\tt\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("t")
+                .returns("a\ty\tt\n");
         assertSymbolParameters(new SymbolParameters(symbolCapacity, false, false, null));
     }
 
@@ -1074,14 +1153,16 @@ public class CreateTableTest extends AbstractCairoTest {
             // The default cairo.posting.index.auto.include.timestamp=true
             // appends the designated timestamp to the covering list, so
             // SHOW CREATE TABLE renders an explicit INCLUDE (ts) clause.
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'tab' (\s
                             \ts SYMBOL INDEX TYPE POSTING INCLUDE (ts),
                             \tts TIMESTAMP
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE tab");
+                            """);
         });
     }
 
@@ -1098,13 +1179,15 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableWithArrayColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (arr double[]);");
-            assertSql("""
+            assertQuery("show create table x;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'x' (\s
                             \tarr DOUBLE[]
                             );
-                            """,
-                    "show create table x;");
+                            """);
         });
     }
 
@@ -1112,7 +1195,11 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableWithDefaultIndexType() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (s symbol index, ts timestamp) timestamp(ts)");
-            assertSql("s\tts\n", "select * from tab");
+            assertQuery("select * from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("s\tts\n");
             try (TableReader r = engine.getReader("tab")) {
                 TableReaderMetadata metadata = r.getMetadata();
                 int colIndex = metadata.getColumnIndex("s");
@@ -1125,7 +1212,10 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableWithIndex() throws Exception {
         execute("create table tab (s symbol), index(s)");
-        assertSql("s\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\n");
         assertColumnsIndexed("tab", "s");
     }
 
@@ -1137,14 +1227,20 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableWithMultipleIndexes() throws Exception {
         execute("create table tab (s1 symbol, s2 symbol, s3 symbol), index(s1), index(s2), index(s3)");
-        assertSql("s1\ts2\ts3\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\ts2\ts3\n");
         assertColumnsIndexed("tab", "s1", "s2", "s3");
     }
 
     @Test
     public void testCreateTableWithNoIndex() throws Exception {
         execute("create table tab (s symbol) ");
-        assertSql("s\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\n");
     }
 
     @Test
@@ -1164,7 +1260,11 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableWithPostingIndexType() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (s symbol index type posting, ts timestamp) timestamp(ts)");
-            assertSql("s\tts\n", "select * from tab");
+            assertQuery("select * from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("s\tts\n");
             try (TableReader r = engine.getReader("tab")) {
                 TableReaderMetadata metadata = r.getMetadata();
                 int colIndex = metadata.getColumnIndex("s");
@@ -1178,7 +1278,11 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableWithSymbolIndexType() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (s symbol index type bitmap, ts timestamp) timestamp(ts)");
-            assertSql("s\tts\n", "select * from tab");
+            assertQuery("select * from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("s\tts\n");
             try (TableReader r = engine.getReader("tab")) {
                 TableReaderMetadata metadata = r.getMetadata();
                 int colIndex = metadata.getColumnIndex("s");
@@ -1192,39 +1296,46 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableWithTimestampNSColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ns timestamp_ns, s symbol) timestamp(ns) partition by DAY WAL;");
-            assertSql("""
+            assertQuery("show create table x;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'x' (\s
                             \tns TIMESTAMP_NS,
                             \ts SYMBOL
                             ) timestamp(ns) PARTITION BY DAY;
-                            """,
-                    "show create table x;");
+                            """);
             execute("create table y (like x);");
-            assertSql("ns\ts\n", "select * from x");
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ns")
+                    .returns("ns\ts\n");
 
             try (TableReader reader = engine.getReader("x")) {
                 assertEquals(PartitionBy.DAY, reader.getPartitionedBy());
                 assertEquals(0, reader.getMetadata().getTimestampIndex());
             }
 
-            assertSql("""
+            assertQuery("show create table y;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'y' (\s
                             \tns TIMESTAMP_NS,
                             \ts SYMBOL
                             ) timestamp(ns) PARTITION BY DAY;
-                            """,
-                    "show create table y;");
-            assertSql(
-                    """
+                            """);
+            assertQuery("SHOW COLUMNS FROM y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
                             s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
-                            """
-                    ,
-                    "SHOW COLUMNS FROM y"
-            );
+                            """);
 
             execute(
                     "CREATE TABLE z (" +
@@ -1235,7 +1346,10 @@ public class CreateTableTest extends AbstractCairoTest {
                             "TIMESTAMP(ns) PARTITION BY DAY WAL " +
                             "DEDUP UPSERT KEYS(ns, a)"
             );
-            assertSql("""
+            assertQuery("show create table z;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'z' (\s
                             \tns TIMESTAMP_NS,
@@ -1243,8 +1357,7 @@ public class CreateTableTest extends AbstractCairoTest {
                             \tb STRING
                             ) timestamp(ns) PARTITION BY DAY
                             DEDUP UPSERT KEYS(ns,a);
-                            """,
-                    "show create table z;");
+                            """);
         });
     }
 
@@ -1335,12 +1448,16 @@ public class CreateTableTest extends AbstractCairoTest {
                 assertFalse(r.getMetadata().isColumnIndexed(r.getMetadata().getColumnIndex("s")));
             }
 
-            assertSql("""
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                     ts\ts
                     2024-01-01T00:00:00.000000Z\tA
                     2024-01-01T01:00:00.000000Z\tB
                     2024-01-01T02:00:00.000000Z\tA
-                    """, "SELECT * FROM t");
+                    """);
         });
     }
 
@@ -1376,10 +1493,14 @@ public class CreateTableTest extends AbstractCairoTest {
             }
 
             // Verify all rows are readable
-            assertSql("""
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                     count
                     6
-                    """, "SELECT count() FROM t");
+                    """);
         });
     }
 
@@ -1399,39 +1520,63 @@ public class CreateTableTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Query BEFORE releaseAllWriters (unsealed sparse gens)
-            assertSql("""
+            assertQuery("SELECT * FROM t WHERE s = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                     ts\ts
                     2024-01-01T00:00:00.000000Z\tA
                     2024-01-01T02:00:00.000000Z\tA
                     2024-01-01T05:00:00.000000Z\tA
-                    """, "SELECT * FROM t WHERE s = 'A'");
+                    """);
 
             // Release writers (triggers seal)
             engine.releaseAllWriters();
 
             // Query AFTER seal (dense gen, stride-indexed)
-            assertSql("""
+            assertQuery("SELECT * FROM t WHERE s = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                     ts\ts
                     2024-01-01T00:00:00.000000Z\tA
                     2024-01-01T02:00:00.000000Z\tA
                     2024-01-01T05:00:00.000000Z\tA
-                    """, "SELECT * FROM t WHERE s = 'A'");
+                    """);
 
-            assertSql("""
+            assertQuery("SELECT * FROM t WHERE s = 'B'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                     ts\ts
                     2024-01-01T01:00:00.000000Z\tB
                     2024-01-01T04:00:00.000000Z\tB
-                    """, "SELECT * FROM t WHERE s = 'B'");
+                    """);
 
-            assertSql("""
+            assertQuery("SELECT * FROM t WHERE s = 'C'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                     ts\ts
                     2024-01-01T03:00:00.000000Z\tC
-                    """, "SELECT * FROM t WHERE s = 'C'");
+                    """);
 
             // Non-existent symbol returns no rows
-            assertSql("""
+            assertQuery("SELECT * FROM t WHERE s = 'Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                     ts\ts
-                    """, "SELECT * FROM t WHERE s = 'Z'");
+                    """);
         });
     }
 
@@ -1452,12 +1597,17 @@ public class CreateTableTest extends AbstractCairoTest {
             // Do NOT call engine.releaseAllWriters() — the writer is still open.
             // PostingIndexWriter must flush pending data during commit so that
             // readers can see it without waiting for close/seal.
-            assertSql("""
+            assertQuery("SELECT * FROM t WHERE s = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                     ts\ts
                     2024-01-01T00:00:00.000000Z\tA
                     2024-01-01T02:00:00.000000Z\tA
                     2024-01-01T05:00:00.000000Z\tA
-                    """, "SELECT * FROM t WHERE s = 'A'");
+                    """);
         });
     }
 
@@ -1471,11 +1621,14 @@ public class CreateTableTest extends AbstractCairoTest {
         // them.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_show_ord (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts)");
-            assertSql("""
+            assertQuery("SHOW COLUMNS FROM t_show_ord")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                     ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
                     s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
-                    """, "SHOW COLUMNS FROM t_show_ord");
+                    """);
         });
     }
 
@@ -1580,7 +1733,11 @@ public class CreateTableTest extends AbstractCairoTest {
         String walParameterValue = isWalEnabled ? "WAL" : "BYPASS WAL";
         execute("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY " + walParameterValue);
         execute("create table x (like y)");
-        assertSql("s2\tts\n", "select * from x");
+        assertQuery("select * from x")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("s2\tts\n");
         assertWalEnabled(isWalEnabled);
     }
 
@@ -1603,7 +1760,11 @@ public class CreateTableTest extends AbstractCairoTest {
                         "t timestamp) timestamp(t) partition by MONTH"
         );
         execute("create table tab ( like x)");
-        assertSql("a\ty\tt\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("t")
+                .returns("a\ty\tt\n");
         SymbolParameters parameters = new SymbolParameters(null, isSymbolCached, false, null);
         assertSymbolParameters(parameters);
     }

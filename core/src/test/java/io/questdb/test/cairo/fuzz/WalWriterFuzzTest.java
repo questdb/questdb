@@ -142,18 +142,30 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             drainPurgeJob();
 
             int expectedTxnCount = 500;
-            assertSql("count\n" +
-                    expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
+            assertQuery("select count(*) from wal_transactions('chunk_seq')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" +
+                    expectedTxnCount + "\n");
 
             drainWalQueue();
 
-            assertSql("count\n" +
-                    expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
+            assertQuery("select count(*) from wal_transactions('chunk_seq')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" +
+                    expectedTxnCount + "\n");
 
             drainPurgeJob();
 
-            assertSql("count\n" +
-                    (expectedTxnCount - (expectedTxnCount - 1) / chunkSize * chunkSize) + "\n", "select count(*) from wal_transactions('chunk_seq')");
+            assertQuery("select count(*) from wal_transactions('chunk_seq')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" +
+                    (expectedTxnCount - (expectedTxnCount - 1) / chunkSize * chunkSize) + "\n");
         });
     }
 

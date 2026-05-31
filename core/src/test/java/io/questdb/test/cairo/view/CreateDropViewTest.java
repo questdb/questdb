@@ -293,20 +293,20 @@ public class CreateDropViewTest extends AbstractViewTest {
     public void testDeclareCreateView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE VIEW foo AS (DECLARE @x := 1, @y := 2 SELECT @x + @y)");
-            assertSql(
-                    """
+            assertQuery("select view_name, view_sql, view_table_dir_name, invalidation_reason, view_status from views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status
                             foo\tDECLARE @x := 1, @y := 2 SELECT @x + @y\tfoo~1\t\tvalid
-                            """,
-                    "select view_name, view_sql, view_table_dir_name, invalidation_reason, view_status from views()"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("foo")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             3
-                            """,
-                    "foo"
-            );
+                            """);
         });
     }
 

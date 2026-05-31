@@ -150,27 +150,27 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // posting-DISTINCT optimization. After rejection, the regular
             // DISTINCT codegen must observe the original WHERE clause.
             // ORDER BY locks ordering so this asserts row identity, not order.
-            assertSql(
-                    """
+            assertQuery("SELECT DISTINCT sym FROM t_distinct_reject WHERE sym IN ('A','B') AND extra > 5.0 ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym
                             A
                             B
-                            """,
-                    "SELECT DISTINCT sym FROM t_distinct_reject WHERE sym IN ('A','B') AND extra > 5.0 ORDER BY sym"
-            );
+                            """);
 
             // Run the same query a second time. If the rejected path leaked
             // mutated nodes back into the expression pool, a subsequent
             // compilation that pulls from the same pool can observe stale
             // tree state and produce different (or wrong) rows.
-            assertSql(
-                    """
+            assertQuery("SELECT DISTINCT sym FROM t_distinct_reject WHERE sym IN ('A','B') AND extra > 5.0 ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym
                             A
                             B
-                            """,
-                    "SELECT DISTINCT sym FROM t_distinct_reject WHERE sym IN ('A','B') AND extra > 5.0 ORDER BY sym"
-            );
+                            """);
         });
     }
 
@@ -1454,14 +1454,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             }
 
             // Result correctness must match across paths.
-            assertSql(
-                    "sym\nA\nB\n",
-                    "SELECT DISTINCT sym FROM t_dist_hint ORDER BY sym"
-            );
-            assertSql(
-                    "sym\nA\nB\n",
-                    "SELECT /*+ no_covering */ DISTINCT sym FROM t_dist_hint ORDER BY sym"
-            );
+            assertQuery("SELECT DISTINCT sym FROM t_dist_hint ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("sym\nA\nB\n");
+            assertQuery("SELECT /*+ no_covering */ DISTINCT sym FROM t_dist_hint ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("sym\nA\nB\n");
         });
     }
 
@@ -3027,13 +3027,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // logical day before arming the fault; otherwise
             // squashPartitions() short-circuits and the reseal at
             // TableWriter:11920 is never reached.
-            assertSql(
-                    """
+            assertQuery("SELECT count() FROM table_partitions('t_squash_reseal_fail')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             2
-                            """,
-                    "SELECT count() FROM table_partitions('t_squash_reseal_fail')"
-            );
+                            """);
 
             engine.releaseAllWriters();
 

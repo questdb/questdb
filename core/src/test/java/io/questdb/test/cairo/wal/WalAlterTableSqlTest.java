@@ -64,24 +64,32 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
             execute("alter table " + tableName + " attach partition list '" + partition + "'");
 
             drainWalQueue();
-            assertSql("x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "2\tBC\t2022-02-24T06:00:00.000000Z\tFG\n" +
-                    "3\tCD\t2022-02-24T12:00:00.000000Z\tFG\n" +
-                    "4\tCD\t2022-02-24T18:00:00.000000Z\tFG\n" +
-                    "5\tAB\t2022-02-25T00:00:00.000000Z\tDE\n", tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            2\tBC\t2022-02-24T06:00:00.000000Z\tFG
+                            3\tCD\t2022-02-24T12:00:00.000000Z\tFG
+                            4\tCD\t2022-02-24T18:00:00.000000Z\tFG
+                            5\tAB\t2022-02-25T00:00:00.000000Z\tDE
+                            """);
         });
     }
 
     @Test
     public void createWalAndDropAddIndex() throws Exception {
         assertMemoryLeak(() -> {
-            String expected = "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "2\tBC\t2022-02-24T06:00:00.000000Z\tFG\n" +
-                    "3\tCD\t2022-02-24T12:00:00.000000Z\tFG\n" +
-                    "4\tCD\t2022-02-24T18:00:00.000000Z\tFG\n" +
-                    "5\tAB\t2022-02-25T00:00:00.000000Z\tDE\n";
+            String expected = """
+                    x\tsym\tts\tsym2
+                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                    2\tBC\t2022-02-24T06:00:00.000000Z\tFG
+                    3\tCD\t2022-02-24T12:00:00.000000Z\tFG
+                    4\tCD\t2022-02-24T18:00:00.000000Z\tFG
+                    5\tAB\t2022-02-25T00:00:00.000000Z\tDE
+                    """;
 
             String tableName = testName.getMethodName();
             execute("create table " + tableName + " as (" +
@@ -129,12 +137,18 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
             execute("alter table " + tableName + " drop partition list '2022-02-26'");
 
             drainWalQueue();
-            assertSql("x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "2\tBC\t2022-02-24T06:00:00.000000Z\tFG\n" +
-                    "3\tCD\t2022-02-24T12:00:00.000000Z\tFG\n" +
-                    "4\tCD\t2022-02-24T18:00:00.000000Z\tFG\n" +
-                    "5\tAB\t2022-02-25T00:00:00.000000Z\tDE\n", tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            2\tBC\t2022-02-24T06:00:00.000000Z\tFG
+                            3\tCD\t2022-02-24T12:00:00.000000Z\tFG
+                            4\tCD\t2022-02-24T18:00:00.000000Z\tFG
+                            5\tAB\t2022-02-25T00:00:00.000000Z\tDE
+                            """);
         });
     }
 
@@ -153,8 +167,14 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
             execute("alter table " + tableName + " drop partition list '2022-02-24'");
 
             drainWalQueue();
-            assertSql("x\tsym\tts\tsym2\n" +
-                    "5\tAB\t2022-02-25T00:00:00.000000Z\tDE\n", tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tsym\tts\tsym2
+                            5\tAB\t2022-02-25T00:00:00.000000Z\tDE
+                            """);
         });
     }
 
@@ -173,81 +193,97 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
             execute("alter table " + tableName + " drop partition list '2022-02-23', '2022-02-24'");
 
             drainWalQueue();
-            assertSql("x\tsym\tts\tsym2\n" +
-                    "9\tAB\t2022-02-25T00:00:00.000000Z\t\n" +
-                    "10\tAB\t2022-02-25T06:00:00.000000Z\tEF\n", tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tsym\tts\tsym2
+                            9\tAB\t2022-02-25T00:00:00.000000Z\t
+                            10\tAB\t2022-02-25T06:00:00.000000Z\tEF
+                            """);
         });
     }
 
     @Test
     public void createWalAndDropPartitionsWithWhere22() throws Exception {
         final String tableName = testName.getMethodName();
-        createWalAndDropPartitionsWithWhere(tableName, 22, 2, "x\tsym\tts\tsym2\n" +
-                "1\tAB\t2022-02-23T00:00:00.000000Z\tEF\n" +
-                "2\tBC\t2022-02-23T06:00:00.000000Z\tFG\n" +
-                "3\tCD\t2022-02-23T12:00:00.000000Z\tFG\n" +
-                "4\tCD\t2022-02-23T18:00:00.000000Z\tFG\n" +
-                "5\tAB\t2022-02-24T00:00:00.000000Z\tDE\n" +
-                "6\tBC\t2022-02-24T06:00:00.000000Z\tDE\n" +
-                "7\tBC\t2022-02-24T12:00:00.000000Z\tFG\n" +
-                "8\tBC\t2022-02-24T18:00:00.000000Z\tDE\n" +
-                "9\tAB\t2022-02-25T00:00:00.000000Z\t\n" +
-                "10\tAB\t2022-02-25T06:00:00.000000Z\tEF\n" +
-                "11\tBC\t2022-02-25T12:00:00.000000Z\tFG\n" +
-                "12\tAB\t2022-02-25T18:00:00.000000Z\t\n" +
-                "13\tAB\t2022-02-26T00:00:00.000000Z\tDE\n");
+        createWalAndDropPartitionsWithWhere(tableName, 22, 2, """
+                x\tsym\tts\tsym2
+                1\tAB\t2022-02-23T00:00:00.000000Z\tEF
+                2\tBC\t2022-02-23T06:00:00.000000Z\tFG
+                3\tCD\t2022-02-23T12:00:00.000000Z\tFG
+                4\tCD\t2022-02-23T18:00:00.000000Z\tFG
+                5\tAB\t2022-02-24T00:00:00.000000Z\tDE
+                6\tBC\t2022-02-24T06:00:00.000000Z\tDE
+                7\tBC\t2022-02-24T12:00:00.000000Z\tFG
+                8\tBC\t2022-02-24T18:00:00.000000Z\tDE
+                9\tAB\t2022-02-25T00:00:00.000000Z\t
+                10\tAB\t2022-02-25T06:00:00.000000Z\tEF
+                11\tBC\t2022-02-25T12:00:00.000000Z\tFG
+                12\tAB\t2022-02-25T18:00:00.000000Z\t
+                13\tAB\t2022-02-26T00:00:00.000000Z\tDE
+                """);
     }
 
     @Test
     public void createWalAndDropPartitionsWithWhere23() throws Exception {
         final String tableName = testName.getMethodName();
-        createWalAndDropPartitionsWithWhere(tableName, 23, 2, "x\tsym\tts\tsym2\n" +
-                "1\tAB\t2022-02-23T00:00:00.000000Z\tEF\n" +
-                "2\tBC\t2022-02-23T06:00:00.000000Z\tFG\n" +
-                "3\tCD\t2022-02-23T12:00:00.000000Z\tFG\n" +
-                "4\tCD\t2022-02-23T18:00:00.000000Z\tFG\n" +
-                "5\tAB\t2022-02-24T00:00:00.000000Z\tDE\n" +
-                "6\tBC\t2022-02-24T06:00:00.000000Z\tDE\n" +
-                "7\tBC\t2022-02-24T12:00:00.000000Z\tFG\n" +
-                "8\tBC\t2022-02-24T18:00:00.000000Z\tDE\n" +
-                "9\tAB\t2022-02-25T00:00:00.000000Z\t\n" +
-                "10\tAB\t2022-02-25T06:00:00.000000Z\tEF\n" +
-                "11\tBC\t2022-02-25T12:00:00.000000Z\tFG\n" +
-                "12\tAB\t2022-02-25T18:00:00.000000Z\t\n" +
-                "13\tAB\t2022-02-26T00:00:00.000000Z\tDE\n");
+        createWalAndDropPartitionsWithWhere(tableName, 23, 2, """
+                x\tsym\tts\tsym2
+                1\tAB\t2022-02-23T00:00:00.000000Z\tEF
+                2\tBC\t2022-02-23T06:00:00.000000Z\tFG
+                3\tCD\t2022-02-23T12:00:00.000000Z\tFG
+                4\tCD\t2022-02-23T18:00:00.000000Z\tFG
+                5\tAB\t2022-02-24T00:00:00.000000Z\tDE
+                6\tBC\t2022-02-24T06:00:00.000000Z\tDE
+                7\tBC\t2022-02-24T12:00:00.000000Z\tFG
+                8\tBC\t2022-02-24T18:00:00.000000Z\tDE
+                9\tAB\t2022-02-25T00:00:00.000000Z\t
+                10\tAB\t2022-02-25T06:00:00.000000Z\tEF
+                11\tBC\t2022-02-25T12:00:00.000000Z\tFG
+                12\tAB\t2022-02-25T18:00:00.000000Z\t
+                13\tAB\t2022-02-26T00:00:00.000000Z\tDE
+                """);
     }
 
     @Test
     public void createWalAndDropPartitionsWithWhere24() throws Exception {
         final String tableName = testName.getMethodName();
-        createWalAndDropPartitionsWithWhere(tableName, 24, 2, "x\tsym\tts\tsym2\n" +
-                "5\tAB\t2022-02-24T00:00:00.000000Z\tDE\n" +
-                "6\tBC\t2022-02-24T06:00:00.000000Z\tDE\n" +
-                "7\tBC\t2022-02-24T12:00:00.000000Z\tFG\n" +
-                "8\tBC\t2022-02-24T18:00:00.000000Z\tDE\n" +
-                "9\tAB\t2022-02-25T00:00:00.000000Z\t\n" +
-                "10\tAB\t2022-02-25T06:00:00.000000Z\tEF\n" +
-                "11\tBC\t2022-02-25T12:00:00.000000Z\tFG\n" +
-                "12\tAB\t2022-02-25T18:00:00.000000Z\t\n" +
-                "13\tAB\t2022-02-26T00:00:00.000000Z\tDE\n");
+        createWalAndDropPartitionsWithWhere(tableName, 24, 2, """
+                x\tsym\tts\tsym2
+                5\tAB\t2022-02-24T00:00:00.000000Z\tDE
+                6\tBC\t2022-02-24T06:00:00.000000Z\tDE
+                7\tBC\t2022-02-24T12:00:00.000000Z\tFG
+                8\tBC\t2022-02-24T18:00:00.000000Z\tDE
+                9\tAB\t2022-02-25T00:00:00.000000Z\t
+                10\tAB\t2022-02-25T06:00:00.000000Z\tEF
+                11\tBC\t2022-02-25T12:00:00.000000Z\tFG
+                12\tAB\t2022-02-25T18:00:00.000000Z\t
+                13\tAB\t2022-02-26T00:00:00.000000Z\tDE
+                """);
     }
 
     @Test
     public void createWalAndDropPartitionsWithWhere25() throws Exception {
         final String tableName = testName.getMethodName();
-        createWalAndDropPartitionsWithWhere(tableName, 25, 3, "x\tsym\tts\tsym2\n" +
-                "9\tAB\t2022-02-25T00:00:00.000000Z\t\n" +
-                "10\tAB\t2022-02-25T06:00:00.000000Z\tEF\n" +
-                "11\tBC\t2022-02-25T12:00:00.000000Z\tFG\n" +
-                "12\tAB\t2022-02-25T18:00:00.000000Z\t\n" +
-                "13\tAB\t2022-02-26T00:00:00.000000Z\tDE\n");
+        createWalAndDropPartitionsWithWhere(tableName, 25, 3, """
+                x\tsym\tts\tsym2
+                9\tAB\t2022-02-25T00:00:00.000000Z\t
+                10\tAB\t2022-02-25T06:00:00.000000Z\tEF
+                11\tBC\t2022-02-25T12:00:00.000000Z\tFG
+                12\tAB\t2022-02-25T18:00:00.000000Z\t
+                13\tAB\t2022-02-26T00:00:00.000000Z\tDE
+                """);
     }
 
     @Test
     public void createWalAndDropPartitionsWithWhere26() throws Exception {
         final String tableName = testName.getMethodName();
-        createWalAndDropPartitionsWithWhere(tableName, 26, 4, "x\tsym\tts\tsym2\n" +
-                "13\tAB\t2022-02-26T00:00:00.000000Z\tDE\n");
+        createWalAndDropPartitionsWithWhere(tableName, 26, 4, """
+                x\tsym\tts\tsym2
+                13\tAB\t2022-02-26T00:00:00.000000Z\tDE
+                """);
     }
 
     @Test
@@ -275,16 +311,19 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            assertSql(
-                    "table_name\n" + tableName + "\n", "select table_name from tables()"
-            );
+            assertQuery("select table_name from tables()")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("table_name\n" + tableName + "\n");
 
             execute("drop table " + tableName);
             drainWalQueue();
 
-            assertSql(
-                    "table_name\n", "select table_name from tables() where table_name = '" + tableName + "'"
-            );
+            assertQuery("select table_name from tables() where table_name = '" + tableName + "'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\n");
         });
     }
 
@@ -302,9 +341,10 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
             execute("alter table " + tableName + " set param o3MaxLag = 117s");
 
             drainWalQueue();
-            assertSql(
-                    "o3MaxLag\n117000000\n", "select o3MaxLag from tables() where table_name = '" + tableName + "'"
-            );
+            assertQuery("select o3MaxLag from tables() where table_name = '" + tableName + "'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("o3MaxLag\n117000000\n");
         });
     }
 
@@ -349,9 +389,15 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
             engine.releaseInactive();
             drainWalQueue();
 
-            assertSql("x\tts\ts1\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\t\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\tstr2\n", tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts\ts1
+                            1\t2022-02-24T00:00:00.000000Z\t
+                            2\t2022-02-24T00:00:01.000000Z\tstr2
+                            """);
 
             // Release TableWriter, WAL and Sequencer
             engine.releaseInactive();
@@ -373,13 +419,19 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
             execute("insert into " + tableName + " values (9, '2022-02-26T01:00:00.000000Z', 'str9')");
             drainWalQueue();
 
-            assertSql("x\tts\ts1\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\t\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\tstr2\n" +
-                    "3\t2022-02-24T00:00:02.000000Z\tstr3\n" +
-                    "7\t2022-02-25T00:00:00.000000Z\tstr7\n" +
-                    "8\t2022-02-26T00:00:00.000000Z\tstr8\n" +
-                    "9\t2022-02-26T01:00:00.000000Z\tstr9\n", tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts\ts1
+                            1\t2022-02-24T00:00:00.000000Z\t
+                            2\t2022-02-24T00:00:01.000000Z\tstr2
+                            3\t2022-02-24T00:00:02.000000Z\tstr3
+                            7\t2022-02-25T00:00:00.000000Z\tstr7
+                            8\t2022-02-26T00:00:00.000000Z\tstr8
+                            9\t2022-02-26T01:00:00.000000Z\tstr9
+                            """);
         });
     }
 

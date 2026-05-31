@@ -370,7 +370,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
             final String sql = "select ts, k, k2, min(v) as v from " + TABLE1 + " sample by 1h";
             execute("create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day");
-            assertSql("column\tsymbolCapacity\nk\t2048\nk2\t512\n", "select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'");
+            assertQuery("select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("column\tsymbolCapacity\nk\t2048\nk2\t512\n");
         });
     }
 
@@ -380,7 +383,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
             final String sql = "select ts, k as kkk, min(v) as v from " + TABLE1 + " sample by 1h";
             execute("create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day");
-            assertSql("column\tsymbolCapacity\nkkk\t2048\n", "select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'");
+            assertQuery("select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("column\tsymbolCapacity\nkkk\t2048\n");
         });
     }
 
@@ -391,7 +397,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String sql = "select ts, cast(k || '_' as symbol) as k, min(v) as v from " + TABLE1 + " sample by 1h";
             execute("create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day");
             // assert default symbol capacity (128)
-            assertSql("column\tsymbolCapacity\nk\t128\n", "select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'");
+            assertQuery("select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("column\tsymbolCapacity\nk\t128\n");
         });
     }
 
@@ -402,7 +411,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE2);
             final String sql = "select ts, k, avg(v), first(k2) as fk2 from ( select t1.ts, t1.k, t1.v, t2.k2 from " + TABLE2 + " as t2 asof join " + TABLE1 + " as t1) timestamp(ts) sample by 30s";
             execute("create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day");
-            assertSql("column\tsymbolCapacity\nk\t2048\nfk2\t128\n", "select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'");
+            assertQuery("select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("column\tsymbolCapacity\nk\t2048\nfk2\t128\n");
         });
     }
 
@@ -412,7 +424,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
             final String sql = "with t as ( select ts, k as kk, v as vv from " + TABLE1 + ") select ts, kk as kkk, avg(vv) as vvv from t sample by 1h";
             execute("create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day");
-            assertSql("column\tsymbolCapacity\nkkk\t2048\n", "select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'");
+            assertQuery("select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("column\tsymbolCapacity\nkkk\t2048\n");
         });
     }
 
@@ -423,7 +438,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String sql = "select ts, cast('aaa' as symbol) as kkk, min(v) as v from " + TABLE1 + " sample by 1h";
             execute("create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day");
             // assert default symbol capacity (128)
-            assertSql("column\tsymbolCapacity\nkkk\t128\n", "select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'");
+            assertQuery("select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("column\tsymbolCapacity\nkkk\t128\n");
         });
     }
 

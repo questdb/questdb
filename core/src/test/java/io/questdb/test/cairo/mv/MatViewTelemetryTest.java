@@ -82,10 +82,12 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 }
 
                 assertSql(replaceExpectedTimestamp(
-                                "sym\tprice\tts\n" +
-                                        "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                        "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                        "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
+                                """
+                                        sym\tprice\tts
+                                        gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                                        jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                                        gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                                        """),
                         "price_1h order by ts, sym"
                 );
 
@@ -94,13 +96,16 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 assertNull(engine.getTableTokenIfExists("price_1h"));
                 telemetryJob.runSerially();
 
-                assertSql(
-                        "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
-                                "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0\n" +
-                                "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0\n" +
-                                "2024-10-24T17:00:33.000000Z\t201\t6\tnull\t\t0.0\n",
-                        "sys.telemetry_mat_view"
-                );
+                assertQuery("sys.telemetry_mat_view")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("created")
+                        .returns("""
+                                created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency
+                                2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0
+                                2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0
+                                2024-10-24T17:00:33.000000Z\t201\t6\tnull\t\t0.0
+                                """);
             }
         });
     }
@@ -123,10 +128,12 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
 
                     assertSql(
                             replaceExpectedTimestamp(
-                                    "sym\tprice\tts\n" +
-                                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
+                                    """
+                                            sym\tprice\tts
+                                            gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                                            jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                                            gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                                            """),
                             "price_1h order by ts, sym"
                     );
 
@@ -135,13 +142,16 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                     );
                 }
 
-                assertSql(
-                        "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
-                                "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0\n" +
-                                "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0\n" +
-                                "2024-10-24T17:00:41.000000Z\t202\t6\tnull\ttruncate operation\t0.0\n",
-                        "sys.telemetry_mat_view"
-                );
+                assertQuery("sys.telemetry_mat_view")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("created")
+                        .returns("""
+                                created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency
+                                2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0
+                                2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0
+                                2024-10-24T17:00:41.000000Z\t202\t6\tnull\ttruncate operation\t0.0
+                                """);
             }
         });
     }
@@ -165,10 +175,12 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                     );
 
                     assertSql(
-                            replaceExpectedTimestamp("sym\tprice\tts\n" +
-                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
+                            replaceExpectedTimestamp("""
+                                    sym\tprice\tts
+                                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                                    """),
                             "price_1h order by ts, sym"
                     );
 
@@ -178,14 +190,17 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                     );
                 }
 
-                assertSql(
-                        "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
-                                "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0\n" +
-                                "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0\n" +
-                                "2024-10-24T17:00:33.000000Z\t202\t6\tnull\tbase table is dropped or renamed\t0.0\n" +
-                                "2024-10-24T17:00:33.000000Z\t203\t6\tnull\t[-105]: table does not exist [table=base_price]\t0.0\n",
-                        "sys.telemetry_mat_view"
-                );
+                assertQuery("sys.telemetry_mat_view")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("created")
+                        .returns("""
+                                created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency
+                                2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0
+                                2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0
+                                2024-10-24T17:00:33.000000Z\t202\t6\tnull\tbase table is dropped or renamed\t0.0
+                                2024-10-24T17:00:33.000000Z\t203\t6\tnull\t[-105]: table does not exist [table=base_price]\t0.0
+                                """);
             }
         });
     }
@@ -207,11 +222,13 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                                     "from long_sequence(24 * 20 * 5)"
                     );
 
-                    assertSql(
-                            "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
-                                    "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n",
-                            "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
-                    );
+                    assertQuery("select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("""
+                                    sequencerTxn\tminTimestamp\tmaxTimestamp
+                                    1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
+                                    """);
 
                     execute("2024-10-24T17:01:30.000000Z", refreshJob, telemetryJob,
                             "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
@@ -219,23 +236,28 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                     );
                 }
 
-                assertSql(
-                        "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
-                                "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n" +
-                                "2\t\t\n" +
-                                "3\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
-                        "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
-                );
+                assertQuery("select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                sequencerTxn\tminTimestamp\tmaxTimestamp
+                                1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
+                                2\t\t
+                                3\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z
+                                """);
 
                 assertViewMatchesSqlOverBaseTable();
 
-                assertSql(
-                        "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
-                                "2024-10-24T17:00:20.000000Z\t200\t6\tnull\t\t0.0\n" +
-                                "2024-10-24T17:01:00.000000Z\t204\t6\t1\t\t40000.0\n" +
-                                "2024-10-24T17:01:30.000000Z\t204\t6\t2\t\t30000.0\n",
-                        "sys.telemetry_mat_view"
-                );
+                assertQuery("sys.telemetry_mat_view")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("created")
+                        .returns("""
+                                created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency
+                                2024-10-24T17:00:20.000000Z\t200\t6\tnull\t\t0.0
+                                2024-10-24T17:01:00.000000Z\t204\t6\t1\t\t40000.0
+                                2024-10-24T17:01:30.000000Z\t204\t6\t2\t\t30000.0
+                                """);
             }
         });
     }
