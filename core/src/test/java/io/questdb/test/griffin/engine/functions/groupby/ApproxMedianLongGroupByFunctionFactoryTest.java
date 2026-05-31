@@ -231,20 +231,14 @@ public class ApproxMedianLongGroupByFunctionFactoryTest extends AbstractCairoTes
 
     @Test
     public void testInvalidPrecision1() throws Exception {
-        assertException(
-                "select approx_median(x, 6) from long_sequence(1)",
-                24,
-                "precision must be between 0 and 5"
-        );
+        assertQuery("select approx_median(x, 6) from long_sequence(1)")
+                .fails(24, "precision must be between 0 and 5");
     }
 
     @Test
     public void testInvalidPrecision2() throws Exception {
-        assertException(
-                "select approx_median(x, -1) from long_sequence(1)",
-                24,
-                "precision must be between 0 and 5"
-        );
+        assertQuery("select approx_median(x, -1) from long_sequence(1)")
+                .fails(24, "precision must be between 0 and 5");
     }
 
     @Test

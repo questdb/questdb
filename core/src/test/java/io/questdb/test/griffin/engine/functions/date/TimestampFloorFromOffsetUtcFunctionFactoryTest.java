@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Test;
@@ -40,13 +39,13 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
             bindVariableService.setStr("tz", "Europe/Berlin");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT timestamp_floor_utc('1h', '2021-10-31T01:30:00.000000Z'::timestamp, null, :offset, :tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             timestamp_floor_utc
                             2021-10-31T01:00:00.000000Z
-                            """,
-                    "SELECT timestamp_floor_utc('1h', '2021-10-31T01:30:00.000000Z'::timestamp, null, :offset, :tz)"
-            );
+                            """);
         });
     }
 
@@ -64,16 +63,16 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
             bindVariableService.setStr("tz", "Europe/Berlin");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count_distinct(timestamp_floor_utc('30m', k, null, :offset, :tz)) > " +
+                            "count_distinct(timestamp_floor('30m', k, null, :offset, :tz)) has_more_buckets " +
+                            "FROM ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             has_more_buckets
                             true
-                            """,
-                    "SELECT count_distinct(timestamp_floor_utc('30m', k, null, :offset, :tz)) > " +
-                            "count_distinct(timestamp_floor('30m', k, null, :offset, :tz)) has_more_buckets " +
-                            "FROM ts",
-                    null, false, true, false
-            );
+                            """);
         });
     }
 
@@ -83,13 +82,13 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
         assertMemoryLeak(() -> {
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:15");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT timestamp_floor_utc('30m', '2024-06-15T10:20:00.000000Z'::timestamp, null, :offset, 'Europe/Berlin')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             timestamp_floor_utc
                             2024-06-15T10:15:00.000000Z
-                            """,
-                    "SELECT timestamp_floor_utc('30m', '2024-06-15T10:20:00.000000Z'::timestamp, null, :offset, 'Europe/Berlin')"
-            );
+                            """);
         });
     }
 
@@ -99,13 +98,13 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
         assertMemoryLeak(() -> {
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Berlin");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT timestamp_floor_utc('1h', '2021-10-31T01:30:00.000000Z'::timestamp, null, '00:00', :tz)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             timestamp_floor_utc
                             2021-10-31T01:00:00.000000Z
-                            """,
-                    "SELECT timestamp_floor_utc('1h', '2021-10-31T01:30:00.000000Z'::timestamp, null, '00:00', :tz)"
-            );
+                            """);
         });
     }
 
@@ -122,18 +121,18 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             );
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Berlin");
-            assertQueryNoLeakCheck(
-                    """
-                            violations
-                            0
-                            """,
-                    "SELECT count(*) violations FROM (" +
+            assertQuery("SELECT count(*) violations FROM (" +
                             "SELECT timestamp_floor_utc('30m', k, null, '00:00', :tz) curr, " +
                             "lag(timestamp_floor_utc('30m', k, null, '00:00', :tz)) OVER () prev " +
                             "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev",
-                    null, false, true, false
-            );
+                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            violations
+                            0
+                            """);
         });
     }
 
@@ -288,16 +287,16 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
 
             // Count distinct buckets — should be more than what timestamp_floor produces
             // because timestamp_floor collapses the repeated hour
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count_distinct(timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin')) > " +
+                            "count_distinct(timestamp_floor('30m', k, null, '00:00', 'Europe/Berlin')) has_more_buckets " +
+                            "FROM ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             has_more_buckets
                             true
-                            """,
-                    "SELECT count_distinct(timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin')) > " +
-                            "count_distinct(timestamp_floor('30m', k, null, '00:00', 'Europe/Berlin')) has_more_buckets " +
-                            "FROM ts",
-                    null, false, true, false
-            );
+                            """);
         });
     }
 
@@ -312,18 +311,18 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "FROM long_sequence(60)" +
                             ") TIMESTAMP(k)"
             );
-            assertQueryNoLeakCheck(
-                    """
-                            violations
-                            0
-                            """,
-                    "SELECT count(*) violations FROM (" +
+            assertQuery("SELECT count(*) violations FROM (" +
                             "SELECT timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin') curr, " +
                             "lag(timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
                             "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev",
-                    null, false, true, false
-            );
+                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            violations
+                            0
+                            """);
         });
     }
 
@@ -361,18 +360,18 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "FROM long_sequence(60)" +
                             ") TIMESTAMP(k)"
             );
-            assertQueryNoLeakCheck(
-                    """
-                            violations
-                            0
-                            """,
-                    "SELECT count(*) violations FROM (" +
+            assertQuery("SELECT count(*) violations FROM (" +
                             "SELECT timestamp_floor_utc('30m', k, null, '00:00', 'America/New_York') curr, " +
                             "lag(timestamp_floor_utc('30m', k, null, '00:00', 'America/New_York')) OVER () prev " +
                             "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev",
-                    null, false, true, false
-            );
+                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            violations
+                            0
+                            """);
         });
     }
 
@@ -413,18 +412,18 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "FROM long_sequence(120)" +
                             ") TIMESTAMP(k)"
             );
-            assertQueryNoLeakCheck(
-                    """
-                            violations
-                            0
-                            """,
-                    "SELECT count(*) violations FROM (" +
+            assertQuery("SELECT count(*) violations FROM (" +
                             "SELECT timestamp_floor_utc('15m', k, null, '00:00', 'Europe/Berlin') curr, " +
                             "lag(timestamp_floor_utc('15m', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
                             "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev",
-                    null, false, true, false
-            );
+                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            violations
+                            0
+                            """);
         });
     }
 
@@ -445,16 +444,16 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "FROM long_sequence(120)" +
                             ") TIMESTAMP(k)"
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count(*) mismatches FROM ts " +
+                            "WHERE timestamp_floor_utc('7m', k, null, '00:00', 'Europe/Berlin') != " +
+                            "timestamp_floor_utc('7m', k, null, '00:00', 'Europe/Berlin')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             mismatches
                             0
-                            """,
-                    "SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('7m', k, null, '00:00', 'Europe/Berlin') != " +
-                            "timestamp_floor_utc('7m', k, null, '00:00', 'Europe/Berlin')",
-                    null, false, true, false
-            );
+                            """);
         });
     }
 
@@ -471,18 +470,18 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "FROM long_sequence(200)" +
                             ") TIMESTAMP(k)"
             );
-            assertQueryNoLeakCheck(
-                    """
-                            violations
-                            0
-                            """,
-                    "SELECT count(*) violations FROM (" +
+            assertQuery("SELECT count(*) violations FROM (" +
                             "SELECT timestamp_floor_utc('90s', k, null, '00:00', 'Europe/Berlin') curr, " +
                             "lag(timestamp_floor_utc('90s', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
                             "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev",
-                    null, false, true, false
-            );
+                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            violations
+                            0
+                            """);
         });
     }
 
@@ -543,18 +542,18 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "FROM long_sequence(60)" +
                             ") TIMESTAMP(k)"
             );
-            assertQueryNoLeakCheck(
-                    """
-                            violations
-                            0
-                            """,
-                    "SELECT count(*) violations FROM (" +
+            assertQuery("SELECT count(*) violations FROM (" +
                             "SELECT timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin') curr, " +
                             "lag(timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
                             "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev",
-                    null, false, true, false
-            );
+                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            violations
+                            0
+                            """);
         });
     }
 
@@ -570,16 +569,16 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "FROM long_sequence(100)" +
                             ") TIMESTAMP(k)"
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count(*) mismatches FROM ts " +
+                            "WHERE timestamp_floor_utc('1h', k, null, '00:00', 'GMT+05:30') != " +
+                            "to_utc(timestamp_floor('1h', k, null, '00:00', 'GMT+05:30'), 'GMT+05:30')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             mismatches
                             0
-                            """,
-                    "SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('1h', k, null, '00:00', 'GMT+05:30') != " +
-                            "to_utc(timestamp_floor('1h', k, null, '00:00', 'GMT+05:30'), 'GMT+05:30')",
-                    null, false, true, false
-            );
+                            """);
         });
     }
 
@@ -610,18 +609,18 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "FROM long_sequence(60)" +
                             ") TIMESTAMP(k)"
             );
-            assertQueryNoLeakCheck(
-                    """
-                            violations
-                            0
-                            """,
-                    "SELECT count(*) violations FROM (" +
+            assertQuery("SELECT count(*) violations FROM (" +
                             "SELECT timestamp_floor_utc('1h', k, '2021-10-30T00:15:00Z', '00:00', 'Europe/Berlin') curr, " +
                             "lag(timestamp_floor_utc('1h', k, '2021-10-30T00:15:00Z', '00:00', 'Europe/Berlin')) OVER () prev " +
                             "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev",
-                    null, false, true, false
-            );
+                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            violations
+                            0
+                            """);
         });
     }
 
@@ -644,16 +643,16 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
 
             for (String tz : new String[]{"GMT+05:30", "GMT-03:00", "GMT+09:00", "Asia/Kolkata", "Asia/Kathmandu"}) {
                 for (String stride : new String[]{"30m", "1h"}) {
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("SELECT count(*) mismatches FROM ts " +
+                                    "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', '" + tz + "') != " +
+                                    "to_utc(timestamp_floor('" + stride + "', k, null, '00:00', '" + tz + "'), '" + tz + "')")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
                                     mismatches
                                     0
-                                    """,
-                            "SELECT count(*) mismatches FROM ts " +
-                                    "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', '" + tz + "') != " +
-                                    "to_utc(timestamp_floor('" + stride + "', k, null, '00:00', '" + tz + "'), '" + tz + "')",
-                            null, false, true, false
-                    );
+                                    """);
                 }
             }
         });
@@ -672,16 +671,16 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             );
 
             for (String stride : new String[]{"30m", "1h", "4h", "1d"}) {
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery("SELECT count(*) mismatches FROM ts " +
+                                "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', null) != " +
+                                "timestamp_floor('" + stride + "', k, null, '00:00', null)")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
                                 mismatches
                                 0
-                                """,
-                        "SELECT count(*) mismatches FROM ts " +
-                                "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', null) != " +
-                                "timestamp_floor('" + stride + "', k, null, '00:00', null)",
-                        null, false, true, false
-                );
+                                """);
             }
         });
     }
@@ -699,18 +698,18 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             );
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:15");
-            assertQueryNoLeakCheck(
-                    """
-                            violations
-                            0
-                            """,
-                    "SELECT count(*) violations FROM (" +
+            assertQuery("SELECT count(*) violations FROM (" +
                             "SELECT timestamp_floor_utc('30m', k, null, :offset, 'Europe/Berlin') curr, " +
                             "lag(timestamp_floor_utc('30m', k, null, :offset, 'Europe/Berlin')) OVER () prev " +
                             "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev",
-                    null, false, true, false
-            );
+                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            violations
+                            0
+                            """);
         });
     }
 
@@ -727,16 +726,16 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             );
 
             for (String stride : new String[]{"15m", "30m", "1h", "6h"}) {
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery("SELECT count(*) mismatches FROM ts " +
+                                "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', 'UTC') != " +
+                                "timestamp_floor('" + stride + "', k, null, '00:00', 'UTC')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
                                 mismatches
                                 0
-                                """,
-                        "SELECT count(*) mismatches FROM ts " +
-                                "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', 'UTC') != " +
-                                "timestamp_floor('" + stride + "', k, null, '00:00', 'UTC')",
-                        null, false, true, false
-                );
+                                """);
             }
         });
     }
@@ -796,27 +795,27 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "FROM long_sequence(100)" +
                             ") TIMESTAMP(k)"
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count(*) mismatches FROM ts " +
+                            "WHERE timestamp_floor_utc('30m', k, null, '00:00', null) != timestamp_floor('30m', k, null, '00:00', null)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             mismatches
                             0
-                            """,
-                    "SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('30m', k, null, '00:00', null) != timestamp_floor('30m', k, null, '00:00', null)",
-                    null, false, true, false
-            );
+                            """);
         });
     }
 
     @Test
     public void testNullTimestamp() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
+        assertMemoryLeak(() -> assertQuery("SELECT timestamp_floor_utc('30m', null::timestamp, null, '00:00', 'Europe/Berlin')")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         timestamp_floor_utc
                         
-                        """,
-                "SELECT timestamp_floor_utc('30m', null::timestamp, null, '00:00', 'Europe/Berlin')"
-        ));
+                        """));
     }
 
     @Test
@@ -829,15 +828,15 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "FROM long_sequence(100)" +
                             ") TIMESTAMP(k)"
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count(*) mismatches FROM ts " +
+                            "WHERE timestamp_floor_utc('1h', k, null, '00:00', 'UTC') != timestamp_floor('1h', k, null, '00:00', 'UTC')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             mismatches
                             0
-                            """,
-                    "SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('1h', k, null, '00:00', 'UTC') != timestamp_floor('1h', k, null, '00:00', 'UTC')",
-                    null, false, true, false
-            );
+                            """);
         });
     }
 
@@ -917,16 +916,16 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "FROM long_sequence(60)" +
                             ") TIMESTAMP(k)"
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count(*) mismatches FROM ts " +
+                            "WHERE timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin') != " +
+                            "timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             mismatches
                             0
-                            """,
-                    "SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin') != " +
-                            "timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin')",
-                    null, false, true, false
-            );
+                            """);
         });
     }
 
@@ -947,16 +946,16 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "FROM long_sequence(200)" +
                             ") TIMESTAMP(k)"
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count(*) mismatches FROM ts " +
+                            "WHERE timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin') != " +
+                            "timestamp_floor_utc('1h', k, null, '00:30', '+01:00')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             mismatches
                             0
-                            """,
-                    "SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin') != " +
-                            "timestamp_floor_utc('1h', k, null, '00:30', '+01:00')",
-                    null, false, true, false
-            );
+                            """);
         });
     }
 
@@ -1048,16 +1047,16 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "FROM long_sequence(200)" +
                             ") TIMESTAMP(k)"
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count(*) mismatches FROM ts " +
+                            "WHERE timestamp_floor_utc('1h', k, '2024-01-15T00:30:00.000000Z', '00:15', 'Europe/Berlin') != " +
+                            "timestamp_floor_utc('1h', k, '2024-01-15T00:30:00.000000Z', '00:15', '+01:00')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             mismatches
                             0
-                            """,
-                    "SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('1h', k, '2024-01-15T00:30:00.000000Z', '00:15', 'Europe/Berlin') != " +
-                            "timestamp_floor_utc('1h', k, '2024-01-15T00:30:00.000000Z', '00:15', '+01:00')",
-                    null, false, true, false
-            );
+                            """);
         });
 
         // Same combination but with data spanning DST spring-forward.
@@ -1071,18 +1070,18 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             // Verify monotonicity: no row should have a bucket > the next row's bucket
-            assertQueryNoLeakCheck(
-                    """
-                            violations
-                            0
-                            """,
-                    "SELECT count(*) violations FROM (" +
+            assertQuery("SELECT count(*) violations FROM (" +
                             "SELECT timestamp_floor_utc('1h', k, '2021-03-28T00:30:00.000000Z', '00:20', 'Europe/Berlin') bucket, " +
                             "lead(timestamp_floor_utc('1h', k, '2021-03-28T00:30:00.000000Z', '00:20', 'Europe/Berlin')) OVER (ORDER BY k) next_bucket " +
                             "FROM ts2" +
-                            ") WHERE next_bucket IS NOT NULL AND bucket > next_bucket",
-                    null, false, true, false
-            );
+                            ") WHERE next_bucket IS NOT NULL AND bucket > next_bucket")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            violations
+                            0
+                            """);
         });
     }
 
@@ -1093,16 +1092,16 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             @Nullable String from,
             @Nullable String offset,
             @Nullable String timezone
-    ) throws SqlException {
-        assertQueryNoLeakCheck(
-                expected,
-                "SELECT timestamp_floor_utc('" +
+    ) throws Exception{
+        assertQuery("SELECT timestamp_floor_utc('" +
                         interval + "', " +
                         (timestamp != null ? "'" + timestamp + "'" : "null") + "::timestamp, " +
                         (from != null ? "'" + from + "'" : "null") + ", " +
                         (offset != null ? "'" + offset + "'" : "null") + ", " +
                         (timezone != null ? "'" + timezone + "'" : "null") +
-                        ")"
-        );
+                        ")")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 }

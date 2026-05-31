@@ -1321,10 +1321,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertQuery(expected, query, ddl, expectedTimestamp, null, null, expectSize);
     }
 
+    // todo: remove
     protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp) throws Exception {
         assertQuery(expected, query, ddl, expectedTimestamp, null, null, true, false, false);
     }
 
+    // todo: remove
     protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess) throws Exception {
         assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, false, false);
     }
@@ -1332,6 +1334,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     /**
      * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
+    // todo: remove
     protected static void assertQuery(
             CharSequence expected,
             CharSequence query,
@@ -1413,6 +1416,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false);
     }
 
+    // todo: delete
     protected static void assertQueryExpectSize(CharSequence expected, CharSequence query, CharSequence ddl) throws Exception {
         assertQuery(expected, query, ddl, null, null, null, true, true, false);
     }

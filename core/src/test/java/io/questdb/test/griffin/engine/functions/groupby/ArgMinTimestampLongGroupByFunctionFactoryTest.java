@@ -150,17 +150,15 @@ public class ArgMinTimestampLongGroupByFunctionFactoryTest extends AbstractCairo
                     ('2023-01-01T00:00:00.123456789Z', 1),
                     ('2023-01-03T12:34:56.987654321Z', 3),
                     ('2023-01-02T05:43:21.111222333Z', 2)""");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select arg_min(value, key) from tab")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             arg_min
                             2023-01-01T00:00:00.123456789Z
-                            """,
-                    "select arg_min(value, key) from tab",
-                    null,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -169,17 +167,15 @@ public class ArgMinTimestampLongGroupByFunctionFactoryTest extends AbstractCairo
         assertMemoryLeak(() -> {
             execute("create table tab (value timestamp_ns, key long)");
             execute("INSERT INTO tab VALUES ('2024-06-15T10:00:00.123456789Z', 5)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select typeOf(arg_min(value, key)) AS column_type from tab")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             column_type
                             TIMESTAMP_NS
-                            """,
-                    "select typeOf(arg_min(value, key)) AS column_type from tab",
-                    null,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -193,18 +189,15 @@ public class ArgMinTimestampLongGroupByFunctionFactoryTest extends AbstractCairo
                     ('A', '2023-01-03T00:00:00.333333333Z', 3),
                     ('B', '2023-01-05T00:00:00.555555555Z', 5),
                     ('B', '2023-01-04T00:00:00.444444444Z', 4)""");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select sym, arg_min(value, key) from tab order by sym")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .expectSize()
+                    .returns("""
                             sym\targ_min
                             A\t2023-01-01T00:00:00.111111111Z
                             B\t2023-01-04T00:00:00.444444444Z
-                            """,
-                    "select sym, arg_min(value, key) from tab order by sym",
-                    null,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 }

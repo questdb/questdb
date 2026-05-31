@@ -164,18 +164,15 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (3.5, 'down', '2024-01-01T01:00:00.000000Z'),
                     (0.0, 'down', '2024-01-01T02:00:00.000000Z')
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT grp, 'trend: ' || sparkline(val) || ' end' label FROM t ORDER BY grp")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .expectSize()
+                    .returns("""
                             grp\tlabel
                             down\ttrend: █▄▁ end
                             up\ttrend: ▁▄█ end
-                            """,
-                    "SELECT grp, 'trend: ' || sparkline(val) || ' end' label FROM t ORDER BY grp",
-                    null,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -671,11 +668,8 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (50.0, '2024-01-01T01:00:00.000000Z'),
                     (90.0, '2024-01-01T02:00:00.000000Z')
                     """);
-            assertException(
-                    "SELECT sparkline(val, 100.0, 0.0, 3) FROM t",
-                    17,
-                    "sparkline() min must not exceed max [min=100.0, max=0.0]"
-            );
+            assertQuery("SELECT sparkline(val, 100.0, 0.0, 3) FROM t")
+                    .fails(17, "sparkline() min must not exceed max [min=100.0, max=0.0]");
         });
     }
 
@@ -684,11 +678,8 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO t VALUES (1.0, '2024-01-01T00:00:00.000000Z')");
-            assertException(
-                    "SELECT sparkline(val, 0.0, 100.0, 0) FROM t",
-                    34,
-                    "width must be a positive integer"
-            );
+            assertQuery("SELECT sparkline(val, 0.0, 100.0, 0) FROM t")
+                    .fails(34, "width must be a positive integer");
         });
     }
 
@@ -696,11 +687,8 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testNonConstantMinRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (val DOUBLE, bound DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            assertException(
-                    "SELECT sparkline(val, bound, 100.0, 10) FROM t",
-                    7,
-                    "there is no matching function `sparkline` with the argument types: (DOUBLE, DOUBLE, DOUBLE, INT)"
-            );
+            assertQuery("SELECT sparkline(val, bound, 100.0, 10) FROM t")
+                    .fails(7, "there is no matching function `sparkline` with the argument types: (DOUBLE, DOUBLE, DOUBLE, INT)");
         });
     }
 
@@ -736,11 +724,8 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                             """);
             // Adding the 11th must throw.
             execute("INSERT INTO t VALUES (10.0, '2024-01-01T10:00:00.000000Z')");
-            assertException(
-                    "SELECT sparkline(val) FROM t",
-                    17,
-                    "sparkline() result exceeds max size of 30 bytes"
-            );
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .fails(17, "sparkline() result exceeds max size of 30 bytes");
         });
     }
 
@@ -963,11 +948,8 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (10.0, '2024-01-01T09:00:00.000000Z'),
                     (11.0, '2024-01-01T10:00:00.000000Z')
                     """);
-            assertException(
-                    "SELECT sparkline(val) FROM t",
-                    17,
-                    "sparkline() result exceeds max size of 30 bytes"
-            );
+            assertQuery("SELECT sparkline(val) FROM t")
+                    .fails(17, "sparkline() result exceeds max size of 30 bytes");
         });
     }
 

@@ -158,15 +158,12 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                     "2024-01-01T04:00:00.000000Z\tAAPL\t110.0\n" +
                     "2024-01-01T04:00:00.000000Z\tGOOGL\t108.0\n";
 
-            assertQuery(
-                    expected,
-                    "select ts, ticker, vwap(price, volume) " +
+            assertQuery("select ts, ticker, vwap(price, volume) " +
                             "from trades " +
-                            "sample by 1h fill(linear) ",
-                    "ts",
-                    true,
-                    true
-            );
+                            "sample by 1h fill(linear) ")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 }

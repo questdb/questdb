@@ -44,13 +44,11 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                     }
                 },
         };
-        assertQuery(expected,
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_double(2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b double",
-                expected,
-                true);
+        assertQuery("select round(avg(f),9) avg from tab")
+                .ddl("create table tab as (select rnd_double(2) f from long_sequence(131))")
+                .mutateWith("alter table tab add column b double")
+                .expectSize()
+                .returnsRecords(expected, expected);
 
         Record[] expected2 = new Record[]{
                 new Record() {
@@ -60,11 +58,10 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                     }
                 },
         };
-        assertQuery(expected2,
-                "select round(avg(f),6) avg, sum(b) sum from tab",
-                "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
-                null,
-                true);
+        assertQuery("select round(avg(f),6) avg, sum(b) sum from tab")
+                .ddl("insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)")
+                .expectSize()
+                .returnsRecords(expected2);
     }
 
     @Test

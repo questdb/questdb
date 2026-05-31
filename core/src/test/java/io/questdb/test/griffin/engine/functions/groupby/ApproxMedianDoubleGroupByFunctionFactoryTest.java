@@ -232,20 +232,14 @@ public class ApproxMedianDoubleGroupByFunctionFactoryTest extends AbstractCairoT
 
     @Test
     public void testInvalidPrecision1() throws Exception {
-        assertException(
-                "select approx_median(x::double, 6) from long_sequence(1)",
-                32,
-                "precision must be between 0 and 5"
-        );
+        assertQuery("select approx_median(x::double, 6) from long_sequence(1)")
+                .fails(32, "precision must be between 0 and 5");
     }
 
     @Test
     public void testInvalidPrecision2() throws Exception {
-        assertException(
-                "select approx_median(x::double, -1) from long_sequence(1)",
-                32,
-                "precision must be between 0 and 5"
-        );
+        assertQuery("select approx_median(x::double, -1) from long_sequence(1)")
+                .fails(32, "precision must be between 0 and 5");
     }
 
     @Test

@@ -72,9 +72,21 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         weighted_stddev_rel(NULL, x),
                         weighted_stddev_freq(NULL, x)
                     FROM long_sequence(""";
-            assertSql(expected, sql + "0)");
-            assertSql(expected, sql + "1)");
-            assertSql(expected, sql + "2)");
+            assertQuery(sql + "0)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery(sql + "1)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery(sql + "2)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -121,22 +133,20 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into fill_options values(to_timestamp('2020-01-01:14:00:00', 'yyyy-MM-dd:HH:mm:ss'), 5);");
 
             assertQuery("""
+                            select ts, min(price) min, max(price) max, avg(price) avg, stddev_samp(price) stddev_samp
+                            from fill_options
+                            sample by 1h
+                            fill(linear);""")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tmin\tmax\tavg\tstddev_samp
                             2020-01-01T10:00:00.000000Z\t1\t1\t1.0\tnull
                             2020-01-01T11:00:00.000000Z\t2\t2\t2.0\tnull
                             2020-01-01T12:00:00.000000Z\t3\t3\t3.0\tnull
                             2020-01-01T13:00:00.000000Z\t4\t4\t4.0\tnull
                             2020-01-01T14:00:00.000000Z\t5\t5\t5.0\tnull
-                            """,
-                    """
-                            select ts, min(price) min, max(price) max, avg(price) avg, stddev_samp(price) stddev_samp
-                            from fill_options
-                            sample by 1h
-                            fill(linear);""",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 

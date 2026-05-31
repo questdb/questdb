@@ -113,7 +113,27 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("""
+        assertQuery("select b, max(a), k from x sample by 3h fill(linear)")
+                .ddl("create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0) a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(172800000000, 360000000) k" +
+                " from" +
+                " long_sequence(100)" +
+                ") timestamp(k) partition by NONE")
+                .mutateWith("insert into x select * from (" +
+                "select" +
+                " rnd_double(0) a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(277200000000, 360000000) k" +
+                " from" +
+                " long_sequence(35)" +
+                ") timestamp(k)")
+                .timestamp("k")
+                .expectSize()
+                .returns("""
                 b\tmax\tk
                 \t0.975019885372507\t1970-01-03T00:00:00.000000Z
                 VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z
@@ -139,22 +159,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z
                 HYRX\t0.21055995482842357\t1970-01-03T09:00:00.000000Z
                 CPSW\t1.486661884650934\t1970-01-03T09:00:00.000000Z
-                """, "select b, max(a), k from x sample by 3h fill(linear)", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0) a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(172800000000, 360000000) k" +
-                " from" +
-                " long_sequence(100)" +
-                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
-                "select" +
-                " rnd_double(0) a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(277200000000, 360000000) k" +
-                " from" +
-                " long_sequence(35)" +
-                ") timestamp(k)", """
+                """, """
                 b\tmax\tk
                 \t0.975019885372507\t1970-01-03T00:00:00.000000Z
                 VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z
@@ -277,13 +282,26 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 PEHN\t-1.9805699408189095\t1970-01-04T06:00:00.000000Z
                 HYRX\t-2.362042754952945\t1970-01-04T06:00:00.000000Z
                 CPSW\t3.379954054510219\t1970-01-04T06:00:00.000000Z
-                """, true, true, false);
+                """);
     }
 
     @Test
     public void testSampleInterpolateRandomAccessConsistency() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select b, max(a), k from " +
+                        " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
+                        "sample by 3h fill(linear) align to first observation order by 3, 2, 1")
+                .ddl("create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0) a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE")
+                .timestamp("k")
+                .expectSize()
+                .returns("""
                         b\tmax\tk
                         PEHN\t0.8445258177211064\t1970-01-03T00:18:00.000000Z
                         VTJW\t0.9125204540487346\t1970-01-03T00:18:00.000000Z
@@ -293,26 +311,14 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         VTJW\t0.8196554745841765\t1970-01-03T06:18:00.000000Z
                         PEHN\t0.13271564102902209\t1970-01-03T09:18:00.000000Z
                         VTJW\t0.7732229848518976\t1970-01-03T09:18:00.000000Z
-                        """,
-                "select b, max(a), k from " +
-                        " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
-                        "sample by 3h fill(linear) align to first observation order by 3, 2, 1",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0) a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                true,
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select b, max(a), k from " +
+                        " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
+                        "sample by 3h fill(linear) align to calendar order by 3, 2, 1")
+                .timestamp("k")
+                .expectSize()
+                .returns("""
                         b\tmax\tk
                         PEHN\t0.8445258177211064\t1970-01-03T00:00:00.000000Z
                         VTJW\t0.9125204540487346\t1970-01-03T00:00:00.000000Z
@@ -322,13 +328,6 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         VTJW\t0.8196554745841765\t1970-01-03T06:00:00.000000Z
                         PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z
                         VTJW\t0.7732229848518976\t1970-01-03T09:00:00.000000Z
-                        """,
-                "select b, max(a), k from " +
-                        " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
-                        "sample by 3h fill(linear) align to calendar order by 3, 2, 1",
-                "k",
-                true,
-                true
-        );
+                        """);
     }
 }

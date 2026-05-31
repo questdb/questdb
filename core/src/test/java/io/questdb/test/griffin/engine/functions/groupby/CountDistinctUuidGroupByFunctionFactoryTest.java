@@ -37,14 +37,10 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 b\t1
                 c\t1
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(to_uuid(42L, 42L)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select a, count_distinct(to_uuid(42L, 42L)) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns(expected);
         assertQuery("select a, count(distinct to_uuid(42L, 42L)) from x order by a")
                 .expectSize()
                 .returns(expected);
@@ -56,14 +52,11 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 count_distinct
                 1
                 """;
-        assertQuery(
-                expected,
-                "select count_distinct(to_uuid(l, l)) from x",
-                "create table x as (select -1::long as l from long_sequence(10))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select count_distinct(to_uuid(l, l)) from x")
+                .ddl("create table x as (select -1::long as l from long_sequence(10))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
         assertQuery("select count(distinct to_uuid(l, l)) from x")
                 .noRandomAccess()
                 .expectSize()
@@ -79,14 +72,11 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                     b\t4
                     c\t4
                     """;
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select a, count_distinct(to_uuid(s * 42, s * 42)) from x order by a",
-                    "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_long(1, 8, 0) s from long_sequence(20)))",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select a, count_distinct(to_uuid(s * 42, s * 42)) from x order by a")
+                    .noLeakCheck()
+                    .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_long(1, 8, 0) s from long_sequence(20)))")
+                    .expectSize()
+                    .returns(expected);
             assertQuery("select a, count(distinct to_uuid(s * 42, s * 42)) from x order by a")
                     .noLeakCheck()
                     .expectSize()
@@ -115,14 +105,10 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 e\t4
                 f\t3
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(s) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, to_uuid(rnd_long(0, 16, 0), 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select a, count_distinct(s) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, to_uuid(rnd_long(0, 16, 0), 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))")
+                .expectSize()
+                .returns(expected);
         assertQuery("select a, count(distinct s) from x order by a")
                 .expectSize()
                 .returns(expected);
@@ -134,14 +120,11 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 count_distinct
                 6
                 """;
-        assertQuery(
-                expected,
-                "select count_distinct(s) from x",
-                "create table x as (select * from (select to_uuid(rnd_long(1, 6, 0), 0) s, timestamp_sequence(0, 1000) ts from long_sequence(1000)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select count_distinct(s) from x")
+                .ddl("create table x as (select * from (select to_uuid(rnd_long(1, 6, 0), 0) s, timestamp_sequence(0, 1000) ts from long_sequence(1000)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
         assertQuery("select count(distinct s) from x")
                 .noRandomAccess()
                 .expectSize()
@@ -155,14 +138,12 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                     count_distinct
                     6
                     """;
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select count_distinct(s) from x",
-                    "create table x as (select * from (select to_uuid(rnd_long(1, 6, 0), 0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .ddl("create table x as (select * from (select to_uuid(rnd_long(1, 6, 0), 0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
             assertQuery("select count(distinct s) from x")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -188,13 +169,10 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testMappingZeroToNulls() throws Exception {
         assertMemoryLeak(() -> {
             // this is to ensure that uuids wth nulls and zeros don't map to the same values
-            assertQuery(
-                    "a\ts\tts\n",
-                    "select * from x",
-                    "create table x ( a SYMBOL, s UUID, ts TIMESTAMP ) timestamp(ts)",
-                    "ts",
-                    true
-            );
+            assertQuery("select * from x")
+                    .ddl("create table x ( a SYMBOL, s UUID, ts TIMESTAMP ) timestamp(ts)")
+                    .timestamp("ts")
+                    .returns("a\ts\tts\n");
 
             execute("insert into x values ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, null), '2021-05-21'), ('a', to_uuid(10, 0), '2021-05-21'), ('a', to_uuid(10, null), '2021-05-21')" +
                     ", ('a', to_uuid(0, 5), '2021-05-21'), ('a', to_uuid(0, 5), '2021-05-21'), ('a', to_uuid(null, 5), '2021-05-21'), ('a', to_uuid(0, 10), '2021-05-21'), ('a', to_uuid(null, 10), '2021-05-21'), ('a', to_uuid(0, 0), '2021-05-21'), ('a', to_uuid(null, null), '2021-05-21')");
@@ -221,14 +199,10 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 b\t0
                 c\t0
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(to_uuid(null, null)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select a, count_distinct(to_uuid(null, null)) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns(expected);
         assertQuery("select a, count(distinct to_uuid(null, null)) from x order by a")
                 .expectSize()
                 .returns(expected);
@@ -249,14 +223,11 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 1970-01-01T00:00:08.000000Z\t7
                 1970-01-01T00:00:09.000000Z\t9
                 """;
-        assertQuery(
-                expected,
-                "select ts, count_distinct(s) from x sample by 1s fill(linear)",
-                "create table x as (select * from (select to_uuid(rnd_long(0, 16, 0), 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                true,
-                true
-        );
+        assertQuery("select ts, count_distinct(s) from x sample by 1s fill(linear)")
+                .ddl("create table x as (select * from (select to_uuid(rnd_long(0, 16, 0), 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
         assertQuery("select ts, count(distinct s) from x sample by 1s fill(linear)")
                 .timestamp("ts")
                 .expectSize()
@@ -295,13 +266,11 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 1970-01-01T00:00:08.000000Z\t6
                 1970-01-01T00:00:09.000000Z\t7
                 """;
-        assertQuery(
-                expected,
-                "select ts, count_distinct(s) from x sample by 1s fill(99)",
-                "create table x as (select * from (select to_uuid(rnd_long(0, 8, 0), 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                false
-        );
+        assertQuery("select ts, count_distinct(s) from x sample by 1s fill(99)")
+                .ddl("create table x as (select * from (select to_uuid(rnd_long(0, 8, 0), 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
         assertQuery("select ts, count(distinct s) from x sample by 1s fill(99)")
                 .timestamp("ts")
                 .noRandomAccess()
@@ -325,13 +294,11 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 d\t8\t1970-01-01T00:00:05.000000Z
                 a\t5\t1970-01-01T00:00:05.000000Z
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(s), ts from x sample by 5s align to first observation",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, to_uuid(rnd_long(0, 12, 0), 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                false
-        );
+        assertQuery("select a, count_distinct(s), ts from x sample by 5s align to first observation")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, to_uuid(rnd_long(0, 12, 0), 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
         assertQuery("select a, count(distinct s), ts from x sample by 5s align to first observation")
                 .timestamp("ts")
                 .noRandomAccess()

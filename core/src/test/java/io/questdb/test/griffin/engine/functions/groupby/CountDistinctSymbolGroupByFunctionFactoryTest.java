@@ -37,14 +37,10 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                 b\t1
                 c\t1
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct('a'::symbol) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select a, count_distinct('a'::symbol) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns(expected);
         assertQuery("select a, count(distinct 'a'::symbol) from x order by a")
                 .expectSize()
                 .returns(expected);
@@ -63,14 +59,11 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                     7\t3
                     8\t2
                     """;
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select a, count_distinct(concat(s, 'foobar')::symbol) from x order by a",
-                    "create table x as (select * from (select rnd_int(1, 8, 0) a, rnd_symbol('a','b','c') s from long_sequence(20)))",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select a, count_distinct(concat(s, 'foobar')::symbol) from x order by a")
+                    .noLeakCheck()
+                    .ddl("create table x as (select * from (select rnd_int(1, 8, 0) a, rnd_symbol('a','b','c') s from long_sequence(20)))")
+                    .expectSize()
+                    .returns(expected);
             assertQuery("select a, count(distinct concat(s, 'foobar')::symbol) from x order by a")
                     .noLeakCheck()
                     .expectSize()
@@ -100,14 +93,10 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                 6\t2
                 8\t3
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(s) from x order by a",
-                "create table x as (select * from (select rnd_int(0, 9, 0) a, rnd_symbol('a','b','c','d','e','f') s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select a, count_distinct(s) from x order by a")
+                .ddl("create table x as (select * from (select rnd_int(0, 9, 0) a, rnd_symbol('a','b','c','d','e','f') s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))")
+                .expectSize()
+                .returns(expected);
         assertQuery("select a, count(distinct s) from x order by a")
                 .expectSize()
                 .returns(expected);
@@ -119,14 +108,11 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                 count_distinct
                 922
                 """;
-        assertQuery(
-                expected,
-                "select count_distinct(s) from x",
-                "create table x as (select * from (select rnd_symbol(1000, 1, 10, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(10000)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select count_distinct(s) from x")
+                .ddl("create table x as (select * from (select rnd_symbol(1000, 1, 10, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(10000)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
         assertQuery("select count(distinct s) from x")
                 .noRandomAccess()
                 .expectSize()
@@ -139,14 +125,11 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                 count_distinct\tcount_distinct1
                 96\t921
                 """;
-        assertQuery(
-                expected,
-                "select count_distinct(s1), count_distinct(s2) from x",
-                "create table x as (select * from (select rnd_symbol(100, 1, 10, 0) s1, rnd_symbol(1000, 1, 10, 0) s2, timestamp_sequence(0, 100000) ts from long_sequence(10000)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select count_distinct(s1), count_distinct(s2) from x")
+                .ddl("create table x as (select * from (select rnd_symbol(100, 1, 10, 0) s1, rnd_symbol(1000, 1, 10, 0) s2, timestamp_sequence(0, 100000) ts from long_sequence(10000)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
         assertQuery("select count(distinct s1), count(distinct s2) from x")
                 .noRandomAccess()
                 .expectSize()
@@ -160,14 +143,12 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                     count_distinct
                     62
                     """;
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select count_distinct(s) from x",
-                    "create table x as (select * from (select rnd_symbol(100, 10, 10, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .ddl("create table x as (select * from (select rnd_symbol(100, 10, 10, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
             assertQuery("select count(distinct s) from x")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -197,14 +178,10 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                 b\t0
                 c\t0
                 """;
-        assertQuery(
-                expected,
-                "select s, count_distinct(cast(null as SYMBOL)) from x order by s",
-                "create table x as (select * from (select rnd_symbol('a','b','c') s from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select s, count_distinct(cast(null as SYMBOL)) from x order by s")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') s from long_sequence(20)))")
+                .expectSize()
+                .returns(expected);
         assertQuery("select s, count(distinct cast(null as SYMBOL)) from x order by s")
                 .expectSize()
                 .returns(expected);
@@ -221,11 +198,32 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
         final String queryB = "select count(distinct s), ts from x sample by 5s";
         final String ddl = "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))";
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(expected, queryA, ddl, "ts", true, true);
-            assertQueryNoLeakCheck(expected, queryA + " align to first observation", "ts", false);
-            assertQueryNoLeakCheck(expected, queryB + " align to first observation", "ts", false);
-            assertQueryNoLeakCheck(expected, queryA + " align to calendar", "ts", true, true);
-            assertQueryNoLeakCheck(expected, queryB + " align to calendar", "ts", true, true);
+            assertQuery(queryA)
+                    .noLeakCheck()
+                    .ddl(ddl)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
+            assertQuery(queryA + " align to first observation")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery(queryB + " align to first observation")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery(queryA + " align to calendar")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
+            assertQuery(queryB + " align to calendar")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 }

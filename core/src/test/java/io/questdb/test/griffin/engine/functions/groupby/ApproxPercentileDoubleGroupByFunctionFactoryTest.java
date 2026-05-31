@@ -270,74 +270,50 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
 
     @Test
     public void testInvalidPercentile1() throws Exception {
-        assertException(
-                "select approx_percentile(x::double, 1.1) from long_sequence(1)",
-                7,
-                "percentile must be between 0.0 and 1.0"
-        );
+        assertQuery("select approx_percentile(x::double, 1.1) from long_sequence(1)")
+                .fails(7, "percentile must be between 0.0 and 1.0");
     }
 
     @Test
     public void testInvalidPercentile2() throws Exception {
-        assertException(
-                "select approx_percentile(x::double, -1) from long_sequence(1)",
-                7,
-                "percentile must be between 0.0 and 1.0"
-        );
+        assertQuery("select approx_percentile(x::double, -1) from long_sequence(1)")
+                .fails(7, "percentile must be between 0.0 and 1.0");
     }
 
     @Test
     public void testInvalidPercentile3() throws Exception {
-        assertException(
-                "select approx_percentile(x::double, x::double) from long_sequence(1)",
-                37,
-                "percentile must be a constant"
-        );
+        assertQuery("select approx_percentile(x::double, x::double) from long_sequence(1)")
+                .fails(37, "percentile must be a constant");
     }
 
     @Test
     public void testInvalidPercentilePacked1() throws Exception {
-        assertException(
-                "select approx_percentile(x::double, 1.1, 5) from long_sequence(1)",
-                7,
-                "percentile must be between 0.0 and 1.0"
-        );
+        assertQuery("select approx_percentile(x::double, 1.1, 5) from long_sequence(1)")
+                .fails(7, "percentile must be between 0.0 and 1.0");
     }
 
     @Test
     public void testInvalidPercentilePacked2() throws Exception {
-        assertException(
-                "select approx_percentile(x::double, -1, 5) from long_sequence(1)",
-                7,
-                "percentile must be between 0.0 and 1.0"
-        );
+        assertQuery("select approx_percentile(x::double, -1, 5) from long_sequence(1)")
+                .fails(7, "percentile must be between 0.0 and 1.0");
     }
 
     @Test
     public void testInvalidPercentilePacked3() throws Exception {
-        assertException(
-                "select approx_percentile(x::double, x::double, 5) from long_sequence(1)",
-                37,
-                "percentile must be a constant"
-        );
+        assertQuery("select approx_percentile(x::double, x::double, 5) from long_sequence(1)")
+                .fails(37, "percentile must be a constant");
     }
 
     @Test
     public void testInvalidPrecision1() throws Exception {
-        assertException(
-                "select approx_percentile(x::double, 0.5, 6) from long_sequence(1)",
-                41,
-                "precision must be between 0 and 5"
-        );
+        assertQuery("select approx_percentile(x::double, 0.5, 6) from long_sequence(1)")
+                .fails(41, "precision must be between 0 and 5");
     }
 
     @Test
     public void testInvalidPrecision2() throws Exception {
-        assertException(
-                "select approx_percentile(x::double, 0.5, -1) from long_sequence(1)",
-                41,
-                "precision must be between 0 and 5"
-        );
+        assertQuery("select approx_percentile(x::double, 0.5, -1) from long_sequence(1)")
+                .fails(41, "precision must be between 0 and 5");
     }
 
     @Test

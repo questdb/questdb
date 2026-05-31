@@ -37,68 +37,53 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstant() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, max('42') from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns("""
                         a\tmax
                         a\t42
                         b\t42
                         c\t42
-                        """,
-                "select a, max('42') from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testExpression() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, max(concat(s, s)) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))")
+                .expectSize()
+                .returns("""
                         a\tmax
                         a\tcccccc
                         b\tcccccc
                         c\tcccccc
-                        """,
-                "select a, max(concat(s, s)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupKeyed() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, max(s) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('111','222','333') s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))")
+                .expectSize()
+                .returns("""
                         a\tmax
                         a\t333
                         b\t333
                         c\t333
-                        """,
-                "select a, max(s) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('111','222','333') s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupNotKeyed() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select max(s) from x")
+                .ddl("create table x as (select * from (select rnd_str('a','a1','a2') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         max
                         a2
-                        """,
-                "select max(s) from x",
-                "create table x as (select * from (select rnd_str('a','a1','a2') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -108,14 +93,12 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                     max
                     c
                     """;
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select max(s) from x",
-                    "create table x as (select * from (select rnd_str('a','b','c') s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select max(s) from x")
+                    .noLeakCheck()
+                    .ddl("create table x as (select * from (select rnd_str('a','b','c') s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute("insert into x values(cast(null as STRING), '2021-05-21')");
             execute("insert into x values(cast(null as STRING), '1970-01-01')");
@@ -130,36 +113,28 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLargeStrings() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE, 128);
-        assertQuery(
-                """
+        assertQuery("select a, length(s) from (select a, max(s) s from x) order by a")
+                .ddl("create table x as (select rnd_symbol('a','b','c') a, rnd_str(10,10000,2) s from long_sequence(1000))")
+                .expectSize()
+                .returns("""
                         a\tlength
                         a\t7439
                         b\t2740
                         c\t3504
-                        """,
-                "select a, length(s) from (select a, max(s) s from x) order by a",
-                "create table x as (select rnd_symbol('a','b','c') a, rnd_str(10,10000,2) s from long_sequence(1000))",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testNullConstant() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, max(cast(null as STRING)) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns("""
                         a\tmax
                         a\t
                         b\t
                         c\t
-                        """,
-                "select a, max(cast(null as STRING)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -180,8 +155,11 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleKeyed() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, max(s), ts from x sample by 5s align to first observation")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('едно','две','три') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
                         a\tmax\tts
                         a\tтри\t1970-01-01T00:00:00.000000Z
                         b\tтри\t1970-01-01T00:00:00.000000Z
@@ -195,14 +173,11 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                         c\tтри\t1970-01-01T00:00:05.000000Z
                         f\tтри\t1970-01-01T00:00:05.000000Z
                         e\tедно\t1970-01-01T00:00:05.000000Z
-                        """,
-                "select a, max(s), ts from x sample by 5s align to first observation",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('едно','две','три') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                false
-        );
-        assertQuery(
-                """
+                        """);
+        assertQuery("select a, max(s), ts from x sample by 5s align to calendar order by 3, 1")
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
                         a\tmax\tts
                         a\tтри\t1970-01-01T00:00:00.000000Z
                         b\tтри\t1970-01-01T00:00:00.000000Z
@@ -216,11 +191,6 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                         d\tтри\t1970-01-01T00:00:05.000000Z
                         e\tедно\t1970-01-01T00:00:05.000000Z
                         f\tтри\t1970-01-01T00:00:05.000000Z
-                        """,
-                "select a, max(s), ts from x sample by 5s align to calendar order by 3, 1",
-                "ts",
-                true,
-                true
-        );
+                        """);
     }
 }
