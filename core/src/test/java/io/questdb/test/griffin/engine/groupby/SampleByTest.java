@@ -16899,18 +16899,20 @@ public class SampleByTest extends AbstractCairoTest {
             execute("INSERT INTO t_fv_no_fill VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
             assertPlanNoLeakCheck(
                     "SELECT sum(c - 1000) AS s, ts FROM t_fv_no_fill SAMPLE BY 1h ALIGN TO CALENDAR",
-                    "Encode sort light\n" +
-                            "  keys: [ts]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [sum-COUNT*1000,ts]\n" +
-                            "        Async Group By workers: 1\n" +
-                            "          keys: [ts]\n" +
-                            "          keyFunctions: [timestamp_floor_utc('1h',ts)]\n" +
-                            "          values: [sum(c),count(*)]\n" +
-                            "          filter: null\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: t_fv_no_fill\n"
+                    """
+                            Encode sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [sum-COUNT*1000,ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(c),count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t_fv_no_fill
+                            """
             );
         });
     }
@@ -17518,7 +17520,7 @@ public class SampleByTest extends AbstractCairoTest {
         // takes a different code path through the old Sample By node.
         boolean isFastPath = (fill.equals("null") || fill.equals("prev"))
                 && !"align to first observation".equals(align);
-        boolean isNoneFill = "".equals(fill) || "none".equals(fill);
+        boolean isNoneFill = fill.isEmpty() || "none".equals(fill);
         if (isFastPath) {
             return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By Fill\n" +
@@ -17560,23 +17562,20 @@ public class SampleByTest extends AbstractCairoTest {
             String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
                     .replace("in ('a')", "in ('a', 'none')");
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    forceNoIndexQuery,
-                    insert,
-                    "k",
-                    supportsRandomAccess,
-                    expectSize
-            );
+            assertQuery(forceNoIndexQuery)
+                    .noLeakCheck()
+                    .ddl(insert)
+                    .timestamp("k")
+                    .supportsRandomAccess(supportsRandomAccess)
+                    .expectSize(expectSize)
+                    .returns(expected);
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    query,
-                    null,
-                    "k",
-                    supportsRandomAccess,
-                    expectSize
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .supportsRandomAccess(supportsRandomAccess)
+                    .expectSize(expectSize)
+                    .returns(expected);
         });
     }
 
@@ -17591,23 +17590,19 @@ public class SampleByTest extends AbstractCairoTest {
 
             String forceNoIndexQuery = query.replace("and s = null", " ");
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    forceNoIndexQuery,
-                    null,
-                    "k",
-                    supportsRandomAccess,
-                    expectSize
-            );
+            assertQuery(forceNoIndexQuery)
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .supportsRandomAccess(supportsRandomAccess)
+                    .expectSize(expectSize)
+                    .returns(expected);
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    query,
-                    null,
-                    "k",
-                    supportsRandomAccess,
-                    expectSize
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .supportsRandomAccess(supportsRandomAccess)
+                    .expectSize(expectSize)
+                    .returns(expected);
         });
     }
 

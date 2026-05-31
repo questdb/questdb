@@ -2601,6 +2601,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
 
         /**
+         * Variable-driven variant of {@link #noRandomAccess()} for helper methods that receive the
+         * flag as a parameter. {@code supportsRandomAccess(true)} keeps the default of exercising
+         * random access; {@code supportsRandomAccess(false)} is equivalent to {@link #noRandomAccess()}.
+         */
+        public QueryAssertion supportsRandomAccess(boolean supportsRandomAccess) {
+            this.supportsRandomAccess = supportsRandomAccess;
+            return this;
+        }
+
+        /**
          * Assert the result has a designated timestamp on the given column. Without this step the
          * result is asserted to have no designated timestamp.
          */
