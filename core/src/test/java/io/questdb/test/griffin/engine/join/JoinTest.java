@@ -6734,7 +6734,10 @@ public class JoinTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000004Z\t103\t102
                     """;
 
-            printSqlResult(expected, query, null, false, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 

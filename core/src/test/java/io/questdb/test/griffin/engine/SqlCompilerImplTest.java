@@ -5494,8 +5494,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     0x6ddedcf7415306f799ce31489578cac77b0ec57771d6e9f27c517f53d504487d
                     0xa38b2ad7fbc79d366f9b5d1b162ba472613f1eb5f98a2df86a7f0ebbd1d28a95
                     """;
-            printSqlResult(expected, "t limit -5", null, true, true);
-            printSqlResult(expected, "l256 limit -5", null, true, true);
+            assertQuery("t limit -5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("l256 limit -5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
