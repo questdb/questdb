@@ -12171,29 +12171,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueAllTypesAndTruncate() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " rnd_float(0)*100 c," +
-                            " abs(rnd_int()) d," +
-                            " rnd_short() e," +
-                            " rnd_byte(3,10) f," +
-                            " rnd_long() g," +
-                            " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
-                            " from" +
-                            " long_sequence(20)" +
-                            ") timestamp(k) partition by NONE"
-            );
-
-            snapshotMemoryUsage();
-
-            try (final RecordCursorFactory factory = select("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)")) {
-                assertTimestamp("k", factory);
-                String expected = """
+        String expected = """
                         b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk
                         \t74.19752505948932\t113.12129\t2557447177\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000000Z
                         CPSW\t0.35983672154330515\t76.75673\t113506296\t27809\t9\t-8889930662239044040\t1970-01-03T00:00:00.000000000Z
@@ -12231,20 +12209,25 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000000Z
                         HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000000Z
                         """;
-
-                assertCursor(expected, factory, false, false, false);
-                // make sure we get the same outcome when we get factory to create new cursor
-                assertCursor(expected, factory, false, false, false);
-                // make sure strings, binary fields and symbols are compliant with expected record behaviour
-                assertVariableColumns(factory, sqlExecutionContext);
-
-                execute("truncate table x");
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    println(factory, cursor);
-                    assertEquals("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n", sink);
-                }
-            }
-        });
+        assertQuery("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)")
+                .ddl("create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_float(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_short() e," +
+                        " rnd_byte(3,10) f," +
+                        " rnd_long() g," +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE")
+                .timestamp("k")
+                .noRandomAccess()
+                .mutateWith("truncate table x")
+                .returns(expected, "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n");
     }
 
     @Test
