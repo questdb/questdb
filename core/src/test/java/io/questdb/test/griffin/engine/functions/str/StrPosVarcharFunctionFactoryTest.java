@@ -38,22 +38,24 @@ public class StrPosVarcharFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(15)" +
                         ")")
                 .expectSize()
-                .returns("substr\tstr\tstrpos\n" +
-                        "T\tTEST\t1\n" +
-                        "W\tABCDEFGHIJKLM\t0\n" +
-                        "P\tABCDEFGHIJKLM\t0\n" +
-                        "W\tNOPQRSTUVW\t10\n" +
-                        "Y\tNOPQRSTUVW\t0\n" +
-                        "X\tTEST\t0\n" +
-                        "E\tNOPQRSTUVW\t0\n" +
-                        "N\tABCDEFGHIJKLM\t0\n" +
-                        "X\tTEST\t0\n" +
-                        "Z\tABCDEFGHIJKLM\t0\n" +
-                        "X\t\tnull\n" +
-                        "X\tTEST\t0\n" +
-                        "B\t\tnull\n" +
-                        "T\tNOPQRSTUVW\t7\n" +
-                        "P\t\tnull\n");
+                .returns("""
+                        substr\tstr\tstrpos
+                        T\tTEST\t1
+                        W\tABCDEFGHIJKLM\t0
+                        P\tABCDEFGHIJKLM\t0
+                        W\tNOPQRSTUVW\t10
+                        Y\tNOPQRSTUVW\t0
+                        X\tTEST\t0
+                        E\tNOPQRSTUVW\t0
+                        N\tABCDEFGHIJKLM\t0
+                        X\tTEST\t0
+                        Z\tABCDEFGHIJKLM\t0
+                        X\t\tnull
+                        X\tTEST\t0
+                        B\t\tnull
+                        T\tNOPQRSTUVW\t7
+                        P\t\tnull
+                        """);
     }
 
     @Test
@@ -64,28 +66,34 @@ public class StrPosVarcharFunctionFactoryTest extends AbstractCairoTest {
                         "from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("str\tstrpos\n" +
-                        "ABC XYZ XYZ\t3\n" +
-                        "ABC XYZ XYZ\t3\n" +
-                        "CBA\t1\n" +
-                        "XYZ\t0\n" +
-                        "XYZ\t0\n");
+                .returns("""
+                        str\tstrpos
+                        ABC XYZ XYZ\t3
+                        ABC XYZ XYZ\t3
+                        CBA\t1
+                        XYZ\t0
+                        XYZ\t0
+                        """);
     }
 
     @Test
     public void testConstantEmptyString() throws Exception {
         assertQuery("select strpos('','a') pos1, strpos('a',cast('' as string)) pos2, strpos('','') pos3")
                 .expectSize()
-                .returns("pos1\tpos2\tpos3\n" +
-                        "0\t1\t1\n");
+                .returns("""
+                        pos1\tpos2\tpos3
+                        0\t1\t1
+                        """);
     }
 
     @Test
     public void testConstantNull() throws Exception {
         assertQuery("select strpos(null,'a') pos1, strpos(null,'abc') pos2, strpos('a',null) pos3, strpos(null,null) pos4")
                 .expectSize()
-                .returns("pos1\tpos2\tpos3\tpos4\n" +
-                        "null\tnull\tnull\tnull\n");
+                .returns("""
+                        pos1\tpos2\tpos3\tpos4
+                        null\tnull\tnull\tnull
+                        """);
     }
 
     @Test
@@ -96,56 +104,64 @@ public class StrPosVarcharFunctionFactoryTest extends AbstractCairoTest {
                         "from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("str\tposition\n" +
-                        "ABC XYZ XYZ\t5\n" +
-                        "ABC XYZ XYZ\t5\n" +
-                        "XYZ\t1\n" +
-                        "XYW\t0\n" +
-                        "XYW\t0\n");
+                .returns("""
+                        str\tposition
+                        ABC XYZ XYZ\t5
+                        ABC XYZ XYZ\t5
+                        XYZ\t1
+                        XYW\t0
+                        XYW\t0
+                        """);
     }
 
     @Test
     public void testSplitColumn() throws Exception {
-        assertQuery("select str,\n" +
-                        "left(str, strpos(str, ',') - 1) str1,\n" +
-                        "right(str, length(str) - strpos(str, ',')) str2\n" +
-                        "from x")
+        assertQuery("""
+                select str,
+                left(str, strpos(str, ',') - 1) str1,
+                right(str, length(str) - strpos(str, ',')) str2
+                from x""")
                 .ddl("create table x as (" +
                         "select rnd_varchar('dog,cat','apple,pear') as str\n" +
                         "from long_sequence(3)" +
                         ")")
                 .expectSize()
-                .returns("str\tstr1\tstr2\n" +
-                        "dog,cat\tdog\tcat\n" +
-                        "dog,cat\tdog\tcat\n" +
-                        "apple,pear\tapple\tpear\n");
+                .returns("""
+                        str\tstr1\tstr2
+                        dog,cat\tdog\tcat
+                        dog,cat\tdog\tcat
+                        apple,pear\tapple\tpear
+                        """);
     }
 
     @Test
     public void testStrVar() throws Exception {
         assertQuery("select substr,str,strpos(str,substr) from x")
-                .ddl("create table x as (" +
-                        "select rnd_varchar('ABC XYZ XYZ','XYZ','XYW',NULL) as str\n" +
-                        ", rnd_varchar('XYZ','C',NULL) as substr\n" +
-                        "from long_sequence(15)" +
-                        ")")
+                .ddl("""
+                        create table x as (\
+                        select rnd_varchar('ABC XYZ XYZ','XYZ','XYW',NULL) as str
+                        , rnd_varchar('XYZ','C',NULL) as substr
+                        from long_sequence(15)\
+                        )""")
                 .expectSize()
-                .returns("substr\tstr\tstrpos\n" +
-                        "XYZ\tABC XYZ XYZ\t5\n" +
-                        "\tXYZ\tnull\n" +
-                        "\tXYZ\tnull\n" +
-                        "C\tXYW\t0\n" +
-                        "C\tXYW\t0\n" +
-                        "\tABC XYZ XYZ\tnull\n" +
-                        "C\tXYW\t0\n" +
-                        "XYZ\tXYZ\t1\n" +
-                        "C\tABC XYZ XYZ\t3\n" +
-                        "C\tXYZ\t0\n" +
-                        "XYZ\t\tnull\n" +
-                        "\tABC XYZ XYZ\tnull\n" +
-                        "C\t\tnull\n" +
-                        "C\tXYW\t0\n" +
-                        "XYZ\t\tnull\n");
+                .returns("""
+                        substr\tstr\tstrpos
+                        XYZ\tABC XYZ XYZ\t5
+                        \tXYZ\tnull
+                        \tXYZ\tnull
+                        C\tXYW\t0
+                        C\tXYW\t0
+                        \tABC XYZ XYZ\tnull
+                        C\tXYW\t0
+                        XYZ\tXYZ\t1
+                        C\tABC XYZ XYZ\t3
+                        C\tXYZ\t0
+                        XYZ\t\tnull
+                        \tABC XYZ XYZ\tnull
+                        C\t\tnull
+                        C\tXYW\t0
+                        XYZ\t\tnull
+                        """);
     }
 
     @Test
@@ -156,12 +172,14 @@ public class StrPosVarcharFunctionFactoryTest extends AbstractCairoTest {
                         "from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("str\tstrpos\n" +
-                        "ABC XYZ XYZ\t5\n" +
-                        "ABC XYZ XYZ\t5\n" +
-                        "XYZ\t1\n" +
-                        "XYW\t0\n" +
-                        "XYW\t0\n");
+                .returns("""
+                        str\tstrpos
+                        ABC XYZ XYZ\t5
+                        ABC XYZ XYZ\t5
+                        XYZ\t1
+                        XYW\t0
+                        XYW\t0
+                        """);
     }
 
     @Test
@@ -173,32 +191,34 @@ public class StrPosVarcharFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(25)" +
                         ")")
                 .expectSize()
-                .returns("substr\tstr\tstrpos\n" +
-                        "ěšč\tčřž ěšč ěšč\t5\n" +
-                        "\těšč\tnull\n" +
-                        "\těšč\tnull\n" +
-                        "C\tXYW\t0\n" +
-                        "C\tXYW\t0\n" +
-                        "\tčřž ěšč ěšč\tnull\n" +
-                        "C\tXYW\t0\n" +
-                        "ěšč\těšč\t1\n" +
-                        "C\tčřž ěšč ěšč\t0\n" +
-                        "C\těšč\t0\n" +
-                        "ěšč\t\tnull\n" +
-                        "\tčřž ěšč ěšč\tnull\n" +
-                        "C\t\tnull\n" +
-                        "C\tXYW\t0\n" +
-                        "ěšč\t\tnull\n" +
-                        "C\těšč\t0\n" +
-                        "\tčřž ěšč ěšč\tnull\n" +
-                        "C\tXYW\t0\n" +
-                        "ěšč\t\tnull\n" +
-                        "C\t\tnull\n" +
-                        "ěšč\tXYW\t0\n" +
-                        "C\t\tnull\n" +
-                        "\těšč\tnull\n" +
-                        "ěšč\t\tnull\n" +
-                        "\t\tnull\n");
+                .returns("""
+                        substr\tstr\tstrpos
+                        ěšč\tčřž ěšč ěšč\t5
+                        \těšč\tnull
+                        \těšč\tnull
+                        C\tXYW\t0
+                        C\tXYW\t0
+                        \tčřž ěšč ěšč\tnull
+                        C\tXYW\t0
+                        ěšč\těšč\t1
+                        C\tčřž ěšč ěšč\t0
+                        C\těšč\t0
+                        ěšč\t\tnull
+                        \tčřž ěšč ěšč\tnull
+                        C\t\tnull
+                        C\tXYW\t0
+                        ěšč\t\tnull
+                        C\těšč\t0
+                        \tčřž ěšč ěšč\tnull
+                        C\tXYW\t0
+                        ěšč\t\tnull
+                        C\t\tnull
+                        ěšč\tXYW\t0
+                        C\t\tnull
+                        \těšč\tnull
+                        ěšč\t\tnull
+                        \t\tnull
+                        """);
     }
 
 }

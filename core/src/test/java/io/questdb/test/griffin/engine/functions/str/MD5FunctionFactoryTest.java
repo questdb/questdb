@@ -37,17 +37,19 @@ public class MD5FunctionFactoryTest extends AbstractCairoTest {
                         "from long_sequence(10)" +
                         ")")
                 .expectSize()
-                .returns("bin\tmd5\n" +
-                        "00000000 41 1d\td95cbbe288c2b14e4980750cecc36067\n" +
-                        "00000000 8a 17 fa d8\t84d095be93683b086bbd85f1830217dd\n" +
-                        "00000000 ce f1\t85a5888c0b9c2152c091e06016c94a9c\n" +
-                        "\t\n" +
-                        "00000000 91\t40412202892318d52822e62195a65762\n" +
-                        "00000000 db f3 04 1b\tec2ed6ee17d7f188b10716a7c41d77cf\n" +
-                        "00000000 de a0\t4d1b74d753b4b4d6ccb71aa9c581fbcd\n" +
-                        "\t\n" +
-                        "00000000 15 68\t17b3bbce052f9f8317f44c8b9f4fc77d\n" +
-                        "00000000 af 19 c4 95\t9d7386e4f52d076e9994cb3d1880f21e\n");
+                .returns("""
+                        bin\tmd5
+                        00000000 41 1d\td95cbbe288c2b14e4980750cecc36067
+                        00000000 8a 17 fa d8\t84d095be93683b086bbd85f1830217dd
+                        00000000 ce f1\t85a5888c0b9c2152c091e06016c94a9c
+                        \t
+                        00000000 91\t40412202892318d52822e62195a65762
+                        00000000 db f3 04 1b\tec2ed6ee17d7f188b10716a7c41d77cf
+                        00000000 de a0\t4d1b74d753b4b4d6ccb71aa9c581fbcd
+                        \t
+                        00000000 15 68\t17b3bbce052f9f8317f44c8b9f4fc77d
+                        00000000 af 19 c4 95\t9d7386e4f52d076e9994cb3d1880f21e
+                        """);
     }
 
     @Test
@@ -58,12 +60,14 @@ public class MD5FunctionFactoryTest extends AbstractCairoTest {
                         "from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("str\tmd5\n" +
-                        "abc\t900150983cd24fb0d6963f7d28e17f72\n" +
-                        "\td41d8cd98f00b204e9800998ecf8427e\n" +
-                        "x\t9dd4e461268c8034f5c8564e155c67a6\n" +
-                        "\t\n" +
-                        "x\t9dd4e461268c8034f5c8564e155c67a6\n");
+                .returns("""
+                        str\tmd5
+                        abc\t900150983cd24fb0d6963f7d28e17f72
+                        \td41d8cd98f00b204e9800998ecf8427e
+                        x\t9dd4e461268c8034f5c8564e155c67a6
+                        \t
+                        x\t9dd4e461268c8034f5c8564e155c67a6
+                        """);
     }
 
     @Test
@@ -74,11 +78,13 @@ public class MD5FunctionFactoryTest extends AbstractCairoTest {
                         "from long_sequence(5)" +
                         ")")
                 .expectSize()
-                .returns("v\tmd5\n" +
-                        "abc\t900150983cd24fb0d6963f7d28e17f72\n" +
-                        "едно-две-три\t6c9f2d4ac2b6442dd685906b5d61aeb8\n" +
-                        "едно-две-три\t6c9f2d4ac2b6442dd685906b5d61aeb8\n" +
-                        "x\t9dd4e461268c8034f5c8564e155c67a6\n" +
-                        "x\t9dd4e461268c8034f5c8564e155c67a6\n");
+                .returns("""
+                        v\tmd5
+                        abc\t900150983cd24fb0d6963f7d28e17f72
+                        едно-две-три\t6c9f2d4ac2b6442dd685906b5d61aeb8
+                        едно-две-три\t6c9f2d4ac2b6442dd685906b5d61aeb8
+                        x\t9dd4e461268c8034f5c8564e155c67a6
+                        x\t9dd4e461268c8034f5c8564e155c67a6
+                        """);
     }
 }

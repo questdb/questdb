@@ -34,17 +34,19 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select k, right(k,50) from x") // 50 > than max string len
                 .ddl("create table x as (select rnd_str(10,20,1) k from long_sequence(10))")
                 .expectSize()
-                .returns("k\tright\n" +
-                        "JWCPSWHYRXPEHNRX\tJWCPSWHYRXPEHNRX\n" +
-                        "SXUXIBBTGPGWFFYU\tSXUXIBBTGPGWFFYU\n" +
-                        "YYQEHBHFOWLPDXYSBEO\tYYQEHBHFOWLPDXYSBEO\n" +
-                        "JSHRUEDRQQUL\tJSHRUEDRQQUL\n" +
-                        "\t\n" +
-                        "GETJRSZSRYRFBVTMHGOO\tGETJRSZSRYRFBVTMHGOO\n" +
-                        "VDZJMYICCXZOUIC\tVDZJMYICCXZOUIC\n" +
-                        "KGHVUVSDOTSEDYYCTGQO\tKGHVUVSDOTSEDYYCTGQO\n" +
-                        "\t\n" +
-                        "WCKYLSUWDSWUGSH\tWCKYLSUWDSWUGSH\n");
+                .returns("""
+                        k\tright
+                        JWCPSWHYRXPEHNRX\tJWCPSWHYRXPEHNRX
+                        SXUXIBBTGPGWFFYU\tSXUXIBBTGPGWFFYU
+                        YYQEHBHFOWLPDXYSBEO\tYYQEHBHFOWLPDXYSBEO
+                        JSHRUEDRQQUL\tJSHRUEDRQQUL
+                        \t
+                        GETJRSZSRYRFBVTMHGOO\tGETJRSZSRYRFBVTMHGOO
+                        VDZJMYICCXZOUIC\tVDZJMYICCXZOUIC
+                        KGHVUVSDOTSEDYYCTGQO\tKGHVUVSDOTSEDYYCTGQO
+                        \t
+                        WCKYLSUWDSWUGSH\tWCKYLSUWDSWUGSH
+                        """);
     }
 
     @Test
@@ -52,17 +54,19 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select k, right(k,-1) from x")
                 .ddl("create table x as (select rnd_str(10,20,1) k from long_sequence(10))")
                 .expectSize()
-                .returns("k\tright\n" +
-                        "JWCPSWHYRXPEHNRX\tWCPSWHYRXPEHNRX\n" +
-                        "SXUXIBBTGPGWFFYU\tXUXIBBTGPGWFFYU\n" +
-                        "YYQEHBHFOWLPDXYSBEO\tYQEHBHFOWLPDXYSBEO\n" +
-                        "JSHRUEDRQQUL\tSHRUEDRQQUL\n" +
-                        "\t\n" +
-                        "GETJRSZSRYRFBVTMHGOO\tETJRSZSRYRFBVTMHGOO\n" +
-                        "VDZJMYICCXZOUIC\tDZJMYICCXZOUIC\n" +
-                        "KGHVUVSDOTSEDYYCTGQO\tGHVUVSDOTSEDYYCTGQO\n" +
-                        "\t\n" +
-                        "WCKYLSUWDSWUGSH\tCKYLSUWDSWUGSH\n");
+                .returns("""
+                        k\tright
+                        JWCPSWHYRXPEHNRX\tWCPSWHYRXPEHNRX
+                        SXUXIBBTGPGWFFYU\tXUXIBBTGPGWFFYU
+                        YYQEHBHFOWLPDXYSBEO\tYQEHBHFOWLPDXYSBEO
+                        JSHRUEDRQQUL\tSHRUEDRQQUL
+                        \t
+                        GETJRSZSRYRFBVTMHGOO\tETJRSZSRYRFBVTMHGOO
+                        VDZJMYICCXZOUIC\tDZJMYICCXZOUIC
+                        KGHVUVSDOTSEDYYCTGQO\tGHVUVSDOTSEDYYCTGQO
+                        \t
+                        WCKYLSUWDSWUGSH\tCKYLSUWDSWUGSH
+                        """);
     }
 
     @Test
@@ -70,17 +74,19 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select k, right(k,-100) from x")
                 .ddl("create table x as (select rnd_str(10,20,1) k from long_sequence(10))")
                 .expectSize()
-                .returns("k\tright\n" +
-                        "JWCPSWHYRXPEHNRX\t\n" +
-                        "SXUXIBBTGPGWFFYU\t\n" +
-                        "YYQEHBHFOWLPDXYSBEO\t\n" +
-                        "JSHRUEDRQQUL\t\n" +
-                        "\t\n" +
-                        "GETJRSZSRYRFBVTMHGOO\t\n" +
-                        "VDZJMYICCXZOUIC\t\n" +
-                        "KGHVUVSDOTSEDYYCTGQO\t\n" +
-                        "\t\n" +
-                        "WCKYLSUWDSWUGSH\t\n");
+                .returns("""
+                        k\tright
+                        JWCPSWHYRXPEHNRX\t
+                        SXUXIBBTGPGWFFYU\t
+                        YYQEHBHFOWLPDXYSBEO\t
+                        JSHRUEDRQQUL\t
+                        \t
+                        GETJRSZSRYRFBVTMHGOO\t
+                        VDZJMYICCXZOUIC\t
+                        KGHVUVSDOTSEDYYCTGQO\t
+                        \t
+                        WCKYLSUWDSWUGSH\t
+                        """);
     }
 
     @Test
@@ -88,17 +94,19 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select k, right(k,null) from x")
                 .ddl("create table x as (select rnd_str(10,20,1) k from long_sequence(10))")
                 .expectSize()
-                .returns("k\tright\n" +
-                        "JWCPSWHYRXPEHNRX\t\n" +
-                        "SXUXIBBTGPGWFFYU\t\n" +
-                        "YYQEHBHFOWLPDXYSBEO\t\n" +
-                        "JSHRUEDRQQUL\t\n" +
-                        "\t\n" +
-                        "GETJRSZSRYRFBVTMHGOO\t\n" +
-                        "VDZJMYICCXZOUIC\t\n" +
-                        "KGHVUVSDOTSEDYYCTGQO\t\n" +
-                        "\t\n" +
-                        "WCKYLSUWDSWUGSH\t\n");
+                .returns("""
+                        k\tright
+                        JWCPSWHYRXPEHNRX\t
+                        SXUXIBBTGPGWFFYU\t
+                        YYQEHBHFOWLPDXYSBEO\t
+                        JSHRUEDRQQUL\t
+                        \t
+                        GETJRSZSRYRFBVTMHGOO\t
+                        VDZJMYICCXZOUIC\t
+                        KGHVUVSDOTSEDYYCTGQO\t
+                        \t
+                        WCKYLSUWDSWUGSH\t
+                        """);
     }
 
     @Test
@@ -106,17 +114,19 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select k, right(k,2) from x")
                 .ddl("create table x as (select rnd_str(10,20,1) k from long_sequence(10))")
                 .expectSize()
-                .returns("k\tright\n" +
-                        "JWCPSWHYRXPEHNRX\tRX\n" +
-                        "SXUXIBBTGPGWFFYU\tYU\n" +
-                        "YYQEHBHFOWLPDXYSBEO\tEO\n" +
-                        "JSHRUEDRQQUL\tUL\n" +
-                        "\t\n" +
-                        "GETJRSZSRYRFBVTMHGOO\tOO\n" +
-                        "VDZJMYICCXZOUIC\tIC\n" +
-                        "KGHVUVSDOTSEDYYCTGQO\tQO\n" +
-                        "\t\n" +
-                        "WCKYLSUWDSWUGSH\tSH\n");
+                .returns("""
+                        k\tright
+                        JWCPSWHYRXPEHNRX\tRX
+                        SXUXIBBTGPGWFFYU\tYU
+                        YYQEHBHFOWLPDXYSBEO\tEO
+                        JSHRUEDRQQUL\tUL
+                        \t
+                        GETJRSZSRYRFBVTMHGOO\tOO
+                        VDZJMYICCXZOUIC\tIC
+                        KGHVUVSDOTSEDYYCTGQO\tQO
+                        \t
+                        WCKYLSUWDSWUGSH\tSH
+                        """);
     }
 
     @Test
@@ -124,17 +134,19 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select k, n, right(k,n) from x")
                 .ddl("create table x as (select rnd_str(10,20,1) k, rnd_int(-1, 20, 1) n from long_sequence(10))")
                 .expectSize()
-                .returns("k\tn\tright\n" +
-                        "JWCPSWHYRXPEHNRX\t5\tEHNRX\n" +
-                        "\tnull\t\n" +
-                        "IBBTGPGWFFYUDEY\t15\tIBBTGPGWFFYUDEY\n" +
-                        "BHFOWLPDXY\t-1\tHFOWLPDXY\n" +
-                        "UOJSHRUEDRQQULO\t9\tUEDRQQULO\n" +
-                        "\t6\t\n" +
-                        "SZSRYRFBVTMHGOOZ\t8\tVTMHGOOZ\n" +
-                        "JMYICCXZOUICWEKGH\t16\tMYICCXZOUICWEKGH\n" +
-                        "\t11\t\n" +
-                        "SEDYYCTGQOLY\t10\tDYYCTGQOLY\n");
+                .returns("""
+                        k\tn\tright
+                        JWCPSWHYRXPEHNRX\t5\tEHNRX
+                        \tnull\t
+                        IBBTGPGWFFYUDEY\t15\tIBBTGPGWFFYUDEY
+                        BHFOWLPDXY\t-1\tHFOWLPDXY
+                        UOJSHRUEDRQQULO\t9\tUEDRQQULO
+                        \t6\t
+                        SZSRYRFBVTMHGOOZ\t8\tVTMHGOOZ
+                        JMYICCXZOUICWEKGH\t16\tMYICCXZOUICWEKGH
+                        \t11\t
+                        SEDYYCTGQOLY\t10\tDYYCTGQOLY
+                        """);
     }
 
     @Test
@@ -142,11 +154,13 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select k, right(k,0) from x")
                 .ddl("create table x as (select rnd_str(10,2,3,3) k from long_sequence(5))")
                 .expectSize()
-                .returns("k\tright\n" +
-                        "BT\t\n" +
-                        "\t\n" +
-                        "PGW\t\n" +
-                        "PE\t\n" +
-                        "TJ\t\n");
+                .returns("""
+                        k\tright
+                        BT\t
+                        \t
+                        PGW\t
+                        PE\t
+                        TJ\t
+                        """);
     }
 }

@@ -31,12 +31,14 @@ public class EqVarcharFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharEqualsToStr() throws Exception {
-        String aaLines = "x\tk\n" +
-                "1\taa\n" +
-                "6\taa\n" +
-                "9\taa\n" +
-                "12\taa\n" +
-                "17\taa\n";
+        String aaLines = """
+                x\tk
+                1\taa
+                6\taa
+                9\taa
+                12\taa
+                17\taa
+                """;
         assertQuery("select x, k from x where k = 'aa'")
                 .ddl("create table x as (select x, rnd_varchar('aa', 'abcабв你好\uD83D\uDE00', null, 'абв') k, rnd_str('aa', 'abcабв你好\uD83D\uDE00', null, 'абв') ks from long_sequence(20))")
                 .returns(aaLines);
@@ -45,43 +47,55 @@ public class EqVarcharFunctionFactoryTest extends AbstractCairoTest {
                 .returns(aaLines);
 
         assertQuery("select x, ks from x where cast('aa' as varchar) = ks")
-                .returns("x\tks\n" +
-                        "5\taa\n" +
-                        "6\taa\n" +
-                        "8\taa\n" +
-                        "13\taa\n" +
-                        "14\taa\n" +
-                        "15\taa\n" +
-                        "19\taa\n" +
-                        "20\taa\n");
+                .returns("""
+                        x\tks
+                        5\taa
+                        6\taa
+                        8\taa
+                        13\taa
+                        14\taa
+                        15\taa
+                        19\taa
+                        20\taa
+                        """);
 
         assertQuery("select x, k from x where k is null")
-                .returns("x\tk\n" +
-                        "4\t\n" +
-                        "5\t\n" +
-                        "7\t\n" +
-                        "14\t\n" +
-                        "18\t\n");
+                .returns("""
+                        x\tk
+                        4\t
+                        5\t
+                        7\t
+                        14\t
+                        18\t
+                        """);
 
         assertQuery("select x, ks from x where ks = cast(null as varchar)")
-                .returns("x\tks\n" +
-                        "1\t\n" +
-                        "10\t\n");
+                .returns("""
+                        x\tks
+                        1\t
+                        10\t
+                        """);
 
         assertQuery("select x, k, ks from x where k = ks")
-                .returns("x\tk\tks\n" +
-                        "6\taa\taa\n" +
-                        "11\tабв\tабв\n");
+                .returns("""
+                        x\tk\tks
+                        6\taa\taa
+                        11\tабв\tабв
+                        """);
 
         assertQuery("select x, k, ks from x where ks = k")
-                .returns("x\tk\tks\n" +
-                        "6\taa\taa\n" +
-                        "11\tабв\tабв\n");
+                .returns("""
+                        x\tk\tks
+                        6\taa\taa
+                        11\tабв\tабв
+                        """);
 
         assertQuery("select x, k, ks from x where ks = k")
-                .returns("x\tk\tks\n" +
-                        "6\taa\taa\n" +
-                        "11\tабв\tабв\n");
+                .returns("""
+                        x\tk\tks
+                        6\taa\taa
+                        11\tабв\tабв
+                        """);
     }
 
 }
