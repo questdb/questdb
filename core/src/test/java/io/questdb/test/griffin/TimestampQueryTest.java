@@ -1940,17 +1940,17 @@ public class TimestampQueryTest extends AbstractCairoTest {
         });
     }
 
-    private void assertQueryWithConditions(String query, String expected, String columnName) throws Exception{
-        assertSql(expected, query);
+    private void assertQueryWithConditions(String query, String expected, String columnName) throws Exception {
+        assertQuery(query).noLeakCheck().returnsOnce(expected);
 
         String joining = query.indexOf("where") > 0 ? " and " : " where ";
 
         // Non-impacting additions to WHERE
-        assertSql(expected, query + joining + columnName + " not between now() and CAST(NULL as TIMESTAMP)");
-        assertSql(expected, query + joining + columnName + " between '2200-01-01' and dateadd('y', -10000, now())");
-        assertSql(expected, query + joining + columnName + " > dateadd('y', -1000, now())");
-        assertSql(expected, query + joining + columnName + " <= dateadd('y', 1000, now())");
-        assertSql(expected, query + joining + columnName + " not in '1970-01-01'");
+        assertQuery(query + joining + columnName + " not between now() and CAST(NULL as TIMESTAMP)").noLeakCheck().returnsOnce(expected);
+        assertQuery(query + joining + columnName + " between '2200-01-01' and dateadd('y', -10000, now())").noLeakCheck().returnsOnce(expected);
+        assertQuery(query + joining + columnName + " > dateadd('y', -1000, now())").noLeakCheck().returnsOnce(expected);
+        assertQuery(query + joining + columnName + " <= dateadd('y', 1000, now())").noLeakCheck().returnsOnce(expected);
+        assertQuery(query + joining + columnName + " not in '1970-01-01'").noLeakCheck().returnsOnce(expected);
     }
 
     private void assertTimestampTtFailedQuery(String sql, int errorPos, String expectedError) throws Exception {
