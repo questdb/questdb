@@ -1912,30 +1912,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return new QueryAssertion(query);
     }
 
-    // todo: remove
-    protected void assertQuery(CharSequence expected, CharSequence query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
-        assertMemoryLeak(() -> assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false));
-    }
-
-    // todo: remove
-    protected void assertQueryAndPlan(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess,
-            boolean expectSize,
-            boolean sizeCanBeVariable,
-            @Nullable CharSequence expectedPlan
-    ) throws Exception {
-        assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable);
-            assertPlanNoLeakCheck(query, expectedPlan);
-        });
-    }
-
     protected void assertQueryFullFatNoLeakCheck(CharSequence expected, CharSequence query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean fullFatJoin) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoin);
