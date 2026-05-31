@@ -2831,20 +2831,18 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT host, val, timestamp FROM defer_symbol ORDER BY timestamp")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns("""
                             host\tval\ttimestamp
                             server-01\t1\t1970-01-01T00:00:01.000000Z
                             server-02\t2\t1970-01-01T00:00:02.000000Z
                             server-01\t3\t1970-01-01T00:00:03.000000Z
                             server-03\t4\t1970-01-01T00:00:04.000000Z
                             server-02\t5\t1970-01-01T00:00:05.000000Z
-                            """,
-                    "SELECT host, val, timestamp FROM defer_symbol ORDER BY timestamp",
-                    "timestamp",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4280,16 +4278,15 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT px, timestamp FROM " + table + " ORDER BY timestamp")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns("""
                             px\ttimestamp
                             1.5\t1970-01-01T00:00:01.000000Z
                             2.5\t1970-01-01T00:00:03.000000Z
-                            """,
-                    "SELECT px, timestamp FROM " + table + " ORDER BY timestamp",
-                    "timestamp",
-                    true,
-                    true);
+                            """);
         });
     }
 
