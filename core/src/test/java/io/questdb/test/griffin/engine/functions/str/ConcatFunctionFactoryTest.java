@@ -160,15 +160,11 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullStr() throws Exception {
-        assertQuery(
-                "concat\n" +
-                        "\n",
-                "select concat(sym, str, v) from x",
-                "create table x as (select rnd_symbol(null) sym, rnd_str(null) str, rnd_varchar(null) v from long_sequence(1))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select concat(sym, str, v) from x")
+                .ddl("create table x as (select rnd_symbol(null) sym, rnd_str(null) str, rnd_varchar(null) v from long_sequence(1))")
+                .expectSize()
+                .returns("concat\n" +
+                        "\n");
     }
 
     private void testAllTypes(int timestampType) throws Exception {

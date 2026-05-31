@@ -31,31 +31,25 @@ public class TrimVarcharFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyOrNullTrimSpace() throws Exception {
-        assertQuery(
-                "t1\tt2\tt3\tt4\n" +
-                        "\t\t\t\n",
-                "select trim(''::varchar) t1, trim(' '::varchar) t2, trim('       '::varchar) t3, trim(null::varchar) t4",
-                true
-        );
+        assertQuery("select trim(''::varchar) t1, trim(' '::varchar) t2, trim('       '::varchar) t3, trim(null::varchar) t4")
+                .expectSize()
+                .returns("t1\tt2\tt3\tt4\n" +
+                        "\t\t\t\n");
     }
 
     @Test
     public void testNotTrimSpace() throws Exception {
-        assertQuery(
-                "t1\tt2\tt3\n" +
-                        "a b c\tkkk\t()  /  {}\n",
-                "select trim('a b c'::varchar) t1, trim('kkk'::varchar) t2, trim('()  /  {}'::varchar) t3",
-                true
-        );
+        assertQuery("select trim('a b c'::varchar) t1, trim('kkk'::varchar) t2, trim('()  /  {}'::varchar) t3")
+                .expectSize()
+                .returns("t1\tt2\tt3\n" +
+                        "a b c\tkkk\t()  /  {}\n");
     }
 
     @Test
     public void testTrimSpace() throws Exception {
-        assertQuery(
-                "t1\tt2\tt3\tt4\n" +
-                        "abc\tabc\tabc\ta b c\n",
-                "select trim('    abc     '::varchar) t1, trim('abc     '::varchar) t2, trim('     abc'::varchar) t3, trim(' a b c '::varchar) t4",
-                true
-        );
+        assertQuery("select trim('    abc     '::varchar) t1, trim('abc     '::varchar) t2, trim('     abc'::varchar) t3, trim(' a b c '::varchar) t4")
+                .expectSize()
+                .returns("t1\tt2\tt3\tt4\n" +
+                        "abc\tabc\tabc\ta b c\n");
     }
 }

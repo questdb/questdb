@@ -30,8 +30,14 @@ import org.junit.Test;
 public class PositionFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCharVar() throws Exception {
-        assertQuery(
-                "substr\tstr\tposition\n" +
+        assertQuery("select substr,str,position(str,substr) from x")
+                .ddl("create table x as (" +
+                        "select rnd_str('TEST','A X X','CDE',NULL) as str\n" +
+                        ", rnd_char() as substr\n" +
+                        "from long_sequence(15)" +
+                        ")")
+                .expectSize()
+                .returns("substr\tstr\tposition\n" +
                         "T\tTEST\t1\n" +
                         "W\tA X X\t0\n" +
                         "P\tA X X\t0\n" +
@@ -46,90 +52,68 @@ public class PositionFunctionFactoryTest extends AbstractCairoTest {
                         "X\tTEST\t0\n" +
                         "B\t\tnull\n" +
                         "T\tCDE\t0\n" +
-                        "P\t\tnull\n",
-                "select substr,str,position(str,substr) from x",
-                "create table x as (" +
-                        "select rnd_str('TEST','A X X','CDE',NULL) as str\n" +
-                        ", rnd_char() as substr\n" +
-                        "from long_sequence(15)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        "P\t\tnull\n");
     }
 
     @Test
     public void testCharVarConst() throws Exception {
-        assertQuery(
-                "str\tposition\n" +
+        assertQuery("select str,position(str,'C') from x")
+                .ddl("create table x as (" +
+                        "select rnd_str('ABC XYZ XYZ','CBA','XYZ') as str\n" +
+                        "from long_sequence(5)" +
+                        ")")
+                .expectSize()
+                .returns("str\tposition\n" +
                         "ABC XYZ XYZ\t3\n" +
                         "ABC XYZ XYZ\t3\n" +
                         "CBA\t1\n" +
                         "XYZ\t0\n" +
-                        "XYZ\t0\n",
-                "select str,position(str,'C') from x",
-                "create table x as (" +
-                        "select rnd_str('ABC XYZ XYZ','CBA','XYZ') as str\n" +
-                        "from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        "XYZ\t0\n");
     }
 
     @Test
     public void testConstantEmptyString() throws Exception {
-        assertQuery(
-                "pos1\tpos2\tpos3\n" +
-                        "0\t1\t1\n",
-                "select position('','a') pos1, position('a',cast('' as string)) pos2, position('','') pos3",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select position('','a') pos1, position('a',cast('' as string)) pos2, position('','') pos3")
+                .expectSize()
+                .returns("pos1\tpos2\tpos3\n" +
+                        "0\t1\t1\n");
     }
 
     @Test
     public void testConstantNull() throws Exception {
-        assertQuery(
-                "pos1\tpos2\tpos3\tpos4\n" +
-                        "null\tnull\tnull\tnull\n",
-                "select position(null,'a') pos1, position(null,'abc') pos2, position('a',null) pos3, position(null,null) pos4",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select position(null,'a') pos1, position(null,'abc') pos2, position('a',null) pos3, position(null,null) pos4")
+                .expectSize()
+                .returns("pos1\tpos2\tpos3\tpos4\n" +
+                        "null\tnull\tnull\tnull\n");
     }
 
     @Test
     public void testSplitColumn() throws Exception {
-        assertQuery(
-                "str\tstr1\tstr2\n" +
-                        "dog,cat\tdog\tcat\n" +
-                        "dog,cat\tdog\tcat\n" +
-                        "apple,pear\tapple\tpear\n",
-                "select str,\n" +
+        assertQuery("select str,\n" +
                         "left(str, position(str, ',') - 1) str1,\n" +
                         "right(str, length(str) - position(str, ',')) str2\n" +
-                        "from x",
-                "create table x as (" +
+                        "from x")
+                .ddl("create table x as (" +
                         "select rnd_str('dog,cat','apple,pear') as str\n" +
                         "from long_sequence(3)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("str\tstr1\tstr2\n" +
+                        "dog,cat\tdog\tcat\n" +
+                        "dog,cat\tdog\tcat\n" +
+                        "apple,pear\tapple\tpear\n");
     }
 
     @Test
     public void testStrVar() throws Exception {
-        assertQuery(
-                "substr\tstr\tposition\n" +
+        assertQuery("select substr,str,position(str,substr) from x")
+                .ddl("create table x as (" +
+                        "select rnd_str('ABC XYZ XYZ','XYZ','XYW',NULL) as str\n" +
+                        ", rnd_str('XYZ','C',NULL) as substr\n" +
+                        "from long_sequence(15)" +
+                        ")")
+                .expectSize()
+                .returns("substr\tstr\tposition\n" +
                         "XYZ\tABC XYZ XYZ\t5\n" +
                         "\tXYZ\tnull\n" +
                         "\tXYZ\tnull\n" +
@@ -144,37 +128,23 @@ public class PositionFunctionFactoryTest extends AbstractCairoTest {
                         "\tABC XYZ XYZ\tnull\n" +
                         "C\t\tnull\n" +
                         "C\tXYW\t0\n" +
-                        "XYZ\t\tnull\n",
-                "select substr,str,position(str,substr) from x",
-                "create table x as (" +
-                        "select rnd_str('ABC XYZ XYZ','XYZ','XYW',NULL) as str\n" +
-                        ", rnd_str('XYZ','C',NULL) as substr\n" +
-                        "from long_sequence(15)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        "XYZ\t\tnull\n");
     }
 
     @Test
     public void testStrVarConst() throws Exception {
-        assertQuery(
-                "str\tposition\n" +
+        assertQuery("select str,position(str,'XYZ') from x")
+                .ddl("create table x as (" +
+                        "select rnd_str('ABC XYZ XYZ','XYZ','XYW') as str\n" +
+                        "from long_sequence(5)" +
+                        ")")
+                .expectSize()
+                .returns("str\tposition\n" +
                         "ABC XYZ XYZ\t5\n" +
                         "ABC XYZ XYZ\t5\n" +
                         "XYZ\t1\n" +
                         "XYW\t0\n" +
-                        "XYW\t0\n",
-                "select str,position(str,'XYZ') from x",
-                "create table x as (" +
-                        "select rnd_str('ABC XYZ XYZ','XYZ','XYW') as str\n" +
-                        "from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        "XYW\t0\n");
     }
 
 }

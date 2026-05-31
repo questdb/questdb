@@ -92,12 +92,9 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
         }
 
         try {
-            assertQueryNoLeakCheck(
-                    null,
-                    "select substring('foo',1,-6)",
-                    null,
-                    true
-            );
+            assertQuery("select substring('foo',1,-6)")
+                    .noLeakCheck()
+                    .returns(null);
             assertExceptionNoLeakCheck("const negative len is not allowed");
         } catch (SqlException e) {
             // negative substring length is not allowed

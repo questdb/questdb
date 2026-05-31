@@ -31,8 +31,10 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstLarge() throws Exception {
-        assertQuery(
-                "k\tright\n" +
+        assertQuery("select k, right(k,50) from x") // 50 > than max string len
+                .ddl("create table x as (select rnd_str(10,20,1) k from long_sequence(10))")
+                .expectSize()
+                .returns("k\tright\n" +
                         "JWCPSWHYRXPEHNRX\tJWCPSWHYRXPEHNRX\n" +
                         "SXUXIBBTGPGWFFYU\tSXUXIBBTGPGWFFYU\n" +
                         "YYQEHBHFOWLPDXYSBEO\tYYQEHBHFOWLPDXYSBEO\n" +
@@ -42,19 +44,15 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
                         "VDZJMYICCXZOUIC\tVDZJMYICCXZOUIC\n" +
                         "KGHVUVSDOTSEDYYCTGQO\tKGHVUVSDOTSEDYYCTGQO\n" +
                         "\t\n" +
-                        "WCKYLSUWDSWUGSH\tWCKYLSUWDSWUGSH\n",
-                "select k, right(k,50) from x", // 50 > than max string len
-                "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
-                null,
-                true,
-                true
-        );
+                        "WCKYLSUWDSWUGSH\tWCKYLSUWDSWUGSH\n");
     }
 
     @Test
     public void testConstNeg() throws Exception {
-        assertQuery(
-                "k\tright\n" +
+        assertQuery("select k, right(k,-1) from x")
+                .ddl("create table x as (select rnd_str(10,20,1) k from long_sequence(10))")
+                .expectSize()
+                .returns("k\tright\n" +
                         "JWCPSWHYRXPEHNRX\tWCPSWHYRXPEHNRX\n" +
                         "SXUXIBBTGPGWFFYU\tXUXIBBTGPGWFFYU\n" +
                         "YYQEHBHFOWLPDXYSBEO\tYQEHBHFOWLPDXYSBEO\n" +
@@ -64,19 +62,15 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
                         "VDZJMYICCXZOUIC\tDZJMYICCXZOUIC\n" +
                         "KGHVUVSDOTSEDYYCTGQO\tGHVUVSDOTSEDYYCTGQO\n" +
                         "\t\n" +
-                        "WCKYLSUWDSWUGSH\tCKYLSUWDSWUGSH\n",
-                "select k, right(k,-1) from x",
-                "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
-                null,
-                true,
-                true
-        );
+                        "WCKYLSUWDSWUGSH\tCKYLSUWDSWUGSH\n");
     }
 
     @Test
     public void testConstNegLarge() throws Exception {
-        assertQuery(
-                "k\tright\n" +
+        assertQuery("select k, right(k,-100) from x")
+                .ddl("create table x as (select rnd_str(10,20,1) k from long_sequence(10))")
+                .expectSize()
+                .returns("k\tright\n" +
                         "JWCPSWHYRXPEHNRX\t\n" +
                         "SXUXIBBTGPGWFFYU\t\n" +
                         "YYQEHBHFOWLPDXYSBEO\t\n" +
@@ -86,19 +80,15 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
                         "VDZJMYICCXZOUIC\t\n" +
                         "KGHVUVSDOTSEDYYCTGQO\t\n" +
                         "\t\n" +
-                        "WCKYLSUWDSWUGSH\t\n",
-                "select k, right(k,-100) from x",
-                "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
-                null,
-                true,
-                true
-        );
+                        "WCKYLSUWDSWUGSH\t\n");
     }
 
     @Test
     public void testConstNull() throws Exception {
-        assertQuery(
-                "k\tright\n" +
+        assertQuery("select k, right(k,null) from x")
+                .ddl("create table x as (select rnd_str(10,20,1) k from long_sequence(10))")
+                .expectSize()
+                .returns("k\tright\n" +
                         "JWCPSWHYRXPEHNRX\t\n" +
                         "SXUXIBBTGPGWFFYU\t\n" +
                         "YYQEHBHFOWLPDXYSBEO\t\n" +
@@ -108,19 +98,15 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
                         "VDZJMYICCXZOUIC\t\n" +
                         "KGHVUVSDOTSEDYYCTGQO\t\n" +
                         "\t\n" +
-                        "WCKYLSUWDSWUGSH\t\n",
-                "select k, right(k,null) from x",
-                "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
-                null,
-                true,
-                true
-        );
+                        "WCKYLSUWDSWUGSH\t\n");
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery(
-                "k\tright\n" +
+        assertQuery("select k, right(k,2) from x")
+                .ddl("create table x as (select rnd_str(10,20,1) k from long_sequence(10))")
+                .expectSize()
+                .returns("k\tright\n" +
                         "JWCPSWHYRXPEHNRX\tRX\n" +
                         "SXUXIBBTGPGWFFYU\tYU\n" +
                         "YYQEHBHFOWLPDXYSBEO\tEO\n" +
@@ -130,19 +116,15 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
                         "VDZJMYICCXZOUIC\tIC\n" +
                         "KGHVUVSDOTSEDYYCTGQO\tQO\n" +
                         "\t\n" +
-                        "WCKYLSUWDSWUGSH\tSH\n",
-                "select k, right(k,2) from x",
-                "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
-                null,
-                true,
-                true
-        );
+                        "WCKYLSUWDSWUGSH\tSH\n");
     }
 
     @Test
     public void testVar() throws Exception {
-        assertQuery(
-                "k\tn\tright\n" +
+        assertQuery("select k, n, right(k,n) from x")
+                .ddl("create table x as (select rnd_str(10,20,1) k, rnd_int(-1, 20, 1) n from long_sequence(10))")
+                .expectSize()
+                .returns("k\tn\tright\n" +
                         "JWCPSWHYRXPEHNRX\t5\tEHNRX\n" +
                         "\tnull\t\n" +
                         "IBBTGPGWFFYUDEY\t15\tIBBTGPGWFFYUDEY\n" +
@@ -152,29 +134,19 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
                         "SZSRYRFBVTMHGOOZ\t8\tVTMHGOOZ\n" +
                         "JMYICCXZOUICWEKGH\t16\tMYICCXZOUICWEKGH\n" +
                         "\t11\t\n" +
-                        "SEDYYCTGQOLY\t10\tDYYCTGQOLY\n",
-                "select k, n, right(k,n) from x",
-                "create table x as (select rnd_str(10,20,1) k, rnd_int(-1, 20, 1) n from long_sequence(10))",
-                null,
-                true,
-                true
-        );
+                        "SEDYYCTGQOLY\t10\tDYYCTGQOLY\n");
     }
 
     @Test
     public void testWhenCountIsZeroThenReturnsEmptyStringOrNull() throws Exception {
-        assertQuery(
-                "k\tright\n" +
+        assertQuery("select k, right(k,0) from x")
+                .ddl("create table x as (select rnd_str(10,2,3,3) k from long_sequence(5))")
+                .expectSize()
+                .returns("k\tright\n" +
                         "BT\t\n" +
                         "\t\n" +
                         "PGW\t\n" +
                         "PE\t\n" +
-                        "TJ\t\n",
-                "select k, right(k,0) from x",
-                "create table x as (select rnd_str(10,2,3,3) k from long_sequence(5))",
-                null,
-                true,
-                true
-        );
+                        "TJ\t\n");
     }
 }
