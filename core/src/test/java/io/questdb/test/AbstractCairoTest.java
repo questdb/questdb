@@ -1912,6 +1912,25 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertVariableColumns(factory, executionContext);
     }
 
+    protected void assertPlanContainsNoLeakCheck(CharSequence query, ObjList<CharSequence> fragments) throws SqlException {
+        StringSink explainSql = new StringSink();
+        explainSql.put("EXPLAIN ").put(query);
+        StringSink actualPlan = new StringSink();
+        try (
+                ExplainPlanFactory planFactory = getPlanFactory(explainSql);
+                RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
+        ) {
+            CursorPrinter.println(cursor, planFactory.getMetadata(), actualPlan, false, false);
+        }
+        for (int i = 0, n = fragments.size(); i < n; i++) {
+            CharSequence fragment = fragments.getQuick(i);
+            if (!JitUtil.isJitSupported()) {
+                fragment = Chars.toString(fragment).replace("Async JIT", "Async");
+            }
+            TestUtils.assertContains(actualPlan, fragment);
+        }
+    }
+
     // asserts plan without having to prefix a query with 'explain', specify the fixed output header, etc.
     protected void assertPlanNoLeakCheck(CharSequence query, CharSequence expectedPlan) throws SqlException {
         StringSink sink = new StringSink();
@@ -2345,7 +2364,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
      * This replaces the large family of positional {@code assertQuery} / {@code assertQueryNoLeakCheck} /
      * {@code assertException} overloads: every option is a named step rather than a positional boolean,
      * and cross-cutting concerns ({@link #noLeakCheck()}, {@link #fullFatJoins()}, {@link #cached()},
-     * {@link #plan}) compose instead of multiplying method names. Each step only records intent; the
+     * {@link #withPlan}) compose instead of multiplying method names. Each step only records intent; the
      * terminal step performs the assertion by delegating to the corresponding legacy workhorse, so the
      * semantics are identical to the hand-written positional call.
      * <p>
@@ -2363,6 +2382,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         private CharSequence expectedTimestamp;
         private boolean fullFatJoins;
         private boolean leakCheck = true;
+        private ObjList<CharSequence> planFragments;
         private boolean sizeCanBeVariable;
         private boolean supportsRandomAccess = true;
 
@@ -2496,15 +2516,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
 
         /**
-         * Also assert the query's execution plan (EXPLAIN output). Implies a leak check; cannot be
-         * combined with {@link #noLeakCheck()}, {@link #fullFatJoins()} or {@link #cached()}.
-         */
-        public QueryAssertion plan(CharSequence expectedPlan) {
-            this.expectedPlan = expectedPlan;
-            return this;
-        }
-
-        /**
          * Terminal: assert the query produces exactly {@code expected}.
          */
         public void returns(CharSequence expected) throws Exception {
@@ -2613,13 +2624,48 @@ public abstract class AbstractCairoTest extends AbstractTest {
             return this;
         }
 
+        /**
+         * Also assert the query's execution plan (EXPLAIN output) matches {@code expectedPlan} exactly.
+         * Implies a leak check; cannot be combined with {@link #noLeakCheck()}, {@link #fullFatJoins()}
+         * or {@link #cached()}.
+         */
+        public QueryAssertion withPlan(CharSequence expectedPlan) {
+            this.expectedPlan = expectedPlan;
+            return this;
+        }
+
+        /**
+         * Also assert the query's execution plan (EXPLAIN output) contains every one of {@code fragments}.
+         * Use when a test cares only about parts of the plan rather than the whole text. Implies a leak
+         * check; cannot be combined with {@link #noLeakCheck()}, {@link #fullFatJoins()} or
+         * {@link #cached()}.
+         */
+        public QueryAssertion withPlanContaining(CharSequence... fragments) {
+            final ObjList<CharSequence> list = new ObjList<>(fragments.length);
+            for (CharSequence fragment : fragments) {
+                list.add(fragment);
+            }
+            this.planFragments = list;
+            return this;
+        }
+
         private void dispatch(CharSequence expected, CharSequence expected2) throws Exception {
             prepareForQueryAssertion();
-            if (expectedPlan != null) {
+            if (expectedPlan != null || planFragments != null) {
                 if (!leakCheck || fullFatJoins || cached) {
-                    throw new IllegalStateException("plan(...) cannot be combined with noLeakCheck()/fullFatJoins()/cached()");
+                    throw new IllegalStateException("withPlan(...)/withPlanContaining(...) cannot be combined with noLeakCheck()/fullFatJoins()/cached()");
                 }
-                assertQueryAndPlan(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable, expectedPlan);
+                final CharSequence exactPlan = expectedPlan;
+                final ObjList<CharSequence> fragments = planFragments;
+                assertMemoryLeak(() -> {
+                    assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable);
+                    if (exactPlan != null) {
+                        assertPlanNoLeakCheck(query, exactPlan);
+                    }
+                    if (fragments != null) {
+                        assertPlanContainsNoLeakCheck(query, fragments);
+                    }
+                });
                 return;
             }
             if (cached) {
@@ -2660,13 +2706,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
 
         private void requireRecordPathCompatible() {
-            if (!leakCheck || fullFatJoins || cached || expectedPlan != null || sizeCanBeVariable || !supportsRandomAccess || context != null) {
+            if (!leakCheck || fullFatJoins || cached || expectedPlan != null || planFragments != null || sizeCanBeVariable || !supportsRandomAccess || context != null) {
                 throw new IllegalStateException("returnsRecords(...) supports only ddl()/timestamp()/mutateWith()/expectSize()");
             }
         }
 
         private void requireSingleShotCompatible() {
-            if (expectSize || expectedTimestamp != null || ddl2 != null || cached || fullFatJoins || expectedPlan != null || !supportsRandomAccess || sizeCanBeVariable) {
+            if (expectSize || expectedTimestamp != null || ddl2 != null || cached || fullFatJoins || expectedPlan != null || planFragments != null || !supportsRandomAccess || sizeCanBeVariable) {
                 throw new IllegalStateException("returnsOnce(...) supports only ddl()/noLeakCheck()/withContext()");
             }
         }
