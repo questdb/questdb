@@ -8354,7 +8354,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
-                assertSql(expectedResult, "SELECT value FROM " + tableName + " ORDER BY ts");
+                assertQuery("SELECT value FROM " + tableName + " ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedResult);
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }

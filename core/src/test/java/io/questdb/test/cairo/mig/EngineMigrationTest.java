@@ -647,11 +647,23 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 30\te\t1988-05-18T23:10:00.000000Z\t30
                 """;
 
-        assertSql(part1Expected, "t_col_top_year where y = null");
-        assertSql(part2Expected, "t_col_top_year where y != null");
+        assertQuery("t_col_top_year where y = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns(part1Expected);
+        assertQuery("t_col_top_year where y != null")
+                .noLeakCheck()
+                .expectSize()
+                .returns(part2Expected);
 
-        assertSql(part1Expected, "t_col_top_none where y = null");
-        assertSql(part2Expected, "t_col_top_none where y != null");
+        assertQuery("t_col_top_none where y = null")
+                .noLeakCheck()
+                .expectSize()
+                .returns(part1Expected);
+        assertQuery("t_col_top_none where y != null")
+                .noLeakCheck()
+                .expectSize()
+                .returns(part2Expected);
 
         assertQuery("t_col_top_день where день = null")
                 .noLeakCheck()

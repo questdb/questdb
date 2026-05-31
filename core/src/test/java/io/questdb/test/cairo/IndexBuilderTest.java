@@ -786,8 +786,14 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     null
                     100
                     """;
-            assertSql(expected, "SELECT /*+ no_covering */ qty FROM t_reindex_top WHERE sym = 'A' ORDER BY ts");
-            assertSql(expected, "SELECT qty FROM t_reindex_top WHERE sym = 'A' ORDER BY ts");
+            assertQuery("SELECT /*+ no_covering */ qty FROM t_reindex_top WHERE sym = 'A' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT qty FROM t_reindex_top WHERE sym = 'A' ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 

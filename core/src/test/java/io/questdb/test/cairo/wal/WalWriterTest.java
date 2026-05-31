@@ -1970,7 +1970,10 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(expected, "select a,b from " + tableName);
+            assertQuery("select a,b from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             // mix with new format
             final String tableName1 = "testExtractNewWalEvents";
@@ -1981,7 +1984,10 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken1));
-            assertSql(expected, "select a,b from " + tableName1);
+            assertQuery("select a,b from " + tableName1)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 

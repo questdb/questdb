@@ -128,7 +128,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT * FROM x WHERE x = 897")
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("ts")
                     .returns("""
                             ts\tx\ta
@@ -145,14 +144,14 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Check immediately after parquet conversion
             assertQuery("SELECT * FROM x WHERE x = 896")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:56.000000Z\t896\t[[null,null,null],[null,null,null],[null,null,null]]
                             """);
             assertQuery("SELECT * FROM x WHERE x = 897")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:57.000000Z\t897\t[[null,null,null],[null,null,null],[null,null,null]]
@@ -165,14 +164,14 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Check after native conversion
             assertQuery("SELECT * FROM x WHERE x = 896")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:56.000000Z\t896\t[[null,null,null],[null,null,null],[null,null,null]]
                             """);
             assertQuery("SELECT * FROM x WHERE x = 897")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:57.000000Z\t897\t[[null,null,null],[null,null,null],[null,null,null]]
@@ -223,14 +222,14 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Check the parquet file
             assertQuery("SELECT * FROM x WHERE x = 896")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:56.000000Z\t896\t[[null,null,null],[null,null,null],[null,null,null]]
                             """);
             assertQuery("SELECT * FROM x WHERE x = 897")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:57.000000Z\t897\t[[null,null,null],[null,null,null],[null,null,null]]
@@ -257,28 +256,28 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             assertQuery("SELECT * FROM x WHERE x = 896")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:56.000000Z\t896\t[[null,null,null],[null,null,null],[null,null,null]]
                             """);
             assertQuery("SELECT * FROM x WHERE x = 897")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:57.000000Z\t897\t[[null,null,null],[null,null,null],[null,null,null]]
                             """);
             assertQuery("SELECT * FROM x WHERE x = 0")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:00:00.000000Z\t0\tnull
                             """);
             assertQuery("SELECT * FROM x WHERE x = 20000")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:00:00.500000Z\t20000\t[[0.0]]
@@ -458,7 +457,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Verify row 897 has 3x3 matrix, not NULL
             assertQuery("SELECT * FROM x WHERE x = 896")
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("ts")
                     .returns("""
                             ts\tx\ta
@@ -466,21 +464,21 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT * FROM x WHERE x = 897")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:57.000000Z\t897\t[[null,null,null],[null,null,null],[null,null,null]]
                             """);
             assertQuery("SELECT * FROM x WHERE x = 0")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:00:00.000000Z\t0\tnull
                             """);
             assertQuery("SELECT * FROM x WHERE x = 1098")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:18:18.000000Z\t1098\t[[null,null,null],[null,null,null],[null,null,null]]
@@ -608,9 +606,10 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // With stale bloom_filter_offset on copied RG0', bloom filter read
             // fails silently → RG0' NOT skipped → counter = 2.
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQuery("SELECT x FROM x WHERE x = 50")
-                    .noLeakCheck()
-                    .returns("x\n");
+            // Keep assertSql: it runs a single query execution, so the row-group
+            // skip counter reflects exactly one scan. The assertQuery builder
+            // re-reads the cursor, which would inflate the counter.
+            assertSql("x\n", "SELECT x FROM x WHERE x = 50");
             Assert.assertEquals(
                     "bloom filter should skip all 3 row groups (2 by bloom, 1 by min/max)",
                     3,
@@ -803,19 +802,31 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     2020-01-01T03:00:00.000000Z\t4\tnull\t\t
                     """;
 
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // native → parquet → native round-trip
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
             assertPmAllNullChunkUsesZeroPointers();
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // Second round-trip to verify the normalized representation remains stable.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
@@ -825,7 +836,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -878,18 +893,30 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     2020-01-01T06:00:00.000000Z\t7\t[[null]]
                     """;
 
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // native → parquet → native round-trip
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -935,18 +962,27 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     2020-01-01T03:00:00.000000Z\t4\tnull\t\t
                     """;
 
-            assertSql(expected01, "SELECT * FROM x WHERE ts < '2020-01-02'");
+            assertQuery("SELECT * FROM x WHERE ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected01);
 
             // native → parquet → native round-trip for 2020-01-01
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expected01, "SELECT * FROM x WHERE ts < '2020-01-02'");
+            assertQuery("SELECT * FROM x WHERE ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected01);
 
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expected01, "SELECT * FROM x WHERE ts < '2020-01-02'");
+            assertQuery("SELECT * FROM x WHERE ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected01);
 
             // Second round-trip to verify the normalized representation remains stable.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
@@ -956,7 +992,10 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expected01, "SELECT * FROM x WHERE ts < '2020-01-02'");
+            assertQuery("SELECT * FROM x WHERE ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected01);
         });
     }
 
@@ -1428,7 +1467,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Old rows have no symbol data -> NULL (empty).
             assertQuery("SELECT * FROM x WHERE x >= 5 AND x <= 8 ORDER BY ts")
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("ts")
                     .returns("""
                             x\tts\ts
@@ -1568,17 +1606,26 @@ public class ParquetWriteTest extends AbstractCairoTest {
                         .append(":00.000000Z\t").append(i)
                         .append("\t[[null,null,null],[null,null,null],[null,null,null]]\n");
             }
-            assertSql(expectedSb.toString(), "SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts");
+            assertQuery("SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedSb.toString());
 
             // Step 4: Convert to parquet (column_top=100 for arr)
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expectedSb.toString(), "SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts");
+            assertQuery("SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedSb.toString());
 
             // Step 5: Convert back to native
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expectedSb.toString(), "SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts");
+            assertQuery("SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedSb.toString());
 
             // Step 6: Insert more rows with array data
             sb = new StringBuilder();
@@ -1600,12 +1647,18 @@ public class ParquetWriteTest extends AbstractCairoTest {
                         .append(":00.000000Z\t").append(i)
                         .append("\t[[null,null,null],[null,null,null],[null,null,null]]\n");
             }
-            assertSql(expectedSb.toString(), "SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts");
+            assertQuery("SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedSb.toString());
 
             // Step 7: Convert to parquet (column_top = 0 now)
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expectedSb.toString(), "SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts");
+            assertQuery("SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedSb.toString());
 
             // Step 8: O3 insert into the parquet partition
             // Insert rows with timestamps that fall BEFORE the existing max,
@@ -1633,7 +1686,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT * FROM x WHERE x = 149")
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("ts")
                     .returns("""
                             ts\tx\ta
@@ -1641,21 +1693,21 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT * FROM x WHERE x = 150")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T02:30:00.000000Z\t150\t[[null,null,null],[null,null,null],[null,null,null]]
                             """);
             assertQuery("SELECT * FROM x WHERE x = 1002")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T02:15:30.000000Z\t1002\t[[null,null,null],[null,null,null],[null,null,null]]
                             """);
             assertQuery("SELECT * FROM x WHERE x = 1000")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:00:30.000000Z\t1000\t[[42.0,43.0]]
@@ -1792,7 +1844,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT * FROM x WHERE x = 899")
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("ts")
                     .returns("""
                             ts\tx\ta
@@ -1800,7 +1851,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT * FROM x WHERE x = 900")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:30:00.000000Z\t900\t[[null,null,null],[null,null,null],[null,null,null]]
@@ -1808,7 +1859,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Rows before column_top should be null
             assertQuery("SELECT * FROM x WHERE x = 0")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:00:00.000000Z\t0\tnull
@@ -1816,7 +1867,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // O3 rows should have their values
             assertQuery("SELECT * FROM x WHERE x = 10000")
                     .noLeakCheck()
-                    .expectSize()
+                    .timestamp("ts")
                     .returns("""
                             ts\tx\ta
                             2020-01-01T00:00:01.000000Z\t10000\t[[0.0]]
@@ -1873,12 +1924,20 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     2020-01-01T06:00:00.000000Z\t7\t[[null]]
                     """;
 
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // Convert to parquet
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // O3 insert into the parquet partition → triggers Rust O3 updater
             execute(
@@ -1902,7 +1961,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     """;
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expectedAfterO3, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expectedAfterO3);
         });
     }
 
@@ -2291,18 +2354,30 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     2020-01-01T07:00:00.000000Z\t8\t[[3.0,4.0]]
                     """;
 
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // Convert to parquet (encodes with column_top=4)
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // Convert back to native — decoder materializes ALL rows.
             // Without the fix, column_top stays at 4 in ColumnVersionWriter.
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // Convert to parquet again — with the stale column_top, the
             // encoder would read from offset 0 in the native file but skip 4
@@ -2311,7 +2386,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -2366,14 +2445,22 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     """;
 
             // Verify data before conversion
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // Convert to parquet
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
             // Verify data in parquet format
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // Convert back to native
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
@@ -2382,7 +2469,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
             // Verify data after converting back to native
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 

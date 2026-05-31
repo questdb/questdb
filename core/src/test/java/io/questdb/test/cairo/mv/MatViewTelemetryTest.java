@@ -81,15 +81,17 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                     );
                 }
 
-                assertSql(replaceExpectedTimestamp(
+                assertQuery("price_1h order by ts, sym")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns(replaceExpectedTimestamp(
                                 """
                                         sym\tprice\tts
                                         gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
                                         jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
                                         gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
-                                        """),
-                        "price_1h order by ts, sym"
-                );
+                                        """));
 
                 currentMicros = parseFloorPartialTimestamp("2024-10-24T17:00:33.000000Z");
                 execute("drop materialized view price_1h");
@@ -126,16 +128,17 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                                     ",('gbpusd', 1.321, '2024-09-10T13:02')"
                     );
 
-                    assertSql(
-                            replaceExpectedTimestamp(
+                    assertQuery("price_1h order by ts, sym")
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns(replaceExpectedTimestamp(
                                     """
                                             sym\tprice\tts
                                             gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
                                             jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
                                             gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
-                                            """),
-                            "price_1h order by ts, sym"
-                    );
+                                            """));
 
                     execute("2024-10-24T17:00:41.000000Z", refreshJob, telemetryJob,
                             "truncate table base_price"
@@ -174,15 +177,16 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                                     ",('gbpusd', 1.321, '2024-09-10T13:02')"
                     );
 
-                    assertSql(
-                            replaceExpectedTimestamp("""
+                    assertQuery("price_1h order by ts, sym")
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns(replaceExpectedTimestamp("""
                                     sym\tprice\tts
                                     gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
                                     jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
                                     gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
-                                    """),
-                            "price_1h order by ts, sym"
-                    );
+                                    """));
 
                     execute("2024-10-24T17:00:33.000000Z", refreshJob, telemetryJob,
                             "rename table base_price to base_price2",

@@ -103,22 +103,38 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
             execute("alter table " + tableName + " alter column sym drop index");
 
             drainWalQueue();
-            assertSql(expected, tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("alter table " + tableName + " alter column sym drop index");
 
             drainWalQueue();
-            assertSql(expected, tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("alter table " + tableName + " alter column sym2 drop index");
 
             drainWalQueue();
-            assertSql(expected, tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("alter table " + tableName + " alter column sym add index capacity 8");
 
             drainWalQueue();
-            assertSql(expected, tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -455,7 +471,11 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
                 Assert.assertEquals(expectedTxn, reader.getTxn());
                 Assert.assertEquals(2, reader.getTxFile().getSeqTxn());
             }
-            assertSql(expected, tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 }
