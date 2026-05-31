@@ -74,7 +74,8 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String json = "'{\"path\": 0.0000000000000000000000000001}'";
             execute("create table json_test as (select " + json + "::varchar text, '.path' path)");
-            assertException("select json_extract(text, path, 6) from json_test", 26, "constant or bind variable expected");
+            assertQuery("select json_extract(text, path, 6) from json_test")
+                    .fails(26, "constant or bind variable expected");
         });
     }
 
@@ -88,12 +89,14 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into json_test values ('{\"path2\": \"4\"}')");
             execute("insert into json_test values ('{\"path\": \"1on1\"}')");
             assertSqlWithTypes(
-                    "x\n" +
-                            "1970-01-01T00:00:00.000003Z:TIMESTAMP\n" +
-                            ":TIMESTAMP\n" +
-                            ":TIMESTAMP\n" +
-                            ":TIMESTAMP\n" +
-                            ":TIMESTAMP\n",
+                    """
+                            x
+                            1970-01-01T00:00:00.000003Z:TIMESTAMP
+                            :TIMESTAMP
+                            :TIMESTAMP
+                            :TIMESTAMP
+                            :TIMESTAMP
+                            """,
                     "select json_extract(text, '.path[2]')::timestamp x from json_test order by 1 desc"
             );
         });
@@ -104,8 +107,10 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select json_extract('{\"x\":1.0}', '.x')::timestamp")
                 .noLeakCheck()
                 .expectSize()
-                .returns("json_extract\n" +
-                        "1970-01-01T00:00:00.000001Z\n");
+                .returns("""
+                        json_extract
+                        1970-01-01T00:00:00.000001Z
+                        """);
     }
 
     @Test
@@ -118,12 +123,14 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into json_test values ('{\"path2\": \"4\"}')");
             execute("insert into json_test values ('{\"path\": \"1on1\"}')");
             assertSqlWithTypes(
-                    "x\n" +
-                            "1970-01-01T00:00:00.000003Z:TIMESTAMP\n" +
-                            ":TIMESTAMP\n" +
-                            ":TIMESTAMP\n" +
-                            ":TIMESTAMP\n" +
-                            ":TIMESTAMP\n",
+                    """
+                            x
+                            1970-01-01T00:00:00.000003Z:TIMESTAMP
+                            :TIMESTAMP
+                            :TIMESTAMP
+                            :TIMESTAMP
+                            :TIMESTAMP
+                            """,
                     "select json_extract(text, '.path[2]')::timestamp x from json_test order by 1 desc"
             );
         });

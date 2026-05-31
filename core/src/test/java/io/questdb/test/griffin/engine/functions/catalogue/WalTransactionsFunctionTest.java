@@ -67,28 +67,32 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     @Test
     public void testWalTransactionIdempotency() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE 'trades' ( \n" +
-                    "\tsymbol SYMBOL CAPACITY 256 CACHE,\n" +
-                    "\tside SYMBOL CAPACITY 256 CACHE,\n" +
-                    "\tprice DOUBLE,\n" +
-                    "\tamount DOUBLE,\n" +
-                    "\ttimestamp TIMESTAMP\n" +
-                    ") timestamp(timestamp) PARTITION BY DAY WAL\n");
+            execute("""
+                    CREATE TABLE 'trades' (\s
+                    \tsymbol SYMBOL CAPACITY 256 CACHE,
+                    \tside SYMBOL CAPACITY 256 CACHE,
+                    \tprice DOUBLE,
+                    \tamount DOUBLE,
+                    \ttimestamp TIMESTAMP
+                    ) timestamp(timestamp) PARTITION BY DAY WAL
+                    """);
 
-            assertQueryNoLeakCheck(
-                    "column\n" +
-                            "null\n",
-                    "with segments as (\n" +
-                            "\tselect walid, segmentId from wal_transactions('trades')\n" +
-                            "\twhere sequencerTxn = 10\n" +
-                            ")\n" +
-                            "select max(wt.sequencerTxn) + 1 from wal_transactions('trades') wt\n" +
-                            "join segments s on s.segmentId = wt.segmentId and s.walId = wt.walId\n" +
-                            "where sequencerTxn > 10;\n",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    with segments as (
+                    \tselect walid, segmentId from wal_transactions('trades')
+                    \twhere sequencerTxn = 10
+                    )
+                    select max(wt.sequencerTxn) + 1 from wal_transactions('trades') wt
+                    join segments s on s.segmentId = wt.segmentId and s.walId = wt.walId
+                    where sequencerTxn > 10;
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            column
+                            null
+                            """);
         });
     }
 
@@ -106,10 +110,12 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
             assertQuery("select * from wal_transactions('x')")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType\n" +
-                            "1\t2023-11-22T19:00:53.950468Z\t1\t0\t0\t0\t\t\tnull\t0\n" +
-                            "2\t2023-11-22T19:00:53.950468Z\t1\t0\t1\t0\t\t\tnull\t0\n" +
-                            "3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t0\n");
+                    .returns("""
+                            sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType
+                            1\t2023-11-22T19:00:53.950468Z\t1\t0\t0\t0\t\t\tnull\t0
+                            2\t2023-11-22T19:00:53.950468Z\t1\t0\t1\t0\t\t\tnull\t0
+                            3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t0
+                            """);
         });
     }
 
@@ -128,8 +134,10 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType\n" +
-                            "3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t0\n");
+                    .returns("""
+                            sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType
+                            3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t0
+                            """);
         });
     }
 
@@ -149,11 +157,13 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
             assertQuery("select * from wal_transactions('x')")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType\n" +
-                            "1\t2023-11-22T19:00:53.950468Z\t1\t0\t0\t0\t2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\t1\t0\n" +
-                            "2\t2023-11-22T19:00:53.950468Z\t1\t0\t1\t0\t2020-02-01T00:00:00.000000Z\t2020-02-01T00:00:00.000000Z\t1\t0\n" +
-                            "3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t1\n" +
-                            "4\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t2\t\t\tnull\t8\n");
+                    .returns("""
+                            sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType
+                            1\t2023-11-22T19:00:53.950468Z\t1\t0\t0\t0\t2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\t1\t0
+                            2\t2023-11-22T19:00:53.950468Z\t1\t0\t1\t0\t2020-02-01T00:00:00.000000Z\t2020-02-01T00:00:00.000000Z\t1\t0
+                            3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t1
+                            4\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t2\t\t\tnull\t8
+                            """);
         });
     }
 

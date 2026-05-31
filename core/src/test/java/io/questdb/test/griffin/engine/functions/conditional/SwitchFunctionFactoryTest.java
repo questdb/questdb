@@ -31,8 +31,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBindVar() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             a,
                             case a
@@ -40,27 +39,21 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when '2' then $2
                                 else $3
                             end k
-                        from test""",
-                "create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))",
-                48,
-                "CASE values cannot be bind variables"
-        );
+                        from test""")
+                .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))")
+                .fails(48, "CASE values cannot be bind variables");
     }
 
     @Test
     public void testBindVarAsKey() throws Exception {
-        assertException(
-                "SELECT CASE $1 WHEN 'a' THEN b ELSE c END FROM test",
-                "CREATE TABLE test AS (SELECT rnd_str('a', 'b') b, rnd_str('c', 'd') c FROM long_sequence(5))",
-                12,
-                "bind variable is not supported here, please use column instead"
-        );
+        assertQuery("SELECT CASE $1 WHEN 'a' THEN b ELSE c END FROM test")
+                .ddl("CREATE TABLE test AS (SELECT rnd_str('a', 'b') b, rnd_str('c', 'd') c FROM long_sequence(5))")
+                .fails(12, "bind variable is not supported here, please use column instead");
     }
 
     @Test
     public void testBooleanDuplicateFalse() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             a,
@@ -70,23 +63,20 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when false then 'HELLO'
                                 when false then 'HELLO2'
                             end k
-                        from tanc""",
-                "create table tanc as (" +
+                        from tanc""")
+                .ddl("create table tanc as (" +
                         "select rnd_boolean() x," +
                         " rnd_str() a," +
                         " rnd_str() b," +
                         " rnd_str() c" +
                         " from long_sequence(20)" +
-                        ")",
-                92,
-                "duplicate branch"
-        );
+                        ")")
+                .fails(92, "duplicate branch");
     }
 
     @Test
     public void testBooleanDuplicateTrue() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             a,
@@ -96,23 +86,20 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when true then 'HELLO'
                                 when true then 'HELLO2'
                             end k
-                        from tanc""",
-                "create table tanc as (" +
+                        from tanc""")
+                .ddl("create table tanc as (" +
                         "select rnd_boolean() x," +
                         " rnd_str() a," +
                         " rnd_str() b," +
                         " rnd_str() c" +
                         " from long_sequence(20)" +
-                        ")",
-                91,
-                "duplicate branch"
-        );
+                        ")")
+                .fails(91, "duplicate branch");
     }
 
     @Test
     public void testBooleanDuplicateWayTooManyBranches() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             a,
@@ -123,17 +110,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when true then 'HELLO2'
                                 when false then 'HELLO3'
                             end k
-                        from tanc""",
-                "create table tanc as (" +
+                        from tanc""")
+                .ddl("create table tanc as (" +
                         "select rnd_boolean() x," +
                         " rnd_str() a," +
                         " rnd_str() b," +
                         " rnd_str() c" +
                         " from long_sequence(20)" +
-                        ")",
-                124,
-                "too many branches"
-        );
+                        ")")
+                .fails(124, "too many branches");
     }
 
     @Test
@@ -369,12 +354,9 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBranchTypeMismatch() throws Exception {
-        assertException(
-                "SELECT CASE u WHEN 123 THEN 'a' ELSE 'b' END FROM test",
-                "CREATE TABLE test AS (SELECT rnd_uuid4() u FROM long_sequence(5))",
-                19,
-                "type mismatch [expected=UUID, actual=INT]"
-        );
+        assertQuery("SELECT CASE u WHEN 123 THEN 'a' ELSE 'b' END FROM test")
+                .ddl("CREATE TABLE test AS (SELECT rnd_uuid4() u FROM long_sequence(5))")
+                .fails(19, "type mismatch [expected=UUID, actual=INT]");
     }
 
     @Test
@@ -490,8 +472,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         ")"
         );
 
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             a,
@@ -502,10 +483,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when 701 then c
                                 when -714 then 350
                             end k
-                        from tanc""",
-                94,
-                "inconvertible types: LONG256 -> INT [from=LONG256, to=INT]"
-        );
+                        from tanc""")
+                .fails(94, "inconvertible types: LONG256 -> INT [from=LONG256, to=INT]");
     }
 
     @Test
@@ -521,8 +500,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                             " from long_sequence(20)" +
                             ")"
             );
-            assertExceptionNoLeakCheck(
-                    """
+            assertQuery("""
                             select\s
                                 x,
                                 a,
@@ -534,10 +512,9 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                     when -405 then 350
                                     when 968 then d
                                 end k
-                            from tanc""",
-                    128,
-                    "inconvertible types: UUID -> INT [from=UUID, to=INT]"
-            );
+                            from tanc""")
+                    .noLeakCheck()
+                    .fails(128, "inconvertible types: UUID -> INT [from=UUID, to=INT]");
         });
     }
 
@@ -781,8 +758,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleDuplicateBranch() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             a,
@@ -794,17 +770,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when -714.0d then 350
                                 when 701.0d then c
                             end k
-                        from tanc""",
-                "create table tanc as (" +
+                        from tanc""")
+                .ddl("create table tanc as (" +
                         "select round(rnd_double() * 2000 - 1000) x," +
                         " rnd_int() a," +
                         " rnd_int() b," +
                         " rnd_int() c" +
                         " from long_sequence(20)" +
-                        ")",
-                145,
-                "duplicate branch"
-        );
+                        ")")
+                .fails(145, "duplicate branch");
     }
 
     @Test
@@ -872,8 +846,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDuplicateBranchStringToLongCast() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             a,
@@ -885,17 +858,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when -714 then 350
                                 when '701' then c
                             end k
-                        from tanc""",
-                "create table tanc as (" +
+                        from tanc""")
+                .ddl("create table tanc as (" +
                         "select rnd_long() % 1000 x," +
                         " rnd_int() a," +
                         " rnd_int() b," +
                         " rnd_int() c" +
                         " from long_sequence(20)" +
-                        ")",
-                136,
-                "duplicate branch"
-        );
+                        ")")
+                .fails(136, "duplicate branch");
     }
 
     @Test
@@ -960,18 +931,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFloatDuplicateBranch() throws Exception {
-        assertException(
-                "SELECT CASE x WHEN 1.0 THEN a WHEN 2.0 THEN b WHEN 1.0 THEN c END k FROM tanc",
-                "CREATE TABLE tanc AS (" +
+        assertQuery("SELECT CASE x WHEN 1.0 THEN a WHEN 2.0 THEN b WHEN 1.0 THEN c END k FROM tanc")
+                .ddl("CREATE TABLE tanc AS (" +
                         "SELECT rnd_float() x," +
                         " rnd_int() a," +
                         " rnd_int() b," +
                         " rnd_int() c" +
                         " FROM long_sequence(5)" +
-                        ")",
-                51,
-                "duplicate branch"
-        );
+                        ")")
+                .fails(51, "duplicate branch");
     }
 
     @Test
@@ -1084,8 +1052,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testIntDuplicateBranch() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             a,
@@ -1097,17 +1064,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when -714 then 350
                                 when 701 then c
                             end k
-                        from tanc""",
-                "create table tanc as (" +
+                        from tanc""")
+                .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_int() a," +
                         " rnd_int() b," +
                         " rnd_int() c" +
                         " from long_sequence(20)" +
-                        ")",
-                136,
-                "duplicate branch"
-        );
+                        ")")
+                .fails(136, "duplicate branch");
     }
 
     @Test
@@ -1334,8 +1299,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLong256OrElse() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             a,
@@ -1347,23 +1311,20 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when cast('0x00' as long256) then 350
                                 else b
                             end k
-                        from tanc""",
-                "create table tanc as (" +
+                        from tanc""")
+                .ddl("create table tanc as (" +
                         "select rnd_long256() x," +
                         " rnd_int() a," +
                         " rnd_int() b," +
                         " rnd_int() c" +
                         " from long_sequence(20)" +
-                        ")",
-                45,
-                "type LONG256 is not supported in 'switch' type of 'case' statement"
-        );
+                        ")")
+                .fails(45, "type LONG256 is not supported in 'switch' type of 'case' statement");
     }
 
     @Test
     public void testLongDuplicateBranch() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             a,
@@ -1375,17 +1336,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when -714 then 350
                                 when 701 then c
                             end k
-                        from tanc""",
-                "create table tanc as (" +
+                        from tanc""")
+                .ddl("create table tanc as (" +
                         "select rnd_long() % 1000 x," +
                         " rnd_int() a," +
                         " rnd_int() b," +
                         " rnd_int() c" +
                         " from long_sequence(20)" +
-                        ")",
-                136,
-                "duplicate branch"
-        );
+                        ")")
+                .fails(136, "duplicate branch");
     }
 
     @Test
@@ -1438,8 +1397,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLongVariableKeyError() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             a,
@@ -1450,17 +1408,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when 701 then c
                                 when c then 350
                             end k
-                        from tanc""",
-                "create table tanc as (" +
+                        from tanc""")
+                .ddl("create table tanc as (" +
                         "select rnd_long() % 1000 x," +
                         " rnd_int() a," +
                         " rnd_int() b," +
                         " rnd_int() c" +
                         " from long_sequence(20)" +
-                        ")",
-                109,
-                "constant expected"
-        );
+                        ")")
+                .fails(109, "constant expected");
     }
 
     @Test
@@ -1753,8 +1709,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testStrToStrOrElseDuplicateBranch() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             a,
@@ -1766,17 +1721,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when 'NTO' then 'WORKS!'
                                 else b
                             end k
-                        from tanc""",
-                "create table tanc as (" +
+                        from tanc""")
+                .ddl("create table tanc as (" +
                         "select rnd_str() x," +
                         " rnd_str() a," +
                         " rnd_str() b," +
                         " rnd_str() c" +
                         " from long_sequence(20)" +
-                        ")",
-                118,
-                "duplicate branch"
-        );
+                        ")")
+                .fails(118, "duplicate branch");
     }
 
     @Test
@@ -1976,18 +1929,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolDuplicateBranch() throws Exception {
-        assertException(
-                "SELECT CASE x WHEN 'a1' THEN a WHEN 'b2' THEN b WHEN 'a1' THEN c END k FROM tanc",
-                "CREATE TABLE tanc AS (" +
+        assertQuery("SELECT CASE x WHEN 'a1' THEN a WHEN 'b2' THEN b WHEN 'a1' THEN c END k FROM tanc")
+                .ddl("CREATE TABLE tanc AS (" +
                         "SELECT rnd_symbol('a1', 'b2', 'c3') x," +
                         " rnd_int() a," +
                         " rnd_int() b," +
                         " rnd_int() c" +
                         " FROM long_sequence(5)" +
-                        ")",
-                53,
-                "duplicate branch"
-        );
+                        ")")
+                .fails(53, "duplicate branch");
     }
 
     @Test
@@ -2265,18 +2215,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampDuplicateBranch() throws Exception {
-        assertException(
-                "SELECT CASE ts WHEN '2020-01-01' THEN a WHEN '2020-01-02' THEN b WHEN '2020-01-01' THEN c END k FROM tanc",
-                "CREATE TABLE tanc AS (" +
+        assertQuery("SELECT CASE ts WHEN '2020-01-01' THEN a WHEN '2020-01-02' THEN b WHEN '2020-01-01' THEN c END k FROM tanc")
+                .ddl("CREATE TABLE tanc AS (" +
                         "SELECT timestamp_sequence('2020-01-01', 100000000) ts," +
                         " rnd_int() a," +
                         " rnd_int() b," +
                         " rnd_int() c" +
                         " FROM long_sequence(5)" +
-                        ")",
-                70,
-                "duplicate branch"
-        );
+                        ")")
+                .fails(70, "duplicate branch");
     }
 
     @Test

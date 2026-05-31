@@ -247,10 +247,12 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             String query = "select sym, t from x where sym = $1";
 
             bindVariableService.setTimestampNano(0, NanosTimestampDriver.INSTANCE.parseFloorLiteral("1970-01-01T00:00:28.258937621Z"));
-            assertQuery("""
+            assertQuery(query)
+                    .timestamp("")
+                    .returns("""
                     sym\tt
                     28258937621\t1970-01-01T00:00:28.258937621Z
-                    """, query, "", true, false);
+                    """);
 
         });
     }
@@ -265,10 +267,12 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             String query = "select sym, t from x where sym = $1";
 
             bindVariableService.setTimestamp(0, MicrosTimestampDriver.INSTANCE.parseFloorLiteral("1970-01-01T00:00:37.847040Z"));
-            assertQuery("""
+            assertQuery(query)
+                    .timestamp("")
+                    .returns("""
                     sym\tt
                     37847040\t1970-01-01T00:00:37.847040Z
-                    """, query, "", true, false);
+                    """);
 
         });
     }

@@ -209,7 +209,9 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
                     String query = "select path, diskSize, diskSizeHuman from files('" + inputRoot + "') where glob(path, 'data/*') order by path limit 3"
                             .replace("/", File.separator);
 
-                    assertSql(expected, query);
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .returns(expected);
                 }
         );
     }

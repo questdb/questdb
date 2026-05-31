@@ -289,7 +289,7 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // 5km radius around Times Square
                         String sql = "select count(*) from points where geo_within_radius_latlon(lat, lon, 40.758, -73.9855, 5000.0)";
 
@@ -335,7 +335,7 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select count(*) from points where geo_within_radius_latlon(lat, lon, 40.758, -73.9855, 5000.0)";
 
                         TestUtils.assertSqlCursors(
@@ -457,81 +457,57 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
     @Test
     public void testInvalidCenterLatAbove90() throws Exception {
         // Constant center lat > 90 should throw compile-time exception
-        assertException(
-                "select geo_within_radius_latlon(40.0, -73.0, 91.0, -73.0, 1000.0)",
-                45,
-                "latitude must be between -90 and 90"
-        );
+        assertQuery("select geo_within_radius_latlon(40.0, -73.0, 91.0, -73.0, 1000.0)")
+                .fails(45, "latitude must be between -90 and 90");
     }
 
     @Test
     public void testInvalidCenterLatBelow90() throws Exception {
         // Constant center lat < -90 should throw compile-time exception
-        assertException(
-                "select geo_within_radius_latlon(40.0, -73.0, -91.0, -73.0, 1000.0)",
-                45,
-                "latitude must be between -90 and 90"
-        );
+        assertQuery("select geo_within_radius_latlon(40.0, -73.0, -91.0, -73.0, 1000.0)")
+                .fails(45, "latitude must be between -90 and 90");
     }
 
     @Test
     public void testInvalidCenterLonAbove180() throws Exception {
         // Constant center lon > 180 should throw compile-time exception
-        assertException(
-                "select geo_within_radius_latlon(40.0, -73.0, 40.0, 181.0, 1000.0)",
-                51,
-                "longitude must be between -180 and 180"
-        );
+        assertQuery("select geo_within_radius_latlon(40.0, -73.0, 40.0, 181.0, 1000.0)")
+                .fails(51, "longitude must be between -180 and 180");
     }
 
     @Test
     public void testInvalidCenterLonBelow180() throws Exception {
         // Constant center lon < -180 should throw compile-time exception
-        assertException(
-                "select geo_within_radius_latlon(40.0, -73.0, 40.0, -181.0, 1000.0)",
-                51,
-                "longitude must be between -180 and 180"
-        );
+        assertQuery("select geo_within_radius_latlon(40.0, -73.0, 40.0, -181.0, 1000.0)")
+                .fails(51, "longitude must be between -180 and 180");
     }
 
     @Test
     public void testInvalidPointLatAbove90() throws Exception {
         // Point lat > 90 should throw runtime exception
-        assertException(
-                "select geo_within_radius_latlon(91.0, -73.0, 40.0, -73.0, 1000.0)",
-                32,
-                "latitude must be between -90 and 90"
-        );
+        assertQuery("select geo_within_radius_latlon(91.0, -73.0, 40.0, -73.0, 1000.0)")
+                .fails(32, "latitude must be between -90 and 90");
     }
 
     @Test
     public void testInvalidPointLatBelow90() throws Exception {
         // Point lat < -90 should throw runtime exception
-        assertException(
-                "select geo_within_radius_latlon(-91.0, -73.0, 40.0, -73.0, 1000.0)",
-                32,
-                "latitude must be between -90 and 90"
-        );
+        assertQuery("select geo_within_radius_latlon(-91.0, -73.0, 40.0, -73.0, 1000.0)")
+                .fails(32, "latitude must be between -90 and 90");
     }
 
     @Test
     public void testInvalidPointLonAbove180() throws Exception {
         // Point lon > 180 should throw runtime exception
-        assertException(
-                "select geo_within_radius_latlon(40.0, 181.0, 40.0, -73.0, 1000.0)",
-                38,
-                "longitude must be between -180 and 180"
-        );
+        assertQuery("select geo_within_radius_latlon(40.0, 181.0, 40.0, -73.0, 1000.0)")
+                .fails(38, "longitude must be between -180 and 180");
     }
 
     @Test
     public void testInvalidPointLonBelow180() throws Exception {
         // Point lon < -180 should throw runtime exception
-        assertException(
-                "select geo_within_radius_latlon(40.0, -181.0, 40.0, -73.0, 1000.0)",
-                38,
-                "longitude must be between -180 and 180"
-        );
+        assertQuery("select geo_within_radius_latlon(40.0, -181.0, 40.0, -73.0, 1000.0)")
+                .fails(38, "longitude must be between -180 and 180");
     }
 
     @Test
@@ -540,11 +516,8 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
             execute("create table points (lat double, lon double)");
             execute("insert into points values (91.0, -73.0)");  // invalid lat > 90
 
-            assertException(
-                    "select lat, lon, geo_within_radius_latlon(lat, lon, 40.0, -73.0, 1000.0) as inside from points",
-                    42,
-                    "latitude must be between -90 and 90"
-            );
+            assertQuery("select lat, lon, geo_within_radius_latlon(lat, lon, 40.0, -73.0, 1000.0) as inside from points")
+                    .fails(42, "latitude must be between -90 and 90");
         });
     }
 
@@ -554,11 +527,8 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
             execute("create table points (lat double, lon double)");
             execute("insert into points values (40.0, 181.0)");  // invalid lon > 180
 
-            assertException(
-                    "select lat, lon, geo_within_radius_latlon(lat, lon, 40.0, -73.0, 1000.0) as inside from points",
-                    47,
-                    "longitude must be between -180 and 180"
-            );
+            assertQuery("select lat, lon, geo_within_radius_latlon(lat, lon, 40.0, -73.0, 1000.0) as inside from points")
+                    .fails(47, "longitude must be between -180 and 180");
         });
     }
 
@@ -568,11 +538,8 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
             execute("create table points (lat double, lon double, clat double)");
             execute("insert into points values (40.0, -73.0, 91.0)");  // invalid center > 90
 
-            assertException(
-                    "select lat, lon, clat, geo_within_radius_latlon(lat, lon, clat, -73.0, 1000.0) as inside from points",
-                    58,
-                    "latitude must be between -90 and 90"
-            );
+            assertQuery("select lat, lon, clat, geo_within_radius_latlon(lat, lon, clat, -73.0, 1000.0) as inside from points")
+                    .fails(58, "latitude must be between -90 and 90");
         });
     }
 
@@ -582,11 +549,8 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
             execute("create table points (lat double, lon double, clon double)");
             execute("insert into points values (40.0, -73.0, 181.0)");  // invalid center lon > 180
 
-            assertException(
-                    "select lat, lon, clon, geo_within_radius_latlon(lat, lon, 40.0, clon, 1000.0) as inside from points",
-                    64,
-                    "longitude must be between -180 and 180"
-            );
+            assertQuery("select lat, lon, clon, geo_within_radius_latlon(lat, lon, 40.0, clon, 1000.0) as inside from points")
+                    .fails(64, "longitude must be between -180 and 180");
         });
     }
 

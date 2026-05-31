@@ -209,25 +209,20 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCoalesceDecimalInvalidType() throws Exception {
-        assertException("select coalesce(1.2m, 'abc') c", 22, "inconvertible types");
+        assertQuery("select coalesce(1.2m, 'abc') c")
+                .fails(22, "inconvertible types");
     }
 
     @Test
     public void testCoalesceIPv4InvalidStringLiteral() throws Exception {
-        assertException(
-                "select coalesce('192.168.1.1'::ipv4, 'foobar')",
-                37,
-                "invalid IPv4 constant"
-        );
+        assertQuery("select coalesce('192.168.1.1'::ipv4, 'foobar')")
+                .fails(37, "invalid IPv4 constant");
     }
 
     @Test
     public void testCoalesceIPv4InvalidVarcharLiteral() throws Exception {
-        assertException(
-                "select coalesce('192.168.1.1'::ipv4, 'foobar'::varchar)",
-                45,
-                "invalid IPv4 constant"
-        );
+        assertQuery("select coalesce('192.168.1.1'::ipv4, 'foobar'::varchar)")
+                .fails(45, "invalid IPv4 constant");
     }
 
     @Test
@@ -312,20 +307,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCoalesceUuidInvalidStringLiteral() throws Exception {
-        assertException(
-                "select coalesce('00000000-0000-0000-0000-000000000000'::uuid, 'foobar')",
-                62,
-                "invalid UUID constant"
-        );
+        assertQuery("select coalesce('00000000-0000-0000-0000-000000000000'::uuid, 'foobar')")
+                .fails(62, "invalid UUID constant");
     }
 
     @Test
     public void testCoalesceUuidInvalidVarcharLiteral() throws Exception {
-        assertException(
-                "select coalesce('00000000-0000-0000-0000-000000000000'::uuid, 'foobar'::varchar)",
-                70,
-                "invalid UUID constant"
-        );
+        assertQuery("select coalesce('00000000-0000-0000-0000-000000000000'::uuid, 'foobar'::varchar)")
+                .fails(70, "invalid UUID constant");
     }
 
     @Test
@@ -489,11 +478,9 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertExceptionNoLeakCheck(
-                    "select coalesce(b) from alex",
-                    7,
-                    "coalesce can be used with 2 or more arguments"
-            );
+            assertQuery("select coalesce(b) from alex")
+                    .noLeakCheck()
+                    .fails(7, "coalesce can be used with 2 or more arguments");
         });
     }
 
@@ -626,11 +613,8 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNoArgs() throws Exception {
-        assertException(
-                "select coalesce();",
-                7,
-                "coalesce can be used with 2 or more arguments"
-        );
+        assertQuery("select coalesce();")
+                .fails(7, "coalesce can be used with 2 or more arguments");
     }
 
     @Test
@@ -1044,11 +1028,8 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testUnsupportedBindVariables() throws Exception {
         execute("create table test as (select x, rnd_str(2,10,1) a from long_sequence(10))");
-        assertException(
-                "select coalesce(a, $1, $2) from test",
-                19,
-                "coalesce cannot be used with bind variables"
-        );
+        assertQuery("select coalesce(a, $1, $2) from test")
+                .fails(19, "coalesce cannot be used with bind variables");
     }
 
     @Test

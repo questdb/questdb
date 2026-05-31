@@ -45,12 +45,9 @@ public class GeoHashQueryTest extends AbstractCairoTest {
         for (int b = 60; b > 2; b--) {
             for (int i = 1; i < b; i++) {
                 if (allowed(rnd)) {
-                    assertException(
-                            String.format("insert into gh%s%s select rnd_geohash(%s) from long_sequence(5)", b, i, i),
-                            String.format("create table gh%s%s as (select rnd_geohash(%s) from long_sequence(5))", b, i, b),
-                            20 + String.format("gh%s%s", b, i).length(),
-                            "inconvertible types"
-                    );
+                    assertQuery(String.format("insert into gh%s%s select rnd_geohash(%s) from long_sequence(5)", b, i, i))
+                            .ddl(String.format("create table gh%s%s as (select rnd_geohash(%s) from long_sequence(5))", b, i, b))
+                            .fails(20 + String.format("gh%s%s", b, i).length(), "inconvertible types");
                 }
             }
         }
@@ -63,17 +60,13 @@ public class GeoHashQueryTest extends AbstractCairoTest {
         for (int b = 1; b <= 60; b++) {
             for (int i = b; i <= 60; i++) {
                 if (allowed(rnd)) {
-                    assertQuery(
-                            String.format("count\n%s\n", 5),
-                            String.format("select count() from gh%s%s", b, i),
-                            String.format("create table gh%s%s as (select rnd_geohash(%s) from long_sequence(5))", b, i, b),
-                            null,
-                            String.format("insert into gh%s%s select rnd_geohash(%s) from long_sequence(5)", b, i, i),
-                            String.format("count\n%s\n", 10),
-                            false,
-                            true,
-                            true
-                    );
+                    assertQuery(String.format("select count() from gh%s%s", b, i))
+                            .ddl(String.format("create table gh%s%s as (select rnd_geohash(%s) from long_sequence(5))", b, i, b))
+                            .mutateWith(String.format("insert into gh%s%s select rnd_geohash(%s) from long_sequence(5)", b, i, i))
+                            .noRandomAccess()
+                            .expectSize()
+                            .sizeMayVary()
+                            .returns(String.format("count\n%s\n", 5), String.format("count\n%s\n", 10));
                 }
             }
         }

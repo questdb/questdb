@@ -353,7 +353,8 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     public void testNonConstantExpression() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('a','b','c') name from long_sequence(10))");
-            assertException("select * from x where name like rnd_str('foo','bar')", 32, "use constant or bind variable");
+            assertQuery("select * from x where name like rnd_str('foo','bar')")
+                    .fails(32, "use constant or bind variable");
         });
     }
 

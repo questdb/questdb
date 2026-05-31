@@ -36,8 +36,10 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
             execute("create table B(col0 long, col1 string, col2 float)");
             execute("create table C(col0 double, col1 char, col2 byte)");
             drainWalQueue();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM information_schema.questdb_columns() ORDER BY table_name")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .returns("""
                             table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
                             qdb\tpublic\tA\tcol0\t0\t\tyes\tINT
                             qdb\tpublic\tA\tcol1\t1\t\tyes\tSYMBOL
@@ -48,12 +50,7 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
                             qdb\tpublic\tC\tcol0\t0\t\tyes\tDOUBLE
                             qdb\tpublic\tC\tcol1\t1\t\tyes\tCHAR
                             qdb\tpublic\tC\tcol2\t2\t\tyes\tBYTE
-                            """,
-                    "SELECT * FROM information_schema.questdb_columns() ORDER BY table_name",
-                    null,
-                    null,
-                    true
-            );
+                            """);
         });
     }
 

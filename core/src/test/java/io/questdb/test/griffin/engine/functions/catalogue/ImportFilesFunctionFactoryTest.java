@@ -79,11 +79,8 @@ public class ImportFilesFunctionFactoryTest extends AbstractCairoTest {
             String oldInputRoot = inputRoot;
             try {
                 inputRoot = null;
-                assertException(
-                        "select * from import_files()",
-                        14,
-                        "import_files() is disabled ['cairo.sql.copy.root' is not set?]"
-                );
+                assertQuery("select * from import_files()")
+                        .fails(14, "import_files() is disabled ['cairo.sql.copy.root' is not set?]");
             } finally {
                 inputRoot = oldInputRoot;
             }

@@ -65,10 +65,12 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testFilesColumnsExist() throws Exception {
-        assertMemoryLeak(() -> assertSql("""
+        assertMemoryLeak(() -> assertQuery("select path, diskSize, diskSizeHuman from files('" + testRoot + "') where path = 'test.txt'")
+                .noLeakCheck()
+                .returnsOnce("""
                         path\tdiskSize\tdiskSizeHuman
                         test.txt\t100\t100.0 B
-                        """, "select path, diskSize, diskSizeHuman from files('" + testRoot + "') where path = 'test.txt'"));
+                        """));
     }
 
     /**

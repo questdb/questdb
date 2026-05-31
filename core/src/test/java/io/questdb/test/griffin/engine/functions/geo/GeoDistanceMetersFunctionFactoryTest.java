@@ -127,74 +127,50 @@ public class GeoDistanceMetersFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidLat1Above90() throws Exception {
-        assertException(
-                "select geo_distance_meters(91.0, -73.0, 40.0, -73.0)",
-                27,
-                "latitude must be between -90 and 90"
-        );
+        assertQuery("select geo_distance_meters(91.0, -73.0, 40.0, -73.0)")
+                .fails(27, "latitude must be between -90 and 90");
     }
 
     @Test
     public void testInvalidLat1Below90() throws Exception {
-        assertException(
-                "select geo_distance_meters(-91.0, -73.0, 40.0, -73.0)",
-                27,
-                "latitude must be between -90 and 90"
-        );
+        assertQuery("select geo_distance_meters(-91.0, -73.0, 40.0, -73.0)")
+                .fails(27, "latitude must be between -90 and 90");
     }
 
     @Test
     public void testInvalidLon1Above180() throws Exception {
-        assertException(
-                "select geo_distance_meters(40.0, 181.0, 40.0, -73.0)",
-                33,
-                "longitude must be between -180 and 180"
-        );
+        assertQuery("select geo_distance_meters(40.0, 181.0, 40.0, -73.0)")
+                .fails(33, "longitude must be between -180 and 180");
     }
 
     @Test
     public void testInvalidLon1Below180() throws Exception {
-        assertException(
-                "select geo_distance_meters(40.0, -181.0, 40.0, -73.0)",
-                33,
-                "longitude must be between -180 and 180"
-        );
+        assertQuery("select geo_distance_meters(40.0, -181.0, 40.0, -73.0)")
+                .fails(33, "longitude must be between -180 and 180");
     }
 
     @Test
     public void testInvalidLat2Above90() throws Exception {
-        assertException(
-                "select geo_distance_meters(40.0, -73.0, 91.0, -73.0)",
-                40,
-                "latitude must be between -90 and 90"
-        );
+        assertQuery("select geo_distance_meters(40.0, -73.0, 91.0, -73.0)")
+                .fails(40, "latitude must be between -90 and 90");
     }
 
     @Test
     public void testInvalidLat2Below90() throws Exception {
-        assertException(
-                "select geo_distance_meters(40.0, -73.0, -91.0, -73.0)",
-                40,
-                "latitude must be between -90 and 90"
-        );
+        assertQuery("select geo_distance_meters(40.0, -73.0, -91.0, -73.0)")
+                .fails(40, "latitude must be between -90 and 90");
     }
 
     @Test
     public void testInvalidLon2Above180() throws Exception {
-        assertException(
-                "select geo_distance_meters(40.0, -73.0, 40.0, 181.0)",
-                46,
-                "longitude must be between -180 and 180"
-        );
+        assertQuery("select geo_distance_meters(40.0, -73.0, 40.0, 181.0)")
+                .fails(46, "longitude must be between -180 and 180");
     }
 
     @Test
     public void testInvalidLon2Below180() throws Exception {
-        assertException(
-                "select geo_distance_meters(40.0, -73.0, 40.0, -181.0)",
-                46,
-                "longitude must be between -180 and 180"
-        );
+        assertQuery("select geo_distance_meters(40.0, -73.0, 40.0, -181.0)")
+                .fails(46, "longitude must be between -180 and 180");
     }
 
     @Test
@@ -203,11 +179,8 @@ public class GeoDistanceMetersFunctionFactoryTest extends AbstractCairoTest {
             execute("create table points (lat double, lon double)");
             execute("insert into points values (91.0, -73.0)");
 
-            assertException(
-                    "select geo_distance_meters(40.0, -73.0, lat, lon) from points",
-                    40,
-                    "latitude must be between -90 and 90"
-            );
+            assertQuery("select geo_distance_meters(40.0, -73.0, lat, lon) from points")
+                    .fails(40, "latitude must be between -90 and 90");
         });
     }
 
@@ -217,11 +190,8 @@ public class GeoDistanceMetersFunctionFactoryTest extends AbstractCairoTest {
             execute("create table points (lat double, lon double)");
             execute("insert into points values (40.0, 181.0)");
 
-            assertException(
-                    "select geo_distance_meters(40.0, -73.0, lat, lon) from points",
-                    45,
-                    "longitude must be between -180 and 180"
-            );
+            assertQuery("select geo_distance_meters(40.0, -73.0, lat, lon) from points")
+                    .fails(45, "longitude must be between -180 and 180");
         });
     }
 
@@ -294,7 +264,7 @@ public class GeoDistanceMetersFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // Filter points within ~5km of reference point (40.0, -73.0)
                         String sql = "select count(*) from points where geo_distance_meters(40.0, -73.0, lat, lon) < 5000.0";
 
@@ -341,7 +311,7 @@ public class GeoDistanceMetersFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select count(*) from points where geo_distance_meters(40.0, -73.0, lat, lon) < 5000.0";
 
                         // Run query and verify results are consistent
@@ -371,7 +341,7 @@ public class GeoDistanceMetersFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // Order by distance and take top 10 closest points
                         String sql = "select id, lat, lon from points order by geo_distance_meters(40.0, -73.0, lat, lon) limit 10";
 

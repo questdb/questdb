@@ -149,36 +149,30 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBindVar() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             a,
                             case
                                 when a > 10 then $1
                                 else $2
                             end k
-                        from test""",
-                "create table test as (select cast(x as long) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))",
-                49,
-                "CASE values cannot be bind variables"
-        );
+                        from test""")
+                .ddl("create table test as (select cast(x as long) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))")
+                .fails(49, "CASE values cannot be bind variables");
     }
 
     @Test
     public void testBindVarInElse() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             a,
                             case
                                 when a > 10 then '>10'
                                 else $2
                             end k
-                        from test""",
-                "create table test as (select cast(x as long) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))",
-                68,
-                "CASE values cannot be bind variables"
-        );
+                        from test""")
+                .ddl("create table test as (select cast(x as long) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))")
+                .fails(68, "CASE values cannot be bind variables");
     }
 
     @Test
@@ -366,8 +360,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")"
         );
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             case
@@ -375,41 +368,91 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                                 when x > 100 and x < 200 then b
                                 else 3::byte\
                             end\s
-                        from tanc""",
-                104,
-                "inconvertible types: BYTE -> VARCHAR [from=BYTE, to=VARCHAR]"
-        );
+                        from tanc""")
+                .fails(104, "inconvertible types: BYTE -> VARCHAR [from=BYTE, to=VARCHAR]");
     }
 
     @Test
     public void testCaseErrors() throws Exception {
         assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck("select case from long_sequence(1)", 7, "unbalanced 'case'");
-            assertExceptionNoLeakCheck("select case end from long_sequence(1)", 12, "'when' expected");
-            assertExceptionNoLeakCheck("select case x end from long_sequence(1)", 14, "'when' expected");
-            assertExceptionNoLeakCheck("select case 1 end from long_sequence(1)", 14, "'when' expected");
-            assertExceptionNoLeakCheck("select case false end from long_sequence(1)", 18, "'when' expected");
-            assertExceptionNoLeakCheck("select case x/2 end from long_sequence(1)", 16, "'when' expected");
-            assertExceptionNoLeakCheck("select case x/2 z end from long_sequence(1)", 18, "'when' expected");
-            assertExceptionNoLeakCheck("select case 1+5 end from long_sequence(1)", 16, "'when' expected");
-            assertExceptionNoLeakCheck("select case rnd_double() end from long_sequence(1)", 25, "'when' expected");
-            assertExceptionNoLeakCheck("select case x else 2 end from long_sequence(1)", 14, "'when' expected");
-            assertExceptionNoLeakCheck("select case x when else 2 end from long_sequence(1)", 19, "missing arguments");
-            assertExceptionNoLeakCheck("select case x when 1 end from long_sequence(1)", 21, "'then' expected");
-            assertExceptionNoLeakCheck("select case x when 1 else 2 end from long_sequence(1)", 21, "'then' expected");
-            assertExceptionNoLeakCheck("select case x when 1 then else 2 end from long_sequence(1)", 26, "missing arguments");
-            assertExceptionNoLeakCheck("select case x when 1 then 1 else else end from long_sequence(1)", 33, "missing arguments");
-            assertExceptionNoLeakCheck("select case x when 1 then 1 when else 2 end from long_sequence(1)", 33, "missing arguments");
-            assertExceptionNoLeakCheck("select case x when 1 then 1 when 2 else 2 end from long_sequence(1)", 35, "'then' expected");
-            assertExceptionNoLeakCheck("select case when end from long_sequence(1)", 17, "missing arguments");
-            assertExceptionNoLeakCheck("select case when then else end from long_sequence(1)", 17, "missing arguments");
-            assertExceptionNoLeakCheck("select case when else end from long_sequence(1)", 17, "missing arguments");
-            assertExceptionNoLeakCheck("select case when x end from long_sequence(1)", 19, "'then' expected");
-            assertExceptionNoLeakCheck("select case when x else end from long_sequence(1)", 19, "'then' expected");
-            assertExceptionNoLeakCheck("select case when x else 2 end from long_sequence(1)", 19, "'then' expected");
-            assertExceptionNoLeakCheck("select case when x then end from long_sequence(1)", 24, "missing arguments");
-            assertExceptionNoLeakCheck("select case when x then else end from long_sequence(1)", 24, "missing arguments");
-            assertExceptionNoLeakCheck("select case when x then x else end from long_sequence(1)", 31, "missing arguments");
+            assertQuery("select case from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(7, "unbalanced 'case'");
+            assertQuery("select case end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(12, "'when' expected");
+            assertQuery("select case x end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(14, "'when' expected");
+            assertQuery("select case 1 end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(14, "'when' expected");
+            assertQuery("select case false end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(18, "'when' expected");
+            assertQuery("select case x/2 end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(16, "'when' expected");
+            assertQuery("select case x/2 z end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(18, "'when' expected");
+            assertQuery("select case 1+5 end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(16, "'when' expected");
+            assertQuery("select case rnd_double() end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(25, "'when' expected");
+            assertQuery("select case x else 2 end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(14, "'when' expected");
+            assertQuery("select case x when else 2 end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(19, "missing arguments");
+            assertQuery("select case x when 1 end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(21, "'then' expected");
+            assertQuery("select case x when 1 else 2 end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(21, "'then' expected");
+            assertQuery("select case x when 1 then else 2 end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(26, "missing arguments");
+            assertQuery("select case x when 1 then 1 else else end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(33, "missing arguments");
+            assertQuery("select case x when 1 then 1 when else 2 end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(33, "missing arguments");
+            assertQuery("select case x when 1 then 1 when 2 else 2 end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(35, "'then' expected");
+            assertQuery("select case when end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(17, "missing arguments");
+            assertQuery("select case when then else end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(17, "missing arguments");
+            assertQuery("select case when else end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(17, "missing arguments");
+            assertQuery("select case when x end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(19, "'then' expected");
+            assertQuery("select case when x else end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(19, "'then' expected");
+            assertQuery("select case when x else 2 end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(19, "'then' expected");
+            assertQuery("select case when x then end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(24, "missing arguments");
+            assertQuery("select case when x then else end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(24, "missing arguments");
+            assertQuery("select case when x then x else end from long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(31, "missing arguments");
         });
     }
 
@@ -446,7 +489,8 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCaseWithNoElseInWhereClause() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("select x from long_sequence(3) where case x when 1 then 0 end", 37, "boolean expression expected");
+            assertQuery("select x from long_sequence(3) where case x when 1 then 0 end")
+                    .fails(37, "boolean expression expected");
 
             assertQuery("select x from long_sequence(3) where case when x<2 then true end")
                     .noLeakCheck()
@@ -1106,8 +1150,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")"
         );
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             case
@@ -1115,10 +1158,8 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                                 when x > 100 and x < 200 then b
                                 else 3.5::double\
                             end\s
-                        from tanc""",
-                106,
-                "inconvertible types: DOUBLE -> VARCHAR [from=DOUBLE, to=VARCHAR]"
-        );
+                        from tanc""")
+                .fails(106, "inconvertible types: DOUBLE -> VARCHAR [from=DOUBLE, to=VARCHAR]");
     }
 
     @Test
@@ -1230,8 +1271,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         ")"
         );
 
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             case
@@ -1239,10 +1279,8 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                                 when x > 100 and x < 200 then b
                                 else 3.5::float\
                             end\s
-                        from tanc""",
-                106,
-                "inconvertible types: DOUBLE -> VARCHAR [from=DOUBLE, to=VARCHAR]"
-        );
+                        from tanc""")
+                .fails(106, "inconvertible types: DOUBLE -> VARCHAR [from=DOUBLE, to=VARCHAR]");
     }
 
     @Test
@@ -1384,8 +1422,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testIntOrElseMalformedBinaryOperator() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             case
@@ -1393,17 +1430,15 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                                 when x > 100 and x < 200 then c
                                 else +125
                             end\s
-                        from tanc""",
-                "create table tanc as (" +
+                        from tanc""")
+                .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_int() a," +
                         " rnd_int() b," +
                         " rnd_int() c" +
                         " from long_sequence(20)" +
-                        ")",
-                103,
-                "too few arguments for '+' [found=1,expected=2]"
-        );
+                        ")")
+                .fails(103, "too few arguments for '+' [found=1,expected=2]");
     }
 
     @Test
@@ -1461,8 +1496,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ")"
         );
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             case
@@ -1470,10 +1504,8 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                                 when x > 100 and x < 200 then b
                                 else 5\
                             end\s
-                        from tanc""",
-                103,
-                "inconvertible types: INT -> STRING [from=INT, to=STRING]"
-        );
+                        from tanc""")
+                .fails(103, "inconvertible types: INT -> STRING [from=INT, to=STRING]");
     }
 
     @Test
@@ -1487,18 +1519,15 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ")"
         );
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             case
                                 when x < 0 then a
                                 when x > 100 and x < 500 then 10
                             end\s
-                        from tanc""",
-                88,
-                "inconvertible types: INT -> STRING [from=INT, to=STRING]"
-        );
+                        from tanc""")
+                .fails(88, "inconvertible types: INT -> STRING [from=INT, to=STRING]");
     }
 
     @Test
@@ -1513,8 +1542,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         ")"
         );
 
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             case
@@ -1522,10 +1550,8 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                                 when x > 100 and x < 200 then b
                                 else 3\
                             end\s
-                        from tanc""",
-                103,
-                "inconvertible types: INT -> VARCHAR [from=INT, to=VARCHAR]"
-        );
+                        from tanc""")
+                .fails(103, "inconvertible types: INT -> VARCHAR [from=INT, to=VARCHAR]");
     }
 
     @Test
@@ -1540,18 +1566,15 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         ")"
         );
 
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             case
                                 when x < 0 then a
                                 when x > 100 and x < 500 then 10
                             end\s
-                        from tanc""",
-                88,
-                "inconvertible types: INT -> VARCHAR [from=INT, to=VARCHAR]"
-        );
+                        from tanc""")
+                .fails(88, "inconvertible types: INT -> VARCHAR [from=INT, to=VARCHAR]");
     }
 
     @Test
@@ -1764,8 +1787,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")"
         );
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             case
@@ -1773,45 +1795,37 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                                 when x > 100 and x < 200 then b
                                 else 3::long\
                             end\s
-                        from tanc""",
-                104,
-                "inconvertible types: LONG -> VARCHAR [from=LONG, to=VARCHAR]"
-        );
+                        from tanc""")
+                .fails(104, "inconvertible types: LONG -> VARCHAR [from=LONG, to=VARCHAR]");
     }
 
     @Test
     public void testNoArgs() throws Exception {
-        assertException(
-                "select " +
+        assertQuery("select " +
                         "    x " +
                         "    case end c " +
-                        "from long_sequence(1);",
-                17,
-                "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"case\""
-        );
+                        "from long_sequence(1);")
+                .fails(17, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"case\"");
     }
 
     @Test
     public void testNonBooleanWhen() throws Exception {
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             case
                                 when x then a
                                 when x > 100 and x < 200 then b
                             end\s
-                        from tanc""",
-                "create table tanc as (" +
+                        from tanc""")
+                .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_date() a," +
                         " rnd_date() b," +
                         " rnd_date() c" +
                         " from long_sequence(20)" +
-                        ")",
-                37,
-                "BOOLEAN expected, found INT"
-        );
+                        ")")
+                .fails(37, "BOOLEAN expected, found INT");
     }
 
     @Test
@@ -1912,8 +1926,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")"
         );
-        assertException(
-                """
+        assertQuery("""
                         select\s
                             x,
                             case
@@ -1921,10 +1934,8 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                                 when x > 100 and x < 200 then b
                                 else '42'::short\
                             end\s
-                        from tanc""",
-                107,
-                "inconvertible types: SHORT -> VARCHAR [from=SHORT, to=VARCHAR]"
-        );
+                        from tanc""")
+                .fails(107, "inconvertible types: SHORT -> VARCHAR [from=SHORT, to=VARCHAR]");
     }
 
     @Test

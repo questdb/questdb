@@ -94,7 +94,8 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String json = "'{\"path\": 0.0000000000000000000000000001}'";
             execute("create table json_test as (select " + json + "::varchar text, '.path' path)");
-            assertException("select json_extract(text, path) from json_test", 26, "constant or bind variable expected");
+            assertQuery("select json_extract(text, path) from json_test")
+                    .fails(26, "constant or bind variable expected");
         });
     }
 
@@ -311,8 +312,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testInt() throws Exception {
         assertQuery("select json_extract('{\"path\": 123}'::varchar, '.path')")
                 .noLeakCheck()
-                .expectSize()
-                .returns("""
+                .returnsOnce("""
                         json_extract
                         123
                         """);
@@ -351,30 +351,27 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
                     )""");
 
             // verify that we do have nulls in the column
-            assertSql(
-                    """
+            assertQuery("select count() from json_test where text is null")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             count
                             3324
-                            """,
-                    "select count() from json_test where text is null"
-            );
+                            """);
 
             // verify that some values are not found
-            assertSql(
-                    """
+            assertQuery("select count() from json_test where json_extract(text, '.list[2]') is null")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             count
                             6638
-                            """,
-                    "select count() from json_test where json_extract(text, '.list[2]') is null"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select sum(json_extract(text, '.list[2]')::double) from json_test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             sum
                             10086.0
-                            """,
-                    "select sum(json_extract(text, '.list[2]')::double) from json_test"
-            );
+                            """);
         });
     }
 
@@ -406,28 +403,25 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
                     ")::varchar text from long_sequence(10000)\n" +
                     ")");
 
-            assertSql(
-                    """
+            assertQuery("select count_distinct(json_extract(text, '.list[2]')) from json_test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             count_distinct
                             1
-                            """,
-                    "select count_distinct(json_extract(text, '.list[2]')) from json_test"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select count(distinct json_extract(text, '.list[2]')) from json_test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             count_distinct
                             1
-                            """,
-                    "select count(distinct json_extract(text, '.list[2]')) from json_test"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select sum(json_extract(text, '.list[2]')::double) from json_test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             sum
                             10086.0
-                            """,
-                    "select sum(json_extract(text, '.list[2]')::double) from json_test"
-            );
+                            """);
         });
     }
 
@@ -639,8 +633,9 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
                             )::varchar text from long_sequence(10)
                             )""");
 
-                    assertQuery(
-                            """
+                    assertQuery("select json_extract(text, '.dicts[2]')::string k from json_test")
+                            .expectSize()
+                            .returns("""
                                     k
                                     
                                     {"hello": "запросила"}
@@ -652,10 +647,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
                                     
                                     {"hello": "запросила"}
                                     
-                                    """,
-                            "select json_extract(text, '.dicts[2]')::string k from json_test",
-                            true
-                    );
+                                    """);
                 }
         );
     }

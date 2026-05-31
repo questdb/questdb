@@ -1349,56 +1349,26 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testCharToNumbersException() throws Exception {
-        assertException(
-                "select 'm'::byte",
-                0,
-                "inconvertible value: m [CHAR -> BYTE]"
-        );
-        assertException(
-                "select 'm'::short",
-                0,
-                "inconvertible value: m [CHAR -> SHORT]"
-        );
-        assertException(
-                "select 'm'::int",
-                0,
-                "inconvertible value: m [CHAR -> INT]"
-        );
-        assertException(
-                "select 'm'::long",
-                0,
-                "inconvertible value: m [CHAR -> LONG]"
-        );
-        assertException(
-                "select 'm'::float",
-                0,
-                "inconvertible value: m [CHAR -> DOUBLE]"
-        );
-        assertException(
-                "select 'm'::double",
-                0,
-                "inconvertible value: m [CHAR -> DOUBLE]"
-        );
-        assertException(
-                "select 'm'::date - 1",
-                0,
-                "inconvertible value: m [CHAR -> DATE]"
-        );
-        assertException(
-                "select 'm'::timestamp - 1",
-                0,
-                "inconvertible value: m [CHAR -> TIMESTAMP]"
-        );
-        assertException(
-                "select 'm'::timestamp_ns - 1",
-                0,
-                "inconvertible value: m [CHAR -> TIMESTAMP_NS]"
-        );
-        assertException(
-                "select 'm'::boolean",
-                0,
-                "inconvertible value: m [CHAR -> BOOLEAN]"
-        );
+        assertQuery("select 'm'::byte")
+                .fails(0, "inconvertible value: m [CHAR -> BYTE]");
+        assertQuery("select 'm'::short")
+                .fails(0, "inconvertible value: m [CHAR -> SHORT]");
+        assertQuery("select 'm'::int")
+                .fails(0, "inconvertible value: m [CHAR -> INT]");
+        assertQuery("select 'm'::long")
+                .fails(0, "inconvertible value: m [CHAR -> LONG]");
+        assertQuery("select 'm'::float")
+                .fails(0, "inconvertible value: m [CHAR -> DOUBLE]");
+        assertQuery("select 'm'::double")
+                .fails(0, "inconvertible value: m [CHAR -> DOUBLE]");
+        assertQuery("select 'm'::date - 1")
+                .fails(0, "inconvertible value: m [CHAR -> DATE]");
+        assertQuery("select 'm'::timestamp - 1")
+                .fails(0, "inconvertible value: m [CHAR -> TIMESTAMP]");
+        assertQuery("select 'm'::timestamp_ns - 1")
+                .fails(0, "inconvertible value: m [CHAR -> TIMESTAMP_NS]");
+        assertQuery("select 'm'::boolean")
+                .fails(0, "inconvertible value: m [CHAR -> BOOLEAN]");
     }
 
     @Test
