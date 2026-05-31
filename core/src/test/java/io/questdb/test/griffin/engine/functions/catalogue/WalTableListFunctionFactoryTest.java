@@ -34,7 +34,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
-import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -59,7 +58,6 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testMemoryPressureIndicator() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
 
@@ -72,7 +70,6 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             var pressureControl = tableSequencerAPI.getTxnTracker(token).getMemPressureControl();
             assertMemoryPressureLevel(0);
 
-            long now = 0;
             int parallelism = pressureControl.getMemoryPressureRegulationValue();
             pressureControl.updateInflightPartitions(parallelism);
             pressureControl.onOutOfMemory();
@@ -82,7 +79,6 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             assertMemoryPressureLevel(1);
 
             do {
-                now += 1000;
                 parallelism = pressureControl.getMemoryPressureRegulationValue();
                 pressureControl.updateInflightPartitions(parallelism);
                 pressureControl.onOutOfMemory();
@@ -94,7 +90,6 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
 
             // now let's simulate reducing memory pressure
-            now += 1000;
             parallelism = pressureControl.getMemoryPressureRegulationValue();
             pressureControl.updateInflightPartitions(parallelism);
             pressureControl.onEnoughMemory();
@@ -104,7 +99,6 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             assertMemoryPressureLevel(1);
 
             do {
-                now += 1000;
                 parallelism = pressureControl.getMemoryPressureRegulationValue();
                 pressureControl.updateInflightPartitions(parallelism);
                 pressureControl.onEnoughMemory();
@@ -123,9 +117,11 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            "B\tfalse\t0\t0\t0\t\t\t0\n" +
-                            "C\tfalse\t0\t0\t0\t\t\t0\n");
+                    .returns("""
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
+                            B\tfalse\t0\t0\t0\t\t\t0
+                            C\tfalse\t0\t0\t0\t\t\t0
+                            """);
         });
     }
 
@@ -142,9 +138,11 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         println(factory, cursor);
-                        TestUtils.assertEquals("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                                "B\tfalse\t0\t0\t0\t\t\t0\n" +
-                                "C\tfalse\t0\t0\t0\t\t\t0\n", sink);
+                        TestUtils.assertEquals("""
+                                name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
+                                B\tfalse\t0\t0\t0\t\t\t0
+                                C\tfalse\t0\t0\t0\t\t\t0
+                                """, sink);
                     }
                 }
             }
@@ -189,18 +187,29 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("C")));
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("D")));
 
-            assertSql("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+            assertQuery("wal_tables() order by name")
+                    .noLeakCheck()
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                     "B\ttrue\t1\t0\t3\t\tcould not open read-write [file=" + root + SEPARATOR + "B~2" + SEPARATOR + "2022-12-05" + SEPARATOR + "x.d.1]\t0\n" +
                     "C\tfalse\t2\t0\t2\t\t\t0\n" +
-                    "D\tfalse\t1\t0\t1\t\t\t0\n", "wal_tables() order by name");
+                    "D\tfalse\t1\t0\t1\t\t\t0\n");
 
-            assertSql("name\tsuspended\twriterTxn\n" +
-                    "B\ttrue\t1\n" +
-                    "C\tfalse\t2\n" +
-                    "D\tfalse\t1\n", "select name, suspended, writerTxn from wal_tables() order by name");
+            assertQuery("select name, suspended, writerTxn from wal_tables() order by name")
+                    .noLeakCheck()
+                    .returns("""
+                            name\tsuspended\twriterTxn
+                            B\ttrue\t1
+                            C\tfalse\t2
+                            D\tfalse\t1
+                            """);
 
-            assertSql("name\tsuspended\twriterTxn\n" +
-                    "B\ttrue\t1\n", "select name, suspended, writerTxn from wal_tables() where name = 'B'");
+            assertQuery("select name, suspended, writerTxn from wal_tables() where name = 'B'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tsuspended\twriterTxn
+                            B\ttrue\t1
+                            """);
         });
     }
 
@@ -257,8 +266,11 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("B")));
 
-            assertSql("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                    "B\ttrue\t1\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\n", "wal_tables()");
+            assertQuery("wal_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                    "B\ttrue\t1\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\n");
 
             execute("alter table B resume wal");
 
@@ -266,8 +278,13 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("B")));
 
-            assertSql("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                    "B\tfalse\t2\t0\t2\t\t\t0\n", "wal_tables()");
+            assertQuery("wal_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
+                            B\tfalse\t2\t0\t2\t\t\t0
+                            """);
 
             dropTable("A");
             dropTable("B");

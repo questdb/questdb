@@ -217,41 +217,35 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
 
     @Test
     public void testExplainPlan() throws Exception {
-        assertSql(
-                """
+        assertQuery("explain select rnd_symbol_weighted('AAPL', 50, 'MSFT', 30, 'GOOGL', 20) from long_sequence(10)")
+                .returnsOnce("""
                         QUERY PLAN
                         VirtualRecord
                           functions: [rnd_symbol_weighted(AAPL,50.0,MSFT,30.0,GOOGL,20.0)]
                             long_sequence count: 10
-                        """,
-                "explain select rnd_symbol_weighted('AAPL', 50, 'MSFT', 30, 'GOOGL', 20) from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
     public void testExplainPlanTwoSymbols() throws Exception {
-        assertSql(
-                """
+        assertQuery("explain select rnd_symbol_weighted('A', 70, 'B', 30) from long_sequence(5)")
+                .returnsOnce("""
                         QUERY PLAN
                         VirtualRecord
                           functions: [rnd_symbol_weighted(A,70.0,B,30.0)]
                             long_sequence count: 5
-                        """,
-                "explain select rnd_symbol_weighted('A', 70, 'B', 30) from long_sequence(5)"
-        );
+                        """);
     }
 
     @Test
     public void testExplainPlanWithDecimalWeights() throws Exception {
-        assertSql(
-                """
+        assertQuery("explain select rnd_symbol_weighted('X', 2.5, 'Y', 1.5) from long_sequence(3)")
+                .returnsOnce("""
                         QUERY PLAN
                         VirtualRecord
                           functions: [rnd_symbol_weighted(X,2.5,Y,1.5)]
                             long_sequence count: 3
-                        """,
-                "explain select rnd_symbol_weighted('X', 2.5, 'Y', 1.5) from long_sequence(3)"
-        );
+                        """);
     }
 
     @Override

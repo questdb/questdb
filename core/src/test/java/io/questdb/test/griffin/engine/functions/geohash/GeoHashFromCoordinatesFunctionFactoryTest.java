@@ -66,13 +66,10 @@ public class GeoHashFromCoordinatesFunctionFactoryTest extends AbstractFunctionF
     public void testOutOfRangeBits0() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQueryNoLeakCheck(
-                        "make_geohash\n\n",
-                        "select make_geohash(-0.1275, -91.50722, 61)",
-                        null,
-                        true,
-                        true
-                );
+                assertQuery("select make_geohash(-0.1275, -91.50722, 61)")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("make_geohash\n\n");
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "precision must be in [1..60] range");
@@ -84,13 +81,10 @@ public class GeoHashFromCoordinatesFunctionFactoryTest extends AbstractFunctionF
     public void testOutOfRangeBits1() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQueryNoLeakCheck(
-                        "make_geohash\n\n",
-                        "select make_geohash(-0.1275, -91.50722, 0)",
-                        null,
-                        true,
-                        true
-                );
+                assertQuery("select make_geohash(-0.1275, -91.50722, 0)")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("make_geohash\n\n");
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "precision must be in [1..60] range");
@@ -102,13 +96,10 @@ public class GeoHashFromCoordinatesFunctionFactoryTest extends AbstractFunctionF
     public void testOutOfRangeLat1() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQueryNoLeakCheck(
-                        "make_geohash\n\n",
-                        "select make_geohash(-0.1275, 91.50722, 40)",
-                        null,
-                        true,
-                        true
-                );
+                assertQuery("select make_geohash(-0.1275, 91.50722, 40)")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("make_geohash\n\n");
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "latitude must be in [-90.0..90.0] range");
@@ -120,13 +111,10 @@ public class GeoHashFromCoordinatesFunctionFactoryTest extends AbstractFunctionF
     public void testOutOfRangeLat2() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQueryNoLeakCheck(
-                        "make_geohash\n\n",
-                        "select make_geohash(-0.1275, -91.50722, 40)",
-                        null,
-                        true,
-                        true
-                );
+                assertQuery("select make_geohash(-0.1275, -91.50722, 40)")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("make_geohash\n\n");
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "latitude must be in [-90.0..90.0] range");
@@ -138,13 +126,10 @@ public class GeoHashFromCoordinatesFunctionFactoryTest extends AbstractFunctionF
     public void testOutOfRangeLon1() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQueryNoLeakCheck(
-                        "make_geohash\n\n",
-                        "select make_geohash(-195.0, 51.50722, 40)",
-                        null,
-                        true,
-                        true
-                );
+                assertQuery("select make_geohash(-195.0, 51.50722, 40)")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("make_geohash\n\n");
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "longitude must be in [-180.0..180.0] range");
@@ -156,13 +141,10 @@ public class GeoHashFromCoordinatesFunctionFactoryTest extends AbstractFunctionF
     public void testOutOfRangeLon2() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQueryNoLeakCheck(
-                        "make_geohash\n\n",
-                        "select make_geohash(195.0, 51.50722, 40)",
-                        null,
-                        true,
-                        true
-                );
+                assertQuery("select make_geohash(195.0, 51.50722, 40)")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("make_geohash\n\n");
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "longitude must be in [-180.0..180.0] range");

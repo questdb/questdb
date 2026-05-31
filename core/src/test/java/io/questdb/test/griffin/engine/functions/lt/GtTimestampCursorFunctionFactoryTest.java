@@ -282,50 +282,42 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a, timestamp_sequence_ns(0, 2500000000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from x where ts > (select ts::varchar from x limit 2) limit 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
                             zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
                             ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z
-                            """,
-                    "select * from x where ts > (select ts::varchar from x limit 2) limit 3",
-                    "ts",
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from x where ts > (select ts::varchar from y limit 2) limit 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
                             zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
                             ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z
-                            """,
-                    "select * from x where ts > (select ts::varchar from y limit 2) limit 3",
-                    "ts",
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from y where ts > (select ts::varchar from x limit 2) limit 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             5䄛~\uDA5A\uDCB4끻\uDBD9\uDC84\uD8F3\uDE52\uDB96\uDC4Dx\t1970-01-01T00:00:02.500000000Z
                             uﮭ3\uD8C8\uDD30\uDBDA\uDEC6\uE937簡믗\t1970-01-01T00:00:05.000000000Z
                             4\uE0CAcY\uD97C\uDDF1櫤ğ\t1970-01-01T00:00:07.500000000Z
-                            """,
-                    "select * from y where ts > (select ts::varchar from x limit 2) limit 3",
-                    "ts",
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from y where ts > (select ts::varchar from y limit 2) limit 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             5䄛~\uDA5A\uDCB4끻\uDBD9\uDC84\uD8F3\uDE52\uDB96\uDC4Dx\t1970-01-01T00:00:02.500000000Z
                             uﮭ3\uD8C8\uDD30\uDBDA\uDEC6\uE937簡믗\t1970-01-01T00:00:05.000000000Z
                             4\uE0CAcY\uD97C\uDDF1櫤ğ\t1970-01-01T00:00:07.500000000Z
-                            """,
-                    "select * from y where ts > (select ts::varchar from y limit 2) limit 3",
-                    "ts",
-                    true
-            );
+                            """);
         });
     }
 
@@ -391,11 +383,8 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (i int)");
 
-            assertException(
-                    "select * from tab where i > (select max(i) from tab)",
-                    24,
-                    "left operand must be a TIMESTAMP, found: INT"
-            );
+            assertQuery("select * from tab where i > (select max(i) from tab)")
+                    .fails(24, "left operand must be a TIMESTAMP, found: INT");
         });
     }
 
@@ -406,11 +395,8 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
                     ") timestamp(ts) partition by day");
 
-            assertException(
-                    "select * from x where a <= (select '1970-01-01T00:00:00.000000Z'::varchar)",
-                    22,
-                    "left operand must be a TIMESTAMP, found: VARCHAR"
-            );
+            assertQuery("select * from x where a <= (select '1970-01-01T00:00:00.000000Z'::varchar)")
+                    .fails(22, "left operand must be a TIMESTAMP, found: VARCHAR");
         });
     }
 
@@ -448,10 +434,14 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("select * from x where ts > (select '11'::varchar from x where 1 <> 1)")
                 .noLeakCheck()
                 .returns(expected);
-            assertException("select * from x where ts > (select 'hello')", 28, "the cursor selected invalid timestamp value: hello");
-            assertException("select * from x where ts > (select 'hello'::varchar)", 28, "the cursor selected invalid timestamp value: hello");
-            assertException("select * from x where ts > (select 'hello'::varchar, 10 x)", 28, "select must provide exactly one column");
-            assertException("select * from x where ts > (select 10 x)", 28, "cannot compare TIMESTAMP and INT");
+            assertQuery("select * from x where ts > (select 'hello')")
+                    .fails(28, "the cursor selected invalid timestamp value: hello");
+            assertQuery("select * from x where ts > (select 'hello'::varchar)")
+                    .fails(28, "the cursor selected invalid timestamp value: hello");
+            assertQuery("select * from x where ts > (select 'hello'::varchar, 10 x)")
+                    .fails(28, "select must provide exactly one column");
+            assertQuery("select * from x where ts > (select 10 x)")
+                    .fails(28, "cannot compare TIMESTAMP and INT");
         });
     }
 

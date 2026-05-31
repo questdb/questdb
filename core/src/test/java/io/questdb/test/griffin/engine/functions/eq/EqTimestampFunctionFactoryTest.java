@@ -171,12 +171,14 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
             execute("insert into x values " +
                     "('2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000001Z'), " +
                     "('2020-01-01T00:00:00.000002Z', '2020-01-01T00:00:00.000003Z')");
-            assertQueryNoLeakCheck("""
+            assertQuery("select a = b from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             true
                             false
-                            """,
-                    "select a = b from x");
+                            """);
         });
     }
 
@@ -190,19 +192,23 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
             execute("insert into x values " +
                     "('2020-01-01T00:00:00.000001000Z'), " +
                     "('2020-01-01T00:00:00.000002000Z')");
-            assertQueryNoLeakCheck("""
+            assertQuery("select '2020-01-01T00:00:00.000001Z'::timestamp = ts from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             true
                             false
-                            """,
-                    "select '2020-01-01T00:00:00.000001Z'::timestamp = ts from x");
+                            """);
             // Flipped: triggers the initial swap-normalization path as well.
-            assertQueryNoLeakCheck("""
+            assertQuery("select ts = '2020-01-01T00:00:00.000001Z'::timestamp from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             true
                             false
-                            """,
-                    "select ts = '2020-01-01T00:00:00.000001Z'::timestamp from x");
+                            """);
         });
     }
 
@@ -216,12 +222,14 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
             execute("insert into x values " +
                     "('2020-01-01T00:00:00.000001Z'), " +
                     "('2020-01-01T00:00:00.000002Z')");
-            assertQueryNoLeakCheck("""
+            assertQuery("select ts = '2020-01-01T00:00:00.000001Z'::timestamp from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             true
                             false
-                            """,
-                    "select ts = '2020-01-01T00:00:00.000001Z'::timestamp from x");
+                            """);
         });
     }
 
@@ -237,20 +245,24 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                     "('2020-01-01T00:00:00.000002000Z')");
             bindVariableService.clear();
             bindVariableService.setTimestamp("bind", MicrosTimestampDriver.floor("2020-01-01T00:00:00.000002Z"));
-            assertQueryNoLeakCheck("""
+            assertQuery("select ts = :bind from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             false
                             true
-                            """,
-                    "select ts = :bind from x");
+                            """);
             // Flipped: exercises the initial swap-normalization before the
             // left-converts left-runtime-const path.
-            assertQueryNoLeakCheck("""
+            assertQuery("select :bind = ts from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             false
                             true
-                            """,
-                    "select :bind = ts from x");
+                            """);
         });
     }
 
@@ -362,18 +374,22 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                     "('2020-01-01T00:00:00.000002Z')");
             bindVariableService.clear();
             bindVariableService.setTimestamp("bind", MicrosTimestampDriver.floor("2020-01-01T00:00:00.000002Z"));
-            assertQueryNoLeakCheck("""
+            assertQuery("select ts = :bind from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             false
                             true
-                            """,
-                    "select ts = :bind from x");
-            assertQueryNoLeakCheck("""
+                            """);
+            assertQuery("select :bind = ts from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             false
                             true
-                            """,
-                    "select :bind = ts from x");
+                            """);
         });
     }
 
@@ -516,13 +532,7 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
             bindVariableService.clear();
             bindVariableService.setStr("str_bind", "2020-01-01T00:00:00.000002Z");
             bindVariableService.setTimestamp("micro_bind", MicrosTimestampDriver.floor("2020-01-01T00:00:00.000002Z"));
-            assertQueryNoLeakCheck("""
-                            column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\tcolumn5\tcolumn6
-                            false\tfalse\tfalse\ttrue\ttrue\ttrue\ttrue
-                            true\ttrue\tfalse\tfalse\tfalse\tfalse\tfalse
-                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
-                            """,
-                    "select " +
+            assertQuery("select " +
                             "a != b, " +
                             "ts != '2020-01-01T00:00:00.000001Z'::timestamp, " +
                             "ts != ts_ns, " +
@@ -530,7 +540,15 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                             "ts != :str_bind, " +
                             ":micro_bind != ts_ns, " +
                             ":micro_bind != ts " +
-                            "from x");
+                            "from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\tcolumn5\tcolumn6
+                            false\tfalse\tfalse\ttrue\ttrue\ttrue\ttrue
+                            true\ttrue\tfalse\tfalse\tfalse\tfalse\tfalse
+                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
+                            """);
         });
     }
 
@@ -546,14 +564,7 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
             bindVariableService.clear();
             bindVariableService.setTimestamp("null_bind", Numbers.LONG_NULL);
             bindVariableService.setStr("null_str_bind", null);
-            assertQueryNoLeakCheck("""
-                            column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\tcolumn5\tcolumn6\tcolumn7\tcolumn8\tcolumn9
-                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
-                            false\tfalse\ttrue\tfalse\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse
-                            true\ttrue\ttrue\ttrue\ttrue\tfalse\tfalse\ttrue\tfalse\ttrue
-                            false\tfalse\ttrue\tfalse\tfalse\ttrue\ttrue\ttrue\ttrue\tfalse
-                            """,
-                    "select " +
+            assertQuery("select " +
                             "null::timestamp = ts, " +
                             "ts = null::timestamp, " +
                             "null::timestamp = null::timestamp, " +
@@ -564,7 +575,16 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                             "null::timestamp = null::timestamp_ns, " +
                             ":null_bind = ts_ns, " +
                             "ts = :null_str_bind " +
-                            "from x");
+                            "from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\tcolumn5\tcolumn6\tcolumn7\tcolumn8\tcolumn9
+                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
+                            false\tfalse\ttrue\tfalse\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse
+                            true\ttrue\ttrue\ttrue\ttrue\tfalse\tfalse\ttrue\tfalse\ttrue
+                            false\tfalse\ttrue\tfalse\tfalse\ttrue\ttrue\ttrue\ttrue\tfalse
+                            """);
         });
     }
 
@@ -577,12 +597,14 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                     "('2020-01-01T00:00:00.000002Z')");
             bindVariableService.clear();
             bindVariableService.setStr("bind", "2020-01-01T00:00:00.000002Z");
-            assertQueryNoLeakCheck("""
+            assertQuery("select ts = :bind from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             false
                             true
-                            """,
-                    "select ts = :bind from x");
+                            """);
         });
     }
 
@@ -596,20 +618,24 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
                     "('2020-01-01T00:00:00.000002124Z')");
             bindVariableService.clear();
             bindVariableService.setStr("bind", "2020-01-01T00:00:00.000002123Z");
-            assertQueryNoLeakCheck("""
+            assertQuery("select ts = :bind from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             false
                             true
                             false
-                            """,
-                    "select ts = :bind from x");
-            assertQueryNoLeakCheck("""
+                            """);
+            assertQuery("select :bind = ts from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             false
                             true
                             false
-                            """,
-                    "select :bind = ts from x");
+                            """);
         });
     }
 

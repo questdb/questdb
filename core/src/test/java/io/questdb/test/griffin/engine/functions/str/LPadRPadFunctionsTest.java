@@ -36,12 +36,14 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
             assertQuery("select lpad(vc, 5), rpad(vc, 5) from x order by vc")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("lpad\trpad\n" +
-                            "  abc\tabc  \n" +
-                            "  abc\tabc  \n" +
-                            "  def\tdef  \n" +
-                            "  ghi\tghi  \n" +
-                            "  ghi\tghi  \n");
+                    .returns("""
+                            lpad\trpad
+                              abc\tabc \s
+                              abc\tabc \s
+                              def\tdef \s
+                              ghi\tghi \s
+                              ghi\tghi \s
+                            """);
         });
     }
 
@@ -52,12 +54,14 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
             assertQuery("select lpad(vc, 5, '.'::varchar), rpad(vc, 5, '.'::varchar) from x order by vc")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("lpad\trpad\n" +
-                            "..abc\tabc..\n" +
-                            "..abc\tabc..\n" +
-                            "..def\tdef..\n" +
-                            "..ghi\tghi..\n" +
-                            "..ghi\tghi..\n");
+                    .returns("""
+                            lpad\trpad
+                            ..abc\tabc..
+                            ..abc\tabc..
+                            ..def\tdef..
+                            ..ghi\tghi..
+                            ..ghi\tghi..
+                            """);
         });
     }
 
@@ -65,12 +69,14 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
     public void testAsciiTrim() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");
-            final String expected = "lpad\trpad\n" +
-                    "ab\tbc\n" +
-                    "ab\tbc\n" +
-                    "de\tef\n" +
-                    "gh\thi\n" +
-                    "gh\thi\n";
+            final String expected = """
+                    lpad\trpad
+                    ab\tbc
+                    ab\tbc
+                    de\tef
+                    gh\thi
+                    gh\thi
+                    """;
 
             assertQuery("select lpad(vc, 2), rpad(vc, 2) from x order by vc")
                     .noLeakCheck()
@@ -87,29 +93,17 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
     @Test
     public void testCheckMaxBuffer() throws Exception {
         final int maxLength = configuration.getStrFunctionMaxBufferLength();
-        assertException(
-                "select rpad('w3r'::varchar, " + (maxLength + 1) + ")",
-                0,
-                "breached memory limit set for rpad(ØI) [maxLength=1048576, requiredLength=1048577]"
-        );
+        assertQuery("select rpad('w3r'::varchar, " + (maxLength + 1) + ")")
+                .fails(0, "breached memory limit set for rpad(ØI) [maxLength=1048576, requiredLength=1048577]");
 
-        assertException(
-                "select lpad('w3r'::varchar, " + (maxLength + 1) + ")",
-                0,
-                "breached memory limit set for lpad(ØI) [maxLength=1048576, requiredLength=1048577]"
-        );
+        assertQuery("select lpad('w3r'::varchar, " + (maxLength + 1) + ")")
+                .fails(0, "breached memory limit set for lpad(ØI) [maxLength=1048576, requiredLength=1048577]");
 
-        assertException(
-                "select rpad('w3r'::varchar, " + (maxLength + 1) + ", 'esource'::varchar)",
-                0,
-                "breached memory limit set for rpad(ØIØ) [maxLength=1048576, requiredLength=1048577]"
-        );
+        assertQuery("select rpad('w3r'::varchar, " + (maxLength + 1) + ", 'esource'::varchar)")
+                .fails(0, "breached memory limit set for rpad(ØIØ) [maxLength=1048576, requiredLength=1048577]");
 
-        assertException(
-                "select lpad('w3r'::varchar, " + (maxLength + 1) + ", 'esource'::varchar)",
-                0,
-                "breached memory limit set for lpad(ØIØ) [maxLength=1048576, requiredLength=1048577]"
-        );
+        assertQuery("select lpad('w3r'::varchar, " + (maxLength + 1) + ", 'esource'::varchar)")
+                .fails(0, "breached memory limit set for lpad(ØIØ) [maxLength=1048576, requiredLength=1048577]");
     }
 
     @Test
@@ -118,12 +112,14 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
         assertQuery("select lpad(str, 7, fill), rpad(str, 7, fill) from x")
                 .noLeakCheck()
                 .expectSize()
-                .returns("lpad\trpad\n" +
-                        "abcabcx\txabcabc\n" +
-                        "ghighiy\tyghighi\n" +
-                        "ghighiz\tzghighi\n" +
-                        "defdefz\tzdefdef\n" +
-                        "defdefx\txdefdef\n");
+                .returns("""
+                        lpad\trpad
+                        abcabcx\txabcabc
+                        ghighiy\tyghighi
+                        ghighiz\tzghighi
+                        defdefz\tzdefdef
+                        defdefx\txdefdef
+                        """);
     }
 
     @Test
@@ -156,12 +152,14 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
         assertQuery("select lpad('const', 11, fill), rpad('const', 11, fill) from x")
                 .noLeakCheck()
                 .expectSize()
-                .returns("lpad\trpad\n" +
-                        "abcabcconst\tconstabcabc\n" +
-                        "abcabcconst\tconstabcabc\n" +
-                        "defdefconst\tconstdefdef\n" +
-                        "ghighiconst\tconstghighi\n" +
-                        "ghighiconst\tconstghighi\n");
+                .returns("""
+                        lpad\trpad
+                        abcabcconst\tconstabcabc
+                        abcabcconst\tconstabcabc
+                        defdefconst\tconstdefdef
+                        ghighiconst\tconstghighi
+                        ghighiconst\tconstghighi
+                        """);
     }
 
     @Test
@@ -171,13 +169,15 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
             assertQuery("select lpad(vc, 10), rpad(vc, 10) from x order by vc")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("lpad\trpad\n" +
-                            "     вечір\tвечір     \n" +
-                            "     вечір\tвечір     \n" +
-                            "    ганьба\tганьба    \n" +
-                            "    добрий\tдобрий    \n" +
-                            "     слава\tслава     \n" +
-                            "     слава\tслава     \n");
+                    .returns("""
+                            lpad\trpad
+                                 вечір\tвечір    \s
+                                 вечір\tвечір    \s
+                                ганьба\tганьба   \s
+                                добрий\tдобрий   \s
+                                 слава\tслава    \s
+                                 слава\tслава    \s
+                            """);
         });
     }
 
@@ -188,13 +188,15 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
             assertQuery("select lpad(vc, 10, '.'::varchar), rpad(vc, 10, '.'::varchar) from x order by vc")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("lpad\trpad\n" +
-                            ".....вечір\tвечір.....\n" +
-                            ".....вечір\tвечір.....\n" +
-                            "....ганьба\tганьба....\n" +
-                            "....добрий\tдобрий....\n" +
-                            ".....слава\tслава.....\n" +
-                            ".....слава\tслава.....\n");
+                    .returns("""
+                            lpad\trpad
+                            .....вечір\tвечір.....
+                            .....вечір\tвечір.....
+                            ....ганьба\tганьба....
+                            ....добрий\tдобрий....
+                            .....слава\tслава.....
+                            .....слава\tслава.....
+                            """);
         });
     }
 
@@ -205,22 +207,28 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
-                .returns("count\n" +
-                        "100\n");
+                .returns("""
+                        count
+                        100
+                        """);
         // test A/B case
         assertQuery("select count (*) from x where lpad(vc1, 20) = lpad(vc1, 20)")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
-                .returns("count\n" +
-                        "100\n");
+                .returns("""
+                        count
+                        100
+                        """);
 
         assertQuery("select count (*) from x where rpad(vc2, 20) = rpad(vc2, 20)")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
-                .returns("count\n" +
-                        "100\n");
+                .returns("""
+                        count
+                        100
+                        """);
     }
 
     @Test
@@ -230,35 +238,43 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
-                .returns("count\n" +
-                        "100\n");
+                .returns("""
+                        count
+                        100
+                        """);
 
         assertQuery("select count (*) from x where lpad(vc1, 20, '.'::varchar) = lpad(vc1, 20, '.'::varchar)")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
-                .returns("count\n" +
-                        "100\n");
+                .returns("""
+                        count
+                        100
+                        """);
 
         assertQuery("select count (*) from x where rpad(vc2, 20, '.'::varchar) = rpad(vc2, 20, '.'::varchar)")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
-                .returns("count\n" +
-                        "100\n");
+                .returns("""
+                        count
+                        100
+                        """);
     }
 
     @Test
     public void testUtf8Trim() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_varchar('ганьба','слава','добрий','вечір') vc from long_sequence(6))");
-            final String expected = "lpad\trpad\n" +
-                    "вечі\tечір\n" +
-                    "вечі\tечір\n" +
-                    "гань\tньба\n" +
-                    "добр\tбрий\n" +
-                    "слав\tлава\n" +
-                    "слав\tлава\n";
+            final String expected = """
+                    lpad\trpad
+                    вечі\tечір
+                    вечі\tечір
+                    гань\tньба
+                    добр\tбрий
+                    слав\tлава
+                    слав\tлава
+                    """;
             assertQuery("select lpad(vc, 4), rpad(vc, 4) from x order by vc")
                     .noLeakCheck()
                     .expectSize()

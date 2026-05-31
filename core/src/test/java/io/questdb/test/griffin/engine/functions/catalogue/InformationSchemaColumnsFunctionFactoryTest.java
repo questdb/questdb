@@ -40,8 +40,10 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             execute("create table B(col0 long, col1 string, col2 float)");
             execute("create table C(col0 double, col1 char, col2 byte)");
             drainWalQueue();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM information_schema.columns() ORDER BY table_name")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .returns("""
                             table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
                             qdb\tpublic\tA\tcol0\t0\t\tyes\tinteger
                             qdb\tpublic\tA\tcol1\t1\t\tyes\tcharacter varying
@@ -52,12 +54,7 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                             qdb\tpublic\tC\tcol0\t0\t\tyes\tdouble precision
                             qdb\tpublic\tC\tcol1\t1\t\tyes\tcharacter
                             qdb\tpublic\tC\tcol2\t2\t\tyes\tsmallint
-                            """,
-                    "SELECT * FROM information_schema.columns() ORDER BY table_name",
-                    null,
-                    null,
-                    true
-            );
+                            """);
         });
     }
 

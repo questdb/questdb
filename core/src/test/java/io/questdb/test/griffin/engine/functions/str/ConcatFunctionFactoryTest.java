@@ -122,12 +122,9 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCursor() throws Exception {
-        assertException(
-                "select concat('hehe', select max(a) from test), concat('hoho', 'haha')",
-                "create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))",
-                22,
-                "unsupported type: CURSOR"
-        );
+        assertQuery("select concat('hehe', select max(a) from test), concat('hoho', 'haha')")
+                .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))")
+                .fails(22, "unsupported type: CURSOR");
     }
 
     @Test
@@ -152,11 +149,8 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNoArgs() throws Exception {
-        assertException(
-                "select concat();",
-                7,
-                "no arguments provided"
-        );
+        assertQuery("select concat();")
+                .fails(7, "no arguments provided");
     }
 
     @Test

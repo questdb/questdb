@@ -79,11 +79,8 @@ public class ExportFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testExportFilesDisabled() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, "");
-            assertException(
-                    "select * from export_files()",
-                    14,
-                    "export_files() is disabled ['cairo.sql.copy.export.root' is not set?]"
-            );
+            assertQuery("select * from export_files()")
+                    .fails(14, "export_files() is disabled ['cairo.sql.copy.export.root' is not set?]");
         });
     }
 

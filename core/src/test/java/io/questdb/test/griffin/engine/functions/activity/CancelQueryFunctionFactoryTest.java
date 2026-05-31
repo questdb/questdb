@@ -131,14 +131,13 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
             }
 
             try {
-                assertSql(
-                        """
+                assertQuery("select query, cancel_query(query_id) was_cancelled from query_activity() where query = '" + query + "'")
+                        .noLeakCheck()
+                        .returnsOnce("""
                                 query\twas_cancelled
                                 select 1 t from long_sequence(1) where sleep(120000)\ttrue
                                 select 1 t from long_sequence(1) where sleep(120000)\ttrue
-                                """,
-                        "select query, cancel_query(query_id) was_cancelled from query_activity() where query = '" + query + "'"
-                );
+                                """);
             } finally {
                 stopped.await();
             }
@@ -151,10 +150,18 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testQueryIdToCancelMustBeNonNegativeInteger() throws Exception {
         assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck("select cancel_query()", 7, "function `cancel_query` requires arguments: cancel_query(LONG)");
-            assertExceptionNoLeakCheck("select cancel_query(null)", 20, "non-negative integer literal expected as query id");
-            assertExceptionNoLeakCheck("select cancel_query(-1)", 20, "non-negative integer literal expected as query id");
-            assertExceptionNoLeakCheck("select cancel_query(12.01f)", 20, "argument type mismatch for function `cancel_query` at #1 expected: LONG, actual: FLOAT");
+            assertQuery("select cancel_query()")
+                    .noLeakCheck()
+                    .fails(7, "function `cancel_query` requires arguments: cancel_query(LONG)");
+            assertQuery("select cancel_query(null)")
+                    .noLeakCheck()
+                    .fails(20, "non-negative integer literal expected as query id");
+            assertQuery("select cancel_query(-1)")
+                    .noLeakCheck()
+                    .fails(20, "non-negative integer literal expected as query id");
+            assertQuery("select cancel_query(12.01f)")
+                    .noLeakCheck()
+                    .fails(20, "argument type mismatch for function `cancel_query` at #1 expected: LONG, actual: FLOAT");
         });
     }
 
