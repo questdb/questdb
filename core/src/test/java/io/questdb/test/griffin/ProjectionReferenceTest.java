@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
@@ -49,17 +48,16 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("insert into quotes values ('A', 10, '2025-01-01T09:59:00.000Z'), ('A', 20, '2025-01-01T10:03:00.000Z')");
 
         // Simple ASOF JOIN without projection references
-        assertQuery(
-                """
+        assertQuery("select e.symbol, e.value, q.quote, e.value + q.quote as sum " +
+                        "from events e asof join quotes q on e.symbol = q.symbol")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         symbol\tvalue\tquote\tsum
                         A\t100\t10\t110
                         A\t200\t20\t220
-                        """,
-                "select e.symbol, e.value, q.quote, e.value + q.quote as sum " +
-                        "from events e asof join quotes q on e.symbol = q.symbol",
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -164,17 +162,15 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("insert into t2 values (1, 100), (2, 200)");
 
         // Simple join without projection references to ensure JOIN works
-        assertQuery(
-                """
+        assertQuery("select t1.id, t1.val as val1, t2.val as val2, t1.val + t2.val as sum " +
+                        "from t1 inner join t2 on t1.id = t2.id")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
                         id\tval1\tval2\tsum
                         1\t10\t100\t110
                         2\t20\t200\t220
-                        """,
-                "select t1.id, t1.val as val1, t2.val as val2, t1.val + t2.val as sum " +
-                        "from t1 inner join t2 on t1.id = t2.id",
-                false,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -184,26 +180,24 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("insert into orders values (1, 100), (2, 200)");
         execute("insert into customers values (1, 'Alice'), (2, 'Bob')");
 
-        assertQuery(
-                """
-                        order_id\tcustomer_name\tamount\ttax\ttotal
-                        1\tAlice\t100\t10.0\t110.0
-                        2\tBob\t200\t20.0\t220.0
-                        """,
-                "select" +
+        assertQuery("select" +
                         " o.id as order_id," +
                         " c.name as customer_name," +
                         " o.amount," +
                         " o.amount * 0.1 as tax," +
                         " o.amount + tax as total" +
-                        " from orders o join customers c on o.id = c.id",
-                false,
-                false
-        );
+                        " from orders o join customers c on o.id = c.id")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        order_id\tcustomer_name\tamount\ttax\ttotal
+                        1\tAlice\t100\t10.0\t110.0
+                        2\tBob\t200\t20.0\t220.0
+                        """);
     }
 
     @Test
-    public void testJsonProjectionInOrderByWithByte() throws SqlException {
+    public void testJsonProjectionInOrderByWithByte() throws Exception {
         testJsonProjectionInOrderByWith0("""
                         name\tval\tdoubled
                         C\t1\t2
@@ -231,27 +225,27 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJsonProjectionInOrderByWithDouble() throws SqlException {
+    public void testJsonProjectionInOrderByWithDouble() throws Exception {
         testJsonProjectionInOrderByWithF("double");
     }
 
     @Test
-    public void testJsonProjectionInOrderByWithFloat() throws SqlException {
+    public void testJsonProjectionInOrderByWithFloat() throws Exception {
         testJsonProjectionInOrderByWithF("float");
     }
 
     @Test
-    public void testJsonProjectionInOrderByWithInt() throws SqlException {
+    public void testJsonProjectionInOrderByWithInt() throws Exception {
         testJsonProjectionInOrderByWithI("int");
     }
 
     @Test
-    public void testJsonProjectionInOrderByWithLong() throws SqlException {
+    public void testJsonProjectionInOrderByWithLong() throws Exception {
         testJsonProjectionInOrderByWithI("long");
     }
 
     @Test
-    public void testJsonProjectionInOrderByWithShort() throws SqlException {
+    public void testJsonProjectionInOrderByWithShort() throws Exception {
         testJsonProjectionInOrderByWithI("short");
     }
 
@@ -337,15 +331,14 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
         allowFunctionMemoization();
 
-        assertSql(
-                """
+        assertQuery("select name, value v, true value, (rnd_boolean() or value) vv from items order by 4")
+                .noLeakCheck()
+                .returnsOnce("""
                         name\tv\tvalue\tvv
                         A\tfalse\ttrue\tfalse
                         B\tfalse\ttrue\tfalse
                         C\ttrue\ttrue\ttrue
-                        """,
-                "select name, value v, true value, (rnd_boolean() or value) vv from items order by 4"
-        );
+                        """);
     }
 
     @Test
@@ -472,8 +465,9 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
     @Test
     public void testProjectionSymbolAccess() throws Exception {
-        assertSql(
-                """
+        assertQuery("select rnd_symbol('abc', 'fgk') a, a || '--', x p, p + 2.0 b from long_sequence(10);")
+                .noLeakCheck()
+                .returnsOnce("""
                         a\tconcat\tp\tb
                         abc\tabc--\t1\t3.0
                         fgk\tfgk--\t2\t4.0
@@ -485,9 +479,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         fgk\tabc--\t8\t10.0
                         abc\tfgk--\t9\t11.0
                         fgk\tabc--\t10\t12.0
-                        """,
-                "select rnd_symbol('abc', 'fgk') a, a || '--', x p, p + 2.0 b from long_sequence(10);"
-        );
+                        """);
     }
 
     @Test
@@ -569,34 +561,32 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("CREATE TABLE data (x INT)");
         execute("INSERT INTO data VALUES (10), (20), (30)");
 
-        assertQuery(
-                """
+        assertQuery("select sum(c) from (" +
+                        "select x, x + 1 as a, x + 2 as b, a + b as c from data" +
+                        ")")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sum
                         129
-                        """,
-                "select sum(c) from (" +
-                        "select x, x + 1 as a, x + 2 as b, a + b as c from data" +
-                        ")",
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testTopDownMultipleColumnsReferenceSameColumn() throws Exception {
         execute("CREATE TABLE data (x INT, y INT)");
         execute("INSERT INTO data VALUES (10, 2), (20, 4), (30, 6)");
-        assertQuery(
-                """
+        assertQuery("select sum(b), sum(c), sum(d) from (" +
+                        "select x, x + y as a, a * 2 as b, a * 3 as c, a * 4 as d from data" +
+                        ")")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sum	sum1	sum2
                         144	216	288
-                        """,
-                "select sum(b), sum(c), sum(d) from (" +
-                        "select x, x + y as a, a * 2 as b, a * 3 as c, a * 4 as d from data" +
-                        ")",
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -604,19 +594,18 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("CREATE TABLE data (x INT)");
         execute("INSERT INTO data VALUES (1), (2), (3)");
 
-        assertQuery(
-                """
-                        sum
-                        18
-                        """,
-                "select sum(c) from (" +
+        assertQuery("select sum(c) from (" +
                         "select b, b + 1 as c from (" +
                         "select x, x + 1 as a, a + 2 as b from data" +
                         ")" +
-                        ")",
-                false,
-                true
-        );
+                        ")")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sum
+                        18
+                        """);
     }
 
     @Test
@@ -633,17 +622,16 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 "('2025-01-01T00:00:00.000000Z', 'A', 100.0, 10, 101.0, 20)," +
                 "('2025-01-01T00:00:01.000000Z', 'B', 200.0, 30, 201.0, 40)");
 
-        assertQuery(
-                """
+        assertQuery("select avg(schmalolzers) from (" +
+                        "select timestamp, bid_volume * 1.0 / ask_volume as lolzings, lolzings * bid_price as schmalolzers from core_price" +
+                        ")")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg
                         100.0
-                        """,
-                "select avg(schmalolzers) from (" +
-                        "select timestamp, bid_volume * 1.0 / ask_volume as lolzings, lolzings * bid_price as schmalolzers from core_price" +
-                        ")",
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -651,17 +639,16 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("CREATE TABLE data (x INT)");
         execute("INSERT INTO data VALUES (4), (9), (16)");
 
-        assertQuery(
-                """
+        assertQuery("select sum(b) from (" +
+                        "select x, sqrt(x) as a, a * 2 as b from data" +
+                        ")")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sum
                         18.0
-                        """,
-                "select sum(b) from (" +
-                        "select x, sqrt(x) as a, a * 2 as b from data" +
-                        ")",
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -669,19 +656,17 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("CREATE TABLE data (x INT)");
         execute("INSERT INTO data VALUES (1), (2), (3)");
 
-        assertQuery(
-                """
+        assertQuery("select x, b, d from (" +
+                        "select x, x + 1 as a, a + 2 as b, b + 1 as c, c + 5 as d from data" +
+                        ")")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         x	b	d
                         1	4	10
                         2	5	11
                         3	6	12
-                        """,
-                "select x, b, d from (" +
-                        "select x, x + 1 as a, a + 2 as b, b + 1 as c, c + 5 as d from data" +
-                        ")",
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -775,8 +760,9 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
     @Test
     public void testVirtualFunctionAsColumnReference() throws Exception {
-        assertSql(
-                """
+        assertQuery("select rnd_int() + 1 k, k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         k\tk1
                         -1148479919\t315515119
                         1548800834\t-727724770
@@ -788,15 +774,14 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         806715482\t1545253513
                         1569490117\t1573662098
                         -409854404\t339631475
-                        """,
-                "select rnd_int() + 1 k, k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
     public void testVirtualFunctionAsColumnReferencePreferBaseTable() throws Exception {
-        assertSql(
-                """
+        assertQuery("select rnd_int() + 1 x, x from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         x\tx1
                         -1148479919\t1
                         315515119\t2
@@ -808,16 +793,17 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         592859672\t8
                         1868723707\t9
                         -847531047\t10
-                        """,
-                "select rnd_int() + 1 x, x from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunction() throws Exception {
         execute("create table tmp as (select rnd_symbol('abc', 'cde') sym, rnd_double() price from long_sequence(20))");
-        assertQuery(
-                """
+        assertQuery("select sym, -price i, lag(i) over (partition by sym) prev from tmp")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sym\ti\tprev
                         abc\t-0.8043224099968393\tnull
                         cde\t-0.08486964232560668\tnull
@@ -839,18 +825,17 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         cde\t-0.15786635599554755\t-0.21583224269349388
                         abc\t-0.1911234617573182\t-0.7675673070796104
                         cde\t-0.5793466326862211\t-0.15786635599554755
-                        """,
-                "select sym, -price i, lag(i) over (partition by sym) prev from tmp",
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testWindowFunctionPreferBaseTable() throws Exception {
         execute("create table tmp as (select rnd_symbol('abc', 'cde') sym, rnd_double() price from long_sequence(20))");
-        assertQuery(
-                """
+        assertQuery("select sym, -price price, lag(price) over (partition by sym) prev from tmp")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sym\tprice\tprev
                         abc\t-0.8043224099968393\tnull
                         cde\t-0.08486964232560668\tnull
@@ -872,14 +857,10 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         cde\t-0.15786635599554755\t0.21583224269349388
                         abc\t-0.1911234617573182\t0.7675673070796104
                         cde\t-0.5793466326862211\t0.15786635599554755
-                        """,
-                "select sym, -price price, lag(price) over (partition by sym) prev from tmp",
-                false,
-                true
-        );
+                        """);
     }
 
-    private void testJsonProjectionInOrderByWith0(String expectedResult, String expectedPlan, String typeToExtract) throws SqlException {
+    private void testJsonProjectionInOrderByWith0(String expectedResult, String expectedPlan, String typeToExtract) throws Exception {
         execute("create table items (name string, value varchar)");
         for (int i = 0; i < 10; i++) {
             int id = rnd.nextInt(100);
@@ -889,18 +870,19 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
         allowFunctionMemoization();
         String query = "select name, json_extract(value, '.value')::" + typeToExtract + " as val, val * 2 as doubled from items order by doubled";
-        assertQuery(expectedResult,
-                query,
-                true,
-                true);
+        assertQuery(query)
+                .noLeakCheck()
+                .expectSize()
+                .returns(expectedResult);
 
-        assertQuery(expectedPlan,
-                "EXPLAIN " + query,
-                false,
-                true);
+        assertQuery("EXPLAIN " + query)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(expectedPlan);
     }
 
-    private void testJsonProjectionInOrderByWithF(String type) throws SqlException {
+    private void testJsonProjectionInOrderByWithF(String type) throws Exception {
         testJsonProjectionInOrderByWith0("""
                         name\tval\tdoubled
                         C\t1.0\t2.0
@@ -927,7 +909,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 type);
     }
 
-    private void testJsonProjectionInOrderByWithI(String type) throws SqlException {
+    private void testJsonProjectionInOrderByWithI(String type) throws Exception {
         testJsonProjectionInOrderByWith0("""
                         name\tval\tdoubled
                         C\t1\t2
@@ -954,15 +936,17 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 type);
     }
 
-    private void testProjectionInOrderByWith0(String expected, String type) throws SqlException {
+    private void testProjectionInOrderByWith0(String expected, String type) throws Exception {
         execute("create table items (name string, value " + type + ")");
         execute("insert into items values ('C', 30), ('A', 10), ('B', 20)");
 
         allowFunctionMemoization();
-        assertSql(expected, "select name, value, value * rnd_double() as doubled from items order by doubled");
+        assertQuery("select name, value, value * rnd_double() as doubled from items order by doubled")
+                .noLeakCheck()
+                .returnsOnce(expected);
     }
 
-    private void testProjectionInOrderByWithF(String type) throws SqlException {
+    private void testProjectionInOrderByWithF(String type) throws Exception {
         testProjectionInOrderByWith0(
                 """
                         name\tvalue\tdoubled
@@ -974,7 +958,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         );
     }
 
-    private void testProjectionInOrderByWithInt(String type) throws SqlException {
+    private void testProjectionInOrderByWithInt(String type) throws Exception {
         testProjectionInOrderByWith0(
                 """
                         name\tvalue\tdoubled
