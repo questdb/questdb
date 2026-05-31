@@ -236,6 +236,31 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorrLargeMagnitudeOverflow() throws Exception {
+        // Regression test: prior to the sqrt(a)*sqrt(b) refactor, the denominator
+        // sqrt(sumY * sumX) overflowed to +Infinity for inputs of magnitude ~1e153,
+        // causing corr() to return 0.0 instead of the true correlation.
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            execute("insert into 'tbl1' VALUES (1e153, 1e153), (-1e153, -1e153)");
+            assertSql(
+                    "corr\n1.0\n", "select corr(x, y) from tbl1"
+            );
+        });
+    }
+
+    @Test
+    public void testCorrLargeMagnitudeNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            execute("insert into 'tbl1' VALUES (1e153, -1e153), (-1e153, 1e153)");
+            assertSql(
+                    "corr\n-1.0\n", "select corr(x, y) from tbl1"
+            );
+        });
+    }
+
+    @Test
     public void testCorrSomeNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");

@@ -108,8 +108,12 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
                 return Double.NaN;
             }
 
-            double denom = Math.sqrt(sumY * sumX);
-            if (denom == 0 || Double.isNaN(denom)) {
+            // Compute sqrt(sumY) * sqrt(sumX) rather than sqrt(sumY * sumX) to avoid
+            // intermediate overflow to +Infinity when both sums are very large
+            // (e.g. inputs near +/-1e153). sumX and sumY are sums of squared deviations
+            // produced by Welford's algorithm, so they are always >= 0.
+            double denom = Math.sqrt(sumY) * Math.sqrt(sumX);
+            if (denom == 0) {
                 return Double.NaN;
             }
 
