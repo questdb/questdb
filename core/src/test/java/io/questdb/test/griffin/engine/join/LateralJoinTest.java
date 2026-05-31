@@ -7970,13 +7970,18 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Unqualified 'status' (no alias prefix) — must still be pushed down
-            assertQueryAndPlan(
-                    """
-                            id\tcnt
-                            1\t2
-                            3\t0
-                            """,
-                    """
+            assertQuery("""
+                            SELECT o.id, sub.cnt
+                            FROM orders o
+                            LEFT JOIN LATERAL (
+                                SELECT count(*) AS cnt
+                                FROM trades
+                                WHERE order_id >= o.id AND order_id < o.id + 1
+                            ) sub ON true
+                            WHERE status = 'ACTIVE'
+                            ORDER BY o.id
+                            """)
+                    .withPlan("""
                             Encode sort
                               keys: [id]
                                 VirtualRecord
@@ -8005,20 +8010,12 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                                 PageFrame
                                                                     Row forward scan
                                                                     Frame forward scan on: orders
-                            """,
-                    """
-                            SELECT o.id, sub.cnt
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT count(*) AS cnt
-                                FROM trades
-                                WHERE order_id >= o.id AND order_id < o.id + 1
-                            ) sub ON true
-                            WHERE status = 'ACTIVE'
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """)
+                    .returns("""
+                            id\tcnt
+                            1\t2
+                            3\t0
+                            """);
         });
     }
 
@@ -8042,13 +8039,18 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Function expression: abs(o.id) > 1 filters orders 2 and 3
-            assertQueryAndPlan(
-                    """
-                            id\tcnt
-                            2\t1
-                            3\t1
-                            """,
-                    """
+            assertQuery("""
+                            SELECT o.id, sub.cnt
+                            FROM orders o
+                            LEFT JOIN LATERAL (
+                                SELECT count(*) AS cnt
+                                FROM trades
+                                WHERE order_id >= o.id AND order_id < o.id + 1
+                            ) sub ON true
+                            WHERE abs(o.id) > 1
+                            ORDER BY o.id
+                            """)
+                    .withPlan("""
                             Encode sort
                               keys: [id]
                                 VirtualRecord
@@ -8077,20 +8079,12 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                                 PageFrame
                                                                     Row forward scan
                                                                     Frame forward scan on: orders
-                            """,
-                    """
-                            SELECT o.id, sub.cnt
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT count(*) AS cnt
-                                FROM trades
-                                WHERE order_id >= o.id AND order_id < o.id + 1
-                            ) sub ON true
-                            WHERE abs(o.id) > 1
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """)
+                    .returns("""
+                            id\tcnt
+                            2\t1
+                            3\t1
+                            """);
         });
     }
 
@@ -8122,13 +8116,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Correlates with both t1 and t2; WHERE filters only t1
-            assertQueryAndPlan(
-                    """
-                            id\tcategory\tcnt
-                            1\tX\t2
-                            3\tX\t1
-                            """,
-                    """
+            assertQuery("""
+                            SELECT t1.id, t2.category, sub.cnt
+                            FROM t1
+                            JOIN t2 ON t1.id = t2.t1_id
+                            JOIN LATERAL (
+                                SELECT count(*) AS cnt
+                                FROM t3
+                                WHERE t3.a >= t1.id AND t3.a < t1.id + 1
+                                  AND t3.b = t2.category
+                            ) sub ON true
+                            WHERE t1.status = 'ACTIVE'
+                            ORDER BY t1.id
+                            """)
+                    .withPlan("""
                             Encode sort
                               keys: [id]
                                 SelectedRecord
@@ -8172,22 +8173,12 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                                             PageFrame
                                                                                 Row forward scan
                                                                                 Frame forward scan on: t2
-                            """,
-                    """
-                            SELECT t1.id, t2.category, sub.cnt
-                            FROM t1
-                            JOIN t2 ON t1.id = t2.t1_id
-                            JOIN LATERAL (
-                                SELECT count(*) AS cnt
-                                FROM t3
-                                WHERE t3.a >= t1.id AND t3.a < t1.id + 1
-                                  AND t3.b = t2.category
-                            ) sub ON true
-                            WHERE t1.status = 'ACTIVE'
-                            ORDER BY t1.id
-                            """,
-                    null, true, false
-            );
+                            """)
+                    .returns("""
+                            id\tcategory\tcnt
+                            1\tX\t2
+                            3\tX\t1
+                            """);
         });
     }
 
@@ -8219,13 +8210,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // WHERE t1.val > t2.val spans both sources — cannot be pushed to either base
-            assertQueryAndPlan(
-                    """
-                            id\tt2_val\tcnt
-                            1\t5\t1
-                            3\t15\t1
-                            """,
-                    """
+            assertQuery("""
+                            SELECT t1.id, t2.val AS t2_val, sub.cnt
+                            FROM t1
+                            JOIN t2 ON t1.id = t2.t1_id
+                            JOIN LATERAL (
+                                SELECT count(*) AS cnt
+                                FROM t3
+                                WHERE t3.a >= t1.id AND t3.a < t1.id + 1
+                                  AND t3.b = t2.val
+                            ) sub ON true
+                            WHERE t1.val > t2.val
+                            ORDER BY t1.id
+                            """)
+                    .withPlan("""
                             Encode sort
                               keys: [id]
                                 SelectedRecord
@@ -8264,22 +8262,12 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                                             PageFrame
                                                                                 Row forward scan
                                                                                 Frame forward scan on: t2
-                            """,
-                    """
-                            SELECT t1.id, t2.val AS t2_val, sub.cnt
-                            FROM t1
-                            JOIN t2 ON t1.id = t2.t1_id
-                            JOIN LATERAL (
-                                SELECT count(*) AS cnt
-                                FROM t3
-                                WHERE t3.a >= t1.id AND t3.a < t1.id + 1
-                                  AND t3.b = t2.val
-                            ) sub ON true
-                            WHERE t1.val > t2.val
-                            ORDER BY t1.id
-                            """,
-                    null, true, false
-            );
+                            """)
+                    .returns("""
+                            id\tt2_val\tcnt
+                            1\t5\t1
+                            3\t15\t1
+                            """);
         });
     }
 

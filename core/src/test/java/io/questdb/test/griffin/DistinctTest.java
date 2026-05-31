@@ -55,16 +55,8 @@ public class DistinctTest extends AbstractCairoTest {
                         "  from long_sequence(100)" +
                         ") timestamp(created);"
         );
-        assertQueryAndPlan(
-                """
-                        sym\torigin\tlag
-                        foo\t315515118\tnull
-                        foo\t73575701\t315515118
-                        foo\t592859671\t73575701
-                        foo\t-1191262516\t592859671
-                        foo\t-1575378703\t-1191262516
-                        """,
-                """
+        assertQuery("SELECT DISTINCT sym, origin, lag(origin) over() from x limit 5")
+                .withPlan("""
                         Limit value: 5 skip-rows: 0 take-rows: 5
                             Distinct
                               keys: sym,origin,lag
@@ -74,26 +66,20 @@ public class DistinctTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                        """,
-                "SELECT DISTINCT sym, origin, lag(origin) over() from x limit 5",
-                null,
-                false,
-                true
-        );
-
-        assertQueryAndPlan(
-                """
+                        """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sym\torigin\tlag
-                        foo\t2137969456\t264240638
-                        foo\t68265578\t2137969456
-                        foo\t44173540\t68265578
-                        foo\t-2144581835\t44173540
-                        foo\t-1162267908\t-2144581835
-                        foo\t-1575135393\t-1162267908
-                        foo\t326010667\t-1575135393
-                        foo\t-2034804966\t326010667
-                        """,
-                """
+                        foo\t315515118\tnull
+                        foo\t73575701\t315515118
+                        foo\t592859671\t73575701
+                        foo\t-1191262516\t592859671
+                        foo\t-1575378703\t-1191262516
+                        """);
+
+        assertQuery("SELECT DISTINCT sym, origin, lag(origin) over() from x limit 20, 28")
+                .withPlan("""
                         Limit left: 20 right: 28 skip-rows: 20 take-rows: 8
                             Distinct
                               keys: sym,origin,lag
@@ -103,24 +89,24 @@ public class DistinctTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                        """,
-                "SELECT DISTINCT sym, origin, lag(origin) over() from x limit 20, 28",
-                null,
-                false,
-                true
-        );
+                        """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sym\torigin\tlag
+                        foo\t2137969456\t264240638
+                        foo\t68265578\t2137969456
+                        foo\t44173540\t68265578
+                        foo\t-2144581835\t44173540
+                        foo\t-1162267908\t-2144581835
+                        foo\t-1575135393\t-1162267908
+                        foo\t326010667\t-1575135393
+                        foo\t-2034804966\t326010667
+                        """);
 
         // no early exit
-        assertQueryAndPlan(
-                """
-                        sym\torigin\tlag
-                        foo\t874367915\t-1775036711
-                        foo\t1431775887\t874367915
-                        foo\t-1822590290\t1431775887
-                        foo\t957075831\t-1822590290
-                        foo\t-2043541236\t957075831
-                        """,
-                """
+        assertQuery("SELECT DISTINCT sym, origin, lag(origin) over() from x limit -5")
+                .withPlan("""
                         Limit value: -5 skip-rows: 95 take-rows: 5
                             Distinct
                               keys: sym,origin,lag
@@ -129,24 +115,21 @@ public class DistinctTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                        """,
-                "SELECT DISTINCT sym, origin, lag(origin) over() from x limit -5",
-                null,
-                false,
-                true
-        );
+                        """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sym\torigin\tlag
+                        foo\t874367915\t-1775036711
+                        foo\t1431775887\t874367915
+                        foo\t-1822590290\t1431775887
+                        foo\t957075831\t-1822590290
+                        foo\t-2043541236\t957075831
+                        """);
 
         // no early exit
-        assertQueryAndPlan(
-                """
-                        sym\torigin\tlag
-                        foo\t315515118\tnull
-                        foo\t73575701\t315515118
-                        foo\t592859671\t73575701
-                        foo\t-1191262516\t592859671
-                        foo\t-1575378703\t-1191262516
-                        """,
-                """
+        assertQuery("SELECT DISTINCT sym, origin, lag(origin) over() from x order by 1 limit 5")
+                .withPlan("""
                         Limit value: 5 skip-rows: 0 take-rows: 5
                             Encode sort
                               keys: [sym]
@@ -157,12 +140,16 @@ public class DistinctTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                        """,
-                "SELECT DISTINCT sym, origin, lag(origin) over() from x order by 1 limit 5",
-                null,
-                true,
-                true
-        );
+                        """)
+                .expectSize()
+                .returns("""
+                        sym\torigin\tlag
+                        foo\t315515118\tnull
+                        foo\t73575701\t315515118
+                        foo\t592859671\t73575701
+                        foo\t-1191262516\t592859671
+                        foo\t-1575378703\t-1191262516
+                        """);
     }
 
     @Test
