@@ -37,9 +37,8 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
-
-import java.util.Objects;
 
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
@@ -123,7 +122,11 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest
 
     @Test
     public void testSql() throws Exception {
-        printSqlResult(() -> toExpectedTableContent(snapshotMetrics()), "select * from table_writer_metrics()", null, null, null, false, true, false, null);
+        assertQuery("select * from table_writer_metrics()")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(toExpectedTableContent(snapshotMetrics()));
     }
 
     private static MetricsSnapshot snapshotMetrics() {
@@ -152,43 +155,18 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest
         }
     }
 
-    private static class MetricsSnapshot {
-        private final long commitCount;
-        private final long committedRows;
-        private final long o3CommitCount;
-        private final long physicallyWrittenRows;
-        private final long rollbackCount;
-
-        private MetricsSnapshot(long commitCount, long committedRows, long o3CommitCount, long rollbackCount, long physicallyWrittenRows) {
-            this.commitCount = commitCount;
-            this.committedRows = committedRows;
-            this.o3CommitCount = o3CommitCount;
-            this.rollbackCount = rollbackCount;
-            this.physicallyWrittenRows = physicallyWrittenRows;
-        }
+    private record MetricsSnapshot(long commitCount, long committedRows, long o3CommitCount, long rollbackCount,
+                                   long physicallyWrittenRows) {
 
         @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            MetricsSnapshot that = (MetricsSnapshot) o;
-            return commitCount == that.commitCount && committedRows == that.committedRows && o3CommitCount == that.o3CommitCount && rollbackCount == that.rollbackCount && physicallyWrittenRows == that.physicallyWrittenRows;
+            public @NotNull String toString() {
+                return "MetricsSnapshot{" +
+                        "commitCount=" + commitCount +
+                        ", committedRows=" + committedRows +
+                        ", o3CommitCount=" + o3CommitCount +
+                        ", rollbackCount=" + rollbackCount +
+                        ", physicallyWrittenRows=" + physicallyWrittenRows +
+                        '}';
+            }
         }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(commitCount, committedRows, o3CommitCount, rollbackCount, physicallyWrittenRows);
-        }
-
-        @Override
-        public String toString() {
-            return "MetricsSnapshot{" +
-                    "commitCount=" + commitCount +
-                    ", committedRows=" + committedRows +
-                    ", o3CommitCount=" + o3CommitCount +
-                    ", rollbackCount=" + rollbackCount +
-                    ", physicallyWrittenRows=" + physicallyWrittenRows +
-                    '}';
-        }
-    }
 }

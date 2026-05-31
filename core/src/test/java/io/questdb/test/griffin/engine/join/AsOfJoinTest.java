@@ -103,7 +103,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     900.0\t700.0\t200.0
                     """;
 
-            printSqlResult(expected, query, null, false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -128,7 +132,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\tnull\t
                     5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\tnull\t
                     """, leftTableTimestampType.getTypeName());
-            printSqlResult(expected, query, "ts", false, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -1012,7 +1020,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000005%2$s\t1970-01-01T00:00:00.000004%1$s\t103\t102
                     """, leftSuffix, rightSuffix);
 
-            printSqlResult(expected, query, "timebid", false, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timebid")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -1096,7 +1108,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     4\t1970-01-01T00:00:00.000004Z\tnull\t
                     5\t1970-01-01T00:00:00.000005Z\tnull\t
                     """;
-            printSqlResult(replaceTimestampSuffix(expected, leftTableTimestampType.getTypeName()), query, "ts", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix(expected, leftTableTimestampType.getTypeName()));
         });
     }
 
@@ -3822,7 +3839,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\t2\t1970-01-01T00:00:00.040000%1$s
                     B\t3\t1970-01-01T00:00:00.050000%1$s
                     """, leftSuffix);
-            printSqlResult(ex, "tabY", "ts", true, true);
+            assertQuery("tabY")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ex);
             ex = String.format("""
                     tag\tx\tts
                     B\t1\t1970-01-01T00:00:00.010000%1$s
@@ -3832,7 +3853,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     A\t6\t1970-01-01T00:00:00.040000%1$s
                     A\t7\t1970-01-01T00:00:00.050000%1$s
                     """, rightSuffix);
-            printSqlResult(ex, "tabZ", "ts", true, true);
+            assertQuery("tabZ")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ex);
             // test
             ex = """
                     tag\thi\tlo
@@ -3844,7 +3869,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\t3\t3
                     """;
             String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabZ b on (tag) ";
-            printSqlResult(ex, query, null, false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(ex);
         });
     }
 
@@ -3873,7 +3902,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2021-07-26T02:36:03.098000%1$s\t8\t6\t2
                     """);
             String query = "select w1.ts ts, w1.SequenceNumber, w2.SequenceNumber, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
-            printSqlResult(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -4139,7 +4173,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000005%2$s\t1970-01-01T00:00:00.000004%1$s\t103\t102
                     """, leftSuffix, rightSuffix);
 
-            printSqlResult(expected, query, "timebid", false, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timebid")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -4367,7 +4405,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     4\t1970-01-01T00:00:00.000004Z\tnull\t
                     5\t1970-01-01T00:00:00.000005Z\tnull\t
                     """, leftTableTimestampType.getTypeName());
-            printSqlResult(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -4519,7 +4562,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\t2\t1970-01-01T00:00:00.040000%1$s
                     B\t3\t1970-01-01T00:00:00.050000%1$s
                     """, leftSuffix);
-            printSqlResult(ex, "tabY", "ts", true, true);
+            assertQuery("tabY")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ex);
             // test
             ex = """
                     tag\thi\tlo
@@ -4531,7 +4578,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\t3\t2
                     """;
             String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
-            printSqlResult(ex, query, null, false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(ex);
         });
     }
 
@@ -4557,7 +4608,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\t2\t1970-01-01T00:00:00.050000%1$s
                     B\t3\t1970-01-01T00:00:00.060000%1$s
                     """, leftSuffix);
-            printSqlResult(ex, "tabY", "ts", true, true);
+            assertQuery("tabY")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ex);
             // test
             ex = """
                     tag\thi\tlo
@@ -4569,7 +4624,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\t3\t2
                     """;
             String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
-            printSqlResult(ex, query, null, false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(ex);
         });
     }
 
@@ -4615,7 +4674,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     CC\t25\t1970-01-01T00:00:00.220000%1$s
                     """);
             String query = "tab";
-            printSqlResult(ex, query, "ts", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ex);
             // test
             ex = """
                     tag\thi\tlo
@@ -4625,7 +4688,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "from tab a " +
                     "lt join tab b " +
                     "where a.x > b.x + 1";
-            printSqlResult(ex, query, null, false, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(ex);
         });
     }
 
@@ -4671,7 +4737,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     CC\t25\t1970-01-01T00:00:00.220000%1$s
                     """);
             String query = "tab";
-            printSqlResult(ex, query, "ts", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ex);
             // test
             ex = """
                     tag\thi\tlo
@@ -4684,7 +4754,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     AA\t20\t17
                     """;
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
-            printSqlResult(ex, query, null, false, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(ex);
         });
     }
 

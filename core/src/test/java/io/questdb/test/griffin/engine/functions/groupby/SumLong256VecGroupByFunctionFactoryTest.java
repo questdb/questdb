@@ -59,7 +59,11 @@ public class SumLong256VecGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (0xb6292e820db4d91ba9a74c8c459676d127590af55a4eccba93a826db814c49c6)");
             String query = "select sum(x) from tab";
             String ex = "sum\n0x67f8b94c324a68824df7e1b864ec7baaeebec676cc2ab629ee23e1880d646e59\n";
-            printSqlResult(ex, query, null, false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(ex);
         });
     }
 }
