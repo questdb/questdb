@@ -1030,13 +1030,8 @@ public class ArrayTest extends AbstractCairoTest {
                     "('2025-06-26', 10.0, null)," +
                     "('2025-06-27', 18.0, ARRAY[11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0])," +
                     "('2025-06-27', 25.0, ARRAY[21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0])");
-            assertQueryAndPlan(
-                    """
-                            ts\tv
-                            2025-06-26T00:00:00.000000Z\t1
-                            2025-06-27T00:00:00.000000Z\t8
-                            """,
-                    """
+            assertQuery("select ts, max(array_position(arr, a)) as v from tango sample by 1d")
+                    .withPlan("""
                             Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
@@ -1047,20 +1042,17 @@ public class ArrayTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tango
-                            """,
-                    "select ts, max(array_position(arr, a)) as v from tango sample by 1d",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryAndPlan(
-                    """
+                            """)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tv
-                            2025-06-26T00:00:00.000000Z\t2
-                            2025-06-27T00:00:00.000000Z\t6
-                            """,
-                    """
+                            2025-06-26T00:00:00.000000Z\t1
+                            2025-06-27T00:00:00.000000Z\t8
+                            """);
+
+            assertQuery("select ts, min(insertion_point(arr, a)) as v from tango sample by 1d")
+                    .withPlan("""
                             Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
@@ -1071,20 +1063,17 @@ public class ArrayTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tango
-                            """,
-                    "select ts, min(insertion_point(arr, a)) as v from tango sample by 1d",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryAndPlan(
-                    """
+                            """)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tv
-                            2025-06-26T00:00:00.000000Z\t10
-                            2025-06-27T00:00:00.000000Z\t20
-                            """,
-                    """
+                            2025-06-26T00:00:00.000000Z\t2
+                            2025-06-27T00:00:00.000000Z\t6
+                            """);
+
+            assertQuery("select ts, sum(array_count(arr)) as v from tango sample by 1d")
+                    .withPlan("""
                             Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
@@ -1095,20 +1084,17 @@ public class ArrayTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tango
-                            """,
-                    "select ts, sum(array_count(arr)) as v from tango sample by 1d",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryAndPlan(
-                    """
+                            """)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tv
-                            2025-06-26T00:00:00.000000Z\t5.5
-                            2025-06-27T00:00:00.000000Z\t41.0
-                            """,
-                    """
+                            2025-06-26T00:00:00.000000Z\t10
+                            2025-06-27T00:00:00.000000Z\t20
+                            """);
+
+            assertQuery("select ts, sum(array_avg(arr)) as v from tango sample by 1d")
+                    .withPlan("""
                             Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
@@ -1119,22 +1105,17 @@ public class ArrayTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tango
-                            """,
-                    "select ts, sum(array_avg(arr)) as v from tango sample by 1d",
-                    "ts",
-                    true,
-                    true
-            );
+                            """)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2025-06-26T00:00:00.000000Z\t5.5
+                            2025-06-27T00:00:00.000000Z\t41.0
+                            """);
 
-            assertQueryAndPlan(
-                    """
-                            ts\tarray_sum\tsum
-                            2025-06-26T00:00:00.000000Z\t220.0\t1.0
-                            2025-06-26T00:00:00.000000Z\tnull\t10.0
-                            2025-06-27T00:00:00.000000Z\t770.0\t18.0
-                            2025-06-27T00:00:00.000000Z\t1320.0\t25.0
-                            """,
-                    """
+            assertQuery("select ts, array_sum(array_cum_sum(arr)), sum(a) from tango sample by 1d")
+                    .withPlan("""
                             Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
@@ -1145,22 +1126,19 @@ public class ArrayTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tango
-                            """,
-                    "select ts, array_sum(array_cum_sum(arr)), sum(a) from tango sample by 1d",
-                    "ts",
-                    true,
-                    true
-            );
-
-            assertQueryAndPlan(
-                    """
-                            ts\tdot_product\tfirst
-                            2025-06-26T00:00:00.000000Z\t110.0\t1.0
+                            """)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tarray_sum\tsum
+                            2025-06-26T00:00:00.000000Z\t220.0\t1.0
                             2025-06-26T00:00:00.000000Z\tnull\t10.0
-                            2025-06-27T00:00:00.000000Z\t310.0\t18.0
-                            2025-06-27T00:00:00.000000Z\t510.0\t25.0
-                            """,
-                    """
+                            2025-06-27T00:00:00.000000Z\t770.0\t18.0
+                            2025-06-27T00:00:00.000000Z\t1320.0\t25.0
+                            """);
+
+            assertQuery("select ts, dot_product(arr, 2), first(a) from tango sample by 1d")
+                    .withPlan("""
                             Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
@@ -1171,20 +1149,19 @@ public class ArrayTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tango
-                            """,
-                    "select ts, dot_product(arr, 2), first(a) from tango sample by 1d",
-                    "ts",
-                    true,
-                    true
-            );
+                            """)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tdot_product\tfirst
+                            2025-06-26T00:00:00.000000Z\t110.0\t1.0
+                            2025-06-26T00:00:00.000000Z\tnull\t10.0
+                            2025-06-27T00:00:00.000000Z\t310.0\t18.0
+                            2025-06-27T00:00:00.000000Z\t510.0\t25.0
+                            """);
 
-            assertQueryAndPlan(
-                    """
-                            ts\tsum
-                            2025-06-26T00:00:00.000000Z\t147.5
-                            2025-06-27T00:00:00.000000Z\t1045.0
-                            """,
-                    """
+            assertQuery("select ts, sum(array_sum((arr * 5 + 3 - 1)/2)) from tango sample by 1d")
+                    .withPlan("""
                             Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
@@ -1195,12 +1172,14 @@ public class ArrayTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tango
-                            """,
-                    "select ts, sum(array_sum((arr * 5 + 3 - 1)/2)) from tango sample by 1d",
-                    "ts",
-                    true,
-                    true
-            );
+                            """)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsum
+                            2025-06-26T00:00:00.000000Z\t147.5
+                            2025-06-27T00:00:00.000000Z\t1045.0
+                            """);
         });
     }
 
