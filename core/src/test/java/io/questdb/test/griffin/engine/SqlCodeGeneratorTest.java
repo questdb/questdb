@@ -1044,20 +1044,17 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     }
                 }
         };
-        assertQuery(
-                expected,
-                "(select sum(a) from x) where 1=1",
-                "create table x as " +
+        assertQuery("(select sum(a) from x) where 1=1")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " timestamp_sequence(0, 10000) k" +
                         " from" +
                         " long_sequence(12)" +
-                        ") timestamp(k)",
-                null,
-                true
-        );
+                        ") timestamp(k)")
+                .expectSize()
+                .returnsRecords(expected);
     }
 
     @Test
