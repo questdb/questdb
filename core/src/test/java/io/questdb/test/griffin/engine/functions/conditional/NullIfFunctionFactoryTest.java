@@ -31,8 +31,14 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCharSimple() throws Exception {
-        assertQuery(
-                "ch1\tch2\tnullif\n" +
+        assertQuery("select ch1,ch2,nullif(ch1,ch2) from x")
+                .ddl("create table x as (" +
+                        "select rnd_char() as ch1\n" +
+                        ", rnd_char() as ch2\n" +
+                        "from long_sequence(20)" +
+                        ")")
+                .expectSize()
+                .returns("ch1\tch2\tnullif\n" +
                         "V\tT\tV\n" +
                         "J\tW\tJ\n" +
                         "C\tP\tC\n" +
@@ -52,195 +58,150 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
                         "F\tF\t\n" +
                         "Y\tU\tY\n" +
                         "D\tE\tD\n" +
-                        "Y\tY\t\n",
-                "select ch1,ch2,nullif(ch1,ch2) from x",
-                "create table x as (" +
-                        "select rnd_char() as ch1\n" +
-                        ", rnd_char() as ch2\n" +
-                        "from long_sequence(20)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        "Y\tY\t\n");
     }
 
     @Test
     public void testDecimalSimple() throws Exception {
-        assertQuery(
-                "dec\tnullif\n" +
+        assertQuery("select dec, nullif(dec,0.3m) from x")
+                .ddl("create table x as (" +
+                        "select x / 10.0m as dec\n" +
+                        "from long_sequence(5)" +
+                        ")")
+                .expectSize()
+                .returns("dec\tnullif\n" +
                         "0.1\t0.1\n" +
                         "0.2\t0.2\n" +
                         "0.3\t\n" +
                         "0.4\t0.4\n" +
-                        "0.5\t0.5\n",
-                "select dec, nullif(dec,0.3m) from x",
-                "create table x as (" +
-                        "select x / 10.0m as dec\n" +
-                        "from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        "0.5\t0.5\n");
     }
 
     @Test
     public void testDoubleNonConstant() throws Exception {
-        assertQuery(
-                "nullif\n" +
-                        "5.0\n" +
-                        "null\n" +
-                        "4.0\n",
-
-                "select nullif(five, four) from x \n" +
+        assertQuery("select nullif(five, four) from x \n" +
                         "UNION \n" +
                         "select nullif(five, five) from x \n" +
                         "UNION \n" +
-                        "select nullif(four, five) from x \n",
-                "create table x as (" +
+                        "select nullif(four, five) from x \n")
+                .ddl("create table x as (" +
                         "SELECT 5::double as five, 4::double as four" +
-                        ")",
-                null,
-                false,
-                false
-        );
+                        ")")
+                .noRandomAccess()
+                .returns("nullif\n" +
+                        "5.0\n" +
+                        "null\n" +
+                        "4.0\n");
     }
 
     @Test
     public void testDoubleSimple() throws Exception {
-        assertQuery(
-                "double\tnullif\n" +
+        assertQuery("select double,nullif(double,0.3) from x")
+                .ddl("create table x as (" +
+                        "select x / 10.0 as double\n" +
+                        "from long_sequence(5)" +
+                        ")")
+                .expectSize()
+                .returns("double\tnullif\n" +
                         "0.1\t0.1\n" +
                         "0.2\t0.2\n" +
                         "0.3\tnull\n" +
                         "0.4\t0.4\n" +
-                        "0.5\t0.5\n",
-                "select double,nullif(double,0.3) from x",
-                "create table x as (" +
-                        "select x / 10.0 as double\n" +
-                        "from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        "0.5\t0.5\n");
     }
 
     @Test
     public void testIntConstNull() throws Exception {
-        assertQuery(
-                "nullif1\tnullif2\n" +
-                        "null\t5\n",
-                "select nullif(null,5) nullif1, nullif(5,null) nullif2",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select nullif(null,5) nullif1, nullif(5,null) nullif2")
+                .expectSize()
+                .returns("nullif1\tnullif2\n" +
+                        "null\t5\n");
     }
 
     @Test
     public void testIntNonConstant() throws Exception {
-        assertQuery(
-                "nullif\n" +
-                        "5\n" +
-                        "null\n" +
-                        "4\n",
-
-                "select nullif(five, four) from x \n" +
+        assertQuery("select nullif(five, four) from x \n" +
                         "UNION \n" +
                         "select nullif(five, five) from x \n" +
                         "UNION \n" +
-                        "select nullif(four, five) from x \n",
-                "create table x as (" +
+                        "select nullif(four, five) from x \n")
+                .ddl("create table x as (" +
                         "SELECT 5 as five, 4 as four" +
-                        ")",
-                null,
-                false,
-                false
-        );
+                        ")")
+                .noRandomAccess()
+                .returns("nullif\n" +
+                        "5\n" +
+                        "null\n" +
+                        "4\n");
     }
 
     @Test
     public void testIntSimple() throws Exception {
-        assertQuery(
-                "int\tnullif\n" +
+        assertQuery("select int,nullif(int,5) from x")
+                .ddl("create table x as (" +
+                        "select rnd_int(1,5,0) as int\n" +
+                        "from long_sequence(5)" +
+                        ")")
+                .expectSize()
+                .returns("int\tnullif\n" +
                         "4\t4\n" +
                         "2\t2\n" +
                         "5\tnull\n" +
                         "2\t2\n" +
-                        "4\t4\n",
-                "select int,nullif(int,5) from x",
-                "create table x as (" +
-                        "select rnd_int(1,5,0) as int\n" +
-                        "from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        "4\t4\n");
     }
 
     @Test
     public void testLongConstNull() throws Exception {
-        assertQuery(
-                "nullif1\tnullif2\n" +
-                        "null\t5\n",
-                "select nullif(null,5::long) nullif1, nullif(5::long,null) nullif2",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select nullif(null,5::long) nullif1, nullif(5::long,null) nullif2")
+                .expectSize()
+                .returns("nullif1\tnullif2\n" +
+                        "null\t5\n");
     }
 
     @Test
     public void testLongNonConstant() throws Exception {
-        assertQuery(
-                "nullif\n" +
-                        "5\n" +
-                        "null\n" +
-                        "4\n",
-
-                "select nullif(five, four) from x \n" +
+        assertQuery("select nullif(five, four) from x \n" +
                         "UNION \n" +
                         "select nullif(five, five) from x \n" +
                         "UNION \n" +
-                        "select nullif(four, five) from x \n",
-                "create table x as (" +
+                        "select nullif(four, five) from x \n")
+                .ddl("create table x as (" +
                         "SELECT 5::long as five, 4::long as four" +
-                        ")",
-                null,
-                false,
-                false
-        );
+                        ")")
+                .noRandomAccess()
+                .returns("nullif\n" +
+                        "5\n" +
+                        "null\n" +
+                        "4\n");
     }
 
     @Test
     public void testLongSimple() throws Exception {
-        assertQuery(
-                "long\tnullif\n" +
+        assertQuery("select long,nullif(long,3) from x")
+                .ddl("create table x as (" +
+                        "select x as long\n" +
+                        "from long_sequence(5)" +
+                        ")")
+                .expectSize()
+                .returns("long\tnullif\n" +
                         "1\t1\n" +
                         "2\t2\n" +
                         "3\tnull\n" +
                         "4\t4\n" +
-                        "5\t5\n",
-                "select long,nullif(long,3) from x",
-                "create table x as (" +
-                        "select x as long\n" +
-                        "from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        "5\t5\n");
     }
 
     @Test
     public void testStrSimple() throws Exception {
-        assertQuery(
-                "str1\tstr2\tnullif\n" +
+        assertQuery("select str1,str2,nullif(str1,str2) from x")
+                .ddl("create table x as (" +
+                        "select rnd_str('cat','dog',NULL) as str1\n" +
+                        ", rnd_str('cat','dog',NULL) as str2\n" +
+                        "from long_sequence(10)" +
+                        ")")
+                .expectSize()
+                .returns("str1\tstr2\tnullif\n" +
                         "cat\tcat\t\n" +
                         "dog\t\tdog\n" +
                         "\t\t\n" +
@@ -250,23 +211,19 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
                         "dog\tdog\t\n" +
                         "dog\tcat\tdog\n" +
                         "cat\tdog\tcat\n" +
-                        "cat\tdog\tcat\n",
-                "select str1,str2,nullif(str1,str2) from x",
-                "create table x as (" +
-                        "select rnd_str('cat','dog',NULL) as str1\n" +
-                        ", rnd_str('cat','dog',NULL) as str2\n" +
-                        "from long_sequence(10)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        "cat\tdog\tcat\n");
     }
 
     @Test
     public void testVarcharSimple() throws Exception {
-        assertQuery(
-                "str1\tstr2\tnullif\n" +
+        assertQuery("select str1,str2,nullif(str1,str2) from x")
+                .ddl("create table x as (" +
+                        "select rnd_varchar('cat','dog',NULL) as str1\n" +
+                        ", rnd_varchar('cat','dog',NULL) as str2\n" +
+                        "from long_sequence(10)" +
+                        ")")
+                .expectSize()
+                .returns("str1\tstr2\tnullif\n" +
                         "cat\tcat\t\n" +
                         "dog\t\tdog\n" +
                         "\t\t\n" +
@@ -276,16 +233,6 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
                         "dog\tdog\t\n" +
                         "dog\tcat\tdog\n" +
                         "cat\tdog\tcat\n" +
-                        "cat\tdog\tcat\n",
-                "select str1,str2,nullif(str1,str2) from x",
-                "create table x as (" +
-                        "select rnd_varchar('cat','dog',NULL) as str1\n" +
-                        ", rnd_varchar('cat','dog',NULL) as str2\n" +
-                        "from long_sequence(10)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        "cat\tdog\tcat\n");
     }
 }
