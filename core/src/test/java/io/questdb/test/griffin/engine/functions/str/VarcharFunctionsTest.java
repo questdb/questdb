@@ -66,7 +66,11 @@ public class VarcharFunctionsTest extends AbstractCairoTest {
                 .mutateWith("update x set v_str = v_varchar")
                 .noRandomAccess()
                 .expectSize()
-                .returns("count\n200\n", "count\n0\n");
+                .returns(
+                        // This argument doesn't assert any meaningful result, the cols are different at this point:
+                        "count\n200\n",
+                        // This is the actual assertion, all lengths must be equal:
+                        "count\n0\n");
     }
 
     @Test

@@ -992,18 +992,16 @@ public class ArrayTest extends AbstractCairoTest {
             execute("create table test (ts timestamp, x int, v double[]) timestamp(ts) partition by DAY");
             execute("insert into test(ts,x,v) values ('2022-02-24', 1, ARRAY[1.0,1.0]), ('2022-02-24', 2, null), ('2022-02-24', 3, ARRAY[2.0,2.0])");
 
-            assertQuery(
-                    """
+            assertQuery("select ts, x, first(v) as v from test sample by 1s")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tx\tv
                             2022-02-24T00:00:00.000000Z\t1\t[1.0,1.0]
                             2022-02-24T00:00:00.000000Z\t2\tnull
                             2022-02-24T00:00:00.000000Z\t3\t[2.0,2.0]
-                            """,
-                    "select ts, x, first(v) as v from test sample by 1s",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             assertPlanNoLeakCheck(
                     "select ts, x, first(v) as v from test sample by 1s",
@@ -1592,15 +1590,6 @@ public class ArrayTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("""
-                            case\tts\ti\ta
-                            []\t2020-01-01T00:00:00.000000Z\t0\t[]
-                            [1.0]\t2021-01-01T00:00:00.000000Z\t1\t[-1.0]
-                            [1.0,2.0]\t2022-01-01T00:00:00.000000Z\t2\t[-1.0,-2.0]
-                            [1.0,2.0,3.0]\t2023-01-01T00:00:00.000000Z\t3\t[-1.0,-2.0,-3.0]
-                            [1.0,2.0,3.0,4.0]\t2024-01-01T00:00:00.000000Z\t4\t[-1.0,-2.0,-3.0,-4.0]
-                            [-1.0,-2.0,-3.0,-4.0,-5.0]\t2025-01-01T00:00:00.000000Z\t5\t[-1.0,-2.0,-3.0,-4.0,-5.0]
-                            """,
-                    """
                             select\s
                               case\s
                                 when ts in '2020' then array[]::double[]
@@ -1610,22 +1599,21 @@ public class ArrayTest extends AbstractCairoTest {
                                 when ts in '2024' then array[1.0, 2.0, 3.0, 4.0]\s
                                 else a\s
                               end, *
-                            from tango;""",
-                    null,
-                    "ts",
-                    true,
-                    true);
+                            from tango;""")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            case\tts\ti\ta
+                            []\t2020-01-01T00:00:00.000000Z\t0\t[]
+                            [1.0]\t2021-01-01T00:00:00.000000Z\t1\t[-1.0]
+                            [1.0,2.0]\t2022-01-01T00:00:00.000000Z\t2\t[-1.0,-2.0]
+                            [1.0,2.0,3.0]\t2023-01-01T00:00:00.000000Z\t3\t[-1.0,-2.0,-3.0]
+                            [1.0,2.0,3.0,4.0]\t2024-01-01T00:00:00.000000Z\t4\t[-1.0,-2.0,-3.0,-4.0]
+                            [-1.0,-2.0,-3.0,-4.0,-5.0]\t2025-01-01T00:00:00.000000Z\t5\t[-1.0,-2.0,-3.0,-4.0,-5.0]
+                            """);
 
             assertQuery("""
-                            case\tts\ti\ta
-                            empty\t2020-01-01T00:00:00.000000Z\t0\t[]
-                            literal\t2021-01-01T00:00:00.000000Z\t1\t[-1.0]
-                            casting\t2022-01-01T00:00:00.000000Z\t2\t[-1.0,-2.0]
-                            whatever\t2023-01-01T00:00:00.000000Z\t3\t[-1.0,-2.0,-3.0]
-                            whatever\t2024-01-01T00:00:00.000000Z\t4\t[-1.0,-2.0,-3.0,-4.0]
-                            whatever\t2025-01-01T00:00:00.000000Z\t5\t[-1.0,-2.0,-3.0,-4.0,-5.0]
-                            """,
-                    """
                             select\s
                               case\s
                                 when a = ARRAY[-1.0] then 'literal'
@@ -1634,11 +1622,19 @@ public class ArrayTest extends AbstractCairoTest {
                                 when a = ARRAY[]::double[] then 'empty'
                                 else 'whatever'
                               end, *
-                            from tango;""",
-                    null,
-                    "ts",
-                    true,
-                    true);
+                            from tango;""")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            case\tts\ti\ta
+                            empty\t2020-01-01T00:00:00.000000Z\t0\t[]
+                            literal\t2021-01-01T00:00:00.000000Z\t1\t[-1.0]
+                            casting\t2022-01-01T00:00:00.000000Z\t2\t[-1.0,-2.0]
+                            whatever\t2023-01-01T00:00:00.000000Z\t3\t[-1.0,-2.0,-3.0]
+                            whatever\t2024-01-01T00:00:00.000000Z\t4\t[-1.0,-2.0,-3.0,-4.0]
+                            whatever\t2025-01-01T00:00:00.000000Z\t5\t[-1.0,-2.0,-3.0,-4.0,-5.0]
+                            """);
 
             assertException("""
                             select\s
@@ -1756,8 +1752,10 @@ public class ArrayTest extends AbstractCairoTest {
                             );"""
             );
 
-            assertQuery(
-                    """
+            assertQuery("select * from blah")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tarr\tb
                             &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t[0.6778564558839208,0.3100545983862456,0.38539947865244994,0.8799634725391621]\t-2119387831
                             衞͛Ԉ龘\t[0.6761934857077543,0.8912587536603974]\t458818940
@@ -1769,10 +1767,7 @@ public class ArrayTest extends AbstractCairoTest {
                             qRӽ\t[0.6797562990945702,0.8189713915910615,0.10459352312331183,0.7365115215570027,0.20585069039325443,0.9418719455092096]\t-623471113
                             E"+~M/8KS\t[0.17180291960857297,0.4416432347777828,0.2065823085842221,0.8584308438045006,0.2445295612285482]\t-1465751763
                             Gk珣zx6쪎\t[0.5780746276543334,0.40791879008699594,0.12663676991275652,0.21485589614090927]\t-365989785
-                            """,
-                    "select * from blah",
-                    true
-            );
+                            """);
         });
     }
 
@@ -2116,16 +2111,17 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testExplicitCastDimensionalityChange() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cast\n[[1.0,2.0]]\n",
-                    "SELECT ARRAY[1.0, 2.0]::double[][]",
-                    true
-            );
+            assertQuery("SELECT ARRAY[1.0, 2.0]::double[][]")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("cast\n[[1.0,2.0]]\n");
 
             // no element arrays
-            assertQuery("cast\n[]\n", // arrays with no elements are always printed as []
-                    "SELECT ARRAY[]::double[][]",
-                    true
-            );
+            assertQuery(// arrays with no elements are always printed as []
+                    "SELECT ARRAY[]::double[][]")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("cast\n[]\n");
 
             // casting to fewer dimensions is not allowed
             assertException("SELECT ARRAY[[1.0], [2.0]]::double[]",
@@ -2233,38 +2229,40 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testExplicitCastFromScalarToArray() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("""
+            assertQuery("SELECT 1.0::double[] FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             cast
                             [1.0]
-                            """,
-                    "SELECT 1.0::double[] FROM long_sequence(1)",
-                    true
-            );
+                            """);
 
             // null
-            assertQuery("""
+            assertQuery("SELECT NULL::double::double[] FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             cast
                             null
-                            """,
-                    "SELECT NULL::double::double[] FROM long_sequence(1)",
-                    true);
+                            """);
 
             // 2D
-            assertQuery("""
+            assertQuery("SELECT 1.0::double[][] FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             cast
                             [[1.0]]
-                            """,
-                    "SELECT 1.0::double[][] FROM long_sequence(1)",
-                    true
-            );
+                            """);
 
             // 2D with null
-            assertQuery("""
+            assertQuery("SELECT NULL::double::double[][] FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             cast
                             null
-                            """,
-                    "SELECT NULL::double::double[][] FROM long_sequence(1)",
-                    true);
+                            """);
         });
     }
 
@@ -2424,17 +2422,18 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES (null, 0)");
 
             assertQuery("""
+                            select arr, count(*)
+                            from tango
+                            group by arr;""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             arr\tcount
                             [[1.0,2.0],[3.0,4.0]]\t2
                             [[1.0,2.0],[3.0,4.1]]\t1
                             [[1.0,2.0],[3.0,4.0],[5.0,6.0]]\t1
                             null\t1
-                            """,
-                    """
-                            select arr, count(*)
-                            from tango
-                            group by arr;""",
-                    true);
+                            """);
         });
     }
 
@@ -2447,15 +2446,16 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES (ARRAY[[2.0, 3.0], [1.0, 4.0]], 5)");
 
             assertQuery("""
+                            select arr[1:2], sum(i)
+                            from tango
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             []\tsum
                             [[1.0,2.0]]\t4
                             [[2.0,3.0]]\t5
-                            """,
-                    """
-                            select arr[1:2], sum(i)
-                            from tango
-                            """,
-                    true);
+                            """);
 
         });
     }
@@ -2466,8 +2466,10 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE blah (a DOUBLE[][])");
             execute("INSERT INTO blah SELECT rnd_double_array(2, 2) FROM long_sequence(10)");
 
-            assertQuery(
-                    """
+            assertQuery("select * from blah")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             [[null,0.20447441837877756],[null,null]]
                             [[0.3491070363730514,0.7611029514995744],[0.4217768841969397,null],[0.7261136209823622,0.4224356661645131],[null,0.3100545983862456],[0.1985581797355932,0.33608255572515877],[0.690540444367637,null],[0.21583224269349388,0.15786635599554755],[null,null],[0.12503042190293423,null],[0.9687423276940171,null],[null,null],[null,null],[null,null],[0.7883065830055033,null],[0.4138164748227684,0.5522494170511608],[0.2459345277606021,null]]
@@ -2479,10 +2481,7 @@ public class ArrayTest extends AbstractCairoTest {
                             [[0.08675950660182763,null],[0.741970173888595,0.25353478516307626],[0.2739985338660311,null],[0.8001632261203552,null],[0.7404912278395417,0.08909442703907178],[0.8439276969435359,null],[null,0.08712007604601191]]
                             [[0.5637742551872849,null],[null,null],[0.7195457109208119,null],[0.23493793601747937,null],[0.6334964081687151,0.6721404635638454]]
                             [[0.17405556853190263,0.823395724427589,null,0.8108032283138068,null,null,0.7530494527849502,0.49153268154777974,0.0024457698760806945,0.29168465906260244,0.3121271759430503,0.3004874521886858],[null,0.7653255982993546,null,null,null,null,0.37873228328689634,null,0.7272119755925095,null,0.7467013668130107,0.5794665369115236],[null,0.5308756766878475,0.03192108074989719,null,0.17498425722537903,null,0.34257201464152764,null,null,0.29242748475227853,null,0.11296257318851766],[null,0.23405440872043592,0.1479745625593103,null,0.8115426881784433,null,0.32093405888189597,null,0.04321289940104611,0.8217652538598936,0.6397125243912908,0.29419791719259025],[0.865629565918467,null,null,0.16923843067953104,0.7198854503668188,0.5174107449677378,0.38509066982448115,null,null,null,0.5475429391562822,0.6977332212252165],[null,null,0.4268921400209912,0.9997797234031688,0.5234892454427748,null,null,null,null,0.5169565007469263,0.7039785408034679,0.8461211697505234],[null,0.537020248377422,0.8766908646423737,null,null,0.31852531484741486,null,0.605050319285447,0.9683642405595932,0.3549235578142891,0.04211401699125483,null],[null,0.0032519916115479885,0.2703179181043681,0.729536610842768,0.3317641556575974,0.8895915828662114,null,null,null,null,0.1599211504269954,0.5251698097331752],[null,0.18442756220221035,null,0.48422587819911567,0.2970515836513553,null,0.7826107801293182,null,0.3218450864634881,0.8034049105590781,null,null],[0.40425101135606667,0.9412663583926286,null,null,0.8376764297590714,0.15241451173695408,null,0.743599174001969,null,null,0.9001273812517414,0.5629104624260136],[0.6001215594928115,0.8920252905736616,0.09977691656157406,null,0.2862717364877081,null,null,null,0.8853675629694284,4.945923013344178E-5,null,0.0016532800623808575]]
-                            """,
-                    "select * from blah",
-                    true
-            );
+                            """);
         });
     }
 
@@ -3130,28 +3129,28 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES ('2001-03', 3, '{5.0, 6.0, 7.0}')");
             execute("INSERT INTO tango VALUES ('2001-04', 42, null)");
 
-            assertQuery("""
+            assertQuery("select * from tango order by i desc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\ti\tarr
                             2001-04-01T00:00:00.000000Z\t42\tnull
                             2001-03-01T00:00:00.000000Z\t3\t[5.0,6.0,7.0]
                             2001-02-01T00:00:00.000000Z\t2\t[3.0,4.0]
                             2001-01-01T00:00:00.000000Z\t1\t[1.0,2.0]
-                            """,
-                    "select * from tango order by i desc",
-                    true
-            );
+                            """);
 
             // test also with no rowId - this simulates ordering output of a factory which does not support rowId
-            assertQuery("""
+            assertQuery("select * from '*!*tango' order by i desc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\ti\tarr
                             2001-04-01T00:00:00.000000Z\t42\tnull
                             2001-03-01T00:00:00.000000Z\t3\t[5.0,6.0,7.0]
                             2001-02-01T00:00:00.000000Z\t2\t[3.0,4.0]
                             2001-01-01T00:00:00.000000Z\t1\t[1.0,2.0]
-                            """,
-                    "select * from '*!*tango' order by i desc",
-                    true
-            );
+                            """);
         });
     }
 
@@ -3178,22 +3177,18 @@ public class ArrayTest extends AbstractCairoTest {
                     """;
 
             execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET where ts in '2001-01';");
-            assertQuery(
-                    expected,
-                    "tango",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
 
             execute("ALTER TABLE tango CONVERT PARTITION TO NATIVE where ts in '2001-01';");
-            assertQuery(
-                    expected,
-                    "tango",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -3205,15 +3200,14 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[2.0, 3.0], ARRAY[4.0, 5]), " +
                     "(ARRAY[6.0, 7], ARRAY[8.0, 9])");
 
-            assertQuery(
-                    """
+            assertQuery("select a as a1, b as b1, a as a2, b as b2 from 'tango' ")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a1\tb1\ta2\tb2
                             [2.0,3.0]\t[4.0,5.0]\t[2.0,3.0]\t[4.0,5.0]
                             [6.0,7.0]\t[8.0,9.0]\t[6.0,7.0]\t[8.0,9.0]
-                            """,
-                    "select a as a1, b as b1, a as a2, b as b2 from 'tango' ",
-                    true
-            );
+                            """);
         });
     }
 
@@ -3448,8 +3442,10 @@ public class ArrayTest extends AbstractCairoTest {
 
         drainWalQueue();
 
-        assertQuery(
-                """
+        assertQuery("select distinct bids[1][2] bid from market_data order by bid")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         bid
                         0.0396096812427591
                         0.04173263630897883
@@ -3461,13 +3457,12 @@ public class ArrayTest extends AbstractCairoTest {
                         0.8615841627702753
                         0.8796413468565342
                         0.9344604857394011
-                        """,
-                "select distinct bids[1][2] bid from market_data order by bid",
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select distinct bids from market_data;")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         bids
                         [[0.0843832076262595,0.9344604857394011,0.13123360041292131],[0.7905675319675964,0.19202208853547864,0.8899286912289663]]
                         [[0.9771103146051203,0.6217326707853098,0.15786635599554755,0.6381607531178513,0.4022810626779558,0.5793466326862211,0.9038068796506872,0.12026122412833129,0.6761934857077543],[0.8912587536603974,0.3435685332942956,0.42281342727402726,0.26922103479744897,0.7664256753596138,0.5298405941762054,0.5522494170511608,0.8445258177211064,0.7763904674818695],[0.05048190020054388,0.8847591603509142,0.0011075361080621349,0.931192737286751,0.8258367614088108,0.8001121139739173,0.38642336707855873,0.92050039469858,0.16381374773748514]]
@@ -3479,19 +3474,15 @@ public class ArrayTest extends AbstractCairoTest {
                         [[0.6936669914583254,0.43117716480568924,0.9578716688144072,0.5940502728139653,0.17914853671380093,0.30878646825073175,0.1319044042993568,0.33261541215518553,0.5079751443209725,0.3812506482325819,0.2703044758382739,0.4104855595304533],[0.6376518594972684,0.7587860024773928,0.011263511839942453,0.32613652012030125,0.9176263114713273,0.8457748651234394,0.6281252905002019,0.6504194217741501,0.2824076895992761,0.8054745482045382,0.27144997281940675,0.7573042043889733],[0.6931441108030082,0.1900488162112337,0.837738444021418,0.02633639777833019,0.8658616916564643,0.12465120312903266,0.36986619304630497,0.7706329763519386,0.10424082472921137,0.7874929839944909,0.9266929571641075,0.551184165451474],[0.7751886508004251,0.7659949103776245,0.7417434132166958,0.6288088087840823,0.9379038084870472,0.5763691784056397,0.5350165471764692,0.4613501223216129,0.3257868894353412,0.43619251546485505,0.6927480038605662,0.6051204746298999],[0.9410396704938232,0.19073234832401043,0.9610592594899304,0.4246651384043666,0.236380596505666,0.34085516645580494,0.08533575092925538,0.7564214859398338,0.8718394349472115,0.8925004728084927,0.45388767393986074,0.6728521416263535],[0.8413721135371649,0.7298540433653912,0.527776712010911,0.981074259037815,0.4701492486769596,0.4573258867972624,0.8139041928326346,0.3123904307505546,0.761296424148768,0.9510816389659975,0.43990342764801993,0.3726618828334195]]
                         [[0.48432558936820347,0.2199453379647608],[0.12934061164115174,0.19245855538083634],[0.40354999638471434,0.8940422626709261],[0.8235056484964091,0.7536836395346167],[0.5570298738371094,0.8096078909402364],[0.819524120126593,0.2056999100146133],[0.2017974971999763,0.42934437054513563],[0.16638148883943538,0.3911828760735948],[0.2969423112431254,0.9940353811420282]]
                         [[0.3669999679163578,0.0396096812427591,0.7234181773407536,0.7184108604451028],[0.844088760011128,0.4911664452671409,0.7776474810620265,0.17857143325827407],[0.3074410595329138,0.4151433463570058,0.9930633230891175,0.32317345869453706],[0.12027057950578746,0.27289838138048383,0.440645592676968,0.5999750613543716],[0.7436419445622273,0.8019738363360789,0.49950663682485574,0.9925168599192057],[0.6600337469738781,0.9251043257912728,0.060162223725059416,0.008444033230580739],[0.7573509485315202,0.9622544279671161,0.04229155272030727,0.9207177299535534],[0.11500943478849246,0.6013488560104849,0.23290767295012593,0.288531163175191],[0.9582280075093402,0.0983023224719013,0.22243351688740076,0.04969674919093636],[0.11493568065083815,0.4287405981191371,0.4058708191934428,0.22148534962398414],[0.8503316000896455,0.4879274348488539,0.45039214871547917,0.42774600405593644],[0.7593868458005614,0.32484768130656416,0.9520909221021127,0.2562499563674363],[0.6385649970707139,0.3622980885814183,0.2524690658195553,0.8825940193001498],[0.2917796053045747,0.9809851788419132,0.05339947229164044,0.7771965216814184]]
-                        """,
-                "select distinct bids from market_data;",
-                true
-        );
+                        """);
 
-        assertQuery(
-                """
+        assertQuery("select distinct ARRAY[[1.0, 2.0], [3.0, 4.0]] from long_sequence(10)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         ARRAY
                         [[1.0,2.0],[3.0,4.0]]
-                        """,
-                "select distinct ARRAY[[1.0, 2.0], [3.0, 4.0]] from long_sequence(10)",
-                true
-        );
+                        """);
     }
 
     @Test
@@ -3563,16 +3554,7 @@ public class ArrayTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertQueryNoLeakCheck(
-                    """
-                            timestamp\tavg_price\tbest_price\tdrift
-                            2023-08-25T08:00:00.000000Z\t176.79999999999998\t176.8\t-2.842170943040401E-14
-                            2023-08-25T08:01:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14
-                            2023-08-25T08:02:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14
-                            2023-08-25T08:03:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14
-                            2023-08-25T08:04:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM (DECLARE
                             \t@price := 1,
                             \t@size := 2,
@@ -3584,10 +3566,17 @@ public class ArrayTest extends AbstractCairoTest {
                             \t\t@best_price as best_price,
                             \t\t@avg_price - @best_price as drift
                             \tFROM AAPL_orderbook
-                            \tSAMPLE BY 1m) LIMIT 5;""",
-                    "timestamp",
-                    true,
-                    false);
+                            \tSAMPLE BY 1m) LIMIT 5;""")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns("""
+                            timestamp\tavg_price\tbest_price\tdrift
+                            2023-08-25T08:00:00.000000Z\t176.79999999999998\t176.8\t-2.842170943040401E-14
+                            2023-08-25T08:01:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14
+                            2023-08-25T08:02:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14
+                            2023-08-25T08:03:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14
+                            2023-08-25T08:04:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14
+                            """);
         });
     }
 
@@ -4006,54 +3995,59 @@ public class ArrayTest extends AbstractCairoTest {
             execute("insert into tango values (null)");
 
             // 2 arrays of the same type and dimensionality
-            assertQuery("""
+            assertQuery("SELECT ARRAY[1.0, 2.0] UNION ALL SELECT ARRAY[3.0, 4.0, 5.0] FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ARRAY
                             [1.0,2.0]
                             [3.0,4.0,5.0]
-                            """,
-                    "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT ARRAY[3.0, 4.0, 5.0] FROM long_sequence(1)",
-                    null, null, false, true
-            );
+                            """);
 
             // with scalar double
-            assertQuery("""
+            assertQuery("SELECT ARRAY[1.0, 2.0] UNION ALL SELECT 3.0 FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ARRAY
                             [1.0,2.0]
                             [3.0]
-                            """,
-                    "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT 3.0 FROM long_sequence(1)",
-                    null, null, false, true
-            );
+                            """);
 
             // with double::null
-            assertQuery("""
+            assertQuery("SELECT ARRAY[1.0, 2.0] UNION ALL SELECT * from tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ARRAY
                             [1.0,2.0]
                             null
-                            """,
-                    "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT * from tango",
-                    null, null, false, true
-            );
+                            """);
 
             // with string
-            assertQuery("""
+            assertQuery("SELECT ARRAY[1.0, 2.0] UNION ALL SELECT 'foo' FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ARRAY
                             [1.0,2.0]
                             foo
-                            """,
-                    "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT 'foo' FROM long_sequence(1)",
-                    null, null, false, true
-            );
+                            """);
 
             // 1D and 2D arrays
-            assertQuery("""
+            assertQuery("SELECT ARRAY[1.0, 2.0] UNION ALL SELECT ARRAY[[3.0, 4.0], [5.0, 6.0]] FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ARRAY
                             [[1.0,2.0]]
                             [[3.0,4.0],[5.0,6.0]]
-                            """,
-                    "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT ARRAY[[3.0, 4.0], [5.0, 6.0]] FROM long_sequence(1)",
-                    null, null, false, true
-            );
+                            """);
         });
     }
 
@@ -4117,91 +4111,70 @@ public class ArrayTest extends AbstractCairoTest {
             execute("create table bravo (arr double[])");
 
             execute("insert into alpha values (ARRAY[1.0, 2.0])");
-            assertQuery("arr\n[1.0,2.0]\n",
-                    "select * from alpha union select * from bravo",
-                    null,
-                    null,
-                    false,
-                    false
-            );
+            assertQuery("select * from alpha union select * from bravo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("arr\n[1.0,2.0]\n");
 
             execute("insert into bravo values (ARRAY[1.0, 2.0])");
-            assertQuery("arr\n[1.0,2.0]\n",
-                    "select * from alpha union select * from bravo",
-                    null,
-                    null,
-                    false,
-                    false
-            );
+            assertQuery("select * from alpha union select * from bravo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("arr\n[1.0,2.0]\n");
 
             execute("insert into alpha values (ARRAY[1.0, 2.0, 3.0])");
-            assertQuery("""
+            assertQuery("select * from alpha union select * from bravo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             arr
                             [1.0,2.0]
                             [1.0,2.0,3.0]
-                            """,
-                    "select * from alpha union select * from bravo",
-                    null,
-                    null,
-                    false,
-                    false
-            );
+                            """);
 
             execute("insert into bravo values (ARRAY[1.0, 2.0, 3.0])");
-            assertQuery("""
+            assertQuery("select * from alpha union select * from bravo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             arr
                             [1.0,2.0]
                             [1.0,2.0,3.0]
-                            """,
-                    "select * from alpha union select * from bravo",
-                    null,
-                    null,
-                    false,
-                    false
-            );
+                            """);
 
             execute("insert into alpha values (ARRAY[])");
-            assertQuery("""
+            assertQuery("select * from alpha union select * from bravo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             arr
                             [1.0,2.0]
                             [1.0,2.0,3.0]
                             []
-                            """,
-                    "select * from alpha union select * from bravo",
-                    null,
-                    null,
-                    false,
-                    false
-            );
+                            """);
 
             execute("insert into bravo values (ARRAY[])");
-            assertQuery("""
+            assertQuery("select * from alpha union select * from bravo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             arr
                             [1.0,2.0]
                             [1.0,2.0,3.0]
                             []
-                            """,
-                    "select * from alpha union select * from bravo",
-                    null,
-                    null,
-                    false,
-                    false
-            );
+                            """);
 
             execute("insert into alpha values (null)");
-            assertQuery("""
+            assertQuery("select * from alpha union select * from bravo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             arr
                             [1.0,2.0]
                             [1.0,2.0,3.0]
                             []
                             null
-                            """,
-                    "select * from alpha union select * from bravo",
-                    null,
-                    null,
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
