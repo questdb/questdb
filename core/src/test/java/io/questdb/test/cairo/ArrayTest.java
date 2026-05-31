@@ -1862,12 +1862,59 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[2.0, 3.0], ARRAY[4.0, 0]), " +
                     "(ARRAY[6.0, null], ARRAY[8.0, 9])," +
                     "(null, null)");
-            assertSql("""
-                    div
-                    [0.5,null]
-                    [0.75,null]
-                    null
-                    """, "SELECT a / b div FROM tango");
+            assertQuery("SELECT a / b div FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            div
+                            [0.5,null]
+                            [0.75,null]
+                            null
+                            """);
+        });
+    }
+
+    @Test
+    public void testArrayBinaryOpNullArrayBeforeNonNull() throws Exception {
+        // A null array result resets each element-wise operator's reused output
+        // buffer; a following non-null row must still compute correctly. The null
+        // row comes first here, so even a single scan exercises the null ->
+        // non-null transition for every operator.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
+            execute("INSERT INTO tango VALUES " +
+                    "(null, null), " +
+                    "(ARRAY[2.0, 3.0], ARRAY[4.0, 6.0])");
+            assertQuery("SELECT a / b aDivB, a * b aMulB, a + b aAddB, a - b aSubB FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            aDivB\taMulB\taAddB\taSubB
+                            null\tnull\tnull\tnull
+                            [0.5,0.5]\t[8.0,18.0]\t[6.0,9.0]\t[-2.0,-3.0]
+                            """);
+        });
+    }
+
+    @Test
+    public void testDivNullArrayBeforeNonNull() throws Exception {
+        // A null array result resets the function's reused output buffer; a
+        // following non-null row must still compute correctly. Order matters:
+        // the null row comes first here, so even a single scan exercises the
+        // null -> non-null transition.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
+            execute("INSERT INTO tango VALUES " +
+                    "(null, null), " +
+                    "(ARRAY[2.0, 3.0], ARRAY[4.0, 6.0])");
+            assertQuery("SELECT a / b div FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            div
+                            null
+                            [0.5,0.5]
+                            """);
         });
     }
 
@@ -1879,11 +1926,14 @@ public class ArrayTest extends AbstractCairoTest {
                     "( ARRAY[ [ [2.0, 3], [4.0, 5] ], [ [6.0, 7], [8.0, 9] ]  ], " +
                     "  ARRAY[ [ [10.0, 11], [12.0, 13] ], [ [14.0, 15], [16.0, 20] ]  ] ), " +
                     "( null, null )");
-            assertSql("""
+            assertQuery("SELECT a[1:2, 1:2, 1:2] / b[2:, 2:, 2:] div FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             div
                             [[[0.1]]]
                             null
-                            """, "SELECT a[1:2, 1:2, 1:2] / b[2:, 2:, 2:] div FROM tango");
+                            """);
         });
     }
 
@@ -2815,7 +2865,10 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[2.0, 3.0], ARRAY[4.0, 5]), " +
                     "(ARRAY[6.0, 7], ARRAY[8.0, 9])," +
                     "(null, null)");
-            assertSql("product\n[15.0]\n[63.0]\nnull\n", "SELECT a[2:] * b[2:] product FROM tango");
+            assertQuery("SELECT a[2:] * b[2:] product FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("product\n[15.0]\n[63.0]\nnull\n");
         });
     }
 
@@ -2827,7 +2880,10 @@ public class ArrayTest extends AbstractCairoTest {
                     "( ARRAY[ [ [2.0, 3], [4.0, 5] ], [ [6.0, 7], [8.0, 9] ]  ], " +
                     "  ARRAY[ [ [10.0, 11], [12.0, 13] ], [ [14.0, 15], [16.0, 17] ]  ] ), " +
                     "( null, null )");
-            assertSql("product\n[[[34.0]]]\nnull\n", "SELECT a[1:2, 1:2, 1:2] * b[2:, 2:, 2:] product FROM tango");
+            assertQuery("SELECT a[1:2, 1:2, 1:2] * b[2:, 2:, 2:] product FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("product\n[[[34.0]]]\nnull\n");
         });
     }
 
@@ -3171,12 +3227,35 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testRndDoubleArray() throws Exception {
         assertMemoryLeak(() -> {
+            // Keep assertSql: rnd_double_array() produces fresh random values on
+            // each execution, so the asserted values only hold for a single run.
+            // The assertQuery builder re-reads the cursor and would see new values.
             assertSql("rnd_double_array\n[0.08486964232560668,0.299199045961845]\n", "SELECT rnd_double_array(1)");
-            assertSql("rnd_double_array\n[null]\n", "SELECT rnd_double_array('1', '1', '1', '1')");
-            assertSql("rnd_double_array\n[null]\n", "SELECT rnd_double_array(1::byte, 1::byte, 0::byte, 1::byte)");
-            assertSql("rnd_double_array\n[null]\n", "SELECT rnd_double_array(1::short, 1::short, 0::short, 1::short)");
-            assertSql("rnd_double_array\n[null]\n", "SELECT rnd_double_array(1::int, 1::int, 0::int, 1::int)");
-            assertSql("rnd_double_array\n[null]\n", "SELECT rnd_double_array(1::long, 1::long, 0::long, 1::long)");
+            assertQuery("SELECT rnd_double_array('1', '1', '1', '1')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("rnd_double_array\n[null]\n");
+            assertQuery("SELECT rnd_double_array(1::byte, 1::byte, 0::byte, 1::byte)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("rnd_double_array\n[null]\n");
+            assertQuery("SELECT rnd_double_array(1::short, 1::short, 0::short, 1::short)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("rnd_double_array\n[null]\n");
+            assertQuery("SELECT rnd_double_array(1::int, 1::int, 0::int, 1::int)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("rnd_double_array\n[null]\n");
+            assertQuery("SELECT rnd_double_array(1::long, 1::long, 0::long, 1::long)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("rnd_double_array\n[null]\n");
         });
     }
 

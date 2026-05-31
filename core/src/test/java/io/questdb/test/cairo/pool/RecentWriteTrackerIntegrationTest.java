@@ -562,7 +562,6 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             // Verify via SQL
             assertQuery("SELECT table_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'unique_test'")
                     .noLeakCheck()
-                    .expectSize()
                     .noRandomAccess()
                     .returns("table_row_count\twal_dedup_row_count_since_start\n1000\t200\n");
         });
@@ -647,7 +646,6 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             // Row count should be 500 (first batch applied)
             assertQuery("SELECT table_row_count FROM tables() WHERE table_name = 'dedup_test'")
                     .noLeakCheck()
-                    .expectSize()
                     .noRandomAccess()
                     .returns("table_row_count\n500\n");
 
@@ -657,7 +655,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             // After draining - table_row_count should be 1000, wal_pending_row_count should be 0, no dedup yet
             assertQuery("SELECT table_row_count, wal_pending_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'dedup_test'")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("table_row_count\twal_pending_row_count\twal_dedup_row_count_since_start\n1000\t0\t0\n");
 
             // Now insert duplicate data - same timestamps as first 300 rows (1-300 seconds)
@@ -672,7 +670,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             // - dedup_row_count_since_start should be 300 (cumulative - the 300 duplicates just added)
             assertQuery("SELECT table_row_count, wal_pending_row_count, wal_dedup_row_count_since_start FROM tables() WHERE table_name = 'dedup_test'")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("table_row_count\twal_pending_row_count\twal_dedup_row_count_since_start\n1000\t0\t300\n");
 
             // Verify the values were actually updated (not just row count unchanged)
@@ -680,6 +678,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             assertQuery("SELECT count() FROM dedup_test WHERE v > 1000")
                     .noLeakCheck()
                     .expectSize()
+                    .noRandomAccess()
                     .returns("count\n300\n");
         });
     }

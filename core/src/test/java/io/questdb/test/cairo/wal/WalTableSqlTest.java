@@ -1378,12 +1378,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     @Test
     public void testInsertIntNoTimestampTableAsSelect() throws Exception {
-        testInsertAsSelectBatched("");
+        testInsertAsSelectBatched(false);
     }
 
     @Test
     public void testInsertIntoWalTableAsSelect() throws Exception {
-        testInsertAsSelectBatched("timestamp (timestamp) PARTITION BY DAY WAL DEDUP UPSERT KEYS(timestamp, nuuid)");
+        testInsertAsSelectBatched(true);
     }
 
     @Test
@@ -2228,7 +2228,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
         });
     }
 
-    private void testInsertAsSelectBatched(String destTableCreateAttr) throws Exception {
+    private void testInsertAsSelectBatched(boolean hasTimestampClause) throws Exception {
+        var destTableCreateAttr = hasTimestampClause ? "timestamp (timestamp) PARTITION BY DAY WAL DEDUP UPSERT KEYS(timestamp, nuuid)" : "";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE \"nhs\" (\n" +
                     "  nuuid SYMBOL capacity 256 CACHE index capacity 256,\n" +
@@ -2278,13 +2279,17 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertQuery("nhs")
+            var a = assertQuery("nhs")
                     .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            nuuid\tlns\thst\tslt\tise\tvvv\tcut\tmup\tmub\tnrb\tntb\tdup\ttimestamp
-                            asdf\t123\tasdff\t222\ttrue\t1.2.3\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-01T03:25:21.312321Z
-                            """
+                    .expectSize();
+
+            if (hasTimestampClause) {
+                a.timestamp("timestamp");
+            }
+            a.returns("""
+                    nuuid\tlns\thst\tslt\tise\tvvv\tcut\tmup\tmub\tnrb\tntb\tdup\ttimestamp
+                    asdf\t123\tasdff\t222\ttrue\t1.2.3\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-01T03:25:21.312321Z
+                    """
             );
         });
     }
