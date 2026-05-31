@@ -1917,6 +1917,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertMemoryLeak(() -> assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false));
     }
 
+    // todo: remove
     protected void assertQueryAndPlan(
             CharSequence expected,
             CharSequence query,

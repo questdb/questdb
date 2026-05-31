@@ -51,8 +51,12 @@ public class Long128Tests extends AbstractCairoTest {
                     ")"
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    """
+            assertQuery("select tab2.ts, tab1.* from tab1 JOIN tab2 ON tab1.ts = tab2.ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .fullFatJoins()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tts1\tts11\ti
                             00000000-0000-0006-0000-000000000003\t00000000-0000-0006-0000-000000000003\t2022-02-24T00:00:00.000000Z\t1
                             00000000-0000-000c-0000-000000000006\t00000000-0000-000c-0000-000000000006\t2022-02-24T00:00:01.000000Z\t2
@@ -60,13 +64,7 @@ public class Long128Tests extends AbstractCairoTest {
                             00000000-0000-0018-0000-00000000000c\t00000000-0000-0018-0000-00000000000c\t2022-02-24T00:00:03.000000Z\t4
                             00000000-0000-001e-0000-00000000000f\t00000000-0000-001e-0000-00000000000f\t2022-02-24T00:00:04.000000Z\t5
                             00000000-0000-0024-0000-000000000012\t00000000-0000-0024-0000-000000000012\t2022-02-24T00:00:05.000000Z\t6
-                            """,
-                    "select tab2.ts, tab1.* from tab1 JOIN tab2 ON tab1.ts = tab2.ts",
-                    null,
-                    false,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 

@@ -105,11 +105,13 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                 assertTrue(engine.getTableSequencerAPI().getTxnTracker(tt).getMemPressureControl().isReadyToProcess());
 
                 try {
-                    // cannot use assertQuery, because it clears CairoEngine - this clears all seqTxnTrackers
-                    // and we lose information about memory pressure
-                    assertQueryFullFatNoLeakCheck("count\n" +
-                                    expectedRowCount + "\n",
-                            "select count() from x", null, false, true, false);
+                    // .noLeakCheck() keeps CairoEngine intact - the leak-checked path would clear it and
+                    // with it all seqTxnTrackers, losing the memory-pressure information this test asserts
+                    assertQuery("select count() from x")
+                            .noRandomAccess()
+                            .expectSize()
+                            .noLeakCheck()
+                            .returns("count\n" + expectedRowCount + "\n");
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
