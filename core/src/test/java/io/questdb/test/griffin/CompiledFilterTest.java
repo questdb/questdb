@@ -200,8 +200,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
     @Test
     public void testFilteringOnSingleQuote() throws Exception {
-        assertQueryAndPlan("Time\tSpread\tBid_Volume\task_volume\n",
-                """
+        assertQuery("""
                         SELECT timestamp as Time,
                         avg(asks[1,1]-bids[1,1]) as Spread,
                         sum(bids[1,1]*bids[2,1]) as Bid_Volume,
@@ -210,28 +209,8 @@ public class CompiledFilterTest extends AbstractCairoTest {
                         WHERE symbol = ''''
                         SAMPLE BY 1s
                         ORDER BY timestamp DESC
-                        LIMIT 6;""",
-                """
-                        
-                        CREATE TABLE 'market_data' (\s
-                        \ttimestamp TIMESTAMP,
-                        \tsymbol SYMBOL CAPACITY 16384 CACHE,
-                        \tbids DOUBLE[][],
-                        \tasks DOUBLE[][]
-                        ) timestamp(timestamp);""",
-                "Time###DESC",
-                "INSERT INTO market_data (timestamp, symbol, bids, asks) " +
-                        "VALUES " +
-                        "(0, 'abc', array[[1d,2d],[3d,4d]], array[[2d,3d],[4d,5d]]), " +
-                        "(10_000_000, '''', array[[10d,20d],[30d,40d]], array[[20d,30d],[40d,50d]]);",
-                """
-                        Time\tSpread\tBid_Volume\task_volume
-                        1970-01-01T00:00:10.000000Z\t10.0\t300.0\t800.0
-                        """,
-                true,
-                true,
-                false,
-                """
+                        LIMIT 6;""")
+                .withPlan("""
                         Long Top K lo: 6
                           keys: [Time desc]
                             Async JIT Group By workers: 1
@@ -242,6 +221,24 @@ public class CompiledFilterTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: market_data
+                        """)
+                .ddl("""
+                        
+                        CREATE TABLE 'market_data' (\s
+                        \ttimestamp TIMESTAMP,
+                        \tsymbol SYMBOL CAPACITY 16384 CACHE,
+                        \tbids DOUBLE[][],
+                        \tasks DOUBLE[][]
+                        ) timestamp(timestamp);""")
+                .timestampDesc("Time")
+                .mutateWith("INSERT INTO market_data (timestamp, symbol, bids, asks) " +
+                        "VALUES " +
+                        "(0, 'abc', array[[1d,2d],[3d,4d]], array[[2d,3d],[4d,5d]]), " +
+                        "(10_000_000, '''', array[[10d,20d],[30d,40d]], array[[20d,30d],[40d,50d]]);")
+                .expectSize()
+                .returns("Time\tSpread\tBid_Volume\task_volume\n", """
+                        Time\tSpread\tBid_Volume\task_volume
+                        1970-01-01T00:00:10.000000Z\t10.0\t300.0\t800.0
                         """);
     }
 

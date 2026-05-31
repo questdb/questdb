@@ -1164,7 +1164,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinOnTripleSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (SqlCompiler _ = engine.getSqlCompiler()) {
                 executeWithRewriteTimestamp(
                         """
                                 CREATE TABLE bids (
@@ -1250,8 +1250,18 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%1$s\t11\tSCAM\tMSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%2$s\t11\tEXCELLENT
                         AAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%1$s\t3\tSCAM\tAAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%2$s\t3\tEXCELLENT
                         """, leftSuffix, rightSuffix);
-                assertQueryNoLeakCheck(compiler, expected, queryWithoutHint, "ts", false, sqlExecutionContext, true);
-                assertQueryNoLeakCheck(compiler, expected, queryWithDenseHint, "ts", false, sqlExecutionContext, true);
+                assertQuery(queryWithoutHint)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                assertQuery(queryWithDenseHint)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
 
                 printSql("EXPLAIN " + queryWithoutHint);
                 TestUtils.assertContains(sink, "AsOf Join Fast");
@@ -1264,7 +1274,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinOnTripleSymbolKeyLastKeyMissing() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (SqlCompiler _ = engine.getSqlCompiler()) {
                 executeWithRewriteTimestamp(
                         "CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts #TIMESTAMP, i INT, rating STRING) TIMESTAMP(ts) PARTITION BY DAY",
                         leftTableTimestampType.getTypeName()
@@ -1325,7 +1335,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%1$s\t11\tSCAM\t\t\t\t\tnull\t
                         \tNASDAQ\tUS\t2002-01-01T00:00:00.000000%1$s\t3\tSCAM\t\t\t\t\tnull\t
                         """, leftSuffix, rightSuffix);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -3475,7 +3490,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         AAPL\t2004-01-01T00:00:00.000000%1$s\tAAPL\t2003-01-01T00:00:00.000000%1$s\tAAPL\t2002-01-01T00:00:00.000000%1$s\tAAPL\t2001-01-01T00:00:00.000000%1$s
                         AAPL\t2005-01-01T00:00:00.000000%1$s\tAAPL\t2004-01-01T00:00:00.000000%1$s\tAAPL\t2003-01-01T00:00:00.000000%1$s\tAAPL\t2002-01-01T00:00:00.000000%1$s
                         """);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -4167,7 +4187,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNonKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (SqlCompiler _ = engine.getSqlCompiler()) {
                 executeWithRewriteTimestamp("""
                             CREATE TABLE bids (
                             stock SYMBOL,
@@ -4237,7 +4257,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         MSFT\tNASDAQ\t2002-01-01T00:00:00.000000%1$s\t9\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000%2$s\t11\tSCAM
                         AAPL\tNASDAQ\t2002-01-01T00:00:00.000000%1$s\t3\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000%2$s\t11\tSCAM
                         """, leftSuffix, rightSuffix);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -4317,7 +4342,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         MSFT\tNASDAQ\t2002-01-01T00:00:00.000000%1$s\t9\tSCAM\tMSFT\tNASDAQ\t2001-01-01T00:00:00.000000%2$s\t8\tGOOD
                         AAPL\tNASDAQ\t2002-01-01T00:00:00.000000%1$s\t3\tSCAM\tAAPL\tNASDAQ\t2001-01-01T00:00:00.000000%2$s\t2\tEXCELLENT
                         """, leftSuffix, rightSuffix);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -4424,7 +4454,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         A\t2020-09-28T05:20:00.000000%1$s\t2020-02-09T17:46:39.999999%2$s\tA
                         B\t2021-01-21T23:06:40.000000%1$s\t2020-06-04T11:33:19.999999%2$s\tB
                         """, leftSuffix, rightSuffix);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -5037,7 +5072,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         QSTDB\t2007-01-01T00:00:00.000000%1$s\tQSTDB\t2007-01-01T00:00:00.000000%1$s\tQSTDB\t2007-01-01T00:00:00.000000%1$s\tQSTDB\t2007-01-01T00:00:00.000000%1$s
                         QSTDB\t2008-01-01T00:00:00.000000%1$s\tQSTDB\t2008-01-01T00:00:00.000000%1$s\tQSTDB\t2008-01-01T00:00:00.000000%1$s\tQSTDB\t2008-01-01T00:00:00.000000%1$s
                         """, leftSuffix);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -5099,7 +5139,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         QSTDB\t2007-01-01T00:00:00.000000%1$s\tQSTDB\t2006-01-01T00:00:00.000000%1$s\tQSTDB\t2005-01-01T00:00:00.000000%1$s\tQSTDB\t2004-01-01T00:00:00.000000%1$s
                         QSTDB\t2008-01-01T00:00:00.000000%1$s\tQSTDB\t2007-01-01T00:00:00.000000%1$s\tQSTDB\t2006-01-01T00:00:00.000000%1$s\tQSTDB\t2005-01-01T00:00:00.000000%1$s
                         """, leftSuffix);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -5166,7 +5211,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         Whatever\tQSTDB\t2008-01-01T00:00:00.000000%1$s\tQSTDB\t2007-01-01T00:00:00.000000%1$s\tQSTDB\t2006-01-01T00:00:00.000000%1$s\tQSTDB\t2005-01-01T00:00:00.000000%1$s
                         """, leftSuffix);
 
-                assertQueryNoLeakCheck(compiler, expected, query, "t0ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("t0ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
