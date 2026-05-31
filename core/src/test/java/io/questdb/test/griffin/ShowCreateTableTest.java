@@ -80,7 +80,10 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testDedup() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol, i int ) timestamp(ts) partition by day wal dedup upsert keys(ts, s, i)");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
@@ -88,8 +91,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \ti INT
                             ) timestamp(ts) PARTITION BY DAY
                             DEDUP UPSERT KEYS(ts,s,i);
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -97,14 +99,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts)");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY NONE BYPASS WAL;
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -162,7 +166,10 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     " rnd_str(5,16,2) n" +
                     " from long_sequence(10)" +
                     ") timestamp (timestamp);");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \ti INT,
@@ -182,8 +189,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tm BINARY,
                             \tn STRING
                             ) timestamp(timestamp) PARTITION BY NONE BYPASS WAL;
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -191,13 +197,15 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testMinimalDdl() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp)");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -205,14 +213,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testOtherColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, s symbol capacity 256)");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ts SYMBOL
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -220,14 +230,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testParquetCompression() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE foo (ts TIMESTAMP, d DOUBLE PARQUET(default, ZSTD(3))) TIMESTAMP(ts) PARTITION BY DAY");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \td DOUBLE PARQUET(default, zstd(3))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -235,14 +247,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testParquetCompressionLevelZero() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(PLAIN, GZIP(0))) TIMESTAMP(ts) PARTITION BY DAY");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ta INT PARQUET(plain, gzip(0))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -250,14 +264,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testParquetCompressionUncompressed() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE foo (ts TIMESTAMP, d DOUBLE PARQUET(default, UNCOMPRESSED)) TIMESTAMP(ts) PARTITION BY DAY");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \td DOUBLE PARQUET(default, uncompressed)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -265,14 +281,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testParquetCompressionWithSymbol() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE foo (ts TIMESTAMP, s SYMBOL PARQUET(default, ZSTD)) TIMESTAMP(ts) PARTITION BY DAY");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ts SYMBOL PARQUET(default, zstd)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -280,14 +298,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testParquetEncoding() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(DELTA_BINARY_PACKED)) TIMESTAMP(ts) PARTITION BY DAY");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ta INT PARQUET(delta_binary_packed)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -295,14 +315,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testParquetEncodingAndCompression() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3))) TIMESTAMP(ts) PARTITION BY DAY");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ta INT PARQUET(delta_binary_packed, zstd(3))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -310,14 +332,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testParquetBloomFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE foo (ts TIMESTAMP, a VARCHAR PARQUET(BLOOM_FILTER)) TIMESTAMP(ts) PARTITION BY DAY");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ta VARCHAR PARQUET(bloom_filter)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -325,14 +349,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testParquetBloomFilterWithEncoding() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(PLAIN, BLOOM_FILTER)) TIMESTAMP(ts) PARTITION BY DAY");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ta INT PARQUET(plain, bloom_filter)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -340,14 +366,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testParquetBloomFilterWithEncodingAndCompression() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3), BLOOM_FILTER)) TIMESTAMP(ts) PARTITION BY DAY");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ta INT PARQUET(delta_binary_packed, zstd(3), bloom_filter)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -371,7 +399,10 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testParquetBloomFilterMixedColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(BLOOM_FILTER), b VARCHAR PARQUET(DELTA_LENGTH_BYTE_ARRAY, BLOOM_FILTER), c DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
@@ -379,8 +410,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tb VARCHAR PARQUET(delta_length_byte_array, bloom_filter),
                             \tc DOUBLE
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -416,15 +446,17 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             }
             engine.getMetadataCache().onStartupAsyncHydrator();
 
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ta INT,
                             \tb LONG
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -432,14 +464,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testPartitioning() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year wal;");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY YEAR;
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -447,14 +481,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testPartitioningButBypassingWAL() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year bypass wal;");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY YEAR BYPASS WAL;
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -464,7 +500,10 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             execute("create table t1 ( ts timestamp, s symbol ) timestamp(ts)");
             execute("create table t2 ( ts timestamp, s symbol ) timestamp(ts)");
             execute("create table t3 ( ts timestamp, s symbol ) timestamp(ts)");
-            assertSql("""
+            assertQuery("show create table t1 union show create table t2 union show create table t3")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 't1' (\s
                             \tts TIMESTAMP,
@@ -478,8 +517,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY NONE BYPASS WAL;
-                            """,
-                    "show create table t1 union show create table t2 union show create table t3");
+                            """);
         });
     }
 
@@ -487,14 +525,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testSymbol() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, s symbol capacity 512 nocache)");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ts SYMBOL NOCACHE
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -502,14 +542,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testSymbolAndIndex() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, s symbol capacity 512 nocache index capacity 1024)");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ts SYMBOL NOCACHE INDEX CAPACITY 1024
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -523,12 +565,15 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testTtlOneDay() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     ddl
                     CREATE TABLE 'tango' (\s
                     \tts TIMESTAMP
                     ) timestamp(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL;
-                    """, "SHOW CREATE TABLE tango");
+                    """);
         });
     }
 
@@ -536,12 +581,15 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testTtlOneHour() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     ddl
                     CREATE TABLE 'tango' (\s
                     \tts TIMESTAMP
                     ) timestamp(ts) PARTITION BY HOUR TTL 1 HOUR BYPASS WAL;
-                    """, "SHOW CREATE TABLE tango");
+                    """);
         });
     }
 
@@ -549,12 +597,15 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testTtlOneMonth() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1M");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     ddl
                     CREATE TABLE 'tango' (\s
                     \tts TIMESTAMP
                     ) timestamp(ts) PARTITION BY HOUR TTL 1 MONTH BYPASS WAL;
-                    """, "SHOW CREATE TABLE tango");
+                    """);
         });
     }
 
@@ -562,12 +613,15 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testTtlOneWeek() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1W");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     ddl
                     CREATE TABLE 'tango' (\s
                     \tts TIMESTAMP
                     ) timestamp(ts) PARTITION BY HOUR TTL 1 WEEK BYPASS WAL;
-                    """, "SHOW CREATE TABLE tango");
+                    """);
         });
     }
 
@@ -575,12 +629,15 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testTtlOneYear() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1Y");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     ddl
                     CREATE TABLE 'tango' (\s
                     \tts TIMESTAMP
                     ) timestamp(ts) PARTITION BY HOUR TTL 1 YEAR BYPASS WAL;
-                    """, "SHOW CREATE TABLE tango");
+                    """);
         });
     }
 
@@ -588,12 +645,15 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testTtlTwoHours() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2H");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     ddl
                     CREATE TABLE 'tango' (\s
                     \tts TIMESTAMP
                     ) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS BYPASS WAL;
-                    """, "SHOW CREATE TABLE tango");
+                    """);
         });
     }
 
@@ -601,12 +661,15 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testTtlTwoWeeks() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2W");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     ddl
                     CREATE TABLE 'tango' (\s
                     \tts TIMESTAMP
                     ) timestamp(ts) PARTITION BY HOUR TTL 2 WEEKS BYPASS WAL;
-                    """, "SHOW CREATE TABLE tango");
+                    """);
         });
     }
 
@@ -614,12 +677,15 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testTtlTwoYears() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2Y");
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                     ddl
                     CREATE TABLE 'tango' (\s
                     \tts TIMESTAMP
                     ) timestamp(ts) PARTITION BY HOUR TTL 2 YEARS BYPASS WAL;
-                    """, "SHOW CREATE TABLE tango");
+                    """);
         });
     }
 
@@ -628,14 +694,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) " +
                     "with maxUncommittedRows=1234");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ts SYMBOL
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -648,14 +716,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) " +
                     "with maxUncommittedRows=1234, o3MaxLag=1s");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ts SYMBOL
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -664,14 +734,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) " +
                     "with o3MaxLag=1s");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
                             \ts SYMBOL
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 }

@@ -79,16 +79,46 @@ public class NullLiteralsTest extends AbstractCairoTest {
     @Test
     public void testBooleanSelectCast() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("column\nfalse\n", "select cast(0 AS BOOLEAN) IS NULL");
-            assertSql("column\nfalse\n", "select cast(0L AS BOOLEAN) IS NULL");
-            assertSql("column\nfalse\n", "select cast('' AS BOOLEAN) IS NULL");
-            assertSql("column\nfalse\n", "select cast(NULL AS BOOLEAN) IS NULL");
-            assertSql("column\nfalse\n", "select cast(false AS BOOLEAN) IS NULL");
-            assertSql("column\ntrue\n", "select cast(0 AS BOOLEAN) IS NOT NULL");
-            assertSql("column\ntrue\n", "select cast(0L AS BOOLEAN) IS NOT NULL");
-            assertSql("column\ntrue\n", "select cast('' AS BOOLEAN) IS NOT NULL");
-            assertSql("column\ntrue\n", "select cast(NULL AS BOOLEAN) IS NOT NULL");
-            assertSql("column\ntrue\n", "select cast(false AS BOOLEAN) IS NOT NULL");
+            assertQuery("select cast(0 AS BOOLEAN) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(0L AS BOOLEAN) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast('' AS BOOLEAN) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(NULL AS BOOLEAN) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(false AS BOOLEAN) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(0 AS BOOLEAN) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast(0L AS BOOLEAN) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast('' AS BOOLEAN) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast(NULL AS BOOLEAN) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast(false AS BOOLEAN) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
         });
     }
 
@@ -142,16 +172,46 @@ public class NullLiteralsTest extends AbstractCairoTest {
     @Test
     public void testByteSelectCast() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("column\nfalse\n", "select cast(0 AS BYTE) IS NULL");
-            assertSql("column\nfalse\n", "select cast(0L AS BYTE) IS NULL");
-            assertSql("column\nfalse\n", "select cast('' AS BYTE) IS NULL");
-            assertSql("column\nfalse\n", "select cast(NULL AS BYTE) IS NULL");
-            assertSql("column\nfalse\n", "select cast(false AS BYTE) IS NULL");
-            assertSql("column\ntrue\n", "select cast(0 AS BYTE) IS NOT NULL");
-            assertSql("column\ntrue\n", "select cast(0L AS BYTE) IS NOT NULL");
-            assertSql("column\ntrue\n", "select cast('' AS BYTE) IS NOT NULL");
-            assertSql("column\ntrue\n", "select cast(NULL AS BYTE) IS NOT NULL");
-            assertSql("column\ntrue\n", "select cast(false AS BYTE) IS NOT NULL");
+            assertQuery("select cast(0 AS BYTE) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(0L AS BYTE) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast('' AS BYTE) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(NULL AS BYTE) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(false AS BYTE) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(0 AS BYTE) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast(0L AS BYTE) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast('' AS BYTE) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast(NULL AS BYTE) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast(false AS BYTE) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
         });
     }
 
@@ -202,16 +262,46 @@ public class NullLiteralsTest extends AbstractCairoTest {
     @Test
     public void testCharSelectCast() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("column\ntrue\n", "select cast(0 AS CHAR) IS NULL");
-            assertSql("column\ntrue\n", "select cast(0L AS CHAR) IS NULL");
-            assertSql("column\ntrue\n", "select cast('' AS CHAR) IS NULL");
-            assertSql("column\ntrue\n", "select cast(NULL AS CHAR) IS NULL");
-            assertSql("column\nfalse\n", "select cast(false AS CHAR) IS NULL");
-            assertSql("column\nfalse\n", "select cast(0 AS CHAR) IS NOT NULL");
-            assertSql("column\nfalse\n", "select cast(0L AS CHAR) IS NOT NULL");
-            assertSql("column\nfalse\n", "select cast('' AS CHAR) IS NOT NULL");
-            assertSql("column\nfalse\n", "select cast(NULL AS CHAR) IS NOT NULL");
-            assertSql("column\ntrue\n", "select cast(false AS CHAR) IS NOT NULL");
+            assertQuery("select cast(0 AS CHAR) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast(0L AS CHAR) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast('' AS CHAR) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast(NULL AS CHAR) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast(false AS CHAR) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(0 AS CHAR) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(0L AS CHAR) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast('' AS CHAR) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(NULL AS CHAR) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(false AS CHAR) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
         });
     }
 
@@ -265,16 +355,46 @@ public class NullLiteralsTest extends AbstractCairoTest {
     @Test
     public void testShortSelectCast() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("column\nfalse\n", "select cast(0 AS SHORT) IS NULL");
-            assertSql("column\nfalse\n", "select cast(0L AS SHORT) IS NULL");
-            assertSql("column\nfalse\n", "select cast('' AS SHORT) IS NULL");
-            assertSql("column\nfalse\n", "select cast(NULL AS SHORT) IS NULL");
-            assertSql("column\nfalse\n", "select cast(false AS SHORT) IS NULL");
-            assertSql("column\ntrue\n", "select cast(0 AS SHORT) IS NOT NULL");
-            assertSql("column\ntrue\n", "select cast(0L AS SHORT) IS NOT NULL");
-            assertSql("column\ntrue\n", "select cast('' AS SHORT) IS NOT NULL");
-            assertSql("column\ntrue\n", "select cast(NULL AS SHORT) IS NOT NULL");
-            assertSql("column\ntrue\n", "select cast(false AS SHORT) IS NOT NULL");
+            assertQuery("select cast(0 AS SHORT) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(0L AS SHORT) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast('' AS SHORT) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(NULL AS SHORT) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(false AS SHORT) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\nfalse\n");
+            assertQuery("select cast(0 AS SHORT) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast(0L AS SHORT) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast('' AS SHORT) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast(NULL AS SHORT) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
+            assertQuery("select cast(false AS SHORT) IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("column\ntrue\n");
         });
     }
 }

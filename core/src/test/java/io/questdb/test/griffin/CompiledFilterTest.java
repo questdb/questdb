@@ -118,7 +118,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     false\t28\t0000\t243\t011011000010\tO\t2085282008\t0101011010111101\tHYRX\t0.48820508\t-4986232506486815364\t0.42281342727402726\t2015-09-28T22:29:45.706Z\t11010000001110101000110100011010\t1970-01-05T15:15:00.000000Z
                     """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("atimestamp")
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -167,7 +170,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     B\t3\t1970-01-05T15:23:20.000000Z
                     """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
 
             execute("insert into x select " +
@@ -184,7 +190,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     D\t9\t1970-01-06T19:18:20.000000Z
                     """;
 
-            assertSql(expected2, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected2);
             assertSqlRunWithJit(query);
         });
     }
@@ -276,7 +285,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     1\t6\t1970-01-01T00:00:00.900000Z\t10\t3.1622776601683795
                     """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("col_ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -303,7 +315,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     1\t1970-01-01T00:00:00.000000Z
                     """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -341,15 +356,43 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // from the Java filter. The fix throws SqlException at IR serialization time so
             // SqlCodeGenerator falls back to the Java filter, which evaluates the comparison
             // at int width.
-            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE s > 346548");
-            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE s <= -897671");
-            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE s = 100000");
+            assertQuery("SELECT count(*) FROM x WHERE s > 346548")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM x WHERE s <= -897671")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM x WHERE s = 100000")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
             // != against an out-of-range literal is true for every row.
-            assertSql("count\n1000\n", "SELECT count(*) FROM x WHERE s != 100000");
+            assertQuery("SELECT count(*) FROM x WHERE s != 100000")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1000\n");
             // BYTE range is [-128, 127].
-            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE b > 200");
-            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE b <= -300");
-            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE b = 1000");
+            assertQuery("SELECT count(*) FROM x WHERE b > 200")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM x WHERE b <= -300")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM x WHERE b = 1000")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // Sanity-check the fallback path.
             try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE s > 346548")) {
@@ -395,7 +438,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             // s = 32767, 30000, 10 all yield positive long products; s = -32768
             // yields negative -2_586_738_688L. So three rows match.
-            assertSql("count\n3\n", "SELECT count(*) FROM x WHERE (s * 78941) > l");
+            assertQuery("SELECT count(*) FROM x WHERE (s * 78941) > l")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
 
             try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (s * 78941) > l")) {
                 Assert.assertTrue("narrow * int literal vs long must still JIT",
@@ -426,7 +473,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // 30000*78941 wraps to -1_926_737_296, both negative -- excluded.
             // -32768*78941 wraps to +1_708_228_608 (positive int after wrap)
             // and 10*78941 = 789_410 -- both included. So two rows match.
-            assertSql("count\n2\n", "SELECT count(*) FROM x WHERE (s * 78941) > f");
+            assertQuery("SELECT count(*) FROM x WHERE (s * 78941) > f")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
 
             try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (s * 78941) > f")) {
                 Assert.assertTrue("narrow * int literal vs float must still JIT",
@@ -450,7 +501,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " (10, 0.0, '2024-01-01T00:00:00.000003Z')");
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            assertSql("count\n2\n", "SELECT count(*) FROM x WHERE (s * 78941) > d");
+            assertQuery("SELECT count(*) FROM x WHERE (s * 78941) > d")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
 
             try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (s * 78941) > d")) {
                 Assert.assertTrue("narrow * int literal vs double must still JIT",
@@ -480,9 +535,17 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // fit exactly in f32 and matches.
             String sql = "SELECT count(*) FROM x WHERE (c0 - (c0 - c5)) <= c5";
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            assertSql("count\n1\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            assertSql("count\n1\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             try (RecordCursorFactory factory = select(sql)) {
                 Assert.assertTrue("INT-FLOAT arithmetic must still JIT", factory.usesCompiledFilter());
@@ -525,9 +588,17 @@ public class CompiledFilterTest extends AbstractCairoTest {
             String sql = "SELECT count(*) FROM x WHERE NOT (c5 < ((258558L * -259815L) - (708206 - c5)))";
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            assertSql("count\n8\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            assertSql("count\n8\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8\n");
 
             try (RecordCursorFactory factory = select(sql)) {
                 Assert.assertTrue("predicate must still JIT", factory.usesCompiledFilter());
@@ -564,9 +635,17 @@ public class CompiledFilterTest extends AbstractCairoTest {
             String sql = "SELECT count(*) FROM x WHERE NOT (c0 IS NULL) AND c1 IN (c0, c1)";
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            assertSql("count\n1\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            assertSql("count\n1\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             try (RecordCursorFactory factory = select(sql)) {
                 Assert.assertTrue("predicate must still JIT", factory.usesCompiledFilter());
@@ -595,9 +674,17 @@ public class CompiledFilterTest extends AbstractCairoTest {
             String sql = "SELECT count(*) FROM x WHERE ((l + 0.5) * (a * b)) > 0";
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            assertSql("count\n1\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            assertSql("count\n1\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             try (RecordCursorFactory factory = select(sql)) {
                 Assert.assertTrue("predicate must still JIT", factory.usesCompiledFilter());
@@ -627,14 +714,26 @@ public class CompiledFilterTest extends AbstractCairoTest {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             // a + b: 2147483640+1=2147483641 (positive long), -2147483640-1 negative,
             // 46341+46341=92682 positive, 10+5=15 positive -> three rows match.
-            assertSql("count\n3\n", "SELECT count(*) FROM x WHERE (a + b) > l");
+            assertQuery("SELECT count(*) FROM x WHERE (a + b) > l")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
             // a - b: 2147483640-1=positive, -2147483640-(-1)=negative,
             // 46341-46341=0 (not > 0), 10-5=5 positive -> two rows match.
-            assertSql("count\n2\n", "SELECT count(*) FROM x WHERE (a - b) > l");
+            assertQuery("SELECT count(*) FROM x WHERE (a - b) > l")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
             // a * b: 2147483640*1=positive, -2147483640*-1=positive long,
             // 46341*46341=2_147_488_281L (positive long, overflows int32),
             // 10*5=50 -> four rows match.
-            assertSql("count\n4\n", "SELECT count(*) FROM x WHERE (a * b) > l");
+            assertQuery("SELECT count(*) FROM x WHERE (a * b) > l")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n4\n");
 
             try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (a + b) > l")) {
                 Assert.assertTrue("INT-INT arithmetic in LONG context must still JIT",
@@ -662,7 +761,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             // 127 * 20_000_000 = 2_540_000_000L (positive long, overflows int32);
             // -128 * 20_000_000 negative; 10*5=50 positive -> two rows match.
-            assertSql("count\n2\n", "SELECT count(*) FROM x WHERE (b * i) > l");
+            assertQuery("SELECT count(*) FROM x WHERE (b * i) > l")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
 
             try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (b * i) > l")) {
                 Assert.assertTrue("BYTE*INT in LONG context must still JIT",
@@ -700,9 +803,17 @@ public class CompiledFilterTest extends AbstractCairoTest {
             String sql = "SELECT count(*) FROM x WHERE c0 <= ((-732674 * c5) + -238927)";
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            assertSql("count\n1\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            assertSql("count\n1\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             try (RecordCursorFactory factory = select(sql)) {
                 Assert.assertTrue("nested INT arithmetic in LONG context must still JIT",
@@ -713,9 +824,17 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // SubInt.getLong, which must recurse through MulInt as well.
             String subSql = "SELECT count(*) FROM x WHERE c0 <= ((-732674 * c5) - 238927)";
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            assertSql("count\n1\n", subSql);
+            assertQuery(subSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            assertSql("count\n1\n", subSql);
+            assertQuery(subSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             // Same shape under unary minus: -((-732674 * c5) + 238927)
             // reaches NegInt.getLong, which must also recurse. At long width
@@ -726,9 +845,17 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // returned 3.
             String negSql = "SELECT count(*) FROM x WHERE c0 <= -((-732674 * c5) + 238927)";
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            assertSql("count\n3\n", negSql);
+            assertQuery(negSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            assertSql("count\n3\n", negSql);
+            assertQuery(negSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
         });
     }
 
@@ -753,9 +880,17 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // (with widening) returned 2.
             String sql = "SELECT count(*) FROM x WHERE c0 <= ((732674 * c5) / 7)";
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            assertSql("count\n2\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            assertSql("count\n2\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
 
             try (RecordCursorFactory factory = select(sql)) {
                 Assert.assertTrue("nested INT division in LONG context must still JIT",
@@ -794,9 +929,17 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // -6000 *   403251 wraps to  1_875_461_296 at int32. 1.19 > 1.875e9  -> false.
             //  -100 *   403251 =         -40_325_100  at int32.  1.19 > -4e7     -> true.
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            assertSql("count\n3\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            assertSql("count\n3\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
 
             try (RecordCursorFactory factory = select(sql)) {
                 Assert.assertTrue("INT*INT in mixed LONG/DOUBLE context must still JIT",
@@ -826,9 +969,17 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // 46340 * 46340 = 2_147_395_600 -> fits int32, positive -> included.
             // 10 * 10 = 100 -> included. So two rows match.
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            assertSql("count\n2\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            assertSql("count\n2\n", sql);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
 
             try (RecordCursorFactory factory = select(sql)) {
                 Assert.assertTrue("INT*INT in DOUBLE context must still JIT",
@@ -851,7 +1002,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " (10, 0, 100.0, '2024-01-01T00:00:02.000000Z')");
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            assertSql("count\n3\n", "SELECT count(*) FROM x WHERE d = (s * s) + i");
+            assertQuery("SELECT count(*) FROM x WHERE d = (s * s) + i")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
 
             // Narrow arithmetic mixed with a wider operand must JIT in scalar mode --
             // SIMD would overflow at narrow width, but scalar upcasts to int.
@@ -903,16 +1058,48 @@ public class CompiledFilterTest extends AbstractCairoTest {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
 
             // i64 (LONG): the original failing shape plus the other operators.
-            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE l = (l * 939722L)");
-            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE l = (l + 1L)");
-            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE l = (l - 1L)");
-            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE l = (l / 2L)");
+            assertQuery("SELECT count(*) FROM x WHERE l = (l * 939722L)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM x WHERE l = (l + 1L)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM x WHERE l = (l - 1L)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM x WHERE l = (l / 2L)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             // i32 (INT): all four operators.
-            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE i = (i * 939722)");
-            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE i = (i + 1)");
-            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE i = (i - 1)");
-            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE i = (i / 2)");
+            assertQuery("SELECT count(*) FROM x WHERE i = (i * 939722)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM x WHERE i = (i + 1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM x WHERE i = (i - 1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM x WHERE i = (i / 2)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             // Sanity check that JIT actually compiled (otherwise the test
             // would silently pass via the Java filter).
@@ -998,7 +1185,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     2\t1970-01-01T00:00:00.100000Z
                     """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -1018,7 +1208,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     5\t1970-01-05T15:40:00.000000Z
                     """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
 
             try (RecordCursorFactory factory = select(query)) {
@@ -1072,7 +1265,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     5\t1970-01-05T15:40:00.000000Z\tnull
                     """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
 
             try (RecordCursorFactory factory = select(query)) {
@@ -1211,27 +1407,61 @@ public class CompiledFilterTest extends AbstractCairoTest {
             execute("create table test (s symbol)");
             execute("insert into test values ('C'), ('B'), ('A')");
 
-            assertSql("s\nB\nA\n", "select s from test where s <  'C'");
-            assertSql("s\nC\nB\nA\n", "select s from test where s <= 'C'");
-            assertSql("s\n", "select s from test where s >  'C'");
-            assertSql("s\nC\n", "select s from test where s >= 'C'");
+            assertQuery("select s from test where s <  'C'")
+                    .noLeakCheck()
+                    .returns("s\nB\nA\n");
+            assertQuery("select s from test where s <= 'C'")
+                    .noLeakCheck()
+                    .returns("s\nC\nB\nA\n");
+            assertQuery("select s from test where s >  'C'")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("select s from test where s >= 'C'")
+                    .noLeakCheck()
+                    .returns("s\nC\n");
 
-            assertSql("s\nA\n", "select s from test where s <  'B'");
-            assertSql("s\nB\nA\n", "select s from test where s <= 'B'");
-            assertSql("s\nC\n", "select s from test where s >  'B'");
-            assertSql("s\nC\nB\n", "select s from test where s >= 'B'");
+            assertQuery("select s from test where s <  'B'")
+                    .noLeakCheck()
+                    .returns("s\nA\n");
+            assertQuery("select s from test where s <= 'B'")
+                    .noLeakCheck()
+                    .returns("s\nB\nA\n");
+            assertQuery("select s from test where s >  'B'")
+                    .noLeakCheck()
+                    .returns("s\nC\n");
+            assertQuery("select s from test where s >= 'B'")
+                    .noLeakCheck()
+                    .returns("s\nC\nB\n");
 
-            assertSql("s\n", "select s from test where s <  'A'");
-            assertSql("s\nA\n", "select s from test where s <= 'A'");
-            assertSql("s\nC\nB\n", "select s from test where s >  'A'");
-            assertSql("s\nC\nB\nA\n", "select s from test where s >= 'A'");
+            assertQuery("select s from test where s <  'A'")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("select s from test where s <= 'A'")
+                    .noLeakCheck()
+                    .returns("s\nA\n");
+            assertQuery("select s from test where s >  'A'")
+                    .noLeakCheck()
+                    .returns("s\nC\nB\n");
+            assertQuery("select s from test where s >= 'A'")
+                    .noLeakCheck()
+                    .returns("s\nC\nB\nA\n");
 
-            assertSql("s\nC\nB\nA\n", "select s from test where s <  'Z'");
-            assertSql("s\nC\nB\nA\n", "select s from test where s <= 'Z'");
-            assertSql("s\n", "select s from test where s >  'Z'");
-            assertSql("s\n", "select s from test where s >= 'Z'");
+            assertQuery("select s from test where s <  'Z'")
+                    .noLeakCheck()
+                    .returns("s\nC\nB\nA\n");
+            assertQuery("select s from test where s <= 'Z'")
+                    .noLeakCheck()
+                    .returns("s\nC\nB\nA\n");
+            assertQuery("select s from test where s >  'Z'")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("select s from test where s >= 'Z'")
+                    .noLeakCheck()
+                    .returns("s\n");
 
-            assertSql("s\n", "select s from test where s <  null");
+            assertQuery("select s from test where s <  null")
+                    .noLeakCheck()
+                    .returns("s\n");
         });
     }
 
@@ -1264,7 +1494,9 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     10bb226e-b424-4e36-83b9-1ec970b04e78
                     """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -1290,7 +1522,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     10bb226e-b424-4e36-83b9-1ec970b04e78\t1970-01-05T19:25:00.000000Z
                     """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
 
             // check JIT uses both hi and lo for comparison
@@ -1300,19 +1535,28 @@ public class CompiledFilterTest extends AbstractCairoTest {
             String expectedEmpty = """
                     u	ts
                     """;
-            assertSql(expectedEmpty, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedEmpty);
             assertSqlRunWithJit(query);
 
             // use a dummy hi
             bindVariableService.clear();
             bindVariableService.setUuid(0, uuid.getLo(), 0);
-            assertSql(expectedEmpty, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedEmpty);
             assertSqlRunWithJit(query);
 
             // switch hi and lo
             bindVariableService.clear();
             bindVariableService.setUuid(0, uuid.getHi(), uuid.getLo());
-            assertSql(expectedEmpty, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedEmpty);
             assertSqlRunWithJit(query);
 
             // null uuid
@@ -1323,7 +1567,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     u	ts
                     	2020-01-01T00:00:00.000000Z
                     """;
-            assertSql(expectedWithNull, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedWithNull);
             assertSqlRunWithJit(query);
         });
     }
@@ -1419,7 +1666,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             final String query = "select * from x where l + :l = " + (Numbers.LONG_NULL + value);
             final String expected = "l\tts\n";
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -1560,7 +1810,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     3614738589890112276\t1970-01-05T16:38:20.000000Z
                     """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -1598,25 +1851,40 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // rows have i = NULL, so the int product is INT_NULL and the
             // f64 cast returns NaN; the (b=5, i=7) row gives 35 and 1.74256
             // <= 35.0, so the predicate excludes every row.
-            assertSql("count\n0\n",
-                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b * i))");
+            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b * i))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
             // Same shape with addition (int32_add propagates INT_NULL).
-            assertSql("count\n0\n",
-                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b + i))");
+            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b + i))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
             // Subtraction: NaN rows still excluded; the (b=5, i=7) row gives
             // -2, so NOT(1.74256 <= -2.0) matches and the count is 1.
-            assertSql("count\n1\n",
-                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b - i))");
+            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b - i))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
             // SHORT * INT exercises the i16 narrow path.
-            assertSql("count\n0\n",
-                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * s) <= (s * i))");
+            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * s) <= (s * i))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
             // Division by zero on narrow operands: int32_div returns INT_NULL
             // when rhs is 0 even though both inputs are BYTE / SHORT, so the
             // i32 widening matters here too. The (0, 0, _) row divides by
             // zero -> NaN -> excluded; the (5, 5, _) row gives 1 and
             // NOT(1.74256 <= 1.0) matches, so the count is 1.
-            assertSql("count\n1\n",
-                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b / s))");
+            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b / s))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             // JIT must still compile each predicate -- the fix is at the C++
             // kernel level (result dtype tagging), the IR side is unchanged.

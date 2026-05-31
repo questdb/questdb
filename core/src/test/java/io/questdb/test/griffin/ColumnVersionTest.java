@@ -78,7 +78,10 @@ public class ColumnVersionTest extends AbstractCairoTest {
                             ", rnd_str()" +
                             " from long_sequence(10)"
             );
-            assertSql("""
+            assertQuery("t_col_top_ooo_day where день = 'a'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                     x\tm\tts\tдень\tstr
                     6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
                     12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB
@@ -96,8 +99,7 @@ public class ColumnVersionTest extends AbstractCairoTest {
                     8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE
                     10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV
                     9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG
-                    """, "t_col_top_ooo_day where день = 'a'"
-            );
+                    """);
 
             execute(
                     "insert into t_col_top_ooo_day " +
@@ -110,7 +112,10 @@ public class ColumnVersionTest extends AbstractCairoTest {
                             " from long_sequence(36)"
             );
 
-            assertSql("""
+            assertQuery("t_col_top_ooo_day where день = 'a'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                     x\tm\tts\tдень\tstr
                     1\t\t1970-01-01T01:27:00.000000Z\ta\tTLQZSLQ
                     6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
@@ -133,8 +138,7 @@ public class ColumnVersionTest extends AbstractCairoTest {
                     8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE
                     10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV
                     9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG
-                    """, "t_col_top_ooo_day where день = 'a'"
-            );
+                    """);
         });
     }
 

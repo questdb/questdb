@@ -70,17 +70,14 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
 
             // Verify correct data: rows 2, 3 (ts values in 2022)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-01-01T12:00:00.000000Z\t150.0
                             2022-12-31T12:00:00.000000Z\t200.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -119,18 +116,15 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
 
             // Verify correct data: rows 2, 3, 4 (ts values in 2022)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:30:00.000000Z\t150.0
                             2022-12-31T22:30:00.000000Z\t200.0
                             2022-12-31T23:30:00.000000Z\t250.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -144,13 +138,10 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Use Integer.MIN_VALUE as stride - negating it causes overflow
         // -(-2147483648) = 2147483648 which exceeds Integer.MAX_VALUE
         // Error position 35 is at the stride argument "-2147483648"
-        assertException(
-                "SELECT * FROM (" +
+        assertQuery("SELECT * FROM (" +
                         "SELECT dateadd('s', -2147483648, timestamp) as ts, price FROM trades" +
-                        ") WHERE ts > '2022-01-01'",
-                35,
-                "timestamp offset value 2147483648 exceeds maximum allowed range for dateadd"
-        );
+                        ") WHERE ts > '2022-01-01'")
+                .fails(35, "timestamp offset value 2147483648 exceeds maximum allowed range for dateadd");
     }
 
     @Test
@@ -165,13 +156,10 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
         // Use an offset of 3 billion seconds (exceeds Integer.MAX_VALUE of 2,147,483,647)
         // Error position 35 is at the stride argument "3000000000"
-        assertException(
-                "SELECT * FROM (" +
+        assertQuery("SELECT * FROM (" +
                         "SELECT dateadd('s', 3000000000, timestamp) as ts, price FROM trades" +
-                        ") WHERE ts > '2100-01-01'",
-                35,
-                "timestamp offset value -3000000000 exceeds maximum allowed range for dateadd"
-        );
+                        ") WHERE ts > '2100-01-01'")
+                .fails(35, "timestamp offset value -3000000000 exceeds maximum allowed range for dateadd");
     }
 
     @Test
@@ -202,16 +190,13 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
             // Row 1: ts = 2021-12-31 23:45 (NOT in range)
             // Row 2: ts = 2022-01-01 00:15 (in range)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:15:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -261,17 +246,14 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                 );
             }
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-01-01T01:30:00.000000Z\t150.0
                             2022-01-01T02:30:00.000000Z\t200.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -309,16 +291,13 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
 
             // Should only return row 2
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-02-15T12:00:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -352,16 +331,13 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
 
             // Verify data correctness
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-01-01T01:00:00.000000Z\t100.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -398,16 +374,13 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts2")
+                    .returns("""
                             ts2\tprice
                             2022-01-01T01:00:00.000000Z\t100.0
-                            """,
-                    query,
-                    "ts2",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -530,16 +503,13 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             // Row 1: ts = 00:30, total_value = 1000 (NOT > 1500)
             // Row 2: ts = 01:30, total_value = 3000 (> 1500) - INCLUDED
             // Row 3: ts = 02:30, total_value = 1000 (NOT > 1500)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\ttotal_value
                             2022-01-01T01:30:00.000000Z\t3000.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -583,17 +553,14 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             // Row 1: ts = 00:30 (< 01:00? YES), total_value = 1000 - INCLUDED (ts condition true)
             // Row 2: ts = 01:30 (< 01:00? NO), total_value = 3000 (> 1500? YES) - INCLUDED (total_value condition true)
             // Row 3: ts = 02:30 next day (< 01:00? NO), total_value = 1000 (> 1500? NO) - NOT included
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\ttotal_value
                             2022-01-01T00:30:00.000000Z\t1000.0
                             2022-01-01T01:30:00.000000Z\t3000.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -601,10 +568,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testNullOffsetThrowsError() throws Exception {
         // Ensure a NULL stride is rejected
         assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;"));
-        assertException("SELECT * FROM (SELECT dateadd('h', NULL, timestamp) as ts, price FROM trades) WHERE ts IN '2022'",
-                35,
-                "`null` is not a valid stride"
-        );
+        assertQuery("SELECT * FROM (SELECT dateadd('h', NULL, timestamp) as ts, price FROM trades) WHERE ts IN '2022'")
+                .fails(35, "`null` is not a valid stride");
     }
 
     @Test
@@ -641,16 +606,13 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             // Row 1: ts = 2021-12-31 23:30 (NOT in range)
             // Row 2: ts = 2022-01-01 00:30 (in range)
             // Row 3: ts = 2022-01-01 01:30 (NOT in range)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("original_ts")
+                    .returns("""
                             ts\toriginal_ts\tprice
                             2022-01-01T00:30:00.000000Z\t2022-01-01T01:30:00.000000Z\t150.0
-                            """,
-                    query,
-                    "original_ts",  // Original timestamp is designated
-                    true,
-                    false  // Filter cursor doesn't know size
-            );
+                            """);
         });
     }
 
@@ -682,17 +644,15 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
             // The result should have 'timestamp' as the designated timestamp column (index 1),
             // not 'ts' (index 0), because the original timestamp takes precedence
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns("""
                             ts\ttimestamp\tprice
                             2022-01-01T00:00:00.000000Z\t2022-01-01T01:00:00.000000Z\t100.0
                             2022-01-01T01:00:00.000000Z\t2022-01-01T02:00:00.000000Z\t150.0
-                            """,
-                    query,
-                    "timestamp",  // Original timestamp takes precedence
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -733,16 +693,12 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
             // Row 1: ts = 2022-01-01 00:00 (in range), original_ts = 2022-01-01 01:00
             // Row 2: ts = 2022-01-01 01:00 (NOT in range)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
                             ts\toriginal_ts\tprice
                             2022-01-01T00:00:00.000000Z\t2022-01-01T01:00:00.000000Z\t100.0
-                            """,
-                    query,
-                    null,  // Filter model doesn't propagate timestamp
-                    true,  // supports random access
-                    false  // Filter cursor doesn't know size
-            );
+                            """);
         });
     }
 
@@ -780,17 +736,14 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
 
             // Verify correct data: rows 1, 4
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:00:00.000000Z\t100.0
                             2022-12-31T23:00:00.000000Z\t250.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -824,17 +777,14 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
 
             // Verify correct data
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:30:00.000000Z\t100.0
                             2022-01-01T01:30:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -868,17 +818,14 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
 
             // Verify correct data
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:30:00.000000Z\t100.0
                             2022-01-01T01:30:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -915,17 +862,14 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
 
             // Verify correct data
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:30:00.000000Z\t100.0
                             2022-01-01T01:30:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -958,17 +902,14 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
 
             // Verify correct data
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:30:00.000000Z\t100.0
                             2022-01-01T01:30:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1235,16 +1176,13 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
             // Row 1: ts = 2022-01-01 00:00:00 (in range)
             // Row 2: ts = 2022-01-01 00:00:30 (NOT in range, >= boundary)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:00:00.000000Z\t100.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1262,13 +1200,10 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // dateadd('y', -300000, timestamp) means the optimizer stores +300000 as the inverse offset.
         // When pushing down ts > '2022-01-01', it needs to apply +300000 years to 2022-01-01,
         // resulting in year 302022 which overflows the microsecond timestamp range (~year 294247).
-        assertException(
-                "SELECT * FROM (" +
+        assertQuery("SELECT * FROM (" +
                         "SELECT dateadd('y', -300000, timestamp) as ts, price FROM trades" +
-                        ") WHERE ts > '2022-01-01'",
-                0,
-                "timestamp overflow"
-        );
+                        ") WHERE ts > '2022-01-01'")
+                .fails(0, "timestamp overflow");
     }
 
     @Test
@@ -1301,16 +1236,13 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
 
             // Verify correct data: only the row where ts = 2022-01-01 (original timestamp = 2022-01-02)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-01-01T12:00:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1342,16 +1274,13 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
             // Row 1: ts = 2022-01-01 12:00 (in range)
             // Row 2: ts = 2022-01-08 12:00 (NOT in range, >= boundary)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-01-01T12:00:00.000000Z\t100.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1370,18 +1299,17 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
             // Verify data is correct and ordered
             // Window functions don't support random access but may know size
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             timestamp\tprice\trn
                             2022-01-01T00:00:00.000000Z\t100.0\t1
                             2022-01-01T01:00:00.000000Z\t150.0\t2
                             2022-01-01T02:00:00.000000Z\t200.0\t3
-                            """,
-                    query,
-                    "timestamp",
-                    false,  // Window functions don't support random access
-                    true    // but they may know their size
-            );
+                            """);
         });
     }
 
@@ -1420,8 +1348,18 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Window functions don't support random access but may know size
-            assertQueryNoLeakCheck(expectedNoShift, queryNoShift, "timestamp", false, true);
-            assertQueryNoLeakCheck(expectedWithShift, queryWithShift, "ts", false, true);
+            assertQuery(queryNoShift)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedNoShift);
+            assertQuery(queryWithShift)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedWithShift);
         });
     }
 
@@ -1443,18 +1381,17 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
             // Verify data is correct - dateadd shifts timestamps by -1 hour
             // Window functions don't support random access but may know size
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ts\tprice\trn
                             2022-01-01T00:00:00.000000Z\t100.0\t1
                             2022-01-01T01:00:00.000000Z\t150.0\t2
                             2022-01-01T02:00:00.000000Z\t200.0\t3
-                            """,
-                    query,
-                    "ts",
-                    false,  // Window functions don't support random access
-                    true    // but they may know their size
-            );
+                            """);
         });
     }
 
@@ -1484,18 +1421,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             // Verify window function computes row numbers BEFORE filter is applied
             // All 4 rows get numbered, then we filter to 2022-01-01
             // Window functions don't support random access
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tprice\trn
                             2022-01-01T00:00:00.000000Z\t100.0\t1
                             2022-01-01T01:00:00.000000Z\t150.0\t2
                             2022-01-01T02:00:00.000000Z\t200.0\t3
-                            """,
-                    query,
-                    "ts",
-                    false,  // Window functions don't support random access
-                    false
-            );
+                            """);
         });
     }
 
@@ -1533,16 +1468,13 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             );
 
             // Should only return row 1
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tprice
                             2022-06-15T12:00:00.000000Z\t100.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 }

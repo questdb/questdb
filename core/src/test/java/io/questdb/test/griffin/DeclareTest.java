@@ -267,10 +267,13 @@ public class DeclareTest extends AbstractSqlParserTest {
                     query, ExecutionModel.INSERT);
             execute(query);
             drainWalQueue();
-            assertSql("""
+            assertQuery("select * from foo")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                     x
                     3
-                    """, "select * from foo");
+                    """);
         });
     }
 
@@ -316,11 +319,13 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareReuseVariable() throws Exception {
-        assertSql("interval\n('2025-07-02T13:00:00.000Z', '2025-07-02T13:00:00.000Z')\n",
-                "declare " +
+        assertQuery("declare " +
                         "@ts := '2025-07-02T13:00:00.000000Z', " +
                         "@int := interval(@ts, @ts)" +
-                        "select @int");
+                        "select @int")
+                .noLeakCheck()
+                .expectSize()
+                .returns("interval\n('2025-07-02T13:00:00.000Z', '2025-07-02T13:00:00.000Z')\n");
     }
 
     @Test
@@ -389,25 +394,30 @@ public class DeclareTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareSelectExplainPlan() throws Exception {
         assertModel("EXPLAIN (FORMAT TEXT) ", "EXPLAIN DECLARE @x := 5 SELECT @x", ExecutionModel.EXPLAIN);
-        assertSql("""
+        assertQuery("EXPLAIN DECLARE @x := 5 SELECT @x")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
                 QUERY PLAN
                 VirtualRecord
                   functions: [5]
                     long_sequence count: 1
-                """, "EXPLAIN DECLARE @x := 5 SELECT @x");
+                """);
     }
 
     @Test
     public void testDeclareSelectFromGenerateSeries() throws Exception {
         // Test for issue #6547: DECLARE substitution should work for function arguments in FROM clause
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("DECLARE @lo := '2025-01-01', @hi := '2025-01-02', @unit := '1d' SELECT * FROM generate_series(@lo, @hi, @unit)")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("generate_series")
+                .returns("""
                         generate_series
                         2025-01-01T00:00:00.000000Z
                         2025-01-02T00:00:00.000000Z
-                        """,
-                "DECLARE @lo := '2025-01-01', @hi := '2025-01-02', @unit := '1d' SELECT * FROM generate_series(@lo, @hi, @unit)"
-        ));
+                        """));
     }
 
     @Test
@@ -501,11 +511,13 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertModel("select-choose col2 from (select-virtual [2 - 5 + col1 col2] 2 - 5 + col1 col2 from (select-virtual [2 + 5 col1] 2 + 5 col1 from (long_sequence(1))) a) b",
                 query
                 , ExecutionModel.QUERY);
-        assertSql("""
+        assertQuery(query)
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         col2
                         4
-                        """,
-                query);
+                        """);
     }
 
     @Test
@@ -535,12 +547,16 @@ public class DeclareTest extends AbstractSqlParserTest {
             String query = "DECLARE @lo := -5, @hi := -2 SELECT * FROM trades LIMIT @lo, @hi";
             assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit -(5),-(2)",
                     query, ExecutionModel.QUERY);
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns("""
                     symbol\tside\tprice\tamount\ttimestamp
                     \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
                     \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
                     \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
-                    """, query);
+                    """);
         });
     }
 
@@ -707,16 +723,18 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertSql("""
-                            column
-                            true
-                            """,
-                    """
+            assertQuery("""
                             DECLARE
                                 @today := today(),
                                 @start := interval_start(@today),
                                 @end := interval_end(@today)
-                                SELECT @today = interval(@start, @end)""");
+                                SELECT @today = interval(@start, @end)""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            column
+                            true
+                            """);
         });
     }
 
@@ -1045,15 +1063,15 @@ public class DeclareTest extends AbstractSqlParserTest {
             );
             assertPlanNoLeakCheck("declare @id := id, @val := 4 select * from x where @id < @val", plan);
             assertPlanNoLeakCheck("declare @expr := (id < 4) select * from x where @expr", plan);
-            assertSql(
-                    """
+            assertQuery("x where id < 4")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:16:40.000000Z
                             3\t1970-01-01T00:33:20.000000Z
-                            """,
-                    "x where id < 4"
-            );
+                            """);
         });
     }
 }

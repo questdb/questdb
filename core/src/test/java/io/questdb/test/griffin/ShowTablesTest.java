@@ -176,10 +176,16 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowTablesWithDrop() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertSql("table_name\nbalances\n", "show tables");
+            assertQuery("show tables")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\nbalances\n");
             execute("create table balances2(cust_id int, ccy symbol, balance double)");
             execute("drop table balances");
-            assertSql("table_name\nbalances2\n", "show tables");
+            assertQuery("show tables")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\nbalances2\n");
         });
     }
 
@@ -187,7 +193,10 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowTablesWithFunction() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertSql("table_name\nbalances\n", "select * from all_tables()");
+            assertQuery("select * from all_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\nbalances\n");
         });
     }
 
@@ -195,7 +204,10 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowTablesWithSingleTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            assertSql("table_name\nbalances\n", "show tables");
+            assertQuery("show tables")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\nbalances\n");
         });
     }
 
@@ -206,7 +218,10 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create table balances(account_no int, currency symbol, amount double)");
             execute("create table accounts(account_no int, currency symbol)");
             execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
-            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "SHOW TABLES");
+            assertQuery("SHOW TABLES")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\naccounts\nbalances\ncard_payments\ndeposits\n");
         });
     }
 
@@ -217,7 +232,10 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create table balances(account_no int, currency symbol, amount double)");
             execute("create table accounts(account_no int, currency symbol)");
             execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
-            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "select * from all_tables()");
+            assertQuery("select * from all_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\naccounts\nbalances\ncard_payments\ndeposits\n");
         });
     }
 
@@ -231,7 +249,10 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("drop table balances");
             execute("create table businesses(name symbol)");
             execute("create table balances2(account_no int, currency symbol, amount double)");
-            assertSql("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\n", "select * from all_tables()");
+            assertQuery("select * from all_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\n");
         });
     }
 
@@ -245,7 +266,10 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("rename table balances to statement_balances");
             execute("create table businesses(name symbol)");
             execute("create table balances2(account_no int, currency symbol, amount double)");
-            assertSql("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\nstatement_balances\n", "select * from all_tables()");
+            assertQuery("select * from all_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\nstatement_balances\n");
         });
     }
 
@@ -297,15 +321,16 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create materialized view balances_1h as (select ts, max(balance) from balances sample by 1h) partition by week");
             execute("create view balances_view as (select ts, max(balance) from balances sample by 1h)");
             drainWalAndViewQueues();
-            assertSql(
-                    """
+            assertQuery("tables()")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             id	table_name	designatedTimestamp	partitionBy	walEnabled	dedup	ttlValue	ttlUnit	matView	directoryName	maxUncommittedRows	o3MaxLag	table_suspended	table_type	table_row_count	table_min_timestamp	table_max_timestamp	table_last_write_timestamp	table_txn	table_memory_pressure_level	table_write_amp_count	table_write_amp_p50	table_write_amp_p90	table_write_amp_p99	table_write_amp_max	table_merge_rate_count	table_merge_rate_p50	table_merge_rate_p90	table_merge_rate_p99	table_merge_rate_max	wal_pending_row_count	wal_dedup_row_count_since_start	wal_txn	wal_max_timestamp	wal_tx_count	wal_tx_size_p50	wal_tx_size_p90	wal_tx_size_p99	wal_tx_size_max	replica_batch_count	replica_batch_size_p50	replica_batch_size_p90	replica_batch_size_p99	replica_batch_size_max	replica_more_pending
                             1	balances	ts	DAY	true	false	0	HOUR	false	balances~1	1000	300000000	false	T	null				null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
                             2	balances_1h	ts	WEEK	true	false	0	HOUR	true	balances_1h~2	1000	-1	false	M	null				null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
                             3	balances_view	ts	N/A	true	false	0	HOUR	false	balances_view~3	0	0	false	V	null				null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
-                            """,
-                    "tables()"
-            );
+                            """);
         });
     }
 }

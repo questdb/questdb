@@ -39,7 +39,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -102,7 +101,7 @@ public class DropIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void dropIndexColumnTop() throws SqlException, NumericException {
+    public void dropIndexColumnTop() throws Exception {
         TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
         model.col("a", ColumnType.INT);
         model.timestamp("ts");
@@ -112,7 +111,11 @@ public class DropIndexTest extends AbstractCairoTest {
                 " select x, timestamp_sequence('2022-02-24T01:30', 1000000000), rnd_symbol('A', 'B', 'C') from long_sequence(5)");
         assertIndexFileExist(true);
 
-        assertSql("""
+        assertQuery(tableName)
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                 a\tts\tsym
                 1\t2022-02-24T00:23:59.800000Z\t
                 2\t2022-02-24T00:47:59.600000Z\t
@@ -124,17 +127,20 @@ public class DropIndexTest extends AbstractCairoTest {
                 3\t2022-02-24T02:03:20.000000Z\tB
                 4\t2022-02-24T02:20:00.000000Z\tC
                 5\t2022-02-24T02:36:40.000000Z\tC
-                """, tableName);
+                """);
 
 
-        assertSql("""
+        assertQuery("select * from " + tableName + " where sym is null")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns("""
                 a\tts\tsym
                 1\t2022-02-24T00:23:59.800000Z\t
                 2\t2022-02-24T00:47:59.600000Z\t
                 3\t2022-02-24T01:11:59.400000Z\t
                 4\t2022-02-24T01:35:59.200000Z\t
                 5\t2022-02-24T01:59:59.000000Z\t
-                """, "select * from " + tableName + " where sym is null");
+                """);
 
         if (Os.isWindows()) {
             // Release readers so that we can drop index files
@@ -142,7 +148,11 @@ public class DropIndexTest extends AbstractCairoTest {
         }
         execute("alter table " + tableName + " alter column sym drop index");
 
-        assertSql("""
+        assertQuery(tableName)
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                 a\tts\tsym
                 1\t2022-02-24T00:23:59.800000Z\t
                 2\t2022-02-24T00:47:59.600000Z\t
@@ -154,64 +164,84 @@ public class DropIndexTest extends AbstractCairoTest {
                 3\t2022-02-24T02:03:20.000000Z\tB
                 4\t2022-02-24T02:20:00.000000Z\tC
                 5\t2022-02-24T02:36:40.000000Z\tC
-                """, tableName);
+                """);
 
-        assertSql("""
+        assertQuery("select * from " + tableName + " where sym is null")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns("""
                 a\tts\tsym
                 1\t2022-02-24T00:23:59.800000Z\t
                 2\t2022-02-24T00:47:59.600000Z\t
                 3\t2022-02-24T01:11:59.400000Z\t
                 4\t2022-02-24T01:35:59.200000Z\t
                 5\t2022-02-24T01:59:59.000000Z\t
-                """, "select * from " + tableName + " where sym is null");
+                """);
 
-        assertSql("""
+        assertQuery("select * from " + tableName + " where sym = 'A'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns("""
                 a\tts\tsym
                 1\t2022-02-24T01:30:00.000000Z\tA
                 2\t2022-02-24T01:46:40.000000Z\tA
-                """, "select * from " + tableName + " where sym = 'A'");
+                """);
 
         assertIndexFileExist(false);
     }
 
     @Test
-    public void dropIndexColumnTopLastPartition() throws SqlException, NumericException {
+    public void dropIndexColumnTopLastPartition() throws Exception {
         TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
         model.col("a", ColumnType.INT);
         model.timestamp("ts");
         createPopulateTable(model, 5, "2022-02-24", 2);
         execute("alter table " + tableName + " add column sym symbol index");
 
-        assertSql("""
+        assertQuery(tableName)
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                 a\tts\tsym
                 1\t2022-02-24T00:23:59.800000Z\t
                 2\t2022-02-24T00:47:59.600000Z\t
                 3\t2022-02-24T01:11:59.400000Z\t
                 4\t2022-02-24T01:35:59.200000Z\t
                 5\t2022-02-24T01:59:59.000000Z\t
-                """, tableName);
+                """);
 
         execute("alter table " + tableName + " alter column sym drop index");
 
-        assertSql("""
+        assertQuery(tableName)
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                 a\tts\tsym
                 1\t2022-02-24T00:23:59.800000Z\t
                 2\t2022-02-24T00:47:59.600000Z\t
                 3\t2022-02-24T01:11:59.400000Z\t
                 4\t2022-02-24T01:35:59.200000Z\t
                 5\t2022-02-24T01:59:59.000000Z\t
-                """, tableName);
+                """);
 
-        assertSql("""
+        assertQuery("select * from " + tableName + " where sym is null")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns("""
                 a\tts\tsym
                 1\t2022-02-24T00:23:59.800000Z\t
                 2\t2022-02-24T00:47:59.600000Z\t
                 3\t2022-02-24T01:11:59.400000Z\t
                 4\t2022-02-24T01:35:59.200000Z\t
                 5\t2022-02-24T01:59:59.000000Z\t
-                """, "select * from " + tableName + " where sym is null");
+                """);
 
-        assertSql("a\tts\tsym\n", "select * from " + tableName + " where sym = 'A'");
+        assertQuery("select * from " + tableName + " where sym = 'A'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns("a\tts\tsym\n");
     }
 
     @Test
@@ -389,7 +419,11 @@ public class DropIndexTest extends AbstractCairoTest {
                     false,
                     defaultIndexValueBlockSize
             );
-            assertSql(expected, tableName); // content is not gone
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected); // content is not gone
             Assert.assertEquals(0, countDFiles(0L));
             Assert.assertEquals(0, countIndexFiles(0L));
         });
@@ -467,7 +501,11 @@ public class DropIndexTest extends AbstractCairoTest {
                     false,
                     defaultIndexValueBlockSize
             );
-            assertSql(expected, tableName); // content is not gone
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected); // content is not gone
             Assert.assertEquals(5, countDFiles(1L));
             Assert.assertEquals(0, countIndexFiles(1L));
         });
@@ -485,7 +523,11 @@ public class DropIndexTest extends AbstractCairoTest {
                     true,
                     indexBlockValueSize
             );
-            assertSql(expected, tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             execute(dropIndexStatement());
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
@@ -496,7 +538,11 @@ public class DropIndexTest extends AbstractCairoTest {
                     false,
                     configuration.getIndexValueBlockSize()
             );
-            assertSql(expected, tableName);
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             Assert.assertEquals(2, countDFiles(1L));
             Assert.assertEquals(0, countIndexFiles(1L));
         });

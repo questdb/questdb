@@ -38,22 +38,22 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertQuery("alter table table add column b float")
                     .noLeakCheck()
                     .fails(12, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
-            assertSql(
-                    """
+            assertQuery("table_columns('table')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "table_columns('table')"
-            );
+                            """);
             execute("alter table \"table\" add column b float");
-            assertSql(
-                    """
+            assertQuery("table_columns('table')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             b\tFLOAT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "table_columns('table')"
-            );
+                            """);
         });
     }
 
@@ -63,13 +63,13 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertQuery("create table from (a int)")
                     .fails(13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             execute("create table \"from\" (a int)");
-            assertSql(
-                    """
+            assertQuery("table_columns('from')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "table_columns('from')"
-            );
+                            """);
         });
     }
 
@@ -79,13 +79,13 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertQuery("create table a (from int)")
                     .fails(16, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             execute("create table a (\"from\" int)");
-            assertSql(
-                    """
+            assertQuery("table_columns('a')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             from\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "table_columns('a')"
-            );
+                            """);
         });
     }
 
@@ -107,13 +107,13 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertQuery("insert into table values(10)")
                     .fails(12, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
             execute("insert into \"table\" values(10)");
-            assertSql(
-                    """
+            assertQuery("\"table\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             10
-                            """,
-                    "\"table\""
-            );
+                            """);
         });
     }
 
@@ -124,21 +124,21 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertQuery("insert into \"from\" (from) values(50)")
                     .fails(20, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             execute("insert into \"from\" (\"from\") values(50)");
-            assertSql(
-                    """
+            assertQuery("select * from \"from\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             from
                             50
-                            """,
-                    "select * from \"from\""
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("\"from\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             from
                             50
-                            """,
-                    "\"from\""
-            );
+                            """);
             // alias cannot be unquoted keyword
             assertQuery("select a from \"from\" select")
                     .fails(21, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
@@ -154,13 +154,14 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertQuery("rename table \"from\" to to")
                     .fails(23, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"to\"");
             execute("rename table \"from\" to \"to\"");
-            assertSql(
-                    """
+            assertQuery("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView
                             1\tto\t\tNONE\t1000\t300000000\tfalse\tto~\tfalse\t0\tHOUR\tfalse
-                            """,
-                    "select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()"
-            );
+                            """);
         });
     }
 
@@ -171,21 +172,21 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             execute("insert into \"from\" values(50)");
             assertQuery("select a from from")
                     .fails(14, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
-            assertSql(
-                    """
+            assertQuery("select * from \"from\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             50
-                            """,
-                    "select * from \"from\""
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("\"from\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             50
-                            """,
-                    "\"from\""
-            );
+                            """);
             // alias cannot be unquoted keyword
             assertQuery("select a from \"from\" select")
                     .fails(21, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
@@ -199,13 +200,13 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             execute("insert into \"from\" values(50)");
             assertQuery("select from from from")
                     .fails(7, "column expression expected");
-            assertSql(
-                    """
+            assertQuery("select * from \"from\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             from
                             50
-                            """,
-                    "select * from \"from\""
-            );
+                            """);
 
             // alias cannot be unquoted keyword
             assertQuery("select \"from\" select from \"from\"")
@@ -219,30 +220,30 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
 
 
             // simple alias
-            assertSql(
-                    """
+            assertQuery("select \"from\" \"select\" from \"from\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             select
                             50
-                            """,
-                    "select \"from\" \"select\" from \"from\""
-            );
+                            """);
 
             // alias via "as"
-            assertSql(
-                    """
+            assertQuery("select \"from\" as \"select\" from \"from\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             select
                             50
-                            """,
-                    "select \"from\" as \"select\" from \"from\""
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select a.\"from\" from \"from\" a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             from
                             50
-                            """,
-                    "select a.\"from\" from \"from\" a"
-            );
+                            """);
         });
     }
 
@@ -253,14 +254,13 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             execute("insert into t values(50)");
             assertQuery("select * from t order by from")
                     .fails(25, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
-            assertSql(
-                    """
+            assertQuery("select * from t order by \"from\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             from
                             50
-                            """,
-                    "select * from t order by \"from\""
-
-            );
+                            """);
         });
     }
 
@@ -271,14 +271,13 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             execute("insert into \"from\" values(50)");
             assertQuery("with select as (select * from \"from\") select * from \"select\"")
                     .fails(5, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"select\"");
-            assertSql(
-                    """
+            assertQuery("with \"select\" as (select * from \"from\") select * from \"select\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             from
                             50
-                            """,
-                    "with \"select\" as (select * from \"from\") select * from \"select\""
-
-            );
+                            """);
         });
     }
 
@@ -293,33 +292,33 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertQuery("update \"table\" table set a = 20")
                     .fails(15, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
             update("update \"table\" set a = 20");
-            assertSql(
-                    """
+            assertQuery("\"table\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             20
-                            """,
-                    "\"table\""
-            );
+                            """);
 
             assertQuery("update \"table\" \"from set a = 30")
                     .fails(15, "unclosed quotation mark");
 
-            assertSql(
-                    """
+            assertQuery("\"table\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             20
-                            """,
-                    "\"table\""
-            );
+                            """);
 
             update("update \"table\" \"from\" set a = 30");
-            assertSql(
-                    """
+            assertQuery("\"table\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             30
-                            """,
-                    "\"table\""
-            );
+                            """);
         });
     }
 
