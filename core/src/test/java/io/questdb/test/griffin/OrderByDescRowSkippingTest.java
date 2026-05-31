@@ -755,15 +755,13 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             preparePartitionPerRowTableWithLongNames();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                assertQueryNoLeakCheck(
-                        compiler,
-                        "record_Type\tcre_on\n" + DATA,
-                        "select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5",
-                        "cre_on###DESC",
-                        true,
-                        sqlExecutionContext,
-                        true
-                );
+                assertQuery("select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5")
+                        .noLeakCheck()
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .timestampDesc("cre_on")
+                        .expectSize()
+                        .returns("record_Type\tcre_on\n" + DATA);
             }
         });
     }

@@ -1840,7 +1840,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 }
 
                 execute("create table a ( l long)");
-                assertQueryNoLeakCheck(compiler, expected, "explain (format json) select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ", null, false, sqlExecutionContext, true);
+                assertQuery("explain (format json) select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ")
+                        .noLeakCheck()
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -11287,7 +11293,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     private void assertSqlAndPlanNoLeakCheck(String sql, String expectedPlan, String expectedResult) throws Exception{
         assertPlanNoLeakCheck(sql, expectedPlan);
-        assertSql(expectedResult, sql);
+        assertQuery(sql)
+                .noLeakCheck()
+                .returnsOnce(expectedResult);
     }
 
     private void assertWritePermissionDenied(String sql, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
