@@ -1606,19 +1606,18 @@ public class AggregateTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String _) -> {
+                4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompiler _, SqlExecutionContext sqlExecutionContext, String _) -> {
                     engine.execute("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(1000))", sqlExecutionContext);
                     long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
                     try {
-                        assertQueryNoLeakCheck(
-                                compiler,
-                                "",
-                                "select i, sum(d) from tab group by i",
-                                null,
-                                true,
-                                sqlExecutionContext,
-                                true
-                        );
+                        try (
+                                RecordCursorFactory factory = engine.select("select i, sum(d) from tab group by i", sqlExecutionContext);
+                                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                        ) {
+                            //noinspection StatementWithEmptyBody
+                            while (cursor.hasNext()) {
+                            }
+                        }
                         Assert.fail();
                     } catch (CairoException e) {
                         Assert.assertTrue(e.isOutOfMemory());
