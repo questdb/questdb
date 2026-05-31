@@ -109,11 +109,11 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
             }
 
             double denom = Math.sqrt(sumY * sumX);
-            if (demon == 0 || Double.isNaN(denom)) {
+            if (denom == 0 || Double.isNaN(denom)) {
                 return Double.NaN;
             }
-            
-            return sumXY / demon;
+
+            return sumXY / denom;
         }
 
         @Override
