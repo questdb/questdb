@@ -1034,8 +1034,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     3\t10\t200\t3\t10\t200
                     """;
 
-            assertQueryNoLeakCheck(expected, explicitJoinQuery, null, true, false);
-            assertQueryNoLeakCheck(expected, implicitJoinQuery, null, true, false);
+            assertQuery(explicitJoinQuery)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(implicitJoinQuery)
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -2592,16 +2596,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("CREATE TABLE tango (ts TIMESTAMP);");
             execute("insert into tango values(100000)");
             execute("insert into tango values(100001)");
-            assertQueryNoLeakCheck("""
+            assertQuery("SELECT ts + x  FROM tango CROSS JOIN (SELECT x FROM long_sequence(1)) ORDER BY x;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             column
                             1970-01-01T00:00:00.100001Z
                             1970-01-01T00:00:00.100002Z
-                            """,
-                    "SELECT ts + x  FROM tango CROSS JOIN (SELECT x FROM long_sequence(1)) ORDER BY x;",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2619,14 +2621,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Row backward scan
                                 Frame backward scan on: tab
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(q1)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             p1\tf1\tf2
                             18.0\t2.0\t20.0
                             9.0\t1.0\t10.0
-                            """,
-                    q1
-            );
+                            """);
 
             String q2 = "select f2 - f1, f1, f2 from tab order by ts desc";
             assertPlanNoLeakCheck(q2, """
@@ -2637,11 +2639,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Row backward scan
                                 Frame backward scan on: tab
                     """);
-            assertQueryNoLeakCheck("""
+            assertQuery(q2)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                     column\tf1\tf2
                     18.0\t2.0\t20.0
                     9.0\t1.0\t10.0
-                    """, q2);
+                    """);
         });
     }
 
@@ -2674,7 +2679,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             """
             );
 
-            assertQueryNoLeakCheck("""
+            assertQuery("select * from " +
+                            "(select * from " +
+                            "   (select * from a) " +
+                            "    cross join " +
+                            "   (select * from a) " +
+                            " order by ts desc " +
+                            " limit 10" +
+                            ") " +
+                            "order by ts desc")
+                    .noLeakCheck()
+                    .timestamp("ts###desc")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tts\ti1\tts1
                             10000\t1970-01-01T00:00:00.010000Z\t1\t1970-01-01T00:00:00.000001Z
                             10000\t1970-01-01T00:00:00.010000Z\t2\t1970-01-01T00:00:00.000002Z
@@ -2686,20 +2704,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             10000\t1970-01-01T00:00:00.010000Z\t8\t1970-01-01T00:00:00.000008Z
                             10000\t1970-01-01T00:00:00.010000Z\t9\t1970-01-01T00:00:00.000009Z
                             10000\t1970-01-01T00:00:00.010000Z\t10\t1970-01-01T00:00:00.000010Z
-                            """,
-                    "select * from " +
-                            "(select * from " +
-                            "   (select * from a) " +
-                            "    cross join " +
-                            "   (select * from a) " +
-                            " order by ts desc " +
-                            " limit 10" +
-                            ") " +
-                            "order by ts desc",
-                    "ts###desc",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3918,17 +3923,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id0\tid1\tid0_1\tid1_1\tc
                             2\t2\t1\t0\t1
                             1\t1\t2\t1\t1
-                            """,
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3979,15 +3981,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             id\tts\tid0\tid1\tc
                             1\t2021-01-01T12:34:00.000000Z\t1\t0\t1
                             2\t2021-01-01T12:35:00.000000Z\t2\t1\t1
-                            """,
-                    query,
-                    "ts"
-            );
+                            """);
         });
     }
 
@@ -4038,15 +4040,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             id\tts\tid0\tid1\tid2\tc
                             1\t2021-01-01T12:34:00.000000Z\t1\t0\t1\t1
                             2\t2021-01-01T12:35:00.000000Z\t2\t1\t2\t1
-                            """,
-                    query,
-                    "ts"
-            );
+                            """);
         });
     }
 
@@ -4091,18 +4093,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             id0	id1	c
                             1	2	1
                             1	2	1
                             2	4	1
-                            """,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5122,10 +5122,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     2018-01-29T10:00:00.000000Z\tnull\t4
                     """;
 
-            assertQueryNoLeakCheck(shouldSucceedKeyedBoundedResult, shouldSucceedKeyedBounded,
-                    "ts", false, false);
-            assertQueryNoLeakCheck(shouldSucceedKeyedWithOffsetBoundedResult, shouldSucceedKeyedWithOffsetBounded,
-                    "ts", false, false);
+            assertQuery(shouldSucceedKeyedBounded)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(shouldSucceedKeyedBoundedResult);
+            assertQuery(shouldSucceedKeyedWithOffsetBounded)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(shouldSucceedKeyedWithOffsetBoundedResult);
 
             // Computed-key variants stay compile-only. Adding a TO clause
             // (needed for assertQueryNoLeakCheck) surfaces a pre-existing defect
@@ -5256,8 +5262,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(unionAllQuery)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tavg\tsum
                             2017-12-20T00:00:00.000000Z\tnull\tnull
                             2017-12-20T00:00:00.000000Z\tnull\tnull
@@ -5277,12 +5285,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             2018-01-24T00:00:00.000000Z\tnull\tnull
                             2018-01-29T00:00:00.000000Z\tnull\tnull
                             2018-01-29T00:00:00.000000Z\tnull\tnull
-                            """,
-                    unionAllQuery,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
 
             assertPlanNoLeakCheck(
                     unionQuery,
@@ -5323,8 +5326,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(unionQuery)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tavg\tsum
                             2017-12-20T00:00:00.000000Z\tnull\tnull
                             2017-12-25T00:00:00.000000Z\tnull\tnull
@@ -5335,12 +5340,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             2018-01-19T00:00:00.000000Z\tnull\tnull
                             2018-01-24T00:00:00.000000Z\tnull\tnull
                             2018-01-29T00:00:00.000000Z\tnull\tnull
-                            """,
-                    unionQuery,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -5585,19 +5585,19 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         // assertFactoryCursor, which is what surfaces fix 2.
         assertMemoryLeak(() -> {
             execute(SampleByTest.FROM_TO_DDL);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                            SELECT ts, avg(x) FROM (
+                              SELECT ts, x FROM fromto WHERE x <= 4
+                            ) timestamp(ts) SAMPLE BY 1h FROM '2018-01-01T00:00:00' TO '2018-01-01T03:00:00' FILL(NULL)""")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tavg
                             2018-01-01T00:00:00.000000Z\t1.5
                             2018-01-01T01:00:00.000000Z\t3.5
                             2018-01-01T02:00:00.000000Z\tnull
-                            """,
-                    """
-                            SELECT ts, avg(x) FROM (
-                              SELECT ts, x FROM fromto WHERE x <= 4
-                            ) timestamp(ts) SAMPLE BY 1h FROM '2018-01-01T00:00:00' TO '2018-01-01T03:00:00' FILL(NULL)""",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -5771,18 +5771,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             // Query without explicit timestamp() annotation - timestamp is auto-detected from dateadd
             final String query = "SELECT dateadd('h', -1, timestamp) as ts, price, amount FROM trades";
 
-            assertQueryNoLeakCheck(
-                    """
+            // ts is now the timestamp column (auto-detected from dateadd)
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tprice\tamount
                             2021-12-31T23:00:00.000000Z\t100.0\t10.0
                             2022-06-15T11:00:00.000000Z\t150.0\t20.0
                             2022-12-31T23:00:00.000000Z\t200.0\t30.0
-                            """,
-                    query,
-                    "ts",  // ts is now the timestamp column (auto-detected from dateadd)
-                    true,  // supports random access
-                    true   // expect size
-            );
+                            """);
         });
     }
 
@@ -5921,18 +5920,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ) WHERE ts in '2022'
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .sizeMayVary()
+                    .returns("""
                             ts\tprice\tamount
                             2022-01-01T00:00:00.000000Z\t100.0\t10.0
                             2022-06-15T12:00:00.000000Z\t150.0\t20.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5952,18 +5949,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ) WHERE ts >= '2022-01-01T08:00:00' AND ts < '2022-06-15T12:00:00'
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .sizeMayVary()
+                    .returns("""
                             ts\tprice\tamount
                             2022-01-01T09:00:00.000000Z\t100.0\t10.0
                             2022-06-15T11:00:00.000000Z\t150.0\t20.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5983,17 +5978,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """;
 
             // This query should still work, just without optimization
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .sizeMayVary()
+                    .returns("""
                             ts\tprice\tamount
                             2022-01-01T01:00:00.000000Z\t100.0\t10.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6020,18 +6013,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             // Row 1: timestamp='2022-01-01', ts='2021-12-31T23:00' - NOT in '2022', excluded
             // Row 2: timestamp='2022-06-15T12:00', ts='2022-06-15T11:00' - in '2022', included
             // Row 3: timestamp='2023-01-01', ts='2022-12-31T23:00' - in '2022', included
-            assertQueryNoLeakCheck(
-                    """
+            // sizeCanBeVariable = true for virtual timestamp columns
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .sizeMayVary()
+                    .returns("""
                             ts\tprice\tamount
                             2022-06-15T11:00:00.000000Z\t150.0\t20.0
                             2022-12-31T23:00:00.000000Z\t200.0\t30.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true,
-                    true  // sizeCanBeVariable = true for virtual timestamp columns
-            );
+                            """);
         });
     }
 
@@ -6055,17 +6047,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             // First row: timestamp = 2022-01-05, ts = 2022-01-02 (in range)
             // Second row: timestamp = 2022-06-15, ts = 2022-06-12 (NOT in range)
             // Third row: timestamp = 2022-12-30, ts = 2022-12-27 (NOT in range)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .sizeMayVary()
+                    .returns("""
                             ts\tprice\tamount
                             2022-01-02T00:00:00.000000Z\t100.0\t10.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6089,18 +6079,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             // First row's ts = 2022-01-01T01:00:00 (in 2022)
             // Second row's ts = 2022-06-15T13:00:00 (in 2022)
             // Third row's ts = 2023-01-01T00:00:00 (NOT in 2022)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .sizeMayVary()
+                    .returns("""
                             ts\tprice\tamount
                             2022-01-01T01:00:00.000000Z\t100.0\t10.0
                             2022-06-15T13:00:00.000000Z\t150.0\t20.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6798,15 +6786,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String expectedColumns = aliasExpressionsEnabled
                     ? "ClientIP\tclientip - 1\tClientIP - 2\tcip3\tc\n"
                     : "ClientIP\tcolumn\tcolumn1\tcip3\tc\n";
-            assertQueryNoLeakCheck(
-                    expectedColumns +
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedColumns +
                             "198.162.0.11\t198.162.0.10\t198.162.0.9\t198.162.0.8\t1\n" +
-                            "198.162.0.12\t198.162.0.11\t198.162.0.10\t198.162.0.9\t1\n",
-                    query,
-                    null,
-                    true,
-                    true
-            );
+                            "198.162.0.12\t198.162.0.11\t198.162.0.10\t198.162.0.9\t1\n");
         });
     }
 
