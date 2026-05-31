@@ -62,20 +62,18 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
             //      is Jan 2 (2), which passes the outer WHERE too
             //   2. t_plain: Jan 2 (C, 99)
             //   3. Both rows survive → wrong!
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tsym\tx
-                            2024-01-02T00:00:00.000000Z\tC\t99
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM (
                                 SELECT ts, sym, x FROM t_sym LATEST ON ts PARTITION BY sym
                                 UNION ALL
                                 SELECT ts, sym, x FROM t_plain
-                            ) WHERE ts <= '2024-01-02'""",
-                    null,
-                    false
-            );
+                            ) WHERE ts <= '2024-01-02'""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tx
+                            2024-01-02T00:00:00.000000Z\tC\t99
+                            """);
         });
     }
 
@@ -107,20 +105,18 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
             //   1. Branch 1: WHERE ts >= Jan 3 then LIMIT 2 → Jan 3 (3), Jan 4 (4)
             //   2. Branch 2: Jan 3 (30)
             //   3. All 3 rows pass outer WHERE → wrong!
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tx
-                            2024-01-03T00:00:00.000000Z\t30
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM (
                                 SELECT * FROM (SELECT ts, x FROM t1 LIMIT 2)
                                 UNION ALL
                                 SELECT ts, x FROM t2
-                            ) WHERE ts >= '2024-01-03'""",
-                    null,
-                    false
-            );
+                            ) WHERE ts >= '2024-01-03'""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tx
+                            2024-01-03T00:00:00.000000Z\t30
+                            """);
         });
     }
 
@@ -156,21 +152,19 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
             //   3. UNION ALL: (Jan 3,3), (Jan 4,4), (Jan 5,5)
             //   4. LIMIT 3: all 3
             //   5. WHERE ts >= Jan 3: all 3 → wrong!
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tx
-                            2024-01-03T00:00:00.000000Z\t3
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM (
                                 SELECT ts, x FROM t1
                                 UNION ALL
                                 SELECT ts, x FROM t2
                                 LIMIT 3
-                            ) WHERE ts >= '2024-01-03'""",
-                    null,
-                    false
-            );
+                            ) WHERE ts >= '2024-01-03'""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tx
+                            2024-01-03T00:00:00.000000Z\t3
+                            """);
         });
     }
 
@@ -201,19 +195,17 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
             //      avg(8.0) = 8.0
             //   3. UNION ALL: (9.0), (8.0)
             //   4. WHERE x > 5: both kept — wrong! t2 bucket should not appear
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tx
-                            2024-01-01T00:00:00.000000Z\t9.0
-                            """,
-                    "select * from (" +
+            assertQuery("select * from (" +
                             "select ts, x from t1 " +
                             "union all " +
                             "select ts, avg(x) x from t2 sample by 1h align to first observation" +
-                            ") where x > 5",
-                    null,
-                    false
-            );
+                            ") where x > 5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tx
+                            2024-01-01T00:00:00.000000Z\t9.0
+                            """);
         });
     }
 
