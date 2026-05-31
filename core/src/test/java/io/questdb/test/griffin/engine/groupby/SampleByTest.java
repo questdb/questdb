@@ -7823,9 +7823,7 @@ public class SampleByTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000000Z\t1
                     """;
             // sample-by rewrite
-            assertQueryAndCache(
-                    expected,
-                    """
+            assertQuery("""
                             select timestamp, count()
                             from (
                                 (
@@ -7837,16 +7835,14 @@ public class SampleByTest extends AbstractCairoTest {
                                 order by timestamp
                             )
                             sample by 10m
-                            """,
-                    "timestamp",
-                    false,
-                    false
-            );
+                            """)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .returns(expected);
 
             // sample by fill
-            assertQueryAndCache(
-                    expected,
-                    """
+            assertQuery("""
                             select timestamp, count()
                             from (
                                 (
@@ -7858,11 +7854,11 @@ public class SampleByTest extends AbstractCairoTest {
                                 order by timestamp
                             )
                             sample by 10m
-                            """,
-                    "timestamp",
-                    false,
-                    false
-            );
+                            """)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -17548,9 +17544,11 @@ public class SampleByTest extends AbstractCairoTest {
                 "                Frame forward scan on: #TABLE#\n";
     }
 
-    private void assertSampleByFlavours(String expected, String sql) throws SqlException {
-        assertSql(expected, sql);
-        assertSql(expected, sql + " ALIGN TO FIRST OBSERVATION;");
+    private void assertSampleByFlavours(String expected, String sql) throws Exception {
+        // returnsOnce() does a single cursor pass without asserting the designated timestamp, which varies
+        // per caller (e.g. testSampleByWithProjection projects to NYTime), so one chain fits every caller.
+        assertQuery(sql).noLeakCheck().returnsOnce(expected);
+        assertQuery(sql + " ALIGN TO FIRST OBSERVATION;").noLeakCheck().returnsOnce(expected);
     }
 
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
@@ -17717,12 +17715,9 @@ public class SampleByTest extends AbstractCairoTest {
                             "   long_sequence(100)" +
                             "), index(s) timestamp(k) partition by DAY"
             );
-            try {
-                assertExceptionNoLeakCheck(query);
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), errorContains);
-                Assert.assertEquals(errorPosition, ex.getPosition());
-            }
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fails(errorPosition, errorContains);
         });
     }
 

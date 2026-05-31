@@ -371,16 +371,12 @@ public class LimitTest extends AbstractCairoTest {
                                         Row forward scan
                                         Frame forward scan on: table1
                     """);
-            assertQueryAndCache(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
                             ts\tv_max
                             1970-01-01T00:01:10.000000Z\t7
-                            """,
-                    query,
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -403,13 +399,7 @@ public class LimitTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            assertQueryAndCache(
-                    """
-                            timestamp\tsymbol\tvenue\tbid_price\tbid_size\task_price\task_size
-                            1970-01-01T00:00:00.000002Z\tAAPL\tNYSE\t21.3\t20.3\t11.6\t10.5
-                            1970-01-01T00:00:00.000003Z\tAAPL\tNYSE\t21.4\t20.4\t11.2\t10.2
-                            """,
-                    """
+            assertQuery("""
                             select * from (
                                 select timestamp, symbol, venue,
                                     bids[1][1] as bid_price,
@@ -419,11 +409,14 @@ public class LimitTest extends AbstractCairoTest {
                                 from eq_equities_market_data
                                 where symbol='AAPL' and timestamp in '1970'
                                 limit -4
-                            ) limit 2""",
-                    "timestamp",
-                    true,
-                    false
-            );
+                            ) limit 2""")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns("""
+                            timestamp\tsymbol\tvenue\tbid_price\tbid_size\task_price\task_size
+                            1970-01-01T00:00:00.000002Z\tAAPL\tNYSE\t21.3\t20.3\t11.6\t10.5
+                            1970-01-01T00:00:00.000003Z\tAAPL\tNYSE\t21.4\t20.4\t11.2\t10.2
+                            """);
         });
     }
 
@@ -432,16 +425,13 @@ public class LimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t1 (ts timestamp, id symbol)");
             execute("insert into t1 values (0, 'abc'), (2, 'a1'), (3, 'abc'), (4, 'abc'), (5, 'a2')");
-            assertQueryAndCache(
-                    """
+            assertQuery("select ts, id as id from t1 where id = 'abc' limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tid
                             1970-01-01T00:00:00.000004Z\tabc
-                            """,
-                    "select ts, id as id from t1 where id = 'abc' limit -1",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -667,17 +657,15 @@ public class LimitTest extends AbstractCairoTest {
             bindVariableService.setLong(0, 0L);
             bindVariableService.setLong(1, 2L);
 
-            assertQueryAndCache(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns("""
                             i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                             1\tmsft\t0.509\t2018-01-01T00:02:00.000000Z\tfalse\tU\t0.5243722859289777\t0.8072372\t365\t2015-05-02T19:30:57.935Z\t\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ
                             2\tgoogl\t0.423\t2018-01-01T00:04:00.000000Z\tfalse\tG\t0.5298405941762054\tnull\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t
-                            """,
-                    query,
-                    "timestamp",
-                    true,
-                    true
-            );
+                            """);
 
             assertPlanNoLeakCheck(
                     query,
@@ -1210,11 +1198,19 @@ public class LimitTest extends AbstractCairoTest {
                 bindVariableService.setLong("lo", 4);
                 bindVariableService.setInt("hi", 8);
 
-                assertQueryAndCache(expected1, query, "timestamp", true, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns(expected1);
                 bindVariableService.setLong("lo", 6);
                 bindVariableService.setInt("hi", 12);
 
-                assertQueryAndCache(expected2, query, "timestamp", true, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns(expected2);
             } finally {
                 engine.clear();
             }
@@ -1291,19 +1287,17 @@ public class LimitTest extends AbstractCairoTest {
             bindVariableService.setLong(0, 2L);
             bindVariableService.setLong(1, 5L);
 
-            assertQueryAndCache(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestampDesc("timestamp")
+                    .expectSize()
+                    .returns("""
                             i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                             58\tibm\t0.445\t2018-01-01T01:56:00.000000Z\ttrue\tCDE\t0.7613115945849444\tnull\t118\t\tHGKR\t-5065534156372441821\t1970-01-01T07:30:00.000000Z\t4\t00000000 cd 98 7d ba 9d 68 2a 79 76 fc\tBGCKOSB
                             57\tgoogl\t0.756\t2018-01-01T01:54:00.000000Z\tfalse\tKZZ\t0.8925723033175609\t0.9924997\t416\t2015-11-08T09:45:16.753Z\tLVSY\t7173713836788833462\t1970-01-01T07:13:20.000000Z\t29\t00000000 4d 0d d7 44 2d f1 57 ea aa 41 c5 55 ef 19 d9 0f
                             00000010 61 2d\tEYDNMIOCCVV
                             56\tmsft\t0.061\t2018-01-01T01:52:00.000000Z\ttrue\tCDE\t0.7792511437604662\t0.39658612\t341\t2015-03-04T08:18:06.265Z\tLVSY\t5320837171213814710\t1970-01-01T06:56:40.000000Z\t16\t\tJCUBBMQSRHLWSX
-                            """,
-                    query,
-                    "timestamp###DESC",
-                    true,
-                    true
-            );
+                            """);
 
             assertPlanNoLeakCheck(
                     query,
@@ -1412,19 +1406,17 @@ public class LimitTest extends AbstractCairoTest {
             bindVariableService.setLong("lo", 2L);
             bindVariableService.setLong("hi", 5L);
 
-            assertQueryAndCache(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns("""
                             i	sym2	price	timestamp	b	c	d	e	f	g	ik	j	k	l	m	n
                             3	googl	0.17400000000000002	2018-01-01T00:06:00.000000Z	false	W	0.8828228366697741	0.72300154	845	2015-08-26T10:57:26.275Z	VTJW	9029468389542245059	1970-01-01T00:33:20.000000Z	46	00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47	DSWUGSHOLNV
                             4	ibm	0.148	2018-01-01T00:08:00.000000Z	true	I	0.3456897991538844	0.24008358	775	2015-08-03T15:58:03.335Z	VTJW	-8910603140262731534	1970-01-01T00:50:00.000000Z	24	00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a
                             00000010 e7 0c 89	LJUMLGLHMLLEO
                             5	googl	0.868	2018-01-01T00:10:00.000000Z	true	Z	0.4274704286353759	0.021189213	179			5746626297238459939	1970-01-01T01:06:40.000000Z	35	00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb	RGIIH
-                            """,
-                    query,
-                    "timestamp",
-                    true,
-                    true
-            );
+                            """);
 
             assertPlanNoLeakCheck(query, """
                     Sort light lo: :lo::long hi: :hi::long partiallySorted: true
@@ -1787,9 +1779,17 @@ public class LimitTest extends AbstractCairoTest {
                 );
 
                 bindVariableService.setLong(0, 4);
-                assertQueryAndCache(expected1, query, "timestamp", true, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns(expected1);
                 bindVariableService.setLong(0, 6);
-                assertQueryAndCache(expected2, query, "timestamp", true, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns(expected2);
             } finally {
                 engine.clear();
             }
@@ -1845,9 +1845,17 @@ public class LimitTest extends AbstractCairoTest {
                 );
 
                 bindVariableService.setLong("lim", 4);
-                assertQueryAndCache(expected1, query, "timestamp", true, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns(expected1);
                 bindVariableService.setLong("lim", 6);
-                assertQueryAndCache(expected2, query, "timestamp", true, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("timestamp")
+                        .expectSize()
+                        .returns(expected2);
             } finally {
                 engine.clear();
             }
@@ -1911,7 +1919,11 @@ public class LimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(createTableDdl);
 
-            assertQueryAndCache(expected1, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected1);
 
             execute(
                     "insert into y select * from " +
@@ -1958,28 +1970,22 @@ public class LimitTest extends AbstractCairoTest {
                 execute(sql);
             }
 
-            assertQueryAndCache(
-                    """
+            assertQuery("select * from t1 where id = 'abc' limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tid
                             1970-01-01T00:00:00.000004Z\tabc
-                            """,
-                    "select * from t1 where id = 'abc' limit -1",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // now with a virtual column
-            assertQueryAndCache(
-                    """
+            assertQuery("select 42*42 as the_answer, ts, id from t1 where id = 'abc' limit -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             the_answer\tts\tid
                             1764\t1970-01-01T00:00:00.000004Z\tabc
-                            """,
-                    "select 42*42 as the_answer, ts, id from t1 where id = 'abc' limit -1",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 }
