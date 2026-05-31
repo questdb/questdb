@@ -461,7 +461,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     """
@@ -626,7 +631,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     """
@@ -792,7 +802,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     """
@@ -957,7 +972,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -1046,7 +1066,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -1141,7 +1166,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -1231,7 +1261,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -1302,7 +1337,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     """
@@ -1410,7 +1450,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     """
@@ -1533,7 +1578,12 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from " +
@@ -2489,7 +2539,9 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, d-b", null, true, false);
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, d-b")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
@@ -2644,7 +2696,9 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))");
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
-            assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c order by 1,2,3", null, true, false);
+            assertQuery("select x.c, x.a, b from x join y on y.m = x.c order by 1,2,3")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
             execute("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
@@ -2760,7 +2814,9 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select rnd_symbol('D','B',null,'A') c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d", null, true, false);
+            assertQuery("select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)");
@@ -2891,7 +2947,9 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d", null, true, false);
+            assertQuery("select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
@@ -3349,7 +3407,10 @@ public class JoinTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertQueryAndCache(expected, query, null, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -3376,7 +3437,10 @@ public class JoinTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertQueryAndCache(expected, query, null, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -3579,9 +3643,15 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryAndCache(expected, leftJoin, null, true, false);
-            assertQueryAndCache(expected, rightJoin, null, true, false);
-            assertQueryAndCache(expected, fullJoin, null, true, false);
+            assertQuery(leftJoin)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(rightJoin)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(fullJoin)
+                    .noLeakCheck()
+                    .returns(expected);
 
 
             execute("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
@@ -5784,7 +5854,9 @@ public class JoinTest extends AbstractCairoTest {
                     ETH-USD\t2001-01-01T00:00:01.000000Z\t4\tETH-USD\t2001-01-01T00:00:01.000000Z\t4
                     ETH-USD\t2001-01-01T00:00:01.000000Z\t4\tETH-USD\t2001-01-01T00:00:00.000000Z\t3
                     """;
-            assertQueryAndCache(expected, query, null, true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -5815,7 +5887,9 @@ public class JoinTest extends AbstractCairoTest {
                     ETH-USD\t2001-01-01T00:00:01.000000Z\t4\t2001-01-01T00:00:00.000000Z\t3\tETH-USD
                     ETH-USD\t2001-01-01T00:00:01.000000Z\t4\t2001-01-01T00:00:01.000000Z\t4\tETH-USD
                     """;
-            assertQueryAndCache(expected, query, null, true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -5840,7 +5914,11 @@ public class JoinTest extends AbstractCairoTest {
                     ETH-USD\tbuy\t2001-01-01T00:00:01.000000Z\t5\tETH-USD\tbuy\t2001-01-01T00:00:01.000000Z\t5
                     BTC-USD\tbuy\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\tbuy\t2001-01-01T00:00:01.000000Z\t2
                     """;
-            assertQueryAndCache(expected, query, "ts", false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -5869,7 +5947,11 @@ public class JoinTest extends AbstractCairoTest {
                     2\t2000-01-01T00:00:00.000000Z\t2\t2000-01-01T00:00:00.000000Z
                     4\t2000-01-01T00:00:00.000000Z\t4\t2000-01-01T00:00:00.000000Z
                     """;
-            assertQueryAndCache(expected, query, "ts", false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -5896,9 +5978,19 @@ public class JoinTest extends AbstractCairoTest {
                     BTC-USD\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2
                     BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2
                     """;
-            assertQueryAndCache(expected, leftJoinQuery, "ts", false);
-            assertQueryAndCache(expected, rightJoinQuery, null, false);
-            assertQueryAndCache(expected, fullJoinQuery, null, false);
+            assertQuery(leftJoinQuery)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery(rightJoinQuery)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery(fullJoinQuery)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -6074,7 +6166,10 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCache(expected, query, null, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from " +
@@ -6404,7 +6499,10 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCache(expected, query, null, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from " +
@@ -7002,7 +7100,12 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from (" +
@@ -7119,7 +7222,12 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from " +
@@ -7258,7 +7366,12 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from " +
@@ -7398,7 +7511,12 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from " +
@@ -7515,7 +7633,12 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute("insert into x select * from (select cast(x + 10 as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             execute("insert into y select * from (select cast(x + 30 as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
@@ -7907,13 +8030,9 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCacheFullFat(
-                    expected,
-                    "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, b, d",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, b, d")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
@@ -8001,13 +8120,9 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))");
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
-            assertQueryAndCache(
-                    expected,
-                    "select x.c, x.a, b from x join y on y.m = x.c order by x.c, b",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("select x.c, x.a, b from x join y on y.m = x.c order by x.c, b")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
             execute("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
@@ -8119,13 +8234,9 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select rnd_symbol('D','B',null,'A') c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCacheFullFat(
-                    expected,
-                    "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d, d-b",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d, d-b")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)");
@@ -8256,13 +8367,9 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCacheFullFat(
-                    expected,
-                    "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, b, d",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, b, d")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
@@ -8410,9 +8517,15 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryAndCache(expected, "select x.c, x.a, b from x left join y on y.m = x.c order by x.c, b", null, true, false);
-            assertQueryAndCache(expected, "select x.c, x.a, b from y right join x on y.m = x.c order by x.c, b", null, true, false);
-            assertQueryAndCache(expected, "select x.c, x.a, b from y full join x on y.m = x.c order by x.c, b", null, true, false);
+            assertQuery("select x.c, x.a, b from x left join y on y.m = x.c order by x.c, b")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select x.c, x.a, b from y right join x on y.m = x.c order by x.c, b")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select x.c, x.a, b from y full join x on y.m = x.c order by x.c, b")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
             execute("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
