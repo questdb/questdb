@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -1583,7 +1582,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns(expected);
 
-            assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
 
             // non-keyed join and slave supports timeframe -> should use AsOfJoinNoKeyFastRecordCursorFactory
@@ -3932,7 +3937,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                      from long_sequence(30)
                     """
             );
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute("""
                     insert into x select * from (
@@ -3958,7 +3968,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """
             );
 
-            assertQueryFullFatNoLeakCheck(String.format("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(String.format("""
                             i\tsym\tamt\tprice\ttimestamp\ttimestamp1
                             1\tmsft\t22.463\tnull\t2018-01-01T00:12:00.000000%1$s\t
                             2\tgoogl\t29.92\t0.423\t2018-01-01T00:24:00.000000%1$s\t2018-01-01T00:16:00.000000%2$s
@@ -3980,13 +3996,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             18\tmsft\t36.798\t0.051000000000000004\t2018-01-01T03:36:00.000000%1$s\t2018-01-01T01:50:00.000000%2$s
                             19\tmsft\t66.98\t0.051000000000000004\t2018-01-01T03:48:00.000000%1$s\t2018-01-01T01:50:00.000000%2$s
                             20\tgoogl\t26.369\t0.6900000000000001\t2018-01-01T04:00:00.000000%1$s\t2018-01-01T02:00:00.000000%2$s
-                            """, leftSuffix, rightSuffix),
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    true
-            );
+                            """, leftSuffix, rightSuffix));
         });
     }
 
@@ -4691,7 +4701,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns(expected);
-            assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
 
             // non-keyed join and slave supports timeframe -> should use Lt Join Fast
@@ -5795,11 +5811,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
         });
     }
 
-    private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult) throws SqlException {
+    private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult) throws Exception {
         assertAlgoAndResult(queryBody, hint, expectedAlgo, expectedResult, false);
     }
 
-    private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult, boolean expectSymbolKeyJoin) throws SqlException {
+    private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult, boolean expectSymbolKeyJoin) throws Exception {
         String hintedQuery;
         if (!hint.isEmpty()) {
             hintedQuery = "SELECT /*+ " + hint + "*/ " + queryBody;
@@ -5814,7 +5830,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
         if (expectSymbolKeyJoin) {
             TestUtils.assertContains(sink, "symbolKeyJoin: true");
         }
-        assertSql(expectedResult, hintedQuery);
+        assertQuery(hintedQuery)
+                .noLeakCheck()
+                .returnsOnce(expectedResult);
     }
 
     private void assertAsOfJoinSymbolAndDecimalKey(String tableSuffix, String decimalType, String id1, String id2) throws Exception {
