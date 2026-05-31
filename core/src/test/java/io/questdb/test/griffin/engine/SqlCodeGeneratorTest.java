@@ -1067,10 +1067,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 88.2822836669774\t\t1970-01-17T04:53:20.000000Z
                 """;
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select * from x where cast(b as symbol) in (select rnd_str('PEHN', 'HYRX', null) a from long_sequence(10)) and test_match()",
-                    "create table x as " +
+            assertQuery("select * from x where cast(b as symbol) in (select rnd_str('PEHN', 'HYRX', null) a from long_sequence(10)) and test_match()")
+                    .noLeakCheck()
+                    .ddl("create table x as " +
                             "(" +
                             "select" +
                             " rnd_double(0)*100 a," +
@@ -1078,19 +1077,17 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             " timestamp_sequence(0, 100000000000) k" +
                             " from" +
                             " long_sequence(20)" +
-                            ") timestamp(k) partition by DAY",
-                    "k",
-                    "insert into x select * from (" +
+                            ") timestamp(k) partition by DAY")
+                    .mutateWith("insert into x select * from (" +
                             "select" +
                             " 0.0992," +
                             " 'HYRX'," +
                             " to_timestamp('1971', 'yyyy') t" +
                             " from long_sequence(1)" +
-                            ") timestamp(t)",
-                    expected +
-                            "0.0992\tHYRX\t1971-01-01T00:00:00.000000Z\n",
-                    true
-            );
+                            ") timestamp(t)")
+                    .timestamp("k")
+                    .returns(expected, expected +
+                            "0.0992\tHYRX\t1971-01-01T00:00:00.000000Z\n");
             Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
         });
     }

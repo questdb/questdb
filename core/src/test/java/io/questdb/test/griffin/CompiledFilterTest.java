@@ -1768,13 +1768,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " rnd_geohash(40) hash8c" +
                     " from long_sequence(100)) timestamp(k)";
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    query,
-                    ddl,
-                    "k",
-                    true
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .ddl(ddl)
+                    .timestamp("k")
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }

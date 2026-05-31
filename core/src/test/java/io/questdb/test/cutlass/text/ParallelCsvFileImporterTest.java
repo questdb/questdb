@@ -133,7 +133,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testFindChunkBoundariesForFileWithLongLines() throws Exception {
         executeWithPool(
-                3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                3, 8, (CairoEngine _, SqlCompiler _, SqlExecutionContext _) ->
                         assertChunkBoundariesFor("test-quotes-small.csv", list(0, 0, 90, 2, 185, 3, 256, 5), 3)
         );
     }
@@ -141,7 +141,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testFindChunkBoundariesForFileWithNoQuotes() throws Exception {
         executeWithPool(
-                3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                3, 8, (CairoEngine _, SqlCompiler _, SqlExecutionContext _) ->
                         assertChunkBoundariesFor("test-import.csv", list(0, 0, 4565, 44, 9087, 87, 13612, 130), 3)
         );
     }
@@ -149,7 +149,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testFindChunkBoundariesInFileWithOneLongLine() throws Exception {
         executeWithPool(
-                2, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                2, 8, (CairoEngine _, SqlCompiler _, SqlExecutionContext _) ->
                         assertChunkBoundariesFor("test-quotes-oneline.csv", list(0, 0, 252, 2), 2)
         );
     }
@@ -157,7 +157,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testFindChunkBoundariesInFileWithOneLongLineWithManyWorkers() throws Exception {
         executeWithPool(
-                7, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                7, 8, (CairoEngine _, SqlCompiler _, SqlExecutionContext _) ->
                         assertChunkBoundariesFor("test-quotes-oneline.csv", list(0, 0, 252, 2), 7)
         );
     }
@@ -165,7 +165,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testFindChunkBoundariesInLargerCsv() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                4, 8, (CairoEngine _, SqlCompiler _, SqlExecutionContext _) ->
                         assertChunkBoundariesFor("test-quotes-big.csv", list(0, 0, 16797, 254, 33514, 503, 50216, 752, 66923, 1002), 4)
         );
     }
@@ -173,7 +173,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testFindChunkBoundariesWith1WorkerForFileWithLongLines() throws Exception {
         executeWithPool(
-                1, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                1, 8, (CairoEngine _, SqlCompiler _, SqlExecutionContext _) ->
                         assertChunkBoundariesFor("test-quotes-small.csv", list(0, 0, 256, 0), 1)
         );
     }
@@ -342,7 +342,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                4, 8, ff, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, ff, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab4", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -358,7 +358,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportCsvFromFileWithBadColumnNamesInHeaderIntoNewTableFiltersOutBadCharacters() throws Exception {
         executeWithPool(
-                4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(10);
                         importer.of("tab24", "test-badheadernames.csv", 1, PartitionBy.MONTH, (byte) ',', "Ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -495,7 +495,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     final String tableName = "tab27";
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(10);
@@ -608,7 +608,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportCsvWithTimestampNotMatchingInputFormatFails() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab3", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -623,7 +623,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportEmptyCsv() throws Exception {
         executeWithPool(
-                4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(10);
                         importer.of(
@@ -660,7 +660,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, brokenFf, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab5", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -695,7 +695,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, brokenFf, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab7", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -832,7 +832,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, brokenFf, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab6", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -1244,7 +1244,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithHeaderButPartitionByNotSpecifiedAndTargetTableDoesntExist() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab49", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1275,7 +1275,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithHeaderButPartitionBySetToNone() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab48", "test-quotes-big.csv", 1, PartitionBy.NONE, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1347,7 +1347,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test//it fails even though ts column name and format are specified
     public void testImportFileWithHeaderIntoNewTableFailsBecauseTsColCantBeFoundInFileHeader() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab56", "test-quotes-oneline.csv", 1, PartitionBy.DAY, (byte) ',', "ts2", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1362,7 +1362,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithHeaderWhenTargetTableDoesntExistSuccess() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab50", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1401,7 +1401,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithIncompleteHeaderWithForceHeaderIntoNewTable() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab61", "test-header-missing.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1464,7 +1464,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithNoHeaderIntoNewTableFailsBecauseTsColCantBeFoundInFileHeader() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab54", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1480,7 +1480,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     //when there is no header and header is not forced then target tabel columns get following names : f0, f1, ..., fN
     public void testImportFileWithNoHeaderIntoNewTableSucceedsBecauseSyntheticColumnNameIsUsed() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab55", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "f1", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1604,7 +1604,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportIsCancelled() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab43", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true, () -> true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1619,7 +1619,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportNoRowsCsv() throws Exception {
         executeWithPool(
-                4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(10);
                         importer.of(
@@ -1800,7 +1800,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                2, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                2, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     final String tableName = "tab29";
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 2)) {
                         importer.setMinChunkSize(10);
@@ -1839,7 +1839,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                2, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                2, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     final String tableName = "tab30";
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 2)) {
                         importer.setMinChunkSize(10);
@@ -1913,7 +1913,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(
-                2, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                2, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     final String tableName = "tab28";
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 2)) {
                         importer.setMinChunkSize(10);
@@ -1999,7 +1999,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportWithSkipAllAtomicityFailsWhenTimestampCantBeParsedAtIndexingPhase() throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab22", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss", true, null, Atomicity.SKIP_ALL);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -2127,7 +2127,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportWithZeroLengthQueueReturnsError() throws Exception {
         executeWithPool(
-                2, 0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                2, 0, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 2)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab16", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -2143,7 +2143,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportWithZeroWorkersFails() throws Exception {
         executeWithPool(
-                0, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                0, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 0)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab15", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -2759,7 +2759,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyProcessingQueueCapacityZero() throws Exception {
         executeWithPool(
-                1, 0, TestFilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                1, 0, TestFilesFacadeImpl.INSTANCE, (CairoEngine _, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     try {
                         executeCopy(compiler, sqlExecutionContext);
                         executeCopy(compiler, sqlExecutionContext);
@@ -2998,7 +2998,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
     private void assertColumnNameException(String fileName, boolean forceHeader, String message) throws Exception {
         executeWithPool(
-                4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                4, 8, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab60", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, forceHeader);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -3055,7 +3055,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     private void assertIndexChunks(int workerCount, String dateFormat, int partitionBy, String fileName, IndexChunk... expectedChunks) throws Exception {
         executeWithPool(
                 workerCount, 8,
-                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                (CairoEngine _, SqlCompiler _, SqlExecutionContext sqlExecutionContext) ->
                         assertIndexChunksFor(sqlExecutionContext, workerCount, dateFormat, partitionBy, fileName, expectedChunks)
         );
     }
@@ -3249,7 +3249,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
     private void testImportCsvIntoNewTable0(String tableName) throws Exception {
         executeWithPool(
-                16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                16, 16, (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 16)) {
                         importer.setMinChunkSize(10);
                         importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -3291,7 +3291,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
     private void testImportThrowsException(FilesFacade ff, String tableName, String fileName, int partitionBy, String tsCol, String tsFormat, String expectedError) throws Exception {
         executeWithPool(
-                4, 8, ff, (CairoEngine engine1, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext1) -> {
+                4, 8, ff, (CairoEngine engine1, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine1, 4)) {
                         importer.of(tableName, fileName, 1, partitionBy, (byte) ',', tsCol, tsFormat, true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -3399,8 +3399,8 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 compiler,
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
                         "id\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                        "ts\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts") ? "true" : "false") + "\tfalse\t\t\n" +
-                        "ts_ns\tTIMESTAMP_NS\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts_ns") ? "true" : "false") + "\tfalse\t\t\n",
+                        "ts\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts")) + "\tfalse\t\t\n" +
+                        "ts_ns\tTIMESTAMP_NS\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts_ns")) + "\tfalse\t\t\n",
                 "show columns from timestamp_test",
                 null,
                 sqlExecutionContext,
@@ -3414,7 +3414,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         executeWithPool(
                 2,
                 2,
-                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                (CairoEngine engine, SqlCompiler _, SqlExecutionContext _) -> {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.setMinChunkSize(10);
                         importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);

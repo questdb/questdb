@@ -579,19 +579,15 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                             AAA\t715.8340994940178\t1970-01-01T02:00:01.000000Z
                             """);
 
-            assertQuery(
-                    """
+            assertQuery("select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar")
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
                             s\thaversine_dist_deg\tk
                             AAA\t1131.3799004998614\t1970-01-01T00:00:00.000000Z
                             AAA\t1128.9573035397307\t1970-01-01T01:00:00.000000Z
                             AAA\t716.1464591924607\t1970-01-01T02:00:00.000000Z
-                            """,
-                    "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar",
-                    null,
-                    "k",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
