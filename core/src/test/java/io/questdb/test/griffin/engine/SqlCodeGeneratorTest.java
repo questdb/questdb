@@ -8150,8 +8150,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     .returns(expected);
 
             for (int i = 0; i < 10; i++) {
-                printSqlResult(
-                        """
+                assertQuery("select ts, s, count() from x sample by 1d align to first observation")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
                                 ts\ts\tcount
                                 1970-01-01T00:00:00.000000Z\tfoo\t4
                                 1970-01-01T00:00:00.000000Z\tbar\t5
@@ -8165,12 +8168,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                 1970-01-05T00:00:00.000000Z\tfoo\t4
                                 1970-01-06T00:00:00.000000Z\tbar\t3
                                 1970-01-06T00:00:00.000000Z\tfoo\t3
-                                """,
-                        "select ts, s, count() from x sample by 1d align to first observation",
-                        "ts",
-                        false,
-                        false
-                );
+                                """);
                 // verify that the reader doesn't keep all partitions open once it's returned back to the pool
                 try (TableReader reader = engine.getReader("x")) {
                     Assert.assertEquals(6, reader.getPartitionCount());
