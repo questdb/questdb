@@ -3343,7 +3343,13 @@ public class JoinTest extends AbstractCairoTest {
                     "g2 as (select distinct * from t2 order by ts)" +
                     "select * from g1 lt join g2 on g1.geo4 = g2.geo4";
 
-            assertQueryNoLeakCheckWithFatJoin(sql, expected, "ts", true, false, true);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
             assertQuery(sql)
                     .noLeakCheck()
                     .timestamp("ts")
@@ -3715,7 +3721,9 @@ public class JoinTest extends AbstractCairoTest {
                             " from long_sequence(20))"
             );
 
-            assertQueryNoLeakCheckWithFatJoin(query, expected, null, true, true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns(expected);
             assertQuery(query)
                     .noLeakCheck()
                     .returns(expected);
@@ -3759,7 +3767,13 @@ public class JoinTest extends AbstractCairoTest {
                             " from long_sequence(20))  timestamp(kk)"
             );
 
-            assertQueryNoLeakCheckWithFatJoin(query, expected, "k", true, false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("k")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("k")
