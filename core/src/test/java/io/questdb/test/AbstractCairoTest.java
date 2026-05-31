@@ -1317,37 +1317,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         });
     }
 
-    // todo: remove
-    protected static void assertQuery(Record[] expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean expectSize) throws Exception {
-        assertQuery(expected, query, ddl, expectedTimestamp, null, null, expectSize);
-    }
-
-    // todo: remove
-    protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp) throws Exception {
-        assertQuery(expected, query, ddl, expectedTimestamp, null, null, true, false, false);
-    }
-
-    // todo: remove
-    protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess) throws Exception {
-        assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, false, false);
-    }
-
-    /**
-     * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
-     */
-    // todo: remove
-    protected static void assertQuery(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess
-    ) throws Exception {
-        assertQuery(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, false, false);
-    }
-
     protected static void assertQuery(
             Record[] expected,
             CharSequence query,
@@ -1408,50 +1377,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             boolean sizeCanBeVariable
     ) throws Exception {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable));
-    }
-
-    /**
-     * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
-     */
-    // todo: remove
-    protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
-        assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false);
-    }
-
-    // todo: delete
-    protected static void assertQueryExpectSize(CharSequence expected, CharSequence query, CharSequence ddl) throws Exception {
-        assertQuery(expected, query, ddl, null, null, null, true, true, false);
-    }
-
-    /**
-     * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
-     */
-    // todo: remove
-    protected static void assertQueryNoLeakCheck(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess
-    ) throws Exception {
-        assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, false, false);
-    }
-
-    // todo: delete
-    protected static void assertQueryNoLeakCheck(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp) throws Exception {
-        assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, null, null, true, false, false);
-    }
-
-    // todo: delete
-    protected static void assertQueryNoLeakCheck(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
-        assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false);
-    }
-
-    // todo: delete
-    protected static void assertQueryNoLeakCheck(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess) throws Exception {
-        assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, false, false);
     }
 
     protected static void assertQueryNoLeakCheck(
@@ -1988,61 +1913,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     // todo: remove
-    protected void assertQuery(String expected, String query, boolean expectSize) throws Exception {
-        assertQuery(expected, query, null, null, true, expectSize);
-    }
-
-    // todo: remove
     protected void assertQuery(CharSequence expected, CharSequence query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false));
-    }
-
-    // todo: remove
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess));
-    }
-
-    // todo: remove
-    protected void assertQuery(String expected, String query, String expectedTimestamp) throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(expected, query, expectedTimestamp, false));
-    }
-
-    // todo: remove
-    protected void assertQuery(String expected, String query, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        assertQueryFullFatNoLeakCheck(expected, query, null, supportsRandomAccess, expectSize, false);
-    }
-
-    // todo: remove
-    protected void assertQueryAndCache(String expected, String query, String expectedTimestamp, boolean expectSize) throws SqlException {
-        assertQueryAndCache(expected, query, expectedTimestamp, false, expectSize);
-    }
-
-    // todo: remove
-    protected void assertQueryAndCache(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        assertQueryAndCacheFullFat(expected, query, expectedTimestamp, supportsRandomAccess, expectSize);
-    }
-
-    // todo: remove
-    protected void assertQueryAndCacheFullFat(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        snapshotMemoryUsage();
-        try (final RecordCursorFactory factory = select(query)) {
-            assertFactoryCursor(
-                    expected,
-                    expectedTimestamp,
-                    factory,
-                    supportsRandomAccess,
-                    sqlExecutionContext,
-                    expectSize,
-                    false
-            );
-        }
-    }
-
-    protected void assertQueryAndPlan(CharSequence expected, CharSequence expectedPlan, CharSequence query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
-        assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(query, expectedPlan);
-            assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
-        });
     }
 
     protected void assertQueryAndPlan(
@@ -2090,12 +1962,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     expectSize,
                     false
             );
-        }
-    }
-
-    protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            assertQueryNoLeakCheck(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, false);
         }
     }
 
