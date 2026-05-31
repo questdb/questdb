@@ -518,7 +518,11 @@ public class QueryAssertion {
     private void assertThrows(int errorPos, CharSequence contains, boolean fullFat) throws Exception {
         Assert.assertNotNull(contains);
         try {
-            TestUtils.assertException(engine, context, fullFat, query, sink);
+            if (compiler != null) {
+                assertThrowsViaCompiler(fullFat);
+            } else {
+                TestUtils.assertException(engine, context, fullFat, query, sink);
+            }
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer container) {
                 if (contains.isEmpty()) {
@@ -532,6 +536,25 @@ public class QueryAssertion {
                 throw e;
             }
         }
+    }
+
+    private void assertThrowsViaCompiler(boolean fullFat) throws SqlException {
+        if (fullFat) {
+            compiler.setFullFatJoins(true);
+        }
+        try (
+                RecordCursorFactory factory = CairoEngine.select(compiler, query, context);
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            sink.clear();
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                // ignore the output, we're looking for an error
+                TestUtils.println(record, factory.getMetadata(), sink);
+                sink.clear();
+            }
+        }
+        Assert.fail("SQL statement should have failed");
     }
 
     private void assertViaFactoryCursor(CharSequence expected) throws SqlException {
@@ -602,6 +625,7 @@ public class QueryAssertion {
     }
 
     private void failsNoLeak(int errorPos, CharSequence contains) throws Exception {
+        prepareHook.run();
         if (ddl != null) {
             try {
                 engine.execute(ddl, context);
