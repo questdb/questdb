@@ -405,47 +405,41 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testJitFullFwdCursorBwdSwitch() throws Exception {
-        assertQuery(
-                """
-                        a\tb\tk
-                        67.00476391801053\tBB\t1970-01-19T12:26:40.000000Z
-                        37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z
-                        """,
-                "x where b = 'BB' limit -2",
-                "create table x as " +
+        assertQuery("x where b = 'BB' limit -2")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol('AA','BB','CC') b," +
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                true,
-                true
-        );
+                        ") timestamp(k) partition by DAY")
+                .timestamp("k")
+                .expectSize()
+                .returns("""
+                        a\tb\tk
+                        67.00476391801053\tBB\t1970-01-19T12:26:40.000000Z
+                        37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z
+                        """);
     }
 
     @Test
     public void testJitIntervalFwdCursorBwdSwitch() throws Exception {
-        assertQuery(
-                """
-                        a\tb\tk
-                        37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z
-                        """,
-                "x where k > '1970-01-21T20:00:00' and b = 'BB' limit -2",
-                "create table x as " +
+        assertQuery("x where k > '1970-01-21T20:00:00' and b = 'BB' limit -2")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol('AA','BB','CC') b," +
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                true,
-                true
-        );
+                        ") timestamp(k) partition by DAY")
+                .timestamp("k")
+                .expectSize()
+                .returns("""
+                        a\tb\tk
+                        37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z
+                        """);
     }
 
     @Test

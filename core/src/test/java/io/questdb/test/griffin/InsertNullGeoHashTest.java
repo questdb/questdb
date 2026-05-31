@@ -125,21 +125,16 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
                 setUp();
             }
             try {
-                assertQuery(
-                        "geohash\n",
-                        "geohash " + queryExtra,
-                        String.format(
+                assertQuery("geohash " + queryExtra)
+                        .ddl(String.format(
                                 "create table geohash (geohash %s)",
-                                ColumnType.nameOf(ColumnType.getGeoHashTypeWithBits(b))),
-                        null,
-                        String.format(
+                                ColumnType.nameOf(ColumnType.getGeoHashTypeWithBits(b))))
+                        .mutateWith(String.format(
                                 "insert into geohash select null from long_sequence(%d)",
-                                expectedEmptyLines),
-                        expectedNullInserts("geohash\n", "", expectedEmptyLines, true),
-                        true,
-                        expectedEmptyLines > 0,
-                        expectedEmptyLines > 0
-                );
+                                expectedEmptyLines))
+                        .expectSize(expectedEmptyLines > 0)
+                        .sizeMayVary(expectedEmptyLines > 0)
+                        .returns("geohash\n", expectedNullInserts("geohash\n", "", expectedEmptyLines, true));
             } finally {
                 tearDown();
             }
