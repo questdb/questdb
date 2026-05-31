@@ -118,8 +118,10 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
     @Test
     public void testColumnAsColumnReference() throws Exception {
-        assertSql(
-                """
+        assertQuery("select x k, k from long_sequence(10)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         k\tk1
                         1\t1
                         2\t2
@@ -131,15 +133,15 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         8\t8
                         9\t9
                         10\t10
-                        """,
-                "select x k, k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
     public void testColumnAsColumnReferencePreferBaseTable() throws Exception {
-        assertSql(
-                """
+        assertQuery("select a x, x from (select x a, x b, x from long_sequence(10))")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         x\tx1
                         1\t1
                         2\t2
@@ -151,9 +153,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         8\t8
                         9\t9
                         10\t10
-                        """,
-                "select a x, x from (select x a, x b, x from long_sequence(10))"
-        );
+                        """);
     }
 
     @Test

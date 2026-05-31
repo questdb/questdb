@@ -1387,14 +1387,12 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "SELECT t.ts, sum(p.price) AS agg " +
+            assertQuery("SELECT t.ts, sum(p.price) AS agg " +
                             "FROM trades t " +
                             "WINDOW JOIN prices p " +
-                            " RANGE BETWEEN 1 minute PRECEDING AND nonexistent_func(1) seconds FOLLOWING;",
-                    106,
-                    "unknown function name"
-            );
+                            " RANGE BETWEEN 1 minute PRECEDING AND nonexistent_func(1) seconds FOLLOWING;")
+                    .noLeakCheck()
+                    .fails(106, "unknown function name");
         });
     }
 
@@ -1406,14 +1404,12 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "SELECT t.ts, sum(p.price) AS agg " +
+            assertQuery("SELECT t.ts, sum(p.price) AS agg " +
                             "FROM trades t " +
                             "WINDOW JOIN prices p " +
-                            " RANGE BETWEEN nonexistent_func(1) seconds PRECEDING AND 1 minute FOLLOWING;",
-                    83,
-                    "unknown function name"
-            );
+                            " RANGE BETWEEN nonexistent_func(1) seconds PRECEDING AND 1 minute FOLLOWING;")
+                    .noLeakCheck()
+                    .fails(83, "unknown function name");
         });
     }
 
@@ -1424,14 +1420,12 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+            assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
                             "FROM trades t " +
                             "WINDOW JOIN prices p " +
-                            " RANGE BETWEEN 'invalid' PRECEDING AND 1 minute FOLLOWING;",
-                    108,
-                    "integer expression expected"
-            );
+                            " RANGE BETWEEN 'invalid' PRECEDING AND 1 minute FOLLOWING;")
+                    .noLeakCheck()
+                    .fails(108, "integer expression expected");
         });
     }
 
@@ -1442,15 +1436,13 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+            assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
                             "FROM trades t " +
                             "WINDOW JOIN prices p " +
                             "ON (t.sym = p.sym) " +
-                            " RANGE BETWEEN p.price::long PRECEDING AND 1 minute FOLLOWING;",
-                    127,
-                    "RANGE BETWEEN expression must not reference right table columns"
-            );
+                            " RANGE BETWEEN p.price::long PRECEDING AND 1 minute FOLLOWING;")
+                    .noLeakCheck()
+                    .fails(127, "RANGE BETWEEN expression must not reference right table columns");
         });
     }
 
@@ -1462,15 +1454,13 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+            assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
                             "FROM trades t " +
                             "WINDOW JOIN prices p " +
                             "ON (t.sym = p.sym) " +
-                            " RANGE BETWEEN coalesce(p.price::long, 0, 0) PRECEDING AND 1 minute FOLLOWING;",
-                    136,
-                    "RANGE BETWEEN expression must not reference right table columns"
-            );
+                            " RANGE BETWEEN coalesce(p.price::long, 0, 0) PRECEDING AND 1 minute FOLLOWING;")
+                    .noLeakCheck()
+                    .fails(136, "RANGE BETWEEN expression must not reference right table columns");
         });
     }
 
@@ -4697,8 +4687,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     false
             );
 
-            assertExceptionNoLeakCheck(
-                    "select t.ts, t.sym, sum(p1.price), p.price as window_price2 " +
+            assertQuery("select t.ts, t.sym, sum(p1.price), p.price as window_price2 " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -4706,13 +4695,11 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "window join prices p1 " +
                             "on (t.sym = p1.sym) " +
                             " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    35,
-                    "WINDOW join cannot reference right table non-aggregate column: p.price"
-            );
+                            "order by t.ts, t.sym;")
+                    .noLeakCheck()
+                    .fails(35, "WINDOW join cannot reference right table non-aggregate column: p.price");
 
-            assertExceptionNoLeakCheck(
-                    "select t.ts, t.sym, sum(p1.price + p.price) as window_price2 " +
+            assertQuery("select t.ts, t.sym, sum(p1.price + p.price) as window_price2 " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -4720,10 +4707,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "window join prices p1 " +
                             "on (t.sym = p1.sym) " +
                             " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    20,
-                    "WINDOW join aggregate function cannot reference columns from multiple models"
-            );
+                            "order by t.ts, t.sym;")
+                    .noLeakCheck()
+                    .fails(20, "WINDOW join aggregate function cannot reference columns from multiple models");
         });
     }
 
@@ -4734,15 +4720,13 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) sum_price " +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) sum_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on t.price-p.price " +
-                            " range between 1 second preceding and 1 second following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    97,
-                    "boolean expression expected"
-            );
+                            " range between 1 second preceding and 1 second following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"))
+                    .noLeakCheck()
+                    .fails(97, "boolean expression expected");
         });
     }
 
@@ -4754,15 +4738,13 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
 
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
-                            " range between 2 minute preceding and 4 minute preceding;",
-                    150,
-                    "WINDOW join hi value cannot be less than lo value"
-            );
+                            " range between 2 minute preceding and 4 minute preceding;")
+                    .noLeakCheck()
+                    .fails(150, "WINDOW join hi value cannot be less than lo value");
         });
     }
 
@@ -4774,15 +4756,13 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
 
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, p.price " +
+            assertQuery("select t.sym, t.price, t.ts, p.price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
-                            " range between 1 second preceding and 1 second following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    29,
-                    "WINDOW join cannot reference right table non-aggregate column: p.price"
-            );
+                            " range between 1 second preceding and 1 second following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"))
+                    .noLeakCheck()
+                    .fails(29, "WINDOW join cannot reference right table non-aggregate column: p.price");
         });
     }
 
@@ -4790,17 +4770,15 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testWindowJoinFailsOnSlaveColumnsInFilter() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "where p.price > 10 " +
-                            "order by t.ts, t.sym;",
-                    195,
-                    "Invalid column: p.price"
-            );
+                            "order by t.ts, t.sym;")
+                    .noLeakCheck()
+                    .fails(195, "Invalid column: p.price");
         });
     }
 
@@ -4812,16 +4790,14 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
 
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from (trades limit 5) t " +
                             "window join (select * from prices where ts in '2023-01-01T09:03:00.000000Z' or ts = '2023-01-01T09:07:00.000000Z' and ts = '2023-01-01T09:08:00.000000Z') p " +
                             "on (t.sym = p.sym) " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    82,
-                    "right side of window join must be a table, not sub-query"
-            );
+                            "order by t.ts, t.sym;")
+                    .noLeakCheck()
+                    .fails(82, "right side of window join must be a table, not sub-query");
         });
     }
 
@@ -4833,35 +4809,29 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
 
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on t.sym = p.sym " +
-                            " range between unbounded preceding and 1 day following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    135,
-                    "unbounded preceding/following is not supported in WINDOW joins"
-            );
+                            " range between unbounded preceding and 1 day following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"))
+                    .noLeakCheck()
+                    .fails(135, "unbounded preceding/following is not supported in WINDOW joins");
 
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on t.sym = p.sym " +
-                            " range between 1 second preceding and unbounded following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    158,
-                    "unbounded preceding/following is not supported in WINDOW joins"
-            );
+                            " range between 1 second preceding and unbounded following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"))
+                    .noLeakCheck()
+                    .fails(158, "unbounded preceding/following is not supported in WINDOW joins");
 
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on t.sym = p.sym " +
-                            " range between unbounded preceding and unbounded following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    135,
-                    "unbounded preceding/following is not supported in WINDOW joins"
-            );
+                            " range between unbounded preceding and unbounded following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"))
+                    .noLeakCheck()
+                    .fails(135, "unbounded preceding/following is not supported in WINDOW joins");
         });
     }
 
@@ -5819,7 +5789,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // Create fx_trades-like table
                         engine.execute(
                                 "create table fx_trades (" +
@@ -6356,16 +6326,14 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "select t.ts, t.sym, sum(p.price) " +
+            assertQuery("select t.ts, t.sym, sum(p.price) " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            " where p.price > 100;",
-                    171,
-                    "Invalid column: p.price"
-            );
+                            " where p.price > 100;")
+                    .noLeakCheck()
+                    .fails(171, "Invalid column: p.price");
 
             assertQueryNoLeakCheck(
                     includePrevailing ?

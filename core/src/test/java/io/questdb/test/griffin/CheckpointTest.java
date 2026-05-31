@@ -607,7 +607,8 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.releaseInactive();
             Assert.assertTrue(ff.removeQuiet(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
 
-            assertException("checkpoint create", 0, "could not open txn file");
+            assertQuery("checkpoint create")
+                    .fails(0, "could not open txn file");
         });
     }
 
@@ -637,7 +638,8 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("create table test (ts timestamp, name symbol, val int)");
 
             testFilesFacade.errorOnSync = true;
-            assertException("checkpoint create", 0, "Could not sync");
+            assertQuery("checkpoint create")
+                    .fails(0, "Could not sync");
 
             // Once the error is gone, subsequent PREPARE/COMPLETE statements should execute successfully.
             testFilesFacade.errorOnSync = false;
@@ -719,11 +721,8 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test (ts timestamp, name symbol, val int)");
             execute("checkpoint create");
-            assertException(
-                    "checkpoint create",
-                    0,
-                    "Waiting for CHECKPOINT RELEASE to be called"
-            );
+            assertQuery("checkpoint create")
+                    .fails(0, "Waiting for CHECKPOINT RELEASE to be called");
             execute("checkpoint release");
         });
     }
@@ -2703,11 +2702,8 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointUnknownSubOptionFails() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (ts timestamp, name symbol, val int)");
-            assertException(
-                    "checkpoint commit",
-                    11,
-                    "'create' or 'release' expected"
-            );
+            assertQuery("checkpoint commit")
+                    .fails(11, "'create' or 'release' expected");
         });
     }
 
@@ -2788,7 +2784,8 @@ public class CheckpointTest extends AbstractCairoTest {
                             2023-09-20T14:00:00.000000Z	c	30
                             """);
 
-            assertException("tiesto;", 0, "table does not exist [table=tiesto]");
+            assertQuery("tiesto;")
+                    .fails(0, "table does not exist [table=tiesto]");
         });
     }
 
@@ -3476,10 +3473,10 @@ public class CheckpointTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName(tableName);
             assertSequencerReadColumnOrder(tableToken, 0, 1, 2, 3, 3);
             try (TableReader reader = engine.getReader(tableName)) {
-                assertPostingIncludeMetadata(reader.getMetadata(), "sym", "price");
+                assertPostingIncludeMetadata(reader.getMetadata());
             }
             try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
-                assertPostingIncludeMetadata(metadata, "sym", "price");
+                assertPostingIncludeMetadata(metadata);
             }
 
             execute("checkpoint create");
@@ -3491,10 +3488,10 @@ public class CheckpointTest extends AbstractCairoTest {
             tableToken = engine.verifyTableName(tableName);
             assertSequencerReadColumnOrder(tableToken, 0, 1, 2, 3, 3);
             try (TableReader reader = engine.getReader(tableName)) {
-                assertPostingIncludeMetadata(reader.getMetadata(), "sym", "price");
+                assertPostingIncludeMetadata(reader.getMetadata());
             }
             try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
-                assertPostingIncludeMetadata(metadata, "sym", "price");
+                assertPostingIncludeMetadata(metadata);
             }
 
             engine.checkpointRelease();
@@ -3759,22 +3756,22 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertPostingIncludeMetadata(TableRecordMetadata metadata, String indexedColumn, String coveringColumn) {
-        int indexedColumnIndex = metadata.getColumnIndexQuiet(indexedColumn);
-        int coveringColumnIndex = metadata.getColumnIndexQuiet(coveringColumn);
-        Assert.assertTrue("expected indexed column to exist: " + indexedColumn, indexedColumnIndex > -1);
-        Assert.assertTrue("expected covering column to exist: " + coveringColumn, coveringColumnIndex > -1);
+    private static void assertPostingIncludeMetadata(TableRecordMetadata metadata) {
+        int indexedColumnIndex = metadata.getColumnIndexQuiet("sym");
+        int coveringColumnIndex = metadata.getColumnIndexQuiet("price");
+        Assert.assertTrue("expected indexed column to exist: " + "sym", indexedColumnIndex > -1);
+        Assert.assertTrue("expected covering column to exist: " + "price", coveringColumnIndex > -1);
         Assert.assertEquals(
-                "expected POSTING index on " + indexedColumn,
+                "expected POSTING index on " + "sym",
                 IndexType.POSTING,
                 metadata.getColumnIndexType(indexedColumnIndex)
         );
 
         IntList coveringIndices = metadata.getColumnMetadata(indexedColumnIndex).getCoveringColumnIndices();
-        Assert.assertNotNull("expected INCLUDE list to exist for column: " + indexedColumn, coveringIndices);
-        Assert.assertEquals("expected exact INCLUDE list size for column: " + indexedColumn, 1, coveringIndices.size());
+        Assert.assertNotNull("expected INCLUDE list to exist for column: " + "sym", coveringIndices);
+        Assert.assertEquals("expected exact INCLUDE list size for column: " + "sym", 1, coveringIndices.size());
         Assert.assertTrue(
-                "expected INCLUDE list for " + indexedColumn + " to contain " + coveringColumn,
+                "expected INCLUDE list for " + "sym" + " to contain " + "price",
                 coveringIndices.contains(metadata.getWriterIndex(coveringColumnIndex))
         );
     }

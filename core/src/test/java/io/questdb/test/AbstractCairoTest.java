@@ -2302,6 +2302,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), messageBus, engine);
     }
 
+    /**
+     * Hook invoked by the {@link QueryAssertion} builder immediately before it runs a query assertion.
+     * The default implementation does nothing. Subclasses override it to bring shared state up to date
+     * before the assertion reads it (for example, draining the WAL apply queue).
+     */
+    protected void prepareForQueryAssertion() {
+    }
+
     protected long update(CharSequence updateSql) throws SqlException {
         return update(updateSql, sqlExecutionContext, null);
     }
@@ -2566,6 +2574,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
 
         private void dispatch(CharSequence expected, CharSequence expected2) throws Exception {
+            prepareForQueryAssertion();
             if (expectedPlan != null) {
                 if (!leakCheck || fullFatJoins || cached) {
                     throw new IllegalStateException("plan(...) cannot be combined with noLeakCheck()/fullFatJoins()/cached()");

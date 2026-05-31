@@ -67,9 +67,9 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                     "select distinct * from x"
             );
 
-            assertSql(
-                    "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n", "select distinct * from x where 1 != 1"
-            );
+            assertQuery("select distinct * from x where 1 != 1")
+                    .noLeakCheck()
+                    .returns("i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n");
         });
     }
 
@@ -128,9 +128,9 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                             ") timestamp (ts) partition by DAY"
             );
 
-            assertSql(
-                    "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n", "select distinct * from x"
-            );
+            assertQuery("select distinct * from x")
+                    .noLeakCheck()
+                    .returns("i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n");
         });
     }
 

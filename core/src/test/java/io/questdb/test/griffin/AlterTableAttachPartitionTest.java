@@ -809,7 +809,11 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             10);
 
                     // Make sure nulls are included in the partition to be attached
-                    assertSql("count\n302\n", "select count() from " + src.getName() + " where ts in '2022-08-09' and s = null");
+                    assertQuery("select count() from " + src.getName() + " where ts in '2022-08-09' and s = null")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n302\n");
 
                     createPopulateTable(
                             1,
@@ -853,7 +857,11 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                     // s2 column files from the attached partitions should be ignored
                     // and coltops for s column should be created instead.
-                    assertSql("count\n0\n", "select count() from " + dst.getName() + " where s is not null");
+                    assertQuery("select count() from " + dst.getName() + " where s is not null")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n0\n");
                 }
         );
     }
@@ -875,7 +883,11 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             10);
 
                     // Make sure nulls are included in the partition to be attached
-                    assertSql("count\n302\n", "select count() from " + src.getName() + " where ts in '2022-08-09' and s = null");
+                    assertQuery("select count() from " + src.getName() + " where ts in '2022-08-09' and s = null")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n302\n");
 
                     createPopulateTable(
                             1,

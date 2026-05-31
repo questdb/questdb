@@ -201,15 +201,16 @@ public class Long128Tests extends AbstractCairoTest {
         execute("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(1, 1), 2)");
         execute("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(2, 2), 0)");
 
-        assertSql(
-                """
+        assertQuery("select ts, l, i from x latest on ts partition by l")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                         ts\tl\ti
                         2020-01-01T00:00:00.000000Z\t00000000-0000-0000-0000-000000000000\t0
                         2020-01-02T00:01:00.000000Z\t00000000-0000-0001-0000-000000000001\t2
                         2020-01-02T00:01:00.000000Z\t00000000-0000-0002-0000-000000000002\t0
-                        """,
-                "select ts, l, i from x latest on ts partition by l"
-        );
+                        """);
     }
 
     @Test
@@ -341,8 +342,10 @@ public class Long128Tests extends AbstractCairoTest {
                     ")");
 
             execute("update testUpdateLong128ColumnToNull set uuid = null where i < 5");
-            assertSql(
-                    """
+            assertQuery("testUpdateLong128ColumnToNull")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             uuid\tts1\ti
                             \t2022-02-24T00:00:00.000000Z\t1
                             \t2022-02-24T00:00:01.000000Z\t2
@@ -354,8 +357,7 @@ public class Long128Tests extends AbstractCairoTest {
                             00000000-0000-0004-ffff-fffffffffff8\t2022-02-24T00:00:07.000000Z\t8
                             00000000-0000-0004-ffff-fffffffffff7\t2022-02-24T00:00:08.000000Z\t9
                             00000000-0000-0005-ffff-fffffffffff6\t2022-02-24T00:00:09.000000Z\t10
-                            """, "testUpdateLong128ColumnToNull"
-            );
+                            """);
 
         });
     }

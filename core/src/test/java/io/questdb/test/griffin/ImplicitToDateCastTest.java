@@ -41,12 +41,12 @@ public class ImplicitToDateCastTest extends AbstractCairoTest {
                             "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as date) as date from long_sequence(1) " +
                             ");"
             );
-            assertSql("""
+            assertQuery("select * from balances where date = '2022-03-23'::symbol")
+                    .noLeakCheck()
+                    .returns("""
                             cust_id\tdate
                             abc\t2022-03-23T00:00:00.000Z
-                            """,
-                    "select * from balances where date = '2022-03-23'::symbol"
-            );
+                            """);
         });
     }
 

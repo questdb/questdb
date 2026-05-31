@@ -684,12 +684,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: x
                     """);
 
-            assertSql("""
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .returns("""
                     i\trow_number\tavg\tsum\tfirst_value
                     1\t1\t50.5\t5050.0\t1
                     2\t2\t50.5\t5050.0\t1
                     3\t1\t50.5\t5050.0\t1
-                    """, sql);
+                    """);
         });
     }
 
@@ -1038,8 +1040,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: test
                     """);
 
-            assertSql("avg\n2.0\n", query);
-            assertSql("avg\n2.0\n", "select * from ( " + query + " )");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("avg\n2.0\n");
+            assertQuery("select * from ( " + query + " )")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("avg\n2.0\n");
         });
     }
 
@@ -2280,7 +2290,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """;
 
             assertPlanNoLeakCheck(query1, expectedPlan);
-            assertSql(expectedResult, query1);
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedResult);
 
             String query2 = """
                     select referencePriceType, count(*)\s
@@ -2289,7 +2302,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     and referencePriceType not in ('TYPE1')""";
 
             assertPlanNoLeakCheck(query2, expectedPlan);
-            assertSql(expectedResult, query2);
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedResult);
         });
     }
 
@@ -3775,7 +3791,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i1 int)");
             execute("create table b ( i2 int)");
 
-            assertSql("", "select * from a, b where a.i1 = b.i2");
+            assertQuery("select * from a, b where a.i1 = b.i2")
+                    .noLeakCheck()
+                    .returns("");
 
             assertPlanNoLeakCheck("select * from a , b where a.i1 = b.i2", """
                     SelectedRecord
@@ -3990,10 +4008,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: maps
                     """);
 
-            assertSql("""
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .returns("""
                     timestamp\tcluster\talias\tinterval\tbits\tpackets
                     2023-09-01T09:42:00.000000Z\tcluster10\ta\t60000000\t8\t1
-                    """, sql);
+                    """);
         });
     }
 
@@ -4014,10 +4034,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: tab
                     """);
 
-            assertSql("""
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
                     ts\ts
                     1970-01-01T02:00:00.000000Z\tc
-                    """, sql);
+                    """);
         });
     }
 
@@ -5620,7 +5644,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: test
                     """);
 
-            assertSql("count\n1\n", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
         });
     }
 
@@ -5641,7 +5669,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   functions: [1,3,5]
                                     long_sequence count: 1
                     """);
-            assertSql("a\tb\tc\trownum\n", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("a\tb\tc\trownum\n");
 
             execute("CREATE TABLE tab AS (SELECT x FROM long_sequence(10))");
 
@@ -6446,8 +6476,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     cnt_dst
                     5
                     """;
-            assertSql(expected, "SELECT count_distinct(x+1) cnt_dst FROM test where x > 5");
-            assertSql(expected, "SELECT count(distinct x+1) cnt_dst FROM test where x > 5");
+            assertQuery("SELECT count_distinct(x+1) cnt_dst FROM test where x > 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT count(distinct x+1) cnt_dst FROM test where x > 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
 
             // where clause, distinct expression, table alias
             expected = """
@@ -6467,8 +6505,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     count_distinct
                     5
                     """;
-            assertSql(expected, "SELECT count_distinct(x+1) FROM test tab where x > 5");
-            assertSql(expected, "SELECT count(distinct x+1) FROM test tab where x > 5");
+            assertQuery("SELECT count_distinct(x+1) FROM test tab where x > 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT count(distinct x+1) FROM test tab where x > 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -11105,12 +11151,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: x
                     """);
 
-            assertSql("""
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                     i\trow_number\tavg\tsum\tfirst_value
                     1\t1\t1.0\t1.0\t1
                     2\t2\t2.0\t2.0\t2
                     3\t1\t3.0\t3.0\t3
-                    """, sql);
+                    """);
         });
     }
 
@@ -11235,7 +11285,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSqlAndPlanNoLeakCheck(String sql, String expectedPlan, String expectedResult) throws SqlException {
+    private void assertSqlAndPlanNoLeakCheck(String sql, String expectedPlan, String expectedResult) throws Exception{
         assertPlanNoLeakCheck(sql, expectedPlan);
         assertSql(expectedResult, sql);
     }

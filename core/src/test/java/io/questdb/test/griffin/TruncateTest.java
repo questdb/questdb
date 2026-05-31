@@ -61,10 +61,14 @@ public class TruncateTest extends AbstractCairoTest {
 
             execute("insert into y values('2022-02-24', 1, 2)");
 
-            assertSql("""
+            assertQuery("select * from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns("""
                     timestamp\tx\tnew_x
                     2022-02-24T00:00:00.000000Z\t1\t2
-                    """, "select * from y");
+                    """);
         });
     }
 
@@ -125,13 +129,14 @@ public class TruncateTest extends AbstractCairoTest {
             }
 
             execute("insert into y values(223)");
-            assertSql(
-                    """
+            assertQuery("select * from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns("""
                             timestamp
                             1970-01-01T00:00:00.000223Z
-                            """,
-                    "select * from y"
-            );
+                            """);
         });
     }
 
@@ -847,11 +852,14 @@ public class TruncateTest extends AbstractCairoTest {
                                     " from long_sequence(1000)"
                     );
 
-                    assertSql("""
+                    assertQuery("select column_with_top from testTruncateWithColumnTop limit -2")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                             column_with_top
                             999
                             1000
-                            """, "select column_with_top from testTruncateWithColumnTop limit -2");
+                            """);
                 }
         );
     }
@@ -928,10 +936,14 @@ public class TruncateTest extends AbstractCairoTest {
 
             execute("insert into y values('2022-02-24', 1)");
 
-            assertSql("""
+            assertQuery("select * from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns("""
                     timestamp\tx
                     2022-02-24T00:00:00.000000Z\t1
-                    """, "select * from y");
+                    """);
         });
     }
 

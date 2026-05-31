@@ -93,28 +93,27 @@ public class DataGripTest extends AbstractCairoTest {
     @Test
     public void testGetTxId() throws Exception {
         assertMemoryLeak(
-                () -> assertSql(
-                        "current_txid\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n", """
+                () -> assertSql("current_txid\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n", """
                                 select case
                                   when pg_catalog.pg_is_in_recovery()
                                     then null
                                   else
                                     pg_catalog.txid_current()::varchar::bigint
-                                  end as current_txid"""
-                )
-        );
+                                  end as current_txid"""));
     }
 
     @Test
     public void testLowerCaseCount() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y as (select x from long_sequence(10))");
-            assertSql(
-                    """
+            assertQuery("select COUNT(*) from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             10
-                            """, "select COUNT(*) from y"
-            );
+                            """);
         });
     }
 
@@ -176,12 +175,14 @@ public class DataGripTest extends AbstractCairoTest {
     public void testUpperCaseCount() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y as (select x from long_sequence(10))");
-            assertSql(
-                    """
+            assertQuery("select COUNT(*) from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             10
-                            """, "select COUNT(*) from y"
-            );
+                            """);
         });
     }
 }

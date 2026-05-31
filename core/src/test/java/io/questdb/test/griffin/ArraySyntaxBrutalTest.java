@@ -133,14 +133,12 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE test (id int, data double[])");
 
             // Valid selects
-            assertSql(
-                    "data\n",
-                    "SELECT data FROM test"
-            );
-            assertSql(
-                    "cast\n",
-                    "SELECT CAST(null AS double[]) FROM test"
-            );
+            assertQuery("SELECT data FROM test")
+                    .noLeakCheck()
+                    .returns("data\n");
+            assertQuery("SELECT CAST(null AS double[]) FROM test")
+                    .noLeakCheck()
+                    .returns("cast\n");
 
             // Invalid casts with spaces
             assertQuery("SELECT CAST(null AS double []) FROM test")
@@ -156,7 +154,10 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
             execute("DROP TABLE test_valid");
 
             // Valid casts should work
-            assertSql("cast\nnull\n", "SELECT CAST(null AS double[])");
+            assertQuery("SELECT CAST(null AS double[])")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("cast\nnull\n");
         });
     }
 }

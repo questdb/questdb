@@ -86,13 +86,19 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
                     .expectSize()
                     .returns(expectedOrdered);
 
-            assertSql(expectedChronological, "select sym, k from x");
+            assertQuery("select sym, k from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedChronological);
 
             try (TableWriter writer = getWriter("x")) {
                 writer.changeCacheFlag(1, false);
             }
 
-            assertSql(expectedChronological, "select sym, k from x");
+            assertQuery("select sym, k from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedChronological);
 
             assertQuery("select sym from x order by 1 asc")
                     .noLeakCheck()
@@ -141,24 +147,24 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
                     9\tGBP
                     """;
 
-            assertSql(
-                    expectedOrdered,
-                    "select sym from x order by sym"
-            );
+            assertQuery("select sym from x order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedOrdered);
 
-            assertSql(
-                    expectedChronological,
-                    "select i, sym from x"
-            );
+            assertQuery("select i, sym from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedChronological);
 
             try (TableWriter writer = getWriter("x")) {
                 writer.changeCacheFlag(1, true);
             }
 
-            assertSql(
-                    expectedChronological,
-                    "select i, sym from x"
-            );
+            assertQuery("select i, sym from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedChronological);
 
             assertQuery("select sym from x order by 1 asc")
                     .noLeakCheck()

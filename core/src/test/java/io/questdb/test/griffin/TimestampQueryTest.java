@@ -54,7 +54,10 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
             String expected = "touch\n{\"data_pages\": 2, \"index_key_pages\":0, \"index_values_pages\": 0}\n";
             String query = "select touch(select time, cast2 from xyz);";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -68,7 +71,11 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     2020-12-31T23:59:59.000000Z\tu33d8b12
                     """;
             String query = "select time, \"cast\" from xyz;";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("time")
+                    .returns(expected);
         });
     }
 
@@ -86,27 +93,23 @@ public class TimestampQueryTest extends AbstractCairoTest {
             // constant function
             String query = "select * from tab where ts = 946684800000000000 + 0;";
 
-            assertQueryNoLeakCheck(expected, query, "ts", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
     @Test
     public void testDesignatedTimestampOpSymbolColumns() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, dk, k from x where dk < cast(a as timestamp)")
+                .ddl("create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) dk, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)")
+                .timestamp("k")
+                .returns("""
                         a\tdk\tk
                         1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z
                         1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z
-                        """,
-                "select a, dk, k from x where dk < cast(a as timestamp)",
-                "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) dk, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
-                "k",
-                null,
-                null,
-                true,
-                false,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -119,15 +122,25 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns(expected);
             // test where ts ='2021-01'
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2021-01'";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
             // test where ts ='2020-11'
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-11'";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -141,14 +154,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns(expected);
             // test where ts ='2020-12'
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12'";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -162,11 +182,18 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns(expected);
             // test where ts ='2021'
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2021'";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -301,7 +328,11 @@ public class TimestampQueryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (l long, t timestamp) timestamp(t) partition by DAY");
             execute("insert into x select 1, '2024-02-27T00:00:00'::varchar");
-            assertSql("l\tt\n1\t2024-02-27T00:00:00.000000Z\n", "select * from x");
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("t")
+                    .returns("l\tt\n1\t2024-02-27T00:00:00.000000Z\n");
         });
     }
 
@@ -324,7 +355,10 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "interval(date_trunc('day', micro_time), dateadd('d', 1, date_trunc('day', micro_time))) = " +
                     "interval('2021-01-01T00:00:00.000000Z'::TIMESTAMP, '2021-01-02T00:00:00.000000Z'::TIMESTAMP) as is_constant_interval " +
                     "FROM interval_test_micro ORDER BY micro_time";
-            assertQuery(expected, query, "micro_time", true, true);
+            assertQuery(query)
+                    .timestamp("micro_time")
+                    .expectSize()
+                    .returns(expected);
 
             // Test NullCheckFunc with microsecond intervals - comparing interval function to null interval
             String expected2 = """
@@ -337,7 +371,10 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "interval(date_trunc('day', micro_time), dateadd('d', 1, date_trunc('day', micro_time))) = " +
                     "null::interval as is_null_interval " +
                     "FROM interval_test_micro ORDER BY micro_time";
-            assertQuery(expected2, query2, "micro_time", true, true);
+            assertQuery(query2)
+                    .timestamp("micro_time")
+                    .expectSize()
+                    .returns(expected2);
 
             String expected3 = """
                     id\tmicro_time\tis_not_null_interval
@@ -349,7 +386,10 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "interval(date_trunc('day', micro_time), dateadd('d', 1, date_trunc('day', micro_time))) != " +
                     "null::interval as is_not_null_interval " +
                     "FROM interval_test_micro ORDER BY micro_time";
-            assertQuery(expected3, query3, "micro_time", true, true);
+            assertQuery(query3)
+                    .timestamp("micro_time")
+                    .expectSize()
+                    .returns(expected3);
         });
     }
 
@@ -570,10 +610,16 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("insert into nano_events values (3, " + (baseNanos + 1_000_123) + ", 30.5)"); // +1ms+123ns
 
             // Test AS OF JOIN with mixed timestamp precisions
-            assertSql("id\tts_micro\tvalue\tid1\tts_nano\tprice\n" +
-                            "1\t2020-01-01T00:00:00.123456Z\t100\t1\t2020-01-01T00:00:00.123456000Z\t10.5\n" + // Connect rows 1 to 1 (same timestamp)
-                            "2\t2020-01-01T00:00:00.124456Z\t200\t2\t2020-01-01T00:00:00.123956000Z\t20.5\n", // Connect 2 to 2 (ts_nano in 3 is beyond ts_micro in 2)
-                    "select * from micro_events m asof join nano_events n");
+            assertQuery("select * from micro_events m asof join nano_events n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .timestamp("ts_micro")
+                    .returns("""
+                            id\tts_micro\tvalue\tid1\tts_nano\tprice
+                            1\t2020-01-01T00:00:00.123456Z\t100\t1\t2020-01-01T00:00:00.123456000Z\t10.5
+                            2\t2020-01-01T00:00:00.124456Z\t200\t2\t2020-01-01T00:00:00.123956000Z\t20.5
+                            """);
         });
     }
 
@@ -593,20 +639,26 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("insert into nano_table values (1, " + nanosMatching + "), (2, " + nanosWithExtra + ")");
 
             // Test 1: JOIN with explicit nanos->micros cast (should work with both nano rows)
-            assertSql("""
+            assertQuery("select * from micro_table m join nano_table n on m.ts_micro = CAST(n.ts_nano as timestamp)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts_micro")
+                    .returns("""
                             id\tts_micro\tid1\tts_nano
                             1\t2020-01-01T00:00:00.123456Z\t1\t2020-01-01T00:00:00.123456000Z
                             1\t2020-01-01T00:00:00.123456Z\t2\t2020-01-01T00:00:00.123456789Z
-                            """,
-                    "select * from micro_table m join nano_table n on m.ts_micro = CAST(n.ts_nano as timestamp)");
+                            """);
 
             // Test 2: JOIN without explicit cast (should succeed with implicit casting)
             // Only the matching precision row should join
-            assertSql("""
+            assertQuery("select * from micro_table m join nano_table n on m.ts_micro = n.ts_nano")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts_micro")
+                    .returns("""
                             id\tts_micro\tid1\tts_nano
                             1\t2020-01-01T00:00:00.123456Z\t1\t2020-01-01T00:00:00.123456000Z
-                            """,
-                    "select * from micro_table m join nano_table n on m.ts_micro = n.ts_nano");
+                            """);
         });
     }
 
@@ -627,11 +679,15 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("insert into nano_trades values (2, " + tradeTime2 + ", 200.0)");
 
             // Test LT JOIN with mixed timestamp precisions
-            assertSql("""
+            assertQuery("select * from micro_orders m lt join nano_trades t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .timestamp("ts_micro")
+                    .returns("""
                             order_id\tts_micro\tamount\ttrade_id\tts_nano\tquantity
                             1\t2020-01-01T00:00:00.123456Z\t1000\t1\t2020-01-01T00:00:00.122456000Z\t100.0
-                            """,
-                    "select * from micro_orders m lt join nano_trades t");
+                            """);
         });
     }
 
@@ -653,12 +709,16 @@ public class TimestampQueryTest extends AbstractCairoTest {
             // Test SPLICE JOIN with mixed timestamp precisions (no ON clause - true SPLICE JOIN semantics)
             // SPLICE JOIN returns all records from both tables with prevailing records
             // Expected: 4 rows total (2 from each table with their prevailing counterparts)
-            assertSql("id\tts_micro\tstatus\tid1\tts_nano\tflag\n" +
-                            "1\t2020-01-01T00:00:00.000000Z\tA\tnull\t\t\n" + // micro record A: no prevailing nano record
-                            "1\t2020-01-01T00:00:00.000000Z\tA\t1\t2020-01-01T00:00:00.001000000Z\tX\n" + // nano record X, A is prevailing micro
-                            "2\t2020-01-01T00:00:00.002000Z\tB\t1\t2020-01-01T00:00:00.001000000Z\tX\n" + // micro record B: X is prevailing nano
-                            "2\t2020-01-01T00:00:00.002000Z\tB\t2\t2020-01-01T00:00:00.003000000Z\tY\n", // nano record Y: B is prevailing micro
-                    "select * from micro_base m splice join nano_updates n");
+            assertQuery("select * from micro_base m splice join nano_updates n")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tts_micro\tstatus\tid1\tts_nano\tflag
+                            1\t2020-01-01T00:00:00.000000Z\tA\tnull\t\t
+                            1\t2020-01-01T00:00:00.000000Z\tA\t1\t2020-01-01T00:00:00.001000000Z\tX
+                            2\t2020-01-01T00:00:00.002000Z\tB\t1\t2020-01-01T00:00:00.001000000Z\tX
+                            2\t2020-01-01T00:00:00.002000Z\tB\t2\t2020-01-01T00:00:00.003000000Z\tY
+                            """);
         });
     }
 
@@ -677,20 +737,22 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("insert into ts_table values (2, " + micros + ", " + nanosWithExtra + ")");
 
             // Test 1: WHERE clause with explicit nanos->micros cast (should work with both rows)
-            assertSql("""
+            assertQuery("select * from ts_table where ts_micro = CAST(ts_nano as timestamp)")
+                    .noLeakCheck()
+                    .returns("""
                             id\tts_micro\tts_nano
                             1\t2020-01-01T00:00:00.123456Z\t2020-01-01T00:00:00.123456000Z
                             2\t2020-01-01T00:00:00.123456Z\t2020-01-01T00:00:00.123456789Z
-                            """,
-                    "select * from ts_table where ts_micro = CAST(ts_nano as timestamp)");
+                            """);
 
             // Test 2: WHERE clause without explicit cast
             // Row 1 has matching precision: microseconds convert to same nanoseconds
-            assertSql("""
+            assertQuery("select * from ts_table where ts_micro = ts_nano")
+                    .noLeakCheck()
+                    .returns("""
                             id\tts_micro\tts_nano
                             1\t2020-01-01T00:00:00.123456Z\t2020-01-01T00:00:00.123456000Z
-                            """,
-                    "select * from ts_table where ts_micro = ts_nano");
+                            """);
         });
     }
 
@@ -915,7 +977,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
             final long hour = Micros.HOUR_MICROS;
             final long day = 24 * hour;
-            compareNowRange("select * FROM xts WHERE ts >= '1970' and ts <= '2021'", datesArr, ts -> true);
+            compareNowRange("select * FROM xts WHERE ts >= '1970' and ts <= '2021'", datesArr, _ -> true);
 
             // Scroll now to the end
             setCurrentMicros(200L * hour);
@@ -959,80 +1021,53 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z
                     """;
 
-            assertQuery(
-                    expected,
-                    "tt where dts > '2021-04-02T13:45:49.207Z' and dts < '2021-04-03 13:45:49.207'",
-                    "dts",
-                    true,
-                    false
-            );
+            assertQuery("tt where dts > '2021-04-02T13:45:49.207Z' and dts < '2021-04-03 13:45:49.207'")
+                    .timestamp("dts")
+                    .returns(expected);
 
-            assertQuery(
-                    expected,
-                    "tt where ts > '2021-04-02T13:45:49.207Z' and ts < '2021-04-03 13:45:49.207'",
-                    "dts",
-                    true,
-                    false
-            );
+            assertQuery("tt where ts > '2021-04-02T13:45:49.207Z' and ts < '2021-04-03 13:45:49.207'")
+                    .timestamp("dts")
+                    .returns(expected);
         });
     }
 
     @Test
     public void testTimestampDifferentThanFixedValue() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select t from x where t != to_timestamp('1970-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ")
+                .ddl("create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(3)) timestamp(t)")
+                .timestamp("t")
+                .returns("""
                         t
                         1970-01-01T00:00:01.000000Z
                         1970-01-01T00:00:02.000000Z
-                        """,
-                "select t from x where t != to_timestamp('1970-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ",
-                "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(3)) timestamp(t)",
-                "t",
-                null,
-                null,
-                true,
-                false,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testTimestampDifferentThanNonFixedValue() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select t from x where t != to_timestamp('201' || rnd_long(0,9,0),'yyyy')")
+                .ddl("create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(2)) timestamp(t)")
+                .timestamp("t")
+                .returns("""
                         t
                         1970-01-01T00:00:00.000000Z
                         1970-01-01T00:00:01.000000Z
-                        """,
-                "select t from x where t != to_timestamp('201' || rnd_long(0,9,0),'yyyy')",
-                "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(2)) timestamp(t)",
-                "t",
-                null,
-                null,
-                true,
-                false,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testTimestampInDay1orDay2() throws Exception {
-        assertQuery(
-                "min\tmax\n\t\n",
-                "select min(nts), max(nts) from tt where nts IN '2020-01-01' or nts IN '2020-01-02'",
-                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
-                null,
-                "insert into tt " +
+        assertQuery("select min(nts), max(nts) from tt where nts IN '2020-01-01' or nts IN '2020-01-02'")
+                .ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)")
+                .mutateWith("insert into tt " +
                         "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                        "from long_sequence(48L)",
-                """
+                        "from long_sequence(48L)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("min\tmax\n\t\n", """
                         min\tmax
                         2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -1051,14 +1086,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     5\t2022-11-23T00:00:00.000000Z
                     """;
             String query = "select * from interval_test";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns(expected);
             // test mid-case
             expected = """
                     seq_num\ttimestamp
                     3\t2022-11-21T00:00:00.000000Z
                     """;
             query = "SELECT * FROM interval_test where timestamp IN '2022-11-21'";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -1078,14 +1120,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     5\t2023-03-19T00:00:00.000000Z
                     """;
             String query = "select * from interval_test";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns(expected);
             // test mid-case
             expected = """
                     seq_num\ttimestamp
                     3\t2023-01-18T00:00:00.000000Z
                     """;
             query = "SELECT * FROM interval_test where timestamp IN '2023-01'";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -1105,14 +1154,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     5\t2022-12-17T00:00:00.000000Z
                     """;
             String query = "select * from interval_test";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns(expected);
             // test mid-case
             expected = """
                     seq_num\ttimestamp
                     3\t2022-12-03T00:00:00.000000Z
                     """;
             query = "SELECT * FROM interval_test where timestamp IN '2022-12-03'";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -1132,86 +1188,87 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     5\t2026-11-18T00:00:00.000000Z
                     """;
             String query = "select * from interval_test";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns(expected);
             // test mid-case
             expected = """
                     seq_num\ttimestamp
                     3\t2024-11-18T00:00:00.000000Z
                     """;
             query = "SELECT * FROM interval_test where timestamp IN '2024'";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
     @Test
     public void testTimestampMin() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'")
+                .ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)")
+                .mutateWith("insert into tt " +
+                        "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
+                        "from long_sequence(2L)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         nts\tmin
                         nts\t
-                        """,
-                "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
-                null,
-                "insert into tt " +
-                        "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
-                        "from long_sequence(2L)",
-                """
+                        """, """
                         nts\tmin
                         nts\t2020-01-01T00:00:00.000010Z
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testTimestampNanoWithTimezone() throws Exception {
         // with constant
-        assertSql("""
+        assertQuery("select '2020-01-01T00:00:00.000000001Z'::timestamp_ns with time zone ts")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         ts
                         2020-01-01T00:00:00.000000001Z
-                        """,
-                "select '2020-01-01T00:00:00.000000001Z'::timestamp_ns with time zone ts");
+                        """);
 
         // with function
-        assertSql("""
+        assertQuery("select concat('2020-01-01T','01:02:03.123456789Z')::timestamp_ns with time zone ts")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         ts
                         2020-01-01T01:02:03.123456789Z
-                        """,
-                "select concat('2020-01-01T','01:02:03.123456789Z')::timestamp_ns with time zone ts");
+                        """);
 
         // with column
         assertMemoryLeak(() -> {
             execute("create table tt (vch varchar, ts timestamp_ns)");
             execute("insert into tt values ('2020-01-01T00:00:00.000000123Z', '2020-01-01T00:00:00.000000123Z'::timestamp_ns with time zone)");
 
-            assertSql("""
+            assertQuery("select vch::timestamp_ns with time zone ts from tt")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts
                             2020-01-01T00:00:00.000000123Z
-                            """,
-                    "select vch::timestamp_ns with time zone ts from tt");
+                            """);
         });
     }
 
     @Test
     public void testTimestampOpSymbolColumns() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, k from x where k < cast(a as timestamp)")
+                .ddl("create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)")
+                .timestamp("k")
+                .returns("""
                         a\tk
                         1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z
                         1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z
-                        """,
-                "select a, k from x where k < cast(a as timestamp)",
-                "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
-                "k",
-                null,
-                null,
-                true,
-                false,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -1265,22 +1322,17 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampStringComparison() throws Exception {
-        assertQuery(
-                "min\tmax\n\t\n",
-                "select min(nts), max(nts) from tt where nts = '2020-01-01'",
-                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
-                null,
-                "insert into tt " +
+        assertQuery("select min(nts), max(nts) from tt where nts = '2020-01-01'")
+                .ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)")
+                .mutateWith("insert into tt " +
                         "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                        "from long_sequence(48L)",
-                """
+                        "from long_sequence(48L)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("min\tmax\n\t\n", """
                         min\tmax
                         2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -1761,40 +1813,28 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampStringDateAdd() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select dateadd('d', 1, '2020-01-01')")
+                .ddl(null)
+                .expectSize()
+                .returns("""
                         dateadd
                         2020-01-02T00:00:00.000000Z
-                        """,
-                "select dateadd('d', 1, '2020-01-01')",
-                null,
-                null,
-                null,
-                null,
-                true,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testTimestampSymbolComparison() throws Exception {
-        assertQuery(
-                "min\tmax\n\t\n",
-                "select min(nts), max(nts) from tt where nts = cast('2020-01-01' as symbol)",
-                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
-                null,
-                "insert into tt " +
+        assertQuery("select min(nts), max(nts) from tt where nts = cast('2020-01-01' as symbol)")
+                .ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)")
+                .mutateWith("insert into tt " +
                         "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                        "from long_sequence(48L)",
-                """
+                        "from long_sequence(48L)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("min\tmax\n\t\n", """
                         min\tmax
                         2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -1842,72 +1882,65 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z
                     """;
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    "tt where dts > cast('2021-04-02T13:45:49.207Z' as symbol) and dts < cast('2021-04-03 13:45:49.207' as symbol)",
-                    "dts",
-                    true,
-                    false
-            );
+            assertQuery("tt where dts > cast('2021-04-02T13:45:49.207Z' as symbol) and dts < cast('2021-04-03 13:45:49.207' as symbol)")
+                    .noLeakCheck()
+                    .timestamp("dts")
+                    .returns(expected);
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    "tt where ts > cast('2021-04-02T13:45:49.207Z' as symbol) and ts < cast('2021-04-03 13:45:49.207' as symbol)",
-                    "dts",
-                    true,
-                    false
-            );
+            assertQuery("tt where ts > cast('2021-04-02T13:45:49.207Z' as symbol) and ts < cast('2021-04-03 13:45:49.207' as symbol)")
+                    .noLeakCheck()
+                    .timestamp("dts")
+                    .returns(expected);
         });
     }
 
     @Test
     public void testTimestampSymbolDateAdd() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select dateadd('d', 1, cast('2020-01-01' as symbol))")
+                .ddl(null)
+                .expectSize()
+                .returns("""
                         dateadd
                         2020-01-02T00:00:00.000000Z
-                        """,
-                "select dateadd('d', 1, cast('2020-01-01' as symbol))",
-                null,
-                null,
-                null,
-                null,
-                true,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testTimestampWithTimezone() throws Exception {
         // with constant
-        assertSql("""
+        assertQuery("select '2020-01-01T00:00:00.000000Z'::timestamp with time zone ts")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         ts
                         2020-01-01T00:00:00.000000Z
-                        """,
-                "select '2020-01-01T00:00:00.000000Z'::timestamp with time zone ts");
+                        """);
 
         // with function
-        assertSql("""
+        assertQuery("select concat('2020-01-01T','01:02:03.123456Z')::timestamp with time zone ts")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         ts
                         2020-01-01T01:02:03.123456Z
-                        """,
-                "select concat('2020-01-01T','01:02:03.123456Z')::timestamp with time zone ts");
+                        """);
 
         // with column
         assertMemoryLeak(() -> {
             execute("create table tt (vch varchar, ts timestamp)");
             execute("insert into tt values ('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000000Z'::timestamp with time zone)");
 
-            assertSql("""
+            assertQuery("select vch::timestamp with time zone ts from tt")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts
                             2020-01-01T00:00:00.000000Z
-                            """,
-                    "select vch::timestamp with time zone ts from tt");
+                            """);
         });
     }
 
-    private void assertQueryWithConditions(String query, String expected, String columnName) throws SqlException {
+    private void assertQueryWithConditions(String query, String expected, String columnName) throws Exception{
         assertSql(expected, query);
 
         String joining = query.indexOf("where") > 0 ? " and " : " where ";
@@ -1927,10 +1960,12 @@ public class TimestampQueryTest extends AbstractCairoTest {
     }
 
     private void assertTimestampTtFailedQuery0(String sql, int errorPos, String contains) throws Exception {
-        assertExceptionNoLeakCheck(sql, errorPos, contains);
+        assertQuery(sql)
+                .noLeakCheck()
+                .fails(errorPos, contains);
     }
 
-    private void assertTimestampTtQuery(String expected, String query) throws SqlException {
+    private void assertTimestampTtQuery(String expected, String query) throws Exception{
         assertQueryWithConditions(query, expected, "nts");
         String dtsQuery = query.replace("nts", "dts");
         assertQueryWithConditions(dtsQuery, expected, "dts");

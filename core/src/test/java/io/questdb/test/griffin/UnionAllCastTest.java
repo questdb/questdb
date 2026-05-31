@@ -2043,26 +2043,22 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testInterval1() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertMemoryLeak(() -> assertQuery("select i, typeOf(i) from ((select interval(100000,200000) i) union all (select interval(300000,400000) i) union all (select null::interval i))")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
                         i\ttypeOf
                         ('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tINTERVAL
                         ('1970-01-01T00:00:00.300Z', '1970-01-01T00:00:00.400Z')\tINTERVAL
                         \tINTERVAL
-                        """,
-                "select i, typeOf(i) from ((select interval(100000,200000) i) union all (select interval(300000,400000) i) union all (select null::interval i))"
-        ));
+                        """));
     }
 
     @Test
     public void testInterval2() throws Exception {
         setCurrentMicros(7 * Micros.DAY_MICROS + Micros.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
-        assertMemoryLeak(() -> assertSql(
-                """
-                        a\tb
-                        ('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')
-                        """,
-                """
+        assertMemoryLeak(() -> assertQuery("""
                         select * from (
                           select today() a, yesterday() b
                           union all
@@ -2070,21 +2066,19 @@ public class UnionAllCastTest extends AbstractCairoTest {
                           union all
                           select today() a, null b
                         )
-                        where b = a"""
-        ));
+                        where b = a""")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        a\tb
+                        ('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')
+                        """));
     }
 
     @Test
     public void testInterval3() throws Exception {
         setCurrentMicros(7 * Micros.DAY_MICROS + Micros.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
-        assertMemoryLeak(() -> assertSql(
-                """
-                        a\ta1
-                        ('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')
-                        ('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')
-                        ('1970-01-09T00:00:00.000Z', '1970-01-09T23:59:59.999Z')\t('1970-01-09T00:00:00.000Z', '1970-01-09T23:59:59.999Z')
-                        """,
-                """
+        assertMemoryLeak(() -> assertQuery("""
                         select * from (
                           select today() a
                           union\s
@@ -2099,20 +2093,22 @@ public class UnionAllCastTest extends AbstractCairoTest {
                           union\s
                           select tomorrow()
                         ) b
-                        on a.a = b.a"""
-        ));
+                        on a.a = b.a""")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        a\ta1
+                        ('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')
+                        ('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')
+                        ('1970-01-09T00:00:00.000Z', '1970-01-09T23:59:59.999Z')\t('1970-01-09T00:00:00.000Z', '1970-01-09T23:59:59.999Z')
+                        """));
     }
 
     @Test
     public void testInterval4() throws Exception {
         setCurrentMicros(7 * Micros.DAY_MICROS + Micros.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
-        assertMemoryLeak(() -> assertSql(
-                """
-                        a\tb
-                        ('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')
-                        foobar\t
-                        """,
-                """
+        assertMemoryLeak(() -> assertQuery("""
                         select * from (
                           select today() a, yesterday() b
                           union all
@@ -2120,8 +2116,14 @@ public class UnionAllCastTest extends AbstractCairoTest {
                           union all
                           select 'foobar' a, null b
                         )
-                        where b != a"""
-        ));
+                        where b != a""")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        a\tb
+                        ('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')
+                        foobar\t
+                        """));
     }
 
     @Test

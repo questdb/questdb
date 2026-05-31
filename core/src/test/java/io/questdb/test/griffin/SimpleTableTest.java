@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.NumericException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -41,10 +40,16 @@ public class SimpleTableTest extends AbstractCairoTest {
             execute("create table t (timestamp timestamp) timestamp(timestamp);");
             execute("insert into t values (1);");
 
-            String expected1 = "time\n" +
-                    "1970-01-01T00:00:00.000001Z\n";
+            String expected1 = """
+                    time
+                    1970-01-01T00:00:00.000001Z
+                    """;
 
-            assertSql(expected1, "select timestamp time from t;");
+            assertQuery("select timestamp time from t;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("time")
+                    .returns(expected1);
 
             try {
                 assertExceptionNoLeakCheck("select timestamp with time zone from t;");
@@ -53,27 +58,48 @@ public class SimpleTableTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "String literal expected after 'timestamp with time zone'");
             }
 
-            String expected2 = "timestamp\n" +
-                    "1970-01-01T00:00:00.000001Z\n";
+            String expected2 = """
+                    timestamp
+                    1970-01-01T00:00:00.000001Z
+                    """;
 
-            assertSql(expected2, "select timestamp from t;");
+            assertQuery("select timestamp from t;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns(expected2);
 
-            String expected3 = "time\ttimestamp\n" +
-                    "2020-12-31T15:15:51.663000Z\t1970-01-01T00:00:00.000001Z\n";
+            String expected3 = """
+                    time\ttimestamp
+                    2020-12-31T15:15:51.663000Z\t1970-01-01T00:00:00.000001Z
+                    """;
 
-            assertSql(expected3, "select timestamp with time zone '2020-12-31 15:15:51.663+00:00' time, timestamp from t;");
+            assertQuery("select timestamp with time zone '2020-12-31 15:15:51.663+00:00' time, timestamp from t;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns(expected3);
 
-            assertSql(expected3, "select cast('2020-12-31 15:15:51.663+00:00' as timestamp with time zone) time, timestamp from t;");
+            assertQuery("select cast('2020-12-31 15:15:51.663+00:00' as timestamp with time zone) time, timestamp from t;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns(expected3);
         });
     }
 
     @Test
-    public void testWhereIsColumnNameInsensitive() throws SqlException, NumericException {
+    public void testWhereIsColumnNameInsensitive() throws Exception{
         TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
         tm.timestamp("ts").col("ID", ColumnType.INT);
         createPopulateTable(tm, 2, "2020-01-01", 1);
 
-        assertSql("ts\n" +
-                "2020-01-01T00:00:00.000000Z\n", "select ts from tab1 where id > 1");
+        assertQuery("select ts from tab1 where id > 1")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns("""
+                        ts
+                        2020-01-01T00:00:00.000000Z
+                        """);
     }
 }

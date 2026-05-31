@@ -602,7 +602,10 @@ public class PivotTest extends AbstractSqlParserTest {
                                     Row forward scan
                                     Frame forward scan on: trades
                     """);
-            assertSql(result, pivotQuery);
+            assertQuery(pivotQuery)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(result);
         });
     }
 
@@ -2937,18 +2940,20 @@ public class PivotTest extends AbstractSqlParserTest {
                             )ORDER BY EMPID;""")
                     .fails(86, "Invalid column: EMPID");
 
-            assertSql("""
-                            EMPID	JAN	FEB	MAR
-                            1	10400	8000	11000
-                            2	39500	90700	12000
-                            """,
-                    """
+            assertQuery("""
                             monthly_sales\s
                             PIVOT (
                               SUM(amount)\s
                               FOR MONTH IN ('JAN', 'FEB', 'MAR')\s
                               GROUP BY EMPID
-                            ) ORDER BY EMPID;""");
+                            ) ORDER BY EMPID;""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            EMPID	JAN	FEB	MAR
+                            1	10400	8000	11000
+                            2	39500	90700	12000
+                            """);
         });
     }
 

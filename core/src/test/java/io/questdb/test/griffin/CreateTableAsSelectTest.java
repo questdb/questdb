@@ -59,14 +59,16 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
             // CTAS derives columns from SELECT metadata, which does not carry
             // per-column parquet encoding config from the source table.
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE dest")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'dest' (\s
                             \tts TIMESTAMP,
                             \tv LONG
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE dest");
+                            """);
         });
     }
 
@@ -118,14 +120,16 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             execute("create table src (ts timestamp, v long PARQUET(DELTA_BINARY_PACKED, zstd(3))) timestamp(ts) partition by day;");
             execute("create table dest (like src)");
 
-            assertSql("""
+            assertQuery("SHOW CREATE TABLE dest")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'dest' (\s
                             \tts TIMESTAMP,
                             \tv LONG PARQUET(delta_binary_packed, zstd(3))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE dest");
+                            """);
         });
     }
 

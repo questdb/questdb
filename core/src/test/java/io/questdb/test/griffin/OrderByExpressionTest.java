@@ -332,12 +332,7 @@ public class OrderByExpressionTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByWithAlphanumericNamedColumn() throws Exception {
-        assertMemoryLeak(() -> assertSql("""
-                5_sum
-                123
-                456
-                789
-                """, """
+        assertMemoryLeak(() -> assertQuery("""
                 SELECT * FROM (
                   SELECT 456 AS "5_sum"
                   UNION ALL\s
@@ -345,7 +340,15 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                   UNION ALL\s
                   SELECT 123 AS "5_sum"
                 )
-                ORDER BY "5_sum\""""));
+                ORDER BY "5_sum\"""")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                5_sum
+                123
+                456
+                789
+                """));
     }
 
     @Test
@@ -379,10 +382,10 @@ public class OrderByExpressionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (c1 BOOLEAN)");
             execute("INSERT INTO t VALUES (true)");
-            assertSql(
-                    "a0\n1\n",
-                    "SELECT count_distinct('M'::CHAR) AS a0 FROM t ORDER BY 1"
-            );
+            assertQuery("SELECT count_distinct('M'::CHAR) AS a0 FROM t ORDER BY 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a0\n1\n");
         });
     }
 

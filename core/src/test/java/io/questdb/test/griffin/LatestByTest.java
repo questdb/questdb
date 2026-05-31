@@ -1491,7 +1491,10 @@ public class LatestByTest extends AbstractCairoTest {
                     SELECT * FROM trades
                     WHERE symbol in ('BTC') and side in 'buy'
                     LATEST ON timestamp PARTITION BY symbol;""";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 

@@ -420,7 +420,6 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                             " WHERE attached" +
                             " ORDER BY name")
                     .noLeakCheck()
-                    .expectSize()
                     .sizeMayVary()
                     .returns("""
                             name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet
@@ -431,7 +430,11 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             // Underlying data is still queryable — sum() over the partial-NULL
             // column returns the populated values without exploding on the
             // all-NULL chunk.
-            assertSql("sum\n35\n", "SELECT sum(v) FROM " + tableName);
+            assertQuery("SELECT sum(v) FROM " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("sum\n35\n");
         });
     }
 
@@ -484,7 +487,6 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                             " WHERE attached" +
                             " ORDER BY name")
                     .noLeakCheck()
-                    .expectSize()
                     .sizeMayVary()
                     .returns("""
                             name\thasParquetGenerated\tisParquet
@@ -528,7 +530,6 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                             " WHERE attached" +
                             " ORDER BY name")
                     .noLeakCheck()
-                    .expectSize()
                     .sizeMayVary()
                     .returns("""
                             name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet
@@ -538,7 +539,11 @@ public class ShowPartitionsTest extends AbstractCairoTest {
 
             // NULLs survived the round trip and the underlying data is
             // queryable.
-            assertSql("count\n2\n", "SELECT count() FROM " + tableName + " WHERE v IS NULL");
+            assertQuery("SELECT count() FROM " + tableName + " WHERE v IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
         });
     }
 
@@ -683,7 +688,6 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                             " WHERE attached" +
                             " ORDER BY name")
                     .noLeakCheck()
-                    .expectSize()
                     .sizeMayVary()
                     .returns("""
                             name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet
@@ -752,7 +756,6 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                     assertQuery("show partitions from " + tableName)
                             .noLeakCheck()
                             .noRandomAccess()
-                            .expectSize()
                             .sizeMayVary()
                             .returns(finallyExpected);
                 } catch (Throwable e) {
@@ -769,7 +772,6 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         assertQuery("SELECT * FROM table_partitions('" + tableName + "')")
                 .noLeakCheck()
                 .noRandomAccess()
-                .expectSize()
                 .sizeMayVary()
                 .returns(finallyExpected);
     }

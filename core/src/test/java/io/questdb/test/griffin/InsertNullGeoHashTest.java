@@ -38,7 +38,10 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table g(a geohash(4b))");
             execute("insert into g values (cast(null as geohash(5b)))");
-            assertSql("a\n\n", "g");
+            assertQuery("g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\n\n");
         });
     }
 
@@ -47,7 +50,10 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table g(a geohash(22b))");
             execute("insert into g values (cast(null as geohash(24b)))");
-            assertSql("a\n\n", "g");
+            assertQuery("g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\n\n");
         });
     }
 
@@ -56,7 +62,10 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table g(a geohash(42b))");
             execute("insert into g values (cast(null as geohash(44b)))");
-            assertSql("a\n\n", "g");
+            assertQuery("g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\n\n");
         });
     }
 
@@ -65,7 +74,10 @@ public class InsertNullGeoHashTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table g(a geohash(12b))");
             execute("insert into g values (cast(null as geohash(14b)))");
-            assertSql("a\n\n", "g");
+            assertQuery("g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\n\n");
         });
     }
 

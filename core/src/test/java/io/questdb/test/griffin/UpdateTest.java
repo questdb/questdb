@@ -125,51 +125,57 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET x = 1");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv\tx\tz
                             1970-01-01T00:00:00.000000Z\t1\t1\t1
                             1970-01-01T00:00:01.000000Z\t2\t1\t2
                             1970-01-01T00:00:02.000000Z\t3\t1\t3
                             1970-01-01T00:00:03.000000Z\t4\t1\t4
                             1970-01-01T00:00:04.000000Z\t5\t1\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             update("UPDATE up SET z = 2");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv\tx\tz
                             1970-01-01T00:00:00.000000Z\t1\t1\t2
                             1970-01-01T00:00:01.000000Z\t2\t1\t2
                             1970-01-01T00:00:02.000000Z\t3\t1\t2
                             1970-01-01T00:00:03.000000Z\t4\t1\t2
                             1970-01-01T00:00:04.000000Z\t5\t1\t2
-                            """,
-                    "up"
-            );
+                            """);
 
             update("UPDATE up SET v = 33");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv\tx\tz
                             1970-01-01T00:00:00.000000Z\t33\t1\t2
                             1970-01-01T00:00:01.000000Z\t33\t1\t2
                             1970-01-01T00:00:02.000000Z\t33\t1\t2
                             1970-01-01T00:00:03.000000Z\t33\t1\t2
                             1970-01-01T00:00:04.000000Z\t33\t1\t2
-                            """,
-                    "up"
-            );
+                            """);
 
             execute("INSERT INTO up VALUES('1970-01-01T00:00:05.000000Z', 10.0, 10.0, 10.0)");
             execute("INSERT INTO up VALUES('1970-01-01T00:00:06.000000Z', 100.0, 100.0, 100.0)");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv\tx\tz
                             1970-01-01T00:00:00.000000Z\t33\t1\t2
                             1970-01-01T00:00:01.000000Z\t33\t1\t2
@@ -178,9 +184,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-01T00:00:04.000000Z\t33\t1\t2
                             1970-01-01T00:00:05.000000Z\t10\t10\t10
                             1970-01-01T00:00:06.000000Z\t100\t100\t100
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -199,17 +203,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET x = 1 WHERE x > 10");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv\tx\tz
                             1970-01-01T00:00:00.000000Z\t1\t1\t1
                             1970-01-01T00:00:01.000000Z\t2\t2\t2
                             1970-01-01T00:00:02.000000Z\t3\t3\t3
                             1970-01-01T00:00:03.000000Z\t4\t4\t4
                             1970-01-01T00:00:04.000000Z\t5\t5\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -228,17 +233,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET x = 1 WHERE 1 != 1");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv\tx\tz
                             1970-01-01T00:00:00.000000Z\t1\t1\t1
                             1970-01-01T00:00:01.000000Z\t2\t2\t2
                             1970-01-01T00:00:02.000000Z\t3\t3\t3
                             1970-01-01T00:00:03.000000Z\t4\t4\t4
                             1970-01-01T00:00:04.000000Z\t5\t5\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -264,11 +270,19 @@ public class UpdateTest extends AbstractCairoTest {
                     1970-01-01T00:00:03.000000Z\t92.80.211.65\t92.80.211.65
                     1970-01-01T00:00:04.000000Z\t212.159.205.29\t212.159.205.29
                     """;
-            assertSql(data, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(data);
 
             update("UPDATE up set str = 'abc'");
             update("UPDATE up set str = ip");
-            assertSql(data, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(data);
         });
     }
 
@@ -280,32 +294,34 @@ public class UpdateTest extends AbstractCairoTest {
                     " x" +
                     " from long_sequence(5)" +
                     "), index(symCol) timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
-            assertSql("""
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol\tts\tx
                             WCP\t1970-01-01T00:00:00.000000Z\t1
                             WCP\t1970-01-01T00:00:01.000000Z\t2
                             WCP\t1970-01-01T00:00:02.000000Z\t3
                             VTJ\t1970-01-01T00:00:03.000000Z\t4
                             \t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             try (RecordCursorFactory factory = select("up where symCol = 'WCP'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     update("update up set symCol = null");
                     // Index is updated
-                    assertSql(
-                            """
+                    assertQuery("up where symCol = null")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("""
                                     symCol\tts\tx
                                     \t1970-01-01T00:00:00.000000Z\t1
                                     \t1970-01-01T00:00:01.000000Z\t2
                                     \t1970-01-01T00:00:02.000000Z\t3
                                     \t1970-01-01T00:00:03.000000Z\t4
                                     \t1970-01-01T00:00:04.000000Z\t5
-                                    """,
-                            "up where symCol = null"
-                    );
+                                    """);
 
                     // Old index is still working
                     assertCursor(
@@ -349,17 +365,18 @@ public class UpdateTest extends AbstractCairoTest {
 
                 update("update up set symCol = null where ts >= '1970-01-01T03'");
                 // Index is updated
-                assertSql(
-                        """
+                assertQuery("up")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
                                 symCol\tts\tx
                                 WCP\t1970-01-01T00:00:00.000000Z\t1
                                 WCP\t1970-01-01T01:00:00.000000Z\t2
                                 WCP\t1970-01-01T02:00:00.000000Z\t3
                                 \t1970-01-01T03:00:00.000000Z\t4
                                 \t1970-01-01T04:00:00.000000Z\t5
-                                """,
-                        "up"
-                );
+                                """);
             }
         });
     }
@@ -403,13 +420,14 @@ public class UpdateTest extends AbstractCairoTest {
             // Update column to itself. Should rebuild whole index
             update("update symInd set sym_index = sym_index");
 
-            assertSql(
-                    """
+            assertQuery("select count(), min(ts), max(ts) from symInd where sym_index = null")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count\tmin\tmax
                             75\t1970-01-01T00:00:00.000000Z\t1970-01-01T02:28:00.000000Z
-                            """,
-                    "select count(), min(ts), max(ts) from symInd where sym_index = null"
-            );
+                            """);
 
             for (int i = 0; i < 60; i += 10) {
                 // Index is updated
@@ -540,17 +558,18 @@ public class UpdateTest extends AbstractCairoTest {
                             " WHERE up.s = jn.s"
             );
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\ts\tx\ty
                             1970-01-01T00:00:00.000000Z\ta\t101\t100
                             1970-01-01T00:00:01.000000Z\ta\t101\t100
                             1970-01-01T00:00:02.000000Z\tb\t303\t300
                             1970-01-01T00:00:03.000000Z\t\t505\t500
                             1970-01-01T00:00:04.000000Z\t\t505\t500
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -569,8 +588,11 @@ public class UpdateTest extends AbstractCairoTest {
             execute("alter table testUpdateAddedColumn add column y long", sqlExecutionContext);
             update("UPDATE testUpdateAddedColumn SET y = x + 1 WHERE ts between '1970-01-01T12' and '1970-01-02T12'");
 
-            assertSql(
-                    """
+            assertQuery("testUpdateAddedColumn")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ty
                             1970-01-01T00:00:00.000000Z\t0\tnull
                             1970-01-01T06:00:00.000000Z\t1\tnull
@@ -582,16 +604,17 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-02T18:00:00.000000Z\t7\tnull
                             1970-01-03T00:00:00.000000Z\t8\tnull
                             1970-01-03T06:00:00.000000Z\t9\tnull
-                            """,
-                    "testUpdateAddedColumn"
-            );
+                            """);
 
             execute("alter table testUpdateAddedColumn drop column y");
             execute("alter table testUpdateAddedColumn add column y int");
             update("UPDATE testUpdateAddedColumn SET y = COALESCE(y, x + 2) WHERE x%2 = 0");
 
-            assertSql(
-                    """
+            assertQuery("testUpdateAddedColumn")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ty
                             1970-01-01T00:00:00.000000Z\t0\t2
                             1970-01-01T06:00:00.000000Z\t1\tnull
@@ -603,15 +626,16 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-02T18:00:00.000000Z\t7\tnull
                             1970-01-03T00:00:00.000000Z\t8\t10
                             1970-01-03T06:00:00.000000Z\t9\tnull
-                            """,
-                    "testUpdateAddedColumn"
-            );
+                            """);
 
             execute("alter table testUpdateAddedColumn drop column x");
             update("UPDATE testUpdateAddedColumn SET y = COALESCE(y, 1)");
 
-            assertSql(
-                    """
+            assertQuery("testUpdateAddedColumn")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\ty
                             1970-01-01T00:00:00.000000Z\t2
                             1970-01-01T06:00:00.000000Z\t1
@@ -623,9 +647,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-02T18:00:00.000000Z\t1
                             1970-01-03T00:00:00.000000Z\t10
                             1970-01-03T06:00:00.000000Z\t1
-                            """,
-                    "testUpdateAddedColumn"
-            );
+                            """);
         });
     }
 
@@ -732,8 +754,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET bin1 = cast(null as binary) WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tbin1\tlng2
                             1970-01-01T00:00:00.000000Z\t00000000 41 1d 15 55 8a 17 fa d8 cc 14 ce f1 59 88 c4 91
                             00000010 3b 72 db f3\t1
@@ -748,9 +773,7 @@ public class UpdateTest extends AbstractCairoTest {
                             00000010 b1 3e e3 f1\t8
                             1970-01-03T00:00:00.000000Z\t\t9
                             1970-01-03T06:00:00.000000Z\t00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3\t10
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -774,8 +797,11 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5))");
             update("UPDATE up SET bin1 = cast(null as binary), bin2 = cast(null as binary) WHERE lng2 in (6,8,10,12,14)");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tbin1\tlng2\tbin2
                             1970-01-01T00:00:00.000000Z\t00000000 41 1d 15 55 8a 17 fa d8 cc 14 ce f1 59 88 c4 91
                             00000010 3b 72 db f3\t1\t
@@ -796,9 +822,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-08T10:40:00.000000Z\t00000000 e0 b0 e9 98 f7 67 62 28 60 b0 ec 0b 92\t13\t00000000 24 bc 2e 60 6a 1c 0b 20 a2 86 89 37 11 2c
                             1970-01-08T16:40:00.000000Z\t\t14\t
                             1970-01-08T22:40:00.000000Z\t00000000 e4 35 e4 3a dc 5c 65 ff 27 67 77\t15\t00000000 52 d0 29 26 c5 aa da 18 ce 5f b2
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -836,15 +860,16 @@ public class UpdateTest extends AbstractCairoTest {
                 update("UPDATE tab SET y = $3 WHERE x = $4");
             }
 
-            assertSql(
-                    """
+            assertQuery("tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ty
                             1970-01-01T00:00:00.000000Z\t1\t[[1.0,2.0],[3.0,4.0]]
                             1970-01-01T00:00:01.000000Z\t2\t[[2.0,3.0],[4.0,5.0]]
                             1970-01-01T00:00:02.000000Z\t3\t[]
-                            """,
-                    "tab"
-            );
+                            """);
         });
     }
 
@@ -860,31 +885,33 @@ public class UpdateTest extends AbstractCairoTest {
                             " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : "")
             );
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\txint\txbool
                             1970-01-01T00:00:00.000000Z\t1\ttrue
                             1970-01-01T00:00:01.000000Z\t2\ttrue
                             1970-01-01T00:00:02.000000Z\t3\ttrue
                             1970-01-01T00:00:03.000000Z\t4\ttrue
                             1970-01-01T00:00:04.000000Z\t5\ttrue
-                            """,
-                    "up"
-            );
+                            """);
 
             update("UPDATE up SET xbool = false WHERE xint = 2");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\txint\txbool
                             1970-01-01T00:00:00.000000Z\t1\ttrue
                             1970-01-01T00:00:01.000000Z\t2\tfalse
                             1970-01-01T00:00:02.000000Z\t3\ttrue
                             1970-01-01T00:00:03.000000Z\t4\ttrue
                             1970-01-01T00:00:04.000000Z\t5\ttrue
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -899,17 +926,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET X = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t1
                             1970-01-01T00:00:01.000000Z\t2
                             1970-01-01T00:00:02.000000Z\tnull
                             1970-01-01T00:00:03.000000Z\tnull
                             1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -961,14 +989,15 @@ public class UpdateTest extends AbstractCairoTest {
                     "d256 = 123.456789m " +
                     "WHERE ts >= '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\td8\td16\td32\td64\td128\td256
                             1970-01-01T00:00:00.000000Z\t1.0\t1\t1.000\t1.000000000000\t1\t1.000000000000000000
                             1970-01-01T00:00:01.000000Z\t3.3\t0\t128.000\t123.000000000000\t123456789\t123.456789000000000000
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1016,80 +1045,196 @@ public class UpdateTest extends AbstractCairoTest {
                     """;
 
             update("UPDATE up SET xint=xshort");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xint=xshort WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
 
             update("UPDATE up SET xlong=xshort");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xlong=xshort WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             update("UPDATE up SET xlong=xchar");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xlong=xchar WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             update("UPDATE up SET xfloat=xint");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xfloat=xint WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             update("UPDATE up SET xdouble=xfloat");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xdouble=xfloat WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             update("UPDATE up SET xdouble=xlong");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xdouble=xlong WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             update("UPDATE up SET xshort=xbyte");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xshort=xbyte WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             update("UPDATE up SET xshort=xchar");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xshort=xchar WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             update("UPDATE up SET xchar=(xshort+48)::short");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xchar=(xshort+48)::short WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             update("UPDATE up SET xint=xchar");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xint=xchar WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             update("UPDATE up SET xdouble=xlong");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xdouble=xlong WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             update("UPDATE up SET xlong=xts");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xlong=xts WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             update("UPDATE up SET xdate=xlong");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xdate=xlong WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             update("UPDATE up SET xts=xdate");
             // above call modified data from micro to milli. Revert the data back
             update("UPDATE up SET xts=xlong");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
             update("UPDATE up SET xts=xlong WHERE ts='1970-01-01'");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // Update all at once
             update("UPDATE up SET xint=xshort, xfloat=xint, xdouble=xfloat, xshort=xbyte, xlong=xts, xts=xlong");
-            assertSql(expected, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
             if (!walEnabled) {
@@ -1106,7 +1251,11 @@ public class UpdateTest extends AbstractCairoTest {
                         " xbyte=up2.xbyte " +
                         " FROM up up2 " +
                         " WHERE up.ts = up2.ts AND up.ts = '1970-01-01'");
-                assertSql(expected, "up");
+                assertQuery("up")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns(expected);
             }
         });
     }
@@ -1131,17 +1280,18 @@ public class UpdateTest extends AbstractCairoTest {
                     "g7c = cast('questdb' as geohash(7c)) " +
                     "WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tg1c\tg3c\tg5c\tg7c
                             1970-01-01T00:00:00.000000Z\t9\t46s\tjnw97\tzfuqd3b
                             1970-01-01T00:00:01.000000Z\th\twh4\ts2z2f\t1cjjwk6
                             1970-01-01T00:00:02.000000Z\tq\tque\tquest\tquestdb
                             1970-01-01T00:00:03.000000Z\tq\tque\tquest\tquestdb
                             1970-01-01T00:00:04.000000Z\tx\t76u\tq0s5w\ts2vqs1b
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1165,17 +1315,18 @@ public class UpdateTest extends AbstractCairoTest {
                     "g7c = g7c " +
                     "WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tg1c\tg3c\tg5c\tg7c
                             1970-01-01T00:00:00.000000Z\t9\t46s\tjnw97\tzfuqd3b
                             1970-01-01T00:00:01.000000Z\th\twh4\ts2z2f\t1cjjwk6
                             1970-01-01T00:00:02.000000Z\tq\tq4s\tq4s2x\tq4s2xyt
                             1970-01-01T00:00:03.000000Z\tb\tbuy\tbuyv3\tbuyv3pv
                             1970-01-01T00:00:04.000000Z\tx\t76u\tq0s5w\ts2vqs1b
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1206,8 +1357,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET geo1 = cast('q' as geohash(1c)), geo2 = 'qu', geo4='quest', geo8='questdb0' WHERE lng2 in (6, 8, 10, 12, 14)");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tstr1\tlng2\tgeo1\tgeo2\tgeo4\tgeo8
                             1970-01-01T00:00:00.000000Z\t15\t1\t\t\t\t
                             1970-01-01T06:00:00.000000Z\t15\t2\t\t\t\t
@@ -1224,9 +1378,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-08T10:40:00.000000Z\t\t13\t8\t1y\tcd0fj\t5h18p8vz
                             1970-01-08T16:40:00.000000Z\t\t14\tq\tqu\tquest\tquestdb0
                             1970-01-08T22:40:00.000000Z\t\t15\t1\trc\t5vm2w\tz22qdyty
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1242,17 +1394,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET geo3 = 'questdb', geo5 = 'questdb' WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tgeo3\tgeo5
                             1970-01-01T00:00:00.000000Z\t9v1\t46swg
                             1970-01-01T00:00:01.000000Z\tjnw\tzfuqd
                             1970-01-01T00:00:02.000000Z\tque\tquest
                             1970-01-01T00:00:03.000000Z\tque\tquest
                             1970-01-01T00:00:04.000000Z\tmmt\t71ftm
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1268,17 +1421,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET geo3 = 'questdb'::varchar, geo5 = 'questdb'::varchar WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tgeo3\tgeo5
                             1970-01-01T00:00:00.000000Z\t9v1\t46swg
                             1970-01-01T00:00:01.000000Z\tjnw\tzfuqd
                             1970-01-01T00:00:02.000000Z\tque\tquest
                             1970-01-01T00:00:03.000000Z\tque\tquest
                             1970-01-01T00:00:04.000000Z\tmmt\t71ftm
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1293,17 +1447,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET x = x WHERE x > 1 and x < 4");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t1
                             1970-01-01T00:00:01.000000Z\t2
                             1970-01-01T00:00:02.000000Z\t3
                             1970-01-01T00:00:03.000000Z\t4
                             1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1319,8 +1474,11 @@ public class UpdateTest extends AbstractCairoTest {
             execute("alter table up add column y long", sqlExecutionContext);
             update("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ty
                             1970-01-01T00:00:00.000000Z\t1\tnull
                             1970-01-01T06:56:40.000000Z\t2\t42
@@ -1332,9 +1490,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-03T00:36:40.000000Z\t8\t42
                             1970-01-03T07:33:20.000000Z\t9\tnull
                             1970-01-03T14:30:00.000000Z\t10\tnull
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1349,8 +1505,11 @@ public class UpdateTest extends AbstractCairoTest {
             createPopulateTable(tml, 10, "2020-01-01", 2);
 
             update("UPDATE up SET xint = -1000 WHERE ts in '2020-01-01T00;6h;12h;24'");
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             xint\txsym\tts
                             -1000\tCPSW\t2020-01-01T04:47:59.900000Z
                             2\tHYRX\t2020-01-01T09:35:59.800000Z
@@ -1362,13 +1521,14 @@ public class UpdateTest extends AbstractCairoTest {
                             -1000\t\t2020-01-02T14:23:59.200000Z
                             9\tCPSW\t2020-01-02T19:11:59.100000Z
                             10\t\t2020-01-02T23:59:59.000000Z
-                            """,
-                    "up"
-            );
+                            """);
 
             update("UPDATE up SET xint = -1000 WHERE ts in '2020-01-01T06;6h;12h;24' and xint > 7");
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             xint\txsym\tts
                             -1000\tCPSW\t2020-01-01T04:47:59.900000Z
                             2\tHYRX\t2020-01-01T09:35:59.800000Z
@@ -1380,9 +1540,7 @@ public class UpdateTest extends AbstractCairoTest {
                             -1000\t\t2020-01-02T14:23:59.200000Z
                             -1000\tCPSW\t2020-01-02T19:11:59.100000Z
                             -1000\t\t2020-01-02T23:59:59.000000Z
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1405,8 +1563,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 9 or x = 6 or x = 13 or x = 20");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ty
                             1970-01-01T00:00:00.000000Z\t1\tnull
                             1970-01-01T06:56:40.000000Z\t2\t42
@@ -1428,9 +1589,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-05T22:03:20.000000Z\t18\t80
                             1970-01-06T05:00:00.000000Z\t19\t90
                             1970-01-06T11:56:40.000000Z\t20\t42
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1445,26 +1604,32 @@ public class UpdateTest extends AbstractCairoTest {
             createPopulateTable(tml, 5, "2020-01-01", 2);
 
             update("UPDATE up SET xint = -1000 WHERE ts > '2020-01-02T14'");
-            assertSql(
-                    "xint\txsym\tts\n" +
-                            "1\tCPSW\t2020-01-01T09:35:59.800000Z\n" +
-                            "2\tHYRX\t2020-01-01T19:11:59.600000Z\n" +
-                            "3\t\t2020-01-02T04:47:59.400000Z\n" +
-                            "-1000\tVTJW\t2020-01-02T14:23:59.200000Z\n" +  // Updated
-                            "-1000\tPEHN\t2020-01-02T23:59:59.000000Z\n",   // Updated
-                    "up"
-            );
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            xint\txsym\tts
+                            1\tCPSW\t2020-01-01T09:35:59.800000Z
+                            2\tHYRX\t2020-01-01T19:11:59.600000Z
+                            3\t\t2020-01-02T04:47:59.400000Z
+                            -1000\tVTJW\t2020-01-02T14:23:59.200000Z
+                            -1000\tPEHN\t2020-01-02T23:59:59.000000Z
+                            """);
 
             update("UPDATE up SET xint = -2000 WHERE ts > '2020-01-02T14' AND xsym = 'VTJW'");
-            assertSql(
-                    "xint\txsym\tts\n" +
-                            "1\tCPSW\t2020-01-01T09:35:59.800000Z\n" +
-                            "2\tHYRX\t2020-01-01T19:11:59.600000Z\n" +
-                            "3\t\t2020-01-02T04:47:59.400000Z\n" +
-                            "-2000\tVTJW\t2020-01-02T14:23:59.200000Z\n" +  // Updated
-                            "-1000\tPEHN\t2020-01-02T23:59:59.000000Z\n",
-                    "up"
-            );
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            xint\txsym\tts
+                            1\tCPSW\t2020-01-01T09:35:59.800000Z
+                            2\tHYRX\t2020-01-01T19:11:59.600000Z
+                            3\t\t2020-01-02T04:47:59.400000Z
+                            -2000\tVTJW\t2020-01-02T14:23:59.200000Z
+                            -1000\tPEHN\t2020-01-02T23:59:59.000000Z
+                            """);
         });
     }
 
@@ -1479,17 +1644,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET x = 1");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t1
                             1970-01-01T00:00:01.000000Z\t1
                             1970-01-01T00:00:02.000000Z\t1
                             1970-01-01T00:00:03.000000Z\t1
                             1970-01-01T00:00:04.000000Z\t1
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1504,13 +1670,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " cast(x as int) x" +
                     " from long_sequence(1))" +
                     " timestamp(ts) partition by DAY");
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t1
-                            """,
-                    "up"
-            );
+                            """);
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery cc = compiler.compile("UPDATE up SET x = 2", sqlExecutionContext);
@@ -1543,17 +1710,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET x = 123 WHERE x > 1 and x < 5");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t1
                             1970-01-01T00:00:01.000000Z\t123
                             1970-01-01T00:00:02.000000Z\t123
                             1970-01-01T00:00:03.000000Z\t123
                             1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1572,13 +1740,14 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET x = 44");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t44
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1635,14 +1804,15 @@ public class UpdateTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t1
                             1970-01-01T00:00:01.000000Z\t2
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1671,17 +1841,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\txxx\tsym\tsymi\tabc
                             2022-02-24T01:01:00.000000Z\ta\tabc\ti\tnull
                             2022-02-24T02:01:00.000000Z\ta\tabc\ti\tnull
                             2022-02-24T03:01:00.000000Z\ta\tabc\ti\tnull
                             2022-02-24T04:01:00.000000Z\ta\tabc\ti\tnull
                             2022-02-24T05:01:00.000000Z\ta\tabc\ti\tnull
-                            """,
-                    "test"
-            );
+                            """);
 
         });
     }
@@ -1705,8 +1876,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET y = 42 where x = 9 or x = 10 or x = 11");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ty
                             1970-01-01T00:00:00.000000Z\t0\tnull
                             1970-01-01T00:00:01.000000Z\t1\tnull
@@ -1723,9 +1897,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-01T00:01:42.000000Z\t12\t30
                             1970-01-01T00:01:43.000000Z\t13\t40
                             1970-01-01T00:01:44.000000Z\t14\t50
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1748,8 +1920,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET y = 42 where x = 5 or x = 7 or x = 10 or x = 13 or x = 14");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ty
                             1970-01-01T00:00:00.000000Z\t0\tnull
                             1970-01-01T00:00:01.000000Z\t1\tnull
@@ -1766,9 +1941,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-01T00:01:42.000000Z\t12\t30
                             1970-01-01T00:01:43.000000Z\t13\t42
                             1970-01-01T00:01:44.000000Z\t14\t42
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1784,8 +1957,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ty
                             1970-01-01T00:00:00.000000Z\t1\tnull
                             1970-01-01T00:01:40.000000Z\t2\t42
@@ -1797,9 +1973,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-01T00:11:40.000000Z\t8\t42
                             1970-01-01T00:13:20.000000Z\t9\tnull
                             1970-01-01T00:15:00.000000Z\t10\tnull
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1822,8 +1996,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET y = 42 where x = 6 or x = 8 or x = 12 or x = 14");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ty
                             1970-01-01T00:00:00.000000Z\t0\tnull
                             1970-01-01T00:00:01.000000Z\t1\tnull
@@ -1840,9 +2017,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-01T00:01:42.000000Z\t12\t42
                             1970-01-01T00:01:43.000000Z\t13\t40
                             1970-01-01T00:01:44.000000Z\t14\t42
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1861,45 +2036,48 @@ public class UpdateTest extends AbstractCairoTest {
 
             // char
             update("update up set s = 'a' where s = 'bar'");
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             s\tts\tx
                             foo\t1970-01-01T00:00:00.000000Z\t1
                             foo\t1970-01-01T00:00:01.000000Z\t2
                             a\t1970-01-01T00:00:02.000000Z\t3
                             a\t1970-01-01T00:00:03.000000Z\t4
                             a\t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             // string
             update("update up set s = 'baz' where s = 'a'");
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             s\tts\tx
                             foo\t1970-01-01T00:00:00.000000Z\t1
                             foo\t1970-01-01T00:00:01.000000Z\t2
                             baz\t1970-01-01T00:00:02.000000Z\t3
                             baz\t1970-01-01T00:00:03.000000Z\t4
                             baz\t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             // UUID
             update("update up set s = cast('11111111-1111-1111-1111-111111111111' as uuid) where s = 'baz'");
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             s\tts\tx
                             foo\t1970-01-01T00:00:00.000000Z\t1
                             foo\t1970-01-01T00:00:01.000000Z\t2
                             11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:02.000000Z\t3
                             11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:03.000000Z\t4
                             11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1916,8 +2094,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET str1 = 'questdb' WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tstr1\tlng2
                             1970-01-01T00:00:00.000000Z\t15\t1
                             1970-01-01T06:00:00.000000Z\t15\t2
@@ -1929,9 +2110,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-02T18:00:00.000000Z\t\t8
                             1970-01-03T00:00:00.000000Z\tquestdb\t9
                             1970-01-03T06:00:00.000000Z\t\t10
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -1947,20 +2126,22 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             update("UPDATE up SET str1 = 'questdb' WHERE ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1");
-            assertSql(
-                    """
+            assertQuery("select count() from up where str1 = 'questdb'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             7201
-                            """,
-                    "select count() from up where str1 = 'questdb'"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select count() from up where ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             7201
-                            """,
-                    "select count() from up where ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1"
-            );
+                            """);
         });
     }
 
@@ -1986,8 +2167,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET str1 = 'questdb2', str2 = 'questdb2' WHERE ts = '1970-01-01T01:18:00.000000Z'");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tstr1\tlng2\tstr2
                             1970-01-01T00:00:00.000000Z\t15\t1\t
                             1970-01-01T00:03:00.000000Z\t15\t2\t
@@ -2009,9 +2193,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-01T01:12:00.000000Z\trdgb\t18\t
                             1970-01-01T01:18:00.000000Z\tquestdb2\t19\tquestdb2
                             1970-01-01T01:24:00.000000Z\t\t20\t15
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2036,8 +2218,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET str1 = 'questdb1', str2 = 'questdb2' WHERE lng2 in (6, 8, 10, 12, 14)");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tstr1\tlng2\tstr2
                             1970-01-01T00:00:00.000000Z\t15\t1\t
                             1970-01-01T06:00:00.000000Z\t15\t2\t
@@ -2054,9 +2239,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-08T10:40:00.000000Z\t\t13\t15
                             1970-01-08T16:40:00.000000Z\tquestdb1\t14\tquestdb2
                             1970-01-08T22:40:00.000000Z\trdgb\t15\t
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2073,8 +2256,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET str1 = concat('questdb', str1), lng2 = -1 WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tstr1\tlng2
                             1970-01-01T00:00:00.000000Z\t15\t1
                             1970-01-01T06:00:00.000000Z\t15\t2
@@ -2086,9 +2272,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-02T18:00:00.000000Z\t\t8
                             1970-01-03T00:00:00.000000Z\tquestdb15\t-1
                             1970-01-03T06:00:00.000000Z\t\t10
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2106,14 +2290,16 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET v = s");
 
             final String expected = "count\n879\n";
-            assertSql(
-                    expected,
-                    "select count() from up where s is not null"
-            );
-            assertSql(
-                    expected,
-                    "select count() from up where v is not null"
-            );
+            assertQuery("select count() from up where s is not null")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select count() from up where v is not null")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -2132,32 +2318,34 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up \n" +
                     "SET sym = NULLIF(CONCAT(to_str(ts2, 'yyyy-MM-dd'), 'n'), 'n')");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tsym\tts2
                             1970-01-01T00:00:00.000000Z\t\t
                             1970-01-01T00:00:01.000000Z\t\t
                             1970-01-01T00:00:02.000000Z\t\t
                             1970-01-01T00:00:03.000000Z\t\t
                             1970-01-01T00:00:04.000000Z\t\t
-                            """,
-                    "up"
-            );
+                            """);
 
             update("UPDATE up \n" +
                     "SET sym = COALESCE(CONCAT(to_str(ts2, 'yyyy-MM-dd'), 'n'), 'n')");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tsym\tts2
                             1970-01-01T00:00:00.000000Z\tn\t
                             1970-01-01T00:00:01.000000Z\tn\t
                             1970-01-01T00:00:02.000000Z\tn\t
                             1970-01-01T00:00:03.000000Z\tn\t
                             1970-01-01T00:00:04.000000Z\tn\t
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2175,14 +2363,16 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET v = s");
 
             final String expected = "count\n735\n";
-            assertSql(
-                    expected,
-                    "select count() from up where s is not null"
-            );
-            assertSql(
-                    expected,
-                    "select count() from up where v is not null"
-            );
+            assertQuery("select count() from up where s is not null")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select count() from up where v is not null")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -2194,28 +2384,33 @@ public class UpdateTest extends AbstractCairoTest {
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
-            assertSql("""
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                     symCol\tts\tx
                     WCP\t1970-01-01T00:00:00.000000Z\t1
                     WCP\t1970-01-01T00:00:01.000000Z\t2
                     WCP\t1970-01-01T00:00:02.000000Z\t3
                     VTJ\t1970-01-01T00:00:03.000000Z\t4
                     \t1970-01-01T00:00:04.000000Z\t5
-                    """, "up");
+                    """);
 
             Assert.assertEquals(2, update("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'"));
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol\tts\tx
                             WCP\t1970-01-01T00:00:00.000000Z\t1
                             WCP\t1970-01-01T00:00:01.000000Z\t2
                             WCP\t1970-01-01T00:00:02.000000Z\t3
                             VTJ\t1970-01-01T00:00:03.000000Z\t4
                             VTJ\t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2230,17 +2425,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("update UP set x = null where ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t1
                             1970-01-01T00:00:01.000000Z\t2
                             1970-01-01T00:00:02.000000Z\tnull
                             1970-01-01T00:00:03.000000Z\tnull
                             1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2255,17 +2451,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE \"віт ер\" SET X = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql(
-                    """
+            assertQuery("\"віт ер\"")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t1
                             1970-01-01T00:00:01.000000Z\t2
                             1970-01-01T00:00:02.000000Z\tnull
                             1970-01-01T00:00:03.000000Z\tnull
                             1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "\"віт ер\""
-            );
+                            """);
         });
     }
 
@@ -2283,17 +2480,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET x = 12");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t12
                             1970-01-01T00:00:01.000000Z\t12
                             1970-01-01T00:00:02.000000Z\t12
                             1970-01-01T00:00:03.000000Z\t12
                             1970-01-01T00:00:04.000000Z\t12
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2322,17 +2520,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET ts1 = '1970-02-01' WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tts1
                             1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z
                             1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z
                             1970-01-01T00:00:02.000000Z\t1970-02-01T00:00:00.000000Z
                             1970-01-01T00:00:03.000000Z\t1970-02-01T00:00:00.000000Z
                             1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2348,17 +2547,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET ts1 = sym WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tts1\tsym
                             1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:01.000Z
                             1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:02.000Z
                             1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:03.000Z
                             1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000Z
                             1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:05.000Z
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2374,17 +2574,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET ts1 = v WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tts1\tv
                             1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-02-01
                             1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z\t1970-02-01
                             1970-01-01T00:00:02.000000Z\t1970-02-01T00:00:00.000000Z\t1970-02-01
                             1970-01-01T00:00:03.000000Z\t1970-02-01T00:00:00.000000Z\t1970-02-01
                             1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z\t1970-02-01
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2400,14 +2601,15 @@ public class UpdateTest extends AbstractCairoTest {
             sqlExecutionContext.getBindVariableService().setInt(0, 100);
             update("UPDATE up SET x = $1 WHERE x > 1 and x < 4");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t1
                             1970-01-01T00:00:01.000000Z\t100
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2422,17 +2624,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET x = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t1
                             1970-01-01T00:00:01.000000Z\t2
                             1970-01-01T00:00:02.000000Z\tnull
                             1970-01-01T00:00:03.000000Z\tnull
                             1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2445,17 +2648,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol\tts\tx
                             WCP\t1970-01-01T00:00:00.000000Z\t1
                             WCP\t1970-01-01T00:00:01.000000Z\t2
                             WCP\t1970-01-01T00:00:02.000000Z\t3
                             VTJ\t1970-01-01T00:00:03.000000Z\t4
                             \t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             execute("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
@@ -2463,17 +2667,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5)), index(symCol2)" +
                     " timestamp(ts)");
 
-            assertSql(
-                    """
+            assertQuery("t2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol2\tts\tx
                             XUX\t1970-01-01T00:00:00.000000Z\t1
                             IBB\t1970-01-01T00:00:01.000000Z\t2
                             IBB\t1970-01-01T00:00:02.000000Z\t3
                             GZS\t1970-01-01T00:00:03.000000Z\t4
                             \t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "t2"
-            );
+                            """);
 
             assertQuery("UPDATE up SET symCol = 'VTJ' JOIN t2 ON up.x = t2.x")
                     .fails(29, "FROM, WHERE or EOF expected");
@@ -2495,45 +2700,48 @@ public class UpdateTest extends AbstractCairoTest {
 
             // char
             update("update up set v = 'a' where v = 'bar'");
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             v\tts\tx
                             foo\t1970-01-01T00:00:00.000000Z\t1
                             foo\t1970-01-01T00:00:01.000000Z\t2
                             a\t1970-01-01T00:00:02.000000Z\t3
                             a\t1970-01-01T00:00:03.000000Z\t4
                             a\t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             // string
             update("update up set v = 'baz' where v = 'a'");
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             v\tts\tx
                             foo\t1970-01-01T00:00:00.000000Z\t1
                             foo\t1970-01-01T00:00:01.000000Z\t2
                             baz\t1970-01-01T00:00:02.000000Z\t3
                             baz\t1970-01-01T00:00:03.000000Z\t4
                             baz\t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             // UUID
             update("update up set v = cast('11111111-1111-1111-1111-111111111111' as uuid) where v = 'baz'");
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             v\tts\tx
                             foo\t1970-01-01T00:00:00.000000Z\t1
                             foo\t1970-01-01T00:00:01.000000Z\t2
                             11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:02.000000Z\t3
                             11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:03.000000Z\t4
                             11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2550,8 +2758,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET v1 = 'questdb' WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv1\tlng2
                             1970-01-01T00:00:00.000000Z\t15\t1
                             1970-01-01T06:00:00.000000Z\t15\t2
@@ -2563,9 +2774,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-02T18:00:00.000000Z\t\t8
                             1970-01-03T00:00:00.000000Z\tquestdb\t9
                             1970-01-03T06:00:00.000000Z\t\t10
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2581,20 +2790,22 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             update("UPDATE up SET v1 = 'questdb' WHERE ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1");
-            assertSql(
-                    """
+            assertQuery("select count() from up where v1 = 'questdb'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             7201
-                            """,
-                    "select count() from up where v1 = 'questdb'"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select count() from up where ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             7201
-                            """,
-                    "select count() from up where ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1"
-            );
+                            """);
         });
     }
 
@@ -2620,8 +2831,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET v1 = 'questdb2', v2 = 'questdb2' WHERE ts = '1970-01-01T01:18:00.000000Z'");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv1\tlng2\tv2
                             1970-01-01T00:00:00.000000Z\t15\t1\t
                             1970-01-01T00:03:00.000000Z\t15\t2\t
@@ -2643,9 +2857,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-01T01:12:00.000000Z\trdgb\t18\t
                             1970-01-01T01:18:00.000000Z\tquestdb2\t19\tquestdb2
                             1970-01-01T01:24:00.000000Z\t\t20\t15
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2670,8 +2882,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET v1 = 'questdb1', v2 = 'questdb2' WHERE lng2 in (6, 8, 10, 12, 14)");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv1\tlng2\tv2
                             1970-01-01T00:00:00.000000Z\t15\t1\t
                             1970-01-01T06:00:00.000000Z\t15\t2\t
@@ -2688,9 +2903,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-08T10:40:00.000000Z\t\t13\t15
                             1970-01-08T16:40:00.000000Z\tquestdb1\t14\tquestdb2
                             1970-01-08T22:40:00.000000Z\trdgb\t15\t
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2707,8 +2920,11 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET v1 = concat('questdb', v1), lng2 = -1 WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv1\tlng2
                             1970-01-01T00:00:00.000000Z\t15\t1
                             1970-01-01T06:00:00.000000Z\t15\t2
@@ -2720,9 +2936,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-02T18:00:00.000000Z\t\t8
                             1970-01-03T00:00:00.000000Z\tquestdb15\t-1
                             1970-01-03T06:00:00.000000Z\t\t10
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2740,14 +2954,16 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET s = v");
 
             final String expected = "count\n883\n";
-            assertSql(
-                    expected,
-                    "select count() from up where s is not null"
-            );
-            assertSql(
-                    expected,
-                    "select count() from up where v is not null"
-            );
+            assertQuery("select count() from up where s is not null")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("select count() from up where v is not null")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -2769,17 +2985,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " FROM jn " +
                     " WHERE up.s = jn.s");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\ts\tx
                             1970-01-01T00:00:00.000000Z\ta\t101
                             1970-01-01T00:00:01.000000Z\tc\t2
                             1970-01-01T00:00:02.000000Z\tb\t303
                             1970-01-01T00:00:03.000000Z\t\t505
                             1970-01-01T00:00:04.000000Z\tb\t303
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2795,14 +3012,15 @@ public class UpdateTest extends AbstractCairoTest {
             sqlExecutionContext.getBindVariableService().setInt(0, 2);
             update("UPDATE up SET x = 100 WHERE x < $1");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t100
                             1970-01-01T00:00:01.000000Z\t2
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2818,17 +3036,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET y = 10L * x WHERE x > 1 and x < 4");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ty
                             1970-01-01T00:00:00.000000Z\t1\t1
                             1970-01-01T00:00:01.000000Z\t2\t20
                             1970-01-01T00:00:02.000000Z\t3\t30
                             1970-01-01T00:00:03.000000Z\t4\t4
                             1970-01-01T00:00:04.000000Z\t5\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2844,17 +3063,18 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET y = 10 * x WHERE x > 1 and x < 4");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ty
                             1970-01-01T00:00:00.000000Z\t1\t1
                             1970-01-01T00:00:01.000000Z\t2\t20
                             1970-01-01T00:00:02.000000Z\t3\t30
                             1970-01-01T00:00:03.000000Z\t4\t4
                             1970-01-01T00:00:04.000000Z\t5\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2880,17 +3100,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " FROM down " +
                     " WHERE up.x < 4;");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t100
                             1970-01-01T00:00:01.000000Z\t100
                             1970-01-01T00:00:02.000000Z\t100
                             1970-01-01T00:00:03.000000Z\t4
                             1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2916,17 +3137,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " FROM down " +
                     " WHERE up.ts = down.ts and x > 1 and x < 4");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t1
                             1970-01-01T00:00:01.000000Z\t202
                             1970-01-01T00:00:02.000000Z\t303
                             1970-01-01T00:00:03.000000Z\t4
                             1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2952,17 +3174,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " FROM down " +
                     " WHERE up.ts = down.ts and up.x < down.y and up.x < 4 and down.y > 100;");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t1
                             1970-01-01T00:00:01.000000Z\t200
                             1970-01-01T00:00:02.000000Z\t300
                             1970-01-01T00:00:03.000000Z\t4
                             1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -2988,17 +3211,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " FROM down " +
                     " WHERE up.ts = down.ts and x < 4");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t100
                             1970-01-01T00:00:01.000000Z\t200
                             1970-01-01T00:00:02.000000Z\t300
                             1970-01-01T00:00:03.000000Z\t4
                             1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -3024,17 +3248,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " FROM down " +
                     " WHERE up.x < down.y;");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx
                             1970-01-01T00:00:00.000000Z\t151
                             1970-01-01T00:00:01.000000Z\t251
                             1970-01-01T00:00:02.000000Z\t300
                             1970-01-01T00:00:03.000000Z\t400
                             1970-01-01T00:00:04.000000Z\t500
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -3047,14 +3272,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)" + (walEnabled ? "partition by DAY WAL" : ""));
 
-            assertSql("""
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                     symCol\tts\tx
                     WCP\t1970-01-01T00:00:00.000000Z\t1
                     WCP\t1970-01-01T00:00:01.000000Z\t2
                     WCP\t1970-01-01T00:00:02.000000Z\t3
                     VTJ\t1970-01-01T00:00:03.000000Z\t4
                     \t1970-01-01T00:00:04.000000Z\t5
-                    """, "up");
+                    """);
 
             execute("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
@@ -3062,17 +3291,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5)), index(symCol2)" +
                     " timestamp(ts)");
 
-            assertSql(
-                    """
+            assertQuery("t2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol2\tts\tx
                             XUX\t1970-01-01T00:00:00.000000Z\t1
                             IBB\t1970-01-01T00:00:01.000000Z\t2
                             IBB\t1970-01-01T00:00:02.000000Z\t3
                             GZS\t1970-01-01T00:00:03.000000Z\t4
                             \t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "t2"
-            );
+                            """);
 
             assertQuery("UPDATE up SET symCol = 'VTJ' FROM t2 CROSS JOIN up ON up.x = t2.x")
                     .fails(37, "JOIN is not supported on UPDATE statement");
@@ -3088,17 +3318,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol\tts\tx
                             WCP\t1970-01-01T00:00:00.000000Z\t1
                             WCP\t1970-01-01T00:00:01.000000Z\t2
                             WCP\t1970-01-01T00:00:02.000000Z\t3
                             VTJ\t1970-01-01T00:00:03.000000Z\t4
                             \t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             assertQuery("UPDATE up SET symCol = 'ABC' LATEST ON ts PARTITION BY symCol")
                     .fails(29, "FROM, WHERE or EOF expected");
@@ -3114,17 +3345,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol\tts\tx
                             WCP\t1970-01-01T00:00:00.000000Z\t1
                             WCP\t1970-01-01T00:00:01.000000Z\t2
                             WCP\t1970-01-01T00:00:02.000000Z\t3
                             VTJ\t1970-01-01T00:00:03.000000Z\t4
                             \t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             execute("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
@@ -3132,17 +3364,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5)), index(symCol2)" +
                     " timestamp(ts)");
 
-            assertSql(
-                    """
+            assertQuery("t2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol2\tts\tx
                             XUX\t1970-01-01T00:00:00.000000Z\t1
                             IBB\t1970-01-01T00:00:01.000000Z\t2
                             IBB\t1970-01-01T00:00:02.000000Z\t3
                             GZS\t1970-01-01T00:00:03.000000Z\t4
                             \t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "t2"
-            );
+                            """);
 
             assertQuery("UPDATE up SET symCol = (select symCol2 from t2 where x = 4)")
                     .fails(24, "query is not allowed here");
@@ -3161,17 +3394,18 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol\tts\tx
                             WCP\t1970-01-01T00:00:00.000000Z\t1
                             WCP\t1970-01-01T00:00:01.000000Z\t2
                             WCP\t1970-01-01T00:00:02.000000Z\t3
                             VTJ\t1970-01-01T00:00:03.000000Z\t4
                             \t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             execute("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
@@ -3179,31 +3413,33 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5)), index(symCol2)" +
                     " timestamp(ts)");
 
-            assertSql(
-                    """
+            assertQuery("t2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol2\tts\tx
                             XUX\t1970-01-01T00:00:00.000000Z\t1
                             IBB\t1970-01-01T00:00:01.000000Z\t2
                             IBB\t1970-01-01T00:00:02.000000Z\t3
                             GZS\t1970-01-01T00:00:03.000000Z\t4
                             \t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "t2"
-            );
+                            """);
 
             Assert.assertEquals(1, update("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2"));
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol\tts\tx
                             WCP\t1970-01-01T00:00:00.000000Z\t1
                             WCP\t1970-01-01T00:00:01.000000Z\t2
                             WCP\t1970-01-01T00:00:02.000000Z\t3
                             VTJ\t1970-01-01T00:00:03.000000Z\t4
                             VTJ\t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -3465,11 +3701,19 @@ public class UpdateTest extends AbstractCairoTest {
                     1970-01-01T00:00:03.000000Z\t92.80.211.65\t92.80.211.65
                     1970-01-01T00:00:04.000000Z\t212.159.205.29\t212.159.205.29
                     """;
-            assertSql(data, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(data);
 
             update("UPDATE up set v = 'abc'");
             update("UPDATE up set v = ip");
-            assertSql(data, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(data);
         });
     }
 
@@ -3504,7 +3748,7 @@ public class UpdateTest extends AbstractCairoTest {
         );
     }
 
-    private void createTablesToJoin(String createTableSql) throws SqlException {
+    private void createTablesToJoin(String createTableSql) throws Exception{
         execute(createTableSql);
 
         execute("create table down1 (s symbol index, y int)" + (walEnabled ? " WAL" : ""));
@@ -3521,8 +3765,11 @@ public class UpdateTest extends AbstractCairoTest {
         execute("insert into down2 values (null, 500)");
 
         // Check what will be in JOIN between down1 and down2
-        assertSql(
-                """
+        assertQuery("select down1.y + down2.y AS sm, down1.s FROM down1 JOIN down2 ON down1.s = down2.s")
+                .noLeakCheck()
+                .noRandomAccess()
+                .noRandomAccess()
+                .returns("""
                         sm\ts
                         101\ta
                         102\ta
@@ -3530,9 +3777,7 @@ public class UpdateTest extends AbstractCairoTest {
                         304\tb
                         505\t
                         506\t
-                        """,
-                "select down1.y + down2.y AS sm, down1.s FROM down1 JOIN down2 ON down1.s = down2.s"
-        );
+                        """);
     }
 
     private void testInsertAfterFailed(boolean closeWriter) throws Exception {
@@ -3566,23 +3811,27 @@ public class UpdateTest extends AbstractCairoTest {
                 engine.releaseInactive();
             }
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv\tx\tz
                             1970-01-01T00:00:00.000000Z\t1\t1\t1
                             1970-01-02T00:00:00.000000Z\t2\t2\t2
                             1970-01-03T00:00:00.000000Z\t3\t3\t3
                             1970-01-04T00:00:00.000000Z\t4\t4\t4
                             1970-01-05T00:00:00.000000Z\t5\t5\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             execute("INSERT INTO up VALUES('1970-01-01T00:00:05.000000Z', 10.0, 10.0, 10.0)");
             execute("INSERT INTO up VALUES('1970-01-01T00:00:06.000000Z', 100.0, 100.0, 100.0)");
 
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tv\tx\tz
                             1970-01-01T00:00:00.000000Z\t1\t1\t1
                             1970-01-01T00:00:05.000000Z\t10\t10\t10
@@ -3591,9 +3840,7 @@ public class UpdateTest extends AbstractCairoTest {
                             1970-01-03T00:00:00.000000Z\t3\t3\t3
                             1970-01-04T00:00:00.000000Z\t4\t4\t4
                             1970-01-05T00:00:00.000000Z\t5\t5\t5
-                            """,
-                    "up"
-            );
+                            """);
         });
     }
 
@@ -3606,17 +3853,18 @@ public class UpdateTest extends AbstractCairoTest {
                     (walEnabled ? " partition by DAY WAL" : ""));
 
             update("update up set symCol = 'VTJ' where symCol = 'WCP'");
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol\tts\tx
                             VTJ\t1970-01-01T00:00:00.000000Z\t1
                             VTJ\t1970-01-01T00:00:01.000000Z\t2
                             VTJ\t1970-01-01T00:00:02.000000Z\t3
                             VTJ\t1970-01-01T00:00:03.000000Z\t4
                             \t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             try (
                     RecordCursorFactory factory = select("up where symCol = 'VTJ'");
@@ -3636,7 +3884,10 @@ public class UpdateTest extends AbstractCairoTest {
                     sink
             );
 
-            assertSql("symCol\tts\tx\n", "up where symCol = 'WCP'");
+            assertQuery("up where symCol = 'WCP'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("symCol\tts\tx\n");
         });
     }
 
@@ -3649,17 +3900,19 @@ public class UpdateTest extends AbstractCairoTest {
                     (walEnabled ? " partition by DAY WAL" : ""));
 
             update("update up set symCol = 'ABC' where symCol = 'WCP'");
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol\tts\tx
                             ABC\t1970-01-01T00:00:00.000000Z\t1
                             ABC\t1970-01-01T00:00:01.000000Z\t2
                             ABC\t1970-01-01T00:00:02.000000Z\t3
                             VTJ\t1970-01-01T00:00:03.000000Z\t4
                             \t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             assertQuery("select distinct symCol from up order by symCol")
                     .expectSize()
@@ -3670,15 +3923,16 @@ public class UpdateTest extends AbstractCairoTest {
                             VTJ
                             """);
 
-            assertSql(
-                    """
+            assertQuery("select symCol, count() from up order by symCol")
+                    .noLeakCheck()
+                    .expectSize()
+                    .expectSize()
+                    .returns("""
                             symCol\tcount
                             \t1
                             ABC\t3
                             VTJ\t1
-                            """,
-                    "select symCol, count() from up order by symCol"
-            );
+                            """);
         });
     }
 
@@ -3691,30 +3945,31 @@ public class UpdateTest extends AbstractCairoTest {
                     (walEnabled ? " partition by DAY WAL" : ""));
 
             update("update up set symCol = 'ABC' where symCol is null");
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol\tts\tx
                             WCP\t1970-01-01T00:00:00.000000Z\t1
                             WCP\t1970-01-01T00:00:01.000000Z\t2
                             WCP\t1970-01-01T00:00:02.000000Z\t3
                             VTJ\t1970-01-01T00:00:03.000000Z\t4
                             ABC\t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("up where symCol = 'ABC'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             symCol\tts\tx
                             ABC\t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up where symCol = 'ABC'"
-            );
+                            """);
 
-            assertSql(
-                    "symCol\tts\tx\n",
-                    "up where symCol is null"
-            );
+            assertQuery("up where symCol is null")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("symCol\tts\tx\n");
         });
     }
 
@@ -3727,17 +3982,18 @@ public class UpdateTest extends AbstractCairoTest {
                     (walEnabled ? " partition by DAY WAL" : ""));
 
             update("update up set symCol = 'ABC' where symCol = 'WCP'");
-            assertSql(
-                    """
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             symCol\tts\tx
                             ABC\t1970-01-01T00:00:00.000000Z\t1
                             ABC\t1970-01-01T00:00:01.000000Z\t2
                             ABC\t1970-01-01T00:00:02.000000Z\t3
                             VTJ\t1970-01-01T00:00:03.000000Z\t4
                             \t1970-01-01T00:00:04.000000Z\t5
-                            """,
-                    "up"
-            );
+                            """);
 
             try (
                     RecordCursorFactory factory = select("up where symCol = 'ABC'");
@@ -3756,7 +4012,10 @@ public class UpdateTest extends AbstractCairoTest {
                     sink
             );
 
-            assertSql("symCol\tts\tx\n", "up where symCol = 'WCP'");
+            assertQuery("up where symCol = 'WCP'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("symCol\tts\tx\n");
         });
     }
 
@@ -3820,7 +4079,11 @@ public class UpdateTest extends AbstractCairoTest {
                 th.join();
             }
 
-            assertSql(expectedData, "up");
+            assertQuery("up")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expectedData);
         });
     }
 
@@ -3830,6 +4093,13 @@ public class UpdateTest extends AbstractCairoTest {
             drainWalQueue();
         }
         super.assertSql(expected, sql);
+    }
+
+    @Override
+    protected void prepareForQueryAssertion() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
     }
 
     @Override

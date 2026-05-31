@@ -58,13 +58,13 @@ public class InsertCastTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
             }
-            assertSql(
-                    """
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             9
-                            """,
-                    "y"
-            );
+                            """);
         });
     }
 
@@ -630,14 +630,14 @@ public class InsertCastTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
             }
-            assertSql(
-                    """
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             1.7E25
                             null
-                            """,
-                    "y"
-            );
+                            """);
         });
     }
 
@@ -871,14 +871,14 @@ public class InsertCastTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
             }
-            assertSql(
-                    """
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             2
                             8
-                            """,
-                    "y"
-            );
+                            """);
         });
     }
 
@@ -917,17 +917,17 @@ public class InsertCastTest extends AbstractCairoTest {
             execute("create table x as (select cast(rnd_byte()%10 as string) a from long_sequence(5));");
             // execute insert statement for each value of reference table
             execute("insert into y select a,a from x");
-            assertSql(
-                    """
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tb
                             6\t6
                             2\t2
                             7\t7
                             7\t7
                             9\t9
-                            """,
-                    "y"
-            );
+                            """);
         });
     }
 
@@ -1092,15 +1092,15 @@ public class InsertCastTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
             execute("insert into y values (cast('K' as string))");
-            assertSql(
-                    """
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             A
                             7
                             K
-                            """,
-                    "y"
-            );
+                            """);
         });
     }
 
@@ -1137,17 +1137,17 @@ public class InsertCastTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
             }
-            assertSql(
-                    """
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             2012-04-11T10:45:11.000Z
                             2012-04-11T10:45:11.344Z
                             2012-04-11T00:00:00.000Z
                             2013-05-12T00:00:00.000Z
                             
-                            """,
-                    "y"
-            );
+                            """);
         });
     }
 
@@ -1179,15 +1179,15 @@ public class InsertCastTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
             execute("insert into y values ('2222-01-01T00:00:00.124Z');");
-            assertSql(
-                    """
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             2022-01-01T00:00:00.045Z
                             2022-01-01T00:00:00.076Z
                             2222-01-01T00:00:00.124Z
-                            """,
-                    "y"
-            );
+                            """);
         });
     }
 
@@ -1361,15 +1361,15 @@ public class InsertCastTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
             }
-            assertSql(
-                    """
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             2012-04-11T10:45:11.000000Z
                             2012-04-11T10:45:11.344999Z
                             
-                            """,
-                    "y"
-            );
+                            """);
         });
     }
 
@@ -1401,15 +1401,15 @@ public class InsertCastTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
             execute("insert into y values ('2222-01-01T00:00:00.000124Z');");
-            assertSql(
-                    """
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             2022-01-01T00:00:00.000045Z
                             2222-01-01T00:00:00.000076Z
                             2222-01-01T00:00:00.000124Z
-                            """,
-                    "y"
-            );
+                            """);
         });
     }
 
@@ -1428,15 +1428,15 @@ public class InsertCastTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
             execute("insert into y values ('2222-01-01T00:00:00.000124987Z');");
-            assertSql(
-                    """
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             2022-01-01T00:00:00.000045678Z
                             2222-01-01T00:00:00.000076543Z
                             2222-01-01T00:00:00.000124987Z
-                            """,
-                    "y"
-            );
+                            """);
         });
     }
 
@@ -1468,15 +1468,14 @@ public class InsertCastTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
             }
-            assertSql(
-                    """
+            assertQuery("y")
+                    .noLeakCheck()
+                    .returns("""
                             a
                             2012-04-11T10:45:11.000000000Z
                             2012-04-11T10:45:11.344999123Z
                             
-                            """,
-                    "y"
-            );
+                            """);
         });
     }
 
@@ -1606,14 +1605,14 @@ public class InsertCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab(d string, ts timestamp) timestamp(ts) partition by day");
             execute("insert into tab values ('string', '2000'::string), ('varchar', '2000'::varchar);");
-            assertSql(
-                    """
+            assertQuery("select * from tab order by d")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             d\tts
                             string\t2000-01-01T00:00:00.000000Z
                             varchar\t2000-01-01T00:00:00.000000Z
-                            """,
-                    "select * from tab order by d"
-            );
+                            """);
         });
     }
 
@@ -1622,14 +1621,14 @@ public class InsertCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab(d string, ts timestamp_ns) timestamp(ts) partition by day");
             execute("insert into tab values ('string', '2000'::string), ('varchar', '2000'::varchar);");
-            assertSql(
-                    """
+            assertQuery("select * from tab order by d")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             d\tts
                             string\t2000-01-01T00:00:00.000000000Z
                             varchar\t2000-01-01T00:00:00.000000000Z
-                            """,
-                    "select * from tab order by d"
-            );
+                            """);
         });
     }
 
@@ -1638,13 +1637,13 @@ public class InsertCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x(ts timestamp)");
             execute("insert into x values (cast(null as date))");
-            assertSql(
-                    """
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts
                             
-                            """,
-                    "x"
-            );
+                            """);
         });
     }
 
@@ -1653,13 +1652,13 @@ public class InsertCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x(ts timestamp_ns)");
             execute("insert into x values (cast(null as date))");
-            assertSql(
-                    """
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts
                             
-                            """,
-                    "x"
-            );
+                            """);
         });
     }
 
@@ -1761,7 +1760,10 @@ public class InsertCastTest extends AbstractCairoTest {
             TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
         }
 
-        assertSql(expected, "y");
+        assertQuery("y")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertCharBind(String toType, String expected) throws Exception {
@@ -1786,7 +1788,10 @@ public class InsertCastTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
         }
-        assertSql(expected, "y");
+        assertQuery("y")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertCharFunc(String toType, String expected) throws Exception {
@@ -1804,7 +1809,10 @@ public class InsertCastTest extends AbstractCairoTest {
             insert.execute(sqlExecutionContext);
             insert.execute(sqlExecutionContext);
         }
-        assertSql(expected, "y");
+        assertQuery("y")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertCharLit(String toType, String expected) throws Exception {
@@ -1821,7 +1829,10 @@ public class InsertCastTest extends AbstractCairoTest {
             TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
         }
         execute("insert into y values ('1')");
-        assertSql(expected, "y");
+        assertQuery("y")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertCharTab(String toType, String expected) throws Exception {
@@ -1830,7 +1841,10 @@ public class InsertCastTest extends AbstractCairoTest {
         execute("create table x as (select cast(rnd_int(0,10,0)+47 as char) a from long_sequence(5));");
         // execute insert statement for each value of reference table
         execute("insert into y select a from x");
-        assertSql(expected, "y");
+        assertQuery("y")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertIntBind(String type, String expected) throws Exception {
@@ -1854,7 +1868,10 @@ public class InsertCastTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
         }
-        assertSql(expected, "y");
+        assertQuery("y")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertLongBind(String type, String expected) throws Exception {
@@ -1878,7 +1895,10 @@ public class InsertCastTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
         }
-        assertSql(expected, "y");
+        assertQuery("y")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertShortBind(String type) throws Exception {
@@ -1902,13 +1922,14 @@ public class InsertCastTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
         }
-        assertSql(
-                """
+        assertQuery("y")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         a
                         12
                         31
-                        """, "y"
-        );
+                        """);
     }
 
     private void assertStrBind(String toType, String expected) throws Exception {
@@ -1936,7 +1957,10 @@ public class InsertCastTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
         }
-        assertSql(expected, "y");
+        assertQuery("y")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertStrLit(String toType, String expected) throws Exception {
@@ -1952,7 +1976,10 @@ public class InsertCastTest extends AbstractCairoTest {
             TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
         }
         execute("insert into y values ('124')");
-        assertSql(expected, "y");
+        assertQuery("y")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertStrTab(String toType, String expected) throws Exception {
@@ -1961,7 +1988,10 @@ public class InsertCastTest extends AbstractCairoTest {
         execute("create table x as (select cast(rnd_byte() as string) a from long_sequence(5));");
         // execute insert statement for each value of reference table
         execute("insert into y select a,a from x");
-        assertSql(expected, "y");
+        assertQuery("y")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertTimestampBind(String type, String expected) throws Exception {
@@ -1985,7 +2015,10 @@ public class InsertCastTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
         }
-        assertSql(expected, "y");
+        assertQuery("y")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertTimestampBindNoOverflow(String type, String expected) throws Exception {
@@ -2005,6 +2038,9 @@ public class InsertCastTest extends AbstractCairoTest {
             bindVariableService.setTimestamp(0, 88990229990007L);
             insert.execute(sqlExecutionContext);
         }
-        assertSql(expected, "y");
+        assertQuery("y")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 }

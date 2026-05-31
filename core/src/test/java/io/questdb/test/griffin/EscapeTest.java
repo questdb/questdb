@@ -50,7 +50,10 @@ public class EscapeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t ( s1 string, s2 string, sym symbol );");
             execute("insert into t values ( '1st ''', '2nd ''''', '3rd ''''''' );");
-            assertSql("s1\ts2\tsym\n1st '\t2nd ''\t3rd '''\n", "select * from t");
+            assertQuery("select * from t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("s1\ts2\tsym\n1st '\t2nd ''\t3rd '''\n");
         });
     }
 

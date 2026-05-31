@@ -38,11 +38,9 @@ public class UuidTest extends AbstractCairoTest {
     public void testBadConstantUuidWithExplicitCast() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
-            assertExceptionNoLeakCheck(
-                    "insert into x values (cast ('a0eebc11-110b-11f8-116d' as uuid))",
-                    28,
-                    "invalid UUID constant"
-            );
+            assertQuery("insert into x values (cast ('a0eebc11-110b-11f8-116d' as uuid))")
+                    .noLeakCheck()
+                    .fails(28, "invalid UUID constant");
         });
     }
 
@@ -50,11 +48,9 @@ public class UuidTest extends AbstractCairoTest {
     public void testBadUuidWithImplicitCast() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
-            assertExceptionNoLeakCheck(
-                    "insert into x values ('a0eebc11-110b-11f8-116d')",
-                    0,
-                    "inconvertible value: `a0eebc11-110b-11f8-116d` [STRING -> UUID]"
-            );
+            assertQuery("insert into x values ('a0eebc11-110b-11f8-116d')")
+                    .noLeakCheck()
+                    .fails(0, "inconvertible value: `a0eebc11-110b-11f8-116d` [STRING -> UUID]");
         });
     }
 
@@ -525,7 +521,8 @@ public class UuidTest extends AbstractCairoTest {
             execute("create table x (u UUID)");
             execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
 
-            assertException("select * from x where u in (42)", 28, "cannot compare UUID with type INT");
+            assertQuery("select * from x where u in (42)")
+                    .fails(28, "cannot compare UUID with type INT");
         });
     }
 
@@ -608,7 +605,9 @@ public class UuidTest extends AbstractCairoTest {
     public void testInsertFromFunctionReturningLong() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
-            assertExceptionNoLeakCheck("insert into x values (rnd_long())", 22, "inconvertible types");
+            assertQuery("insert into x values (rnd_long())")
+                    .noLeakCheck()
+                    .fails(22, "inconvertible types");
         });
     }
 
@@ -665,7 +664,9 @@ public class UuidTest extends AbstractCairoTest {
             execute("create table x (u uuid)");
             execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
             execute("create table y (i int)");
-            assertExceptionNoLeakCheck("insert into y select u from x", 21, "inconvertible types");
+            assertQuery("insert into y select u from x")
+                    .noLeakCheck()
+                    .fails(21, "inconvertible types");
         });
     }
 
@@ -758,7 +759,9 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (l long)");
             execute("insert into x values (42)");
-            assertExceptionNoLeakCheck("select cast(l as uuid) from x", 7, "there is no matching function `cast` with the argument types: (LONG, UUID)");
+            assertQuery("select cast(l as uuid) from x")
+                    .noLeakCheck()
+                    .fails(7, "there is no matching function `cast` with the argument types: (LONG, UUID)");
         });
     }
 

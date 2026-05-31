@@ -394,7 +394,6 @@ public class ViewQueryTest extends AbstractViewTest {
             assertQuery(VIEW1)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
                     .sizeMayVary()
                     .returns("""
                             ts\tsymbol\tprice\tqty
@@ -595,7 +594,6 @@ public class ViewQueryTest extends AbstractViewTest {
             assertQuery(VIEW1)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
                     .sizeMayVary()
                     .returns("""
                             ts\tsensor\tavg_val
@@ -1002,7 +1000,6 @@ public class ViewQueryTest extends AbstractViewTest {
             assertQuery(VIEW1)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
                     .sizeMayVary()
                     .returns("""
                             ts\tcategory\tvalue

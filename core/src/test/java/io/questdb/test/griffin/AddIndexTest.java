@@ -49,7 +49,10 @@ public class AddIndexTest extends AbstractCairoTest {
             execute("alter table trades add column sym2 symbol");
             execute("alter table trades alter column sym2 add index");
 
-            assertSql("sym\tprice\tts\tsym2\n", "trades where sym2 = 'ABB'");
+            assertQuery("trades where sym2 = 'ABB'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("sym\tprice\tts\tsym2\n");
         });
     }
 
@@ -81,10 +84,14 @@ public class AddIndexTest extends AbstractCairoTest {
             execute("alter table trades alter column sym2 add index");
             // While row count is derived from append page size, the expected row count value is hardcoded
             // as a string. Test will fail should append page size change.
-            assertSql("""
+            assertQuery("select count(*) from trades where sym2 = 'ABB'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                     count
                     175654
-                    """, "select count(*) from trades where sym2 = 'ABB'");
+                    """);
         });
     }
 

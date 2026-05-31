@@ -49,8 +49,12 @@ public class SqlParserArrayBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE test (id int)");
 
             // Valid array constructors (spaces allowed)
-            assertSql("ARRAY\n", "SELECT ARRAY[1, 2, 3] FROM test");
-            assertSql("ARRAY\n", "SELECT ARRAY[ 1 , 2 , 3 ] FROM test");
+            assertQuery("SELECT ARRAY[1, 2, 3] FROM test")
+                    .noLeakCheck()
+                    .returns("ARRAY\n");
+            assertQuery("SELECT ARRAY[ 1 , 2 , 3 ] FROM test")
+                    .noLeakCheck()
+                    .returns("ARRAY\n");
 
             // Mixed valid constructor with invalid cast
             assertQuery("SELECT CAST(ARRAY[1, 2, 3] AS int []) FROM test")

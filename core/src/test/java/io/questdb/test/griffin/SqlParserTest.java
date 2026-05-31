@@ -970,65 +970,45 @@ public class SqlParserTest extends AbstractSqlParserTest {
             engine.execute("create view v1 as select 42");
             drainWalAndViewQueues();
 
-            assertExceptionNoLeakCheck(
-                    "alter",
-                    5,
-                    "'table' or 'materialized' or 'view' expected"
-            );
+            assertQuery("alter")
+                    .noLeakCheck()
+                    .fails(5, "'table' or 'materialized' or 'view' expected");
 
-            assertExceptionNoLeakCheck(
-                    "alter view",
-                    10,
-                    "view name expected"
-            );
+            assertQuery("alter view")
+                    .noLeakCheck()
+                    .fails(10, "view name expected");
 
-            assertExceptionNoLeakCheck(
-                    "alter view v1",
-                    13,
-                    "'as' expected"
-            );
+            assertQuery("alter view v1")
+                    .noLeakCheck()
+                    .fails(13, "'as' expected");
 
-            assertExceptionNoLeakCheck(
-                    "alter view v1 as",
-                    16,
-                    "'(' or 'with' or 'select' expected"
-            );
+            assertQuery("alter view v1 as")
+                    .noLeakCheck()
+                    .fails(16, "'(' or 'with' or 'select' expected");
 
-            assertExceptionNoLeakCheck(
-                    "alter view v1 as (",
-                    18,
-                    "'with' or 'select' expected"
-            );
+            assertQuery("alter view v1 as (")
+                    .noLeakCheck()
+                    .fails(18, "'with' or 'select' expected");
 
-            assertExceptionNoLeakCheck(
-                    "alter view v1 as select",
-                    23,
-                    "[distinct] column expected"
-            );
+            assertQuery("alter view v1 as select")
+                    .noLeakCheck()
+                    .fails(23, "[distinct] column expected");
 
-            assertExceptionNoLeakCheck(
-                    "alter view v1 as (select",
-                    24,
-                    "[distinct] column expected"
-            );
+            assertQuery("alter view v1 as (select")
+                    .noLeakCheck()
+                    .fails(24, "[distinct] column expected");
 
-            assertExceptionNoLeakCheck(
-                    "alter view v1 as (select 42",
-                    27,
-                    "')' expected"
-            );
+            assertQuery("alter view v1 as (select 42")
+                    .noLeakCheck()
+                    .fails(27, "')' expected");
 
-            assertExceptionNoLeakCheck(
-                    "alter view v1 as bla",
-                    17,
-                    "table does not exist [table=bla]"
-            );
+            assertQuery("alter view v1 as bla")
+                    .noLeakCheck()
+                    .fails(17, "table does not exist [table=bla]");
 
-            assertExceptionNoLeakCheck(
-                    "alter view v1 as select * from bla",
-                    31,
-                    "table does not exist [table=bla]"
-            );
+            assertQuery("alter view v1 as select * from bla")
+                    .noLeakCheck()
+                    .fails(31, "table does not exist [table=bla]");
         });
     }
 
@@ -1205,29 +1185,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
         execute("create table trades (timestamp timestamp, tag symbol) timestamp(timestamp)");
         execute("create table quotes (timestamp timestamp, tag symbol) timestamp(timestamp)");
-        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE 10",
-                61,
-                "expected interval qualifier");
+        assertQuery("select * from trades t ASOF JOIN quotes q on tag TOLERANCE 10")
+                .fails(61, "expected interval qualifier");
 
-        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE 10X",
-                59,
-                "unsupported TOLERANCE unit [unit=X]");
+        assertQuery("select * from trades t ASOF JOIN quotes q on tag TOLERANCE 10X")
+                .fails(59, "unsupported TOLERANCE unit [unit=X]");
 
-        assertException("select * from trades t JOIN quotes q on tag TOLERANCE 10s",
-                44,
-                "TOLERANCE is only supported for ASOF and LT joins");
+        assertQuery("select * from trades t JOIN quotes q on tag TOLERANCE 10s")
+                .fails(44, "TOLERANCE is only supported for ASOF and LT joins");
 
-        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE",
-                49,
-                "ASOF JOIN TOLERANCE period expected");
+        assertQuery("select * from trades t ASOF JOIN quotes q on tag TOLERANCE")
+                .fails(49, "ASOF JOIN TOLERANCE period expected");
 
-        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE -5m",
-                60,
-                "ASOF JOIN TOLERANCE must be positive");
+        assertQuery("select * from trades t ASOF JOIN quotes q on tag TOLERANCE -5m")
+                .fails(60, "ASOF JOIN TOLERANCE must be positive");
 
-        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE $1",
-                59,
-                "ASOF JOIN TOLERANCE must be a constant");
+        assertQuery("select * from trades t ASOF JOIN quotes q on tag TOLERANCE $1")
+                .fails(59, "ASOF JOIN TOLERANCE must be a constant");
     }
 
     @Test
@@ -1725,11 +1699,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
         );
 
-        assertException(
-                "select sum(t.price + q.price) from trades t WINDOW JOIN quotes q on tag range between 2 preceding and current row inner join quotes q1 on tag",
-                114,
-                "no other join types allowed after window join"
-        );
+        assertQuery("select sum(t.price + q.price) from trades t WINDOW JOIN quotes q on tag range between 2 preceding and current row inner join quotes q1 on tag")
+                .fails(114, "no other join types allowed after window join");
     }
 
     @Test
@@ -3071,11 +3042,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateTableIfNotExistsTableNameIsUnquotedKeyword() throws Exception {
-        assertException(
-                "create table if not exists from (a int)",
-                27,
-                "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
-        );
+        assertQuery("create table if not exists from (a int)")
+                .fails(27, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
     }
 
     @Test
@@ -4481,11 +4449,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateTableTableNameIsUnquotedKeyword() throws Exception {
-        assertException(
-                "create table from (a int)",
-                13,
-                "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\""
-        );
+        assertQuery("create table from (a int)")
+                .fails(13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
     }
 
     @Test
@@ -4912,11 +4877,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCursorInSelectConfusingAliases() throws Exception {
-        assertException(
-                "select (pg_catalog.pg_class()).n, (pg_catalog.pg_description()).z, pg_catalog.pg_class() x, pg_catalog.pg_description() x from long_sequence(2)",
-                120,
-                "Duplicate column [name=x]"
-        );
+        assertQuery("select (pg_catalog.pg_class()).n, (pg_catalog.pg_description()).z, pg_catalog.pg_class() x, pg_catalog.pg_description() x from long_sequence(2)")
+                .fails(120, "Duplicate column [name=x]");
     }
 
     @Test
@@ -5328,11 +5290,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testDuplicateColumnErrorPos() throws Exception {
-        assertException(
-                "create table test(col1 int, col2 long, col3 double, col4 string, ts timestamp, col4 symbol) timestamp(ts) partition by DAY;",
-                79,
-                "Duplicate column [name=col4]"
-        );
+        assertQuery("create table test(col1 int, col2 long, col3 double, col4 string, ts timestamp, col4 symbol) timestamp(ts) partition by DAY;")
+                .fails(79, "Duplicate column [name=col4]");
     }
 
     @Test
@@ -5416,16 +5375,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testEmptyWhere() throws Exception {
-        assertException(
-                "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where",
-                """
+        assertQuery("(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where")
+                .ddl("""
                         create table tab (
                             tag string,
                             seq long
-                        )""",
-                71,
-                "empty where clause"
-        );
+                        )""")
+                .fails(71, "empty where clause");
     }
 
     @Test
@@ -5838,58 +5794,46 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testFailureOrderByGroupByColPrefixed() throws Exception {
-        assertException(
-                "select a, sum(b) b from tab order by tab.b, a",
-                """
+        assertQuery("select a, sum(b) b from tab order by tab.b, a")
+                .ddl("""
                         create table tab (
                             a int,
                             b int
-                        )""",
-                37,
-                "Invalid column: tab.b"
-        );
+                        )""")
+                .fails(37, "Invalid column: tab.b");
     }
 
     @Test
     public void testFailureOrderByGroupByColPrefixed2() throws Exception {
-        assertException(
-                "select a, sum(b) b from tab order by a, tab.b",
-                """
+        assertQuery("select a, sum(b) b from tab order by a, tab.b")
+                .ddl("""
                         create table tab (
                             a int,
                             b int
-                        )""",
-                40,
-                "Invalid column: tab.b"
-        );
+                        )""")
+                .fails(40, "Invalid column: tab.b");
     }
 
     @Test
     public void testFailureOrderByGroupByColPrefixed3() throws Exception {
-        assertException(
-                "select a, sum(b) b from tab order by tab.a, tab.b",
-                """
+        assertQuery("select a, sum(b) b from tab order by tab.a, tab.b")
+                .ddl("""
                         create table tab (
                             a int,
                             b int
-                        )""",
-                44,
-                "Invalid column: tab.b"
-        );
+                        )""")
+                .fails(44, "Invalid column: tab.b");
     }
 
     @Test
     public void testFailureOrderByOnOuterResultWhenOrderByColumnIsNotSelected() throws Exception {
-        assertException(
-                "select x, sum(2*y+x) + sum(3/x) z from tab order by z asc, tab.y desc",
-                """
+        assertQuery("select x, sum(2*y+x) + sum(3/x) z from tab order by z asc, tab.y desc")
+                .ddl("""
                         create table tab (
                             x double,
                             y int
-                        )""",
-                59,
-                "Invalid column: tab.y"
-        );
+                        )""")
+                .fails(59, "Invalid column: tab.y");
     }
 
     @Test
@@ -8461,9 +8405,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
             execute("create table y (id int, a int, b int)");
             execute("insert into y values (1, 1, 1), (1, 1, 2)");
             assertSql(
-                    "id\tid1\ta\tb\n" +
-                            "1\t1\t1\t1\n" +
-                            "2\tnull\tnull\tnull\n",
+                    """
+                            id\tid1\ta\tb
+                            1\t1\t1\t1
+                            2\tnull\tnull\tnull
+                            """,
                     "select x.id, y.id, y.a, y.b from x left join y on x.id = y.id and y.a = y.b order by x.id"
             );
         });
@@ -8839,17 +8785,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testNonWindowFunctionInWindowContext() throws Exception {
-        assertException(
-                "select nsum(price) over (partition by symbol) from trades",
-                "create table trades " +
+        assertQuery("select nsum(price) over (partition by symbol) from trades")
+                .ddl("create table trades " +
                         "(" +
                         " price double," +
                         " symbol symbol," +
                         " ts timestamp" +
-                        ") timestamp(ts) partition by day",
-                7,
-                "non-window function called in window context"
-        );
+                        ") timestamp(ts) partition by day")
+                .fails(7, "non-window function called in window context");
     }
 
     @Test
@@ -8880,17 +8823,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testNoopGroupByFailureWhenMissingColumn() throws Exception {
-        assertException(
-                "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by ",
-                """
+        assertQuery("select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by ")
+                .ddl("""
                         create table x (
                             sym symbol,
                             bid int,
                             ask int
-                        )""",
-                71,
-                "literal expected"
-        );
+                        )""")
+                .fails(71, "literal expected");
     }
 
     /*
@@ -10836,11 +10776,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertExceptionNoLeakCheck(
-                    "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM '2020-09-10T20:00:00.000000Z';",
-                    75,
-                    "'to' expected"
-            );
+            assertQuery("REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM '2020-09-10T20:00:00.000000Z';")
+                    .noLeakCheck()
+                    .fails(75, "'to' expected");
         });
     }
 
@@ -10849,11 +10787,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertExceptionNoLeakCheck(
-                    "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to",
-                    78,
-                    "TO timestamp expected"
-            );
+            assertQuery("refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to")
+                    .noLeakCheck()
+                    .fails(78, "TO timestamp expected");
         });
     }
 
@@ -10862,11 +10798,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertExceptionNoLeakCheck(
-                    "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to 'foobar'",
-                    79,
-                    "invalid TO timestamp value"
-            );
+            assertQuery("refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to 'foobar'")
+                    .noLeakCheck()
+                    .fails(79, "invalid TO timestamp value");
         });
     }
 
@@ -10875,11 +10809,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertExceptionNoLeakCheck(
-                    "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to '2020-09-10T19:00:00.000000Z'",
-                    79,
-                    "TO timestamp must not be earlier than FROM timestamp"
-            );
+            assertQuery("refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to '2020-09-10T19:00:00.000000Z'")
+                    .noLeakCheck()
+                    .fails(79, "TO timestamp must not be earlier than FROM timestamp");
         });
     }
 
@@ -10915,11 +10847,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testRefreshMatView4() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base_table (ts timestamp, v long) timestamp(ts) partition by day WAL;");
-            assertException(
-                    "REFRESH MATERIALIZED VIEW base_table",
-                    26,
-                    "materialized view name expected, got table name"
-            );
+            assertQuery("REFRESH MATERIALIZED VIEW base_table")
+                    .fails(26, "materialized view name expected, got table name");
         });
     }
 
@@ -10928,11 +10857,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertExceptionNoLeakCheck(
-                    "REFRESH MATERIALIZED VIEW 'x_view' foobar",
-                    35,
-                    "'full', 'incremental', 'range' or 'stats' expected"
-            );
+            assertQuery("REFRESH MATERIALIZED VIEW 'x_view' foobar")
+                    .noLeakCheck()
+                    .fails(35, "'full', 'incremental', 'range' or 'stats' expected");
         });
     }
 
@@ -10941,11 +10868,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertExceptionNoLeakCheck(
-                    "REFRESH MATERIALIZED VIEW 'x_view' INCREMENTAL foobar",
-                    47,
-                    "unexpected token"
-            );
+            assertQuery("REFRESH MATERIALIZED VIEW 'x_view' INCREMENTAL foobar")
+                    .noLeakCheck()
+                    .fails(47, "unexpected token");
         });
     }
 
@@ -10954,11 +10879,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertExceptionNoLeakCheck(
-                    "REFRESH MATERIALIZED VIEW 'x_view' RANGE;",
-                    40,
-                    "'from' expected"
-            );
+            assertQuery("REFRESH MATERIALIZED VIEW 'x_view' RANGE;")
+                    .noLeakCheck()
+                    .fails(40, "'from' expected");
         });
     }
 
@@ -10967,11 +10890,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertExceptionNoLeakCheck(
-                    "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM",
-                    45,
-                    "FROM timestamp expected"
-            );
+            assertQuery("REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM")
+                    .noLeakCheck()
+                    .fails(45, "FROM timestamp expected");
         });
     }
 
@@ -10980,11 +10901,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertExceptionNoLeakCheck(
-                    "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM foobar;",
-                    46,
-                    "invalid FROM timestamp value"
-            );
+            assertQuery("REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM foobar;")
+                    .noLeakCheck()
+                    .fails(46, "invalid FROM timestamp value");
         });
     }
 
@@ -11449,7 +11368,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByFromToWithAlignToFirstObservation() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (ts TIMESTAMP, price DOUBLE)");
-            assertException("select ts, avg(price) from tbl sample by 5m from '2018' align to first observation", 82, "incompatible");
+            assertQuery("select ts, avg(price) from tbl sample by 5m from '2018' align to first observation")
+                    .fails(82, "incompatible");
         });
     }
 
@@ -11662,10 +11582,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                   timestamp TIMESTAMP
                 ) timestamp (timestamp) PARTITION BY DAY WAL;""");
 
-        assertException("select * from cpu sample by 1d align to first observation", 28, "at least one aggregation function must be present in 'select' clause");
-        assertException("select * from cpu sample by 1d align to calendar", 7, "wildcard column select is not allowed in sample-by queries");
-        assertException("select cpu.* from cpu sample by 1d align to calendar", 7, "wildcard column select is not allowed in sample-by queries");
-        assertException("select hostname, a.* from cpu a sample by 1d align to calendar", 17, "wildcard column select is not allowed in sample-by queries");
+        assertQuery("select * from cpu sample by 1d align to first observation")
+                .fails(28, "at least one aggregation function must be present in 'select' clause");
+        assertQuery("select * from cpu sample by 1d align to calendar")
+                .fails(7, "wildcard column select is not allowed in sample-by queries");
+        assertQuery("select cpu.* from cpu sample by 1d align to calendar")
+                .fails(7, "wildcard column select is not allowed in sample-by queries");
+        assertQuery("select hostname, a.* from cpu a sample by 1d align to calendar")
+                .fails(17, "wildcard column select is not allowed in sample-by queries");
 
         assertQuery(
                 "select-choose column from (select-virtual [avg * 10 column, timestamp] avg * 10 column, timestamp from (select-group-by [avg(usage_user) avg, timestamp_floor_utc('1d', timestamp, null, '00:00', null) timestamp] avg(usage_user) avg, timestamp_floor_utc('1d', timestamp, null, '00:00', null) timestamp from (select [usage_user, timestamp] from cpu timestamp (timestamp) stride 1d)) order by timestamp)",
@@ -12691,12 +12615,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectWildcardOnly() throws Exception {
-        assertException(
-                "select *",
-                "create table tab (seq long)",
-                7,
-                "'from' expected"
-        );
+        assertQuery("select *")
+                .ddl("create table tab (seq long)")
+                .fails(7, "'from' expected");
     }
 
     @Test
@@ -12721,12 +12642,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectWildcardTabNoFrom() throws Exception {
-        assertException(
-                "select * tab",
-                "create table tab (seq long)",
-                9,
-                "wildcard cannot have alias"
-        );
+        assertQuery("select * tab")
+                .ddl("create table tab (seq long)")
+                .fails(9, "wildcard cannot have alias");
     }
 
     @Test
@@ -13428,17 +13346,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testTooManyArgumentsInWindowFunction() throws Exception {
-        assertException(
-                "select row_number(1,2,3) over (partition by symbol) from trades",
-                "create table trades " +
+        assertQuery("select row_number(1,2,3) over (partition by symbol) from trades")
+                .ddl("create table trades " +
                         "(" +
                         " price double," +
                         " symbol symbol," +
                         " ts timestamp" +
-                        ") timestamp(ts) partition by day",
-                7,
-                "wrong number of arguments for function `row_number`"
-        );
+                        ") timestamp(ts) partition by day")
+                .fails(7, "wrong number of arguments for function `row_number`");
     }
 
     @Test
@@ -14706,7 +14621,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
                 modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price1", ColumnType.DOUBLE)
         );
-        assertException("select t.price + 1, sum(q.price) from trades t WINDOW JOIN quotes q on tag", 71, "'range' expected");
+        assertQuery("select t.price + 1, sum(q.price) from trades t WINDOW JOIN quotes q on tag")
+                .fails(71, "'range' expected");
 
         // Self-join window join with aliased column used in multiple expressions
         assertQuery(
@@ -14842,7 +14758,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testWithFollowedByInvalidToken() throws Exception {
-        assertException("with x as (select * from long_sequence(1)) create", 43, "'select' | 'update' | 'insert' expected");
+        assertQuery("with x as (select * from long_sequence(1)) create")
+                .fails(43, "'select' | 'update' | 'insert' expected");
     }
 
     @Test

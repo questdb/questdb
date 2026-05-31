@@ -117,7 +117,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
             int readerAcquisitionCount = configuration.getPoolSegmentSize() * 2;
             long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
-            long threadId = Thread.currentThread().getId();
+            long threadId = Thread.currentThread().threadId();
 
             long allReadersAcquiredTime = acquireReaderAndRun(
                     "tab1",
@@ -183,7 +183,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
             int readerAcquisitionCount = configuration.getPoolSegmentSize() * 2;
             long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
-            long threadId = Thread.currentThread().getId();
+            long threadId = Thread.currentThread().threadId();
             long allReadersAcquiredTime = acquireReaderAndRun(tableName, readerAcquisitionCount, () -> {
                 assertReaderPool(readerAcquisitionCount, recordValidator(startTime, "tab1", threadId, 4));
                 return MicrosecondClockImpl.INSTANCE.getTicks();
@@ -203,7 +203,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
             createPopulateTable(tm, 20, "2020-01-01", 1);
 
             long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
-            long threadId = Thread.currentThread().getId();
+            long threadId = Thread.currentThread().threadId();
             // first check reader acquisition set a timestamp
             // the timestamp has to be greater or equals to clock before a reader was acquired
             long allReadersAcquiredTime = acquireReaderAndRun("tab1", 1, () -> {
@@ -232,13 +232,21 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
             tm.timestamp("ts").col("ID", ColumnType.INT);
             createPopulateTable(tm, 2, "2020-01-01", 1);
 
-            assertSql("ts\tID\n" +
-                    "2020-01-01T00:00:00.000000Z\t1\n" +
-                    "2020-01-01T00:00:00.000000Z\t2\n", "select * from tab1");
+            assertQuery("select * from tab1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tID
+                            2020-01-01T00:00:00.000000Z\t1
+                            2020-01-01T00:00:00.000000Z\t2
+                            """);
 
             assertQueryNoLeakCheck(
-                    "table_name\towner_thread_id\tcurrent_txn\n" +
-                            "tab1\tnull\t1\n",
+                    """
+                            table_name\towner_thread_id\tcurrent_txn
+                            tab1\tnull\t1
+                            """,
                     "select table_name, owner_thread_id, current_txn from reader_pool",
                     null
             );

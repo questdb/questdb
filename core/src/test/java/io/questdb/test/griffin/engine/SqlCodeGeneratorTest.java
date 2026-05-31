@@ -951,7 +951,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createGeoHashTable(4);
             assertQuery("select * from pos where hash = 'ewef'")
                     .timestamp("time")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -967,7 +966,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createGeoHashTable(4);
             assertQuery("select * from pos where 'ewef' = hash")
                     .timestamp("time")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3049,7 +3047,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createGeoHashTable(1);
             assertQuery("select * from pos where hash within(#f, #z, #v) latest on time partition by uuid")
                     .timestamp("time")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3069,7 +3066,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createGeoHashTable(2);
             assertQuery("select * from pos where hash within(#f9, #z3, #ve) latest on time partition by uuid")
                     .timestamp("time")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3089,7 +3085,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createGeoHashTable(2);
             assertQuery("select * from pos where hash within(make_geohash(-62, 53.4, 10), #z3, #ve) latest on time partition by uuid")
                     .timestamp("time")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3109,7 +3104,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createGeoHashTable(4);
             assertQuery("select * from pos where hash within(#f91, #z31w, #vepe) latest on time partition by uuid")
                     .timestamp("time")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3129,7 +3123,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createGeoHashTable(8);
             assertQuery("select * from pos where hash within(#f91, #z31w, #vepe7h) latest on time partition by uuid")
                     .timestamp("time")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3150,7 +3143,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try {
                 assertQuery("select * from pos where hash within(#f9, #z3, #vepe7h) latest on time partition by uuid")
                         .timestamp("time")
-                        .expectSize()
                         .sizeMayVary()
                         .noLeakCheck()
                         .returns("");
@@ -3179,7 +3171,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try {
                 assertQuery("select * from x where geo8 within(make_geohash(lon, lat, 40), #z3, #vegg) latest on ts partition by s")
                         .timestamp("ts")
-                        .expectSize()
                         .sizeMayVary()
                         .noLeakCheck()
                         .returns("time\tuuid\thash\n");
@@ -3198,7 +3189,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try {
                 assertQuery("select * from pos where hash within('z3', #z3, #ve) latest on time partition by uuid")
                         .timestamp("time")
-                        .expectSize()
                         .sizeMayVary()
                         .noLeakCheck()
                         .returns("""
@@ -3222,7 +3212,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try {
                 assertQuery("select * from pos where hash within(make_geohash(-620.0, 53.4, 10), #z3, #ve) latest on time partition by uuid")
                         .timestamp("time")
-                        .expectSize()
                         .sizeMayVary()
                         .noLeakCheck()
                         .returns("""
@@ -3245,7 +3234,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createRndGeoHashTable();
             assertQuery("select geo1, ts from x where geo1 within(#x, #y, #z) latest on ts partition by s")
                     .timestamp("ts")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3270,7 +3258,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createRndGeoHashTable();
             assertQuery("select geo2, ts from x where geo2 within(#x, #y, #z) latest on ts partition by s")
                     .timestamp("ts")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3298,7 +3285,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createRndGeoHashTable();
             assertQuery("select geo4, ts from x where geo4 within(#x, #y, #z) latest on ts partition by s")
                     .timestamp("ts")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3326,7 +3312,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createRndGeoHashBitsTable();
             assertQuery("select bits7, ts from x where bits7 within(##111111) latest on ts partition by s")
                     .timestamp("ts")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3350,7 +3335,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createRndGeoHashTable();
             assertQuery("select geo4, ts from x where geo4 within(#xx, #y, #z4) latest on ts partition by s")
                     .timestamp("ts")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3373,7 +3357,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertQuery("select * from x where bits7 within(#wt/5) latest on ts partition by s")
                     .timestamp(//(##11100)",
                     "ts")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3393,7 +3376,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try {
                 assertQuery("select * from x where bits3 within(##111111) latest on ts partition by s")
                         .timestamp("ts")
-                        .expectSize()
                         .sizeMayVary()
                         .noLeakCheck()
                         .returns("");
@@ -3412,7 +3394,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createGeoHashTable(2);
             assertQuery("select * from pos where hash within(cast('f9' as geohash(2c)), #z3, #ve) latest on time partition by uuid")
                     .timestamp("time")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3432,7 +3413,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createGeoHashTable(1);
             assertQuery("select * from pos where time in '2021-05-11' and hash within (#z, #b) latest on time partition by uuid")
                     .timestamp("time")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3451,7 +3431,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createGeoHashTable(2);
             assertQuery("select * from pos where time in '2021-05-11' and hash within (#z, #b) latest on time partition by uuid")
                     .timestamp("time")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3470,7 +3449,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createGeoHashTable(4);
             assertQuery("select * from pos where time in '2021-05-11' and hash within (#z, #b) latest on time partition by uuid")
                     .timestamp("time")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3489,7 +3467,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createGeoHashTable(8);
             assertQuery("select * from pos where time in '2021-05-11' and hash within (#z31, #bbx) latest on time partition by uuid")
                     .timestamp("time")
-                    .expectSize()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3508,7 +3485,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try {
                 assertQuery("select * from pos where 'hash' within(#f9) latest on time partition by uuid")
                         .timestamp("time")
-                        .expectSize()
                         .sizeMayVary()
                         .noLeakCheck()
                         .returns("");
@@ -3527,7 +3503,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try {
                 assertQuery("select * from pos where uuid within(#f9) latest on time partition by uuid")
                         .timestamp("time")
-                        .expectSize()
                         .sizeMayVary()
                         .noLeakCheck()
                         .returns("");
@@ -3546,7 +3521,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try {
                 assertQuery("select * from pos where hash within() latest on time partition by uuid")
                         .timestamp("time")
-                        .expectSize()
                         .sizeMayVary()
                         .noLeakCheck()
                         .returns("");
@@ -3565,7 +3539,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try {
                 assertQuery("select * from pos where hash within(#f9, #z3, null) latest on time partition by uuid")
                         .timestamp("time")
-                        .expectSize()
                         .sizeMayVary()
                         .noLeakCheck()
                         .returns("");
@@ -3584,7 +3557,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try {
                 assertQuery("select * from pos where hash within(#f9) or hash within(#z3) latest on time partition by uuid")
                         .timestamp("time")
-                        .expectSize()
                         .sizeMayVary()
                         .noLeakCheck()
                         .returns("");
@@ -3603,7 +3575,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try {
                 assertQuery("select * from pos where hash within(cast('f91t' as geohash(4c)), #z3, null) latest on time partition by uuid")
                         .timestamp("time")
-                        .expectSize()
                         .sizeMayVary()
                         .noLeakCheck()
                         .returns("");

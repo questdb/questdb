@@ -427,6 +427,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         }
         assertQuery("show columns from tango")
                 .noLeakCheck()
+                .noRandomAccess()
                 .returns(b);
     }
 
@@ -445,6 +446,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                 .append("\t0\tfalse\tfalse\t\t\n");
         assertQuery("show columns from tango")
                 .noLeakCheck()
+                .noRandomAccess()
                 .returns(b);
     }
 

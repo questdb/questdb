@@ -587,13 +587,13 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
             // 'a_col' already exists — should be skipped; 'b_col' should be added
             execute("alter table x add column if not exists a_col int, b_col long");
             drainWalQueue();
-            assertSql(
-                    """
+            assertQuery("table_columns('x') where column = 'b_col'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             b_col\tLONG\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "table_columns('x') where column = 'b_col'"
-            );
+                            """);
         });
     }
 
@@ -914,7 +914,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     execute("alter table x add column nscol timestamp_ns");
                     drainWalQueue();
 
-                    assertSql("ddl\n" +
+                    assertQuery("show create table x;")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("ddl\n" +
                                     "CREATE TABLE 'x' ( \n" +
                                     "\ti INT,\n" +
                                     "\tsym SYMBOL,\n" +
@@ -933,8 +936,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                     "\tm BINARY,\n" +
                                     "\tn STRING,\n" +
                                     "\tnscol TIMESTAMP_NS\n" +
-                                    ") timestamp(timestamp) PARTITION BY DAY" + (isWal ? "" : " BYPASS WAL") + ";\n",
-                            "show create table x;");
+                                    ") timestamp(timestamp) PARTITION BY DAY" + (isWal ? "" : " BYPASS WAL") + ";\n");
 
                     assertQuery("select c, nscol from x")
                             .noLeakCheck()
@@ -1054,7 +1056,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("ddl\n" +
+            assertQuery("show create table x;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("ddl\n" +
                             "CREATE TABLE 'x' ( \n" +
                             "\ti INT,\n" +
                             "\tsym SYMBOL,\n" +
@@ -1072,9 +1077,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             "\tl BYTE,\n" +
                             "\tm BINARY,\n" +
                             "\tn STRING,\n" +
-                            "\tarr DOUBLE[]\n" + // <-- array should be present
-                            ") timestamp(timestamp) PARTITION BY DAY" + (isWal ? "" : " BYPASS WAL") + ";\n",
-                    "show create table x;");
+                            "\tarr DOUBLE[]\n" + 
+                            ") timestamp(timestamp) PARTITION BY DAY" + (isWal ? "" : " BYPASS WAL") + ";\n");
         });
     }
 

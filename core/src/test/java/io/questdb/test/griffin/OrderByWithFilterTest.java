@@ -906,7 +906,12 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
             // this would fail with an UnsupportedOperationException due to getLongIPv4 not being implemented
             // for SelectedRecord
-            assertSql("""
+            assertQuery("""
+                            select * from (network_nodes_test LATEST on timestamp PARTITION by host_ip)
+                            where status = 'active'
+                            order by host_ip;""")
+                    .noLeakCheck()
+                    .returns("""
                             timestamp\tnode_name\thost_ip\tstatus
                             2024-12-31T19:10:58.038243Z\tnode01\t10.13.2.123\tactive
                             2024-12-31T13:35:33.630915Z\tnode03\t10.13.31.14\tactive
@@ -929,11 +934,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                             2024-12-31T06:40:02.794603Z\tnode02\t10.13.249.36\tactive
                             2024-12-31T14:59:11.599601Z\tnode01\t10.13.249.187\tactive
                             2024-12-31T18:42:59.090116Z\tnode03\t10.13.253.254\tactive
-                            """,
-                    """
-                            select * from (network_nodes_test LATEST on timestamp PARTITION by host_ip)
-                            where status = 'active'
-                            order by host_ip;""");
+                            """);
         });
     }
 

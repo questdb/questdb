@@ -5749,15 +5749,19 @@ public class IPv4Test extends AbstractCairoTest {
                     .returns("netmask\n\n");
             assertQuery("select netmask('1.1.1.1/30');")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("netmask\n255.255.255.252\n");
             assertQuery("select netmask('1.1.1.1/31');")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("netmask\n255.255.255.254\n");
             assertQuery("select netmask('1.1.1.1/32');")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("netmask\n255.255.255.255\n");
             assertQuery("select netmask('1.1.1.1/33');")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("netmask\n\n");
         });
     }
@@ -5837,15 +5841,19 @@ public class IPv4Test extends AbstractCairoTest {
                     .returns("netmask\n\n");
             assertQuery("select netmask('1.1.1.1/30'::varchar);")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("netmask\n255.255.255.252\n");
             assertQuery("select netmask('1.1.1.1/31'::varchar);")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("netmask\n255.255.255.254\n");
             assertQuery("select netmask('1.1.1.1/32'::varchar);")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("netmask\n255.255.255.255\n");
             assertQuery("select netmask('1.1.1.1/33'::varchar);")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("netmask\n\n");
         });
     }

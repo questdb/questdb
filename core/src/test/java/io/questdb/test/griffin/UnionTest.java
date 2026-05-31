@@ -987,7 +987,11 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(5) x)"
             );
 
-            assertSql("""
+            assertQuery("select typeof(t), t from (select t from x union all y)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                     typeof\tt
                     STRING\tCAR
                     STRING\tCAR
@@ -1003,9 +1007,12 @@ public class UnionTest extends AbstractCairoTest {
                     STRING\tSCOOTER
                     STRING\tBICYCLE
                     STRING\tBICYCLE
-                    """, "select typeof(t), t from (select t from x union all y)");
+                    """);
 
-            assertSql("""
+            assertQuery("select typeof(t), t from (select t from x union all y order by t)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                     typeof\tt
                     STRING\tBICYCLE
                     STRING\tBICYCLE
@@ -1021,9 +1028,12 @@ public class UnionTest extends AbstractCairoTest {
                     STRING\tPLANE
                     STRING\tSCOOTER
                     STRING\tVAN
-                    """, "select typeof(t), t from (select t from x union all y order by t)");
+                    """);
 
-            assertSql("""
+            assertQuery("select typeof(t), t from (select t from x union all y) order by t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                     typeof\tt
                     STRING\tBICYCLE
                     STRING\tBICYCLE
@@ -1039,7 +1049,7 @@ public class UnionTest extends AbstractCairoTest {
                     STRING\tPLANE
                     STRING\tSCOOTER
                     STRING\tVAN
-                    """, "select typeof(t), t from (select t from x union all y) order by t");
+                    """);
 
             assertQuery("select typeof(t), t from (select t from x union all y union y except x) order by t")
                     .noLeakCheck()
