@@ -31,16 +31,13 @@ public class PowerBiSqlTest extends AbstractCairoTest {
 
     @Test
     public void testCharSet() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select character_set_name from INFORMATION_SCHEMA.character_sets")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         character_set_name
                         UTF8
-                        """,
-                "select character_set_name from INFORMATION_SCHEMA.character_sets",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
