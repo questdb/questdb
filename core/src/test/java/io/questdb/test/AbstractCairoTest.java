@@ -2576,7 +2576,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
          * Allow {@code cursor.size()} to be reported as unknown (-1) in some passes. Off by default.
          */
         public QueryAssertion sizeMayVary() {
-            this.sizeCanBeVariable = true;
+            return sizeMayVary(true);
+        }
+
+        /**
+         * Variable-driven variant of {@link #sizeMayVary()} for helper methods that receive the flag as
+         * a parameter. {@code sizeMayVary(true)} allows an unknown size; {@code sizeMayVary(false)}
+         * keeps the default of requiring a stable size.
+         */
+        public QueryAssertion sizeMayVary(boolean sizeCanBeVariable) {
+            this.sizeCanBeVariable = sizeCanBeVariable;
             return this;
         }
 
