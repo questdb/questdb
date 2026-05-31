@@ -41,27 +41,25 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
                            ;
                         """
         );
-        assertQuery("""
+        assertQuery("select ob_buy[1:], k, count() from array_test;")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         []\tk\tcount
                         [[9.0,1000.0],[10.0,10000.0]]\tvod\t1
                         [[4.0,1000.0],[10.0,10000.0]]\tvod2\t1
                         [[3.0,1000.0],[10.0,10000.0]]\tvod3\t1
-                        """,
-                "select ob_buy[1:], k, count() from array_test;",
-                true,
-                true
-        );
+                        """);
 
-        assertQuery("""
+        assertQuery("select ob_buy, k, count() from array_test;")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         ob_buy\tk\tcount
                         [[9.0,1000.0],[10.0,10000.0]]\tvod\t1
                         [[4.0,1000.0],[10.0,10000.0]]\tvod2\t1
                         [[3.0,1000.0],[10.0,10000.0]]\tvod3\t1
-                        """,
-                "select ob_buy, k, count() from array_test;",
-                true,
-                true
-        );
+                        """);
     }
 
     @Test

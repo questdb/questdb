@@ -230,10 +230,12 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
         testWalTablesSuspendedWithError("alter table B suspend wal", NONE, "");
     }
 
-    private void assertMemoryPressureLevel(int expectedMemoryPressureLevel) throws SqlException {
-        assertQuery("memoryPressure\n" +
-                        expectedMemoryPressureLevel + "\n",
-                "select memoryPressure from wal_tables() where name = '" + "A" + "'", false, false);
+    private void assertMemoryPressureLevel(int expectedMemoryPressureLevel) throws Exception {
+        assertQuery("select memoryPressure from wal_tables() where name = '" + "A" + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("memoryPressure\n" +
+                        expectedMemoryPressureLevel + "\n");
     }
 
     private void createTable(final String tableName, boolean isWal) throws SqlException {
