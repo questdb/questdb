@@ -81,13 +81,18 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
         bindVariableService.setGeoHash(0, hash1, ColumnType.getGeoHashTypeWithBits(15));
         bindVariableService.setGeoHash(1, hash2, ColumnType.getGeoHashTypeWithBits(15));
 
-        assertQueryAndPlan(
-                "pickup_datetime\tpickup_geohash\n",
-                "trips WHERE pickup_geohash WITHIN ($1, $2);",
-                ddlTrips,
-                "pickup_datetime",
-                dmlTrips,
-                """
+        assertQuery("trips WHERE pickup_geohash WITHIN ($1, $2);")
+                .ddl(ddlTrips)
+                .timestamp("pickup_datetime")
+                .mutateWith(dmlTrips)
+                .withPlan("""
+                        Async Filter workers: 1
+                          filter: pickup_geohash in [$0::geohash(3c),$1::geohash(3c)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: trips
+                        """)
+                .returns("pickup_datetime\tpickup_geohash\n", """
                         pickup_datetime\tpickup_geohash
                         2009-01-01T00:00:00.000000Z\tdr5rsjutvshf
                         2009-01-01T00:00:00.000000Z\tdr5ruy5ttnw1
@@ -116,69 +121,46 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
                         2009-01-01T00:00:36.000000Z\tdr5rvhfgw67v
                         2009-01-01T00:00:37.000000Z\tdr5rsnpw997n
                         2009-01-01T00:00:39.000000Z\tdr72h8hkt556
-                        """,
-                true,
-                false,
-                false,
-                """
-                        Async Filter workers: 1
-                          filter: pickup_geohash in [$0::geohash(3c),$1::geohash(3c)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: trips
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testConstConstFunc() throws Exception {
-        assertQueryAndPlan(
-                """
-                        column
-                        true
-                        """,
-                "SELECT #dr72 WITHIN (#dr5, #dr7);",
-                ddlTrips,
-                null,
-                dmlTrips,
-                """
-                        column
-                        true
-                        """,
-                true,
-                true,
-                false,
-                """
+        assertQuery("SELECT #dr72 WITHIN (#dr5, #dr7);")
+                .ddl(ddlTrips)
+                .mutateWith(dmlTrips)
+                .expectSize()
+                .withPlan("""
                         VirtualRecord
                           functions: [true]
                             long_sequence count: 1
-                        """
-        );
+                        """)
+                .returns("""
+                        column
+                        true
+                        """, """
+                        column
+                        true
+                        """);
     }
 
     @Test
     public void testConstVarFilter() throws Exception {
-        assertQueryAndPlan(
-                "pickup_datetime\tpickup_geohash\n",
-                "trips WHERE #dr5reff6hu5e WITHIN (pickup_geohash);",
-                ddlTrips,
-                "pickup_datetime",
-                dmlTrips,
-                """
-                        pickup_datetime\tpickup_geohash
-                        2009-01-01T00:00:04.000000Z\tdr5reff6hu5e
-                        """,
-                true,
-                false,
-                false,
-                """
+        assertQuery("trips WHERE #dr5reff6hu5e WITHIN (pickup_geohash);")
+                .ddl(ddlTrips)
+                .timestamp("pickup_datetime")
+                .mutateWith(dmlTrips)
+                .withPlan("""
                         Async Filter workers: 1
                           filter: "011001011100101101110110101110011100011010000110100010101101" in [pickup_geohash]
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: trips
-                        """
-        );
+                        """)
+                .returns("pickup_datetime\tpickup_geohash\n", """
+                        pickup_datetime\tpickup_geohash
+                        2009-01-01T00:00:04.000000Z\tdr5reff6hu5e
+                        """);
     }
 
     @Test
@@ -213,13 +195,18 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testVarConstFilter() throws Exception {
-        assertQueryAndPlan(
-                "pickup_datetime\tpickup_geohash\n",
-                "trips WHERE pickup_geohash WITHIN (#dr5, #dr7);",
-                ddlTrips,
-                "pickup_datetime",
-                dmlTrips,
-                """
+        assertQuery("trips WHERE pickup_geohash WITHIN (#dr5, #dr7);")
+                .ddl(ddlTrips)
+                .timestamp("pickup_datetime")
+                .mutateWith(dmlTrips)
+                .withPlan("""
+                        Async Filter workers: 1
+                          filter: pickup_geohash in ["011001011100101","011001011100111"]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: trips
+                        """)
+                .returns("pickup_datetime\tpickup_geohash\n", """
                         pickup_datetime\tpickup_geohash
                         2009-01-01T00:00:00.000000Z\tdr5rsjutvshf
                         2009-01-01T00:00:00.000000Z\tdr5ruy5ttnw1
@@ -248,18 +235,7 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
                         2009-01-01T00:00:36.000000Z\tdr5rvhfgw67v
                         2009-01-01T00:00:37.000000Z\tdr5rsnpw997n
                         2009-01-01T00:00:39.000000Z\tdr72h8hkt556
-                        """,
-                true,
-                false,
-                false,
-                """
-                        Async Filter workers: 1
-                          filter: pickup_geohash in ["011001011100101","011001011100111"]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: trips
-                        """
-        );
+                        """);
     }
 
 

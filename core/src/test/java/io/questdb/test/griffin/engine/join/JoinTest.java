@@ -517,8 +517,13 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1
                             1\tXYZ\t\t50.938\tnull\t2018-01-01T00:12:00.000000Z\t
                             2\tABC\tABC\t42.281\t0.537\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z
@@ -540,13 +545,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tCDE\tCDE\t18.305\t0.401\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z
                             19\tABC\tABC\t16.378\t0.775\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:54:00.000000Z
                             20\t\t\t4.773\t0.624\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:34:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    true
-            );
+                            """);
 
         });
     }
@@ -7004,7 +7003,12 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     private void assertHashJoinSql(String query, String expected, String ts, boolean supportRandom) throws Exception {
-        assertQueryFullFatNoLeakCheck(expected, query, ts, supportRandom, false, true);
+        assertQuery(query)
+                .noLeakCheck()
+                .fullFatJoins()
+                .timestamp(ts)
+                .supportsRandomAccess(supportRandom)
+                .returns(expected);
         printSql(query, true);
         TestUtils.assertEquals("full fat join", expected, sink);
     }
@@ -7129,8 +7133,13 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tsym\tamt\tprice\ttimestamp\ttimestamp1
                             1\tmsft\t22.463\tnull\t2018-01-01T00:12:00.000000Z\t
                             2\tgoogl\t29.92\t0.885\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z
@@ -7152,13 +7161,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tmsft\t36.798\t0.051000000000000004\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:50:00.000000Z
                             19\tmsft\t66.98\t0.051000000000000004\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:50:00.000000Z
                             20\tgoogl\t26.369\t0.6900000000000001\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    fullFatJoin
-            );
+                            """);
         });
     }
 
@@ -7271,8 +7274,13 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tsym\tamt\tprice\ttimestamp\ttimestamp1
                             1\tmsft\t50.938\t0.523\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z
                             2\tgoogl\t42.281\t0.215\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:18:00.000000Z
@@ -7294,13 +7302,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tibm\t60.678000000000004\t0.388\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:56:00.000000Z
                             19\tmsft\t4.727\t0.912\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z
                             20\tgoogl\t26.222\t0.148\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    fullFatJoin
-            );
+                            """);
         });
     }
 
@@ -7416,8 +7418,13 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1
                             1\tXYZ\tXYZ\t50.938\t0.294\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z
                             2\tABC\tABC\t42.281\t0.167\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z
@@ -7439,13 +7446,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\t\t\t1.869\t0.46900000000000003\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:52:00.000000Z
                             19\tABC\tABC\t85.427\t0.359\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:24:00.000000Z
                             20\tABC\tABC\t54.586\t0.359\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:24:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    fullFatJoin
-            );
+                            """);
         });
     }
 
@@ -7561,8 +7562,13 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1
                             1\tXYZ\tXYZ\t50.938\t0.294\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z
                             2\tABC\tABC\t42.281\t0.167\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z
@@ -7584,13 +7590,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\t\t\t1.869\t0.46900000000000003\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:52:00.000000Z
                             19\tABC\tABC\t85.427\t0.359\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:24:00.000000Z
                             20\tABC\tABC\t54.586\t0.359\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:24:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    fullFatJoin
-            );
+                            """);
         });
     }
 
@@ -7643,7 +7643,13 @@ public class JoinTest extends AbstractCairoTest {
             execute("insert into x select * from (select cast(x + 10 as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             execute("insert into y select * from (select cast(x + 30 as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
 
-            assertQueryFullFatNoLeakCheck("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tsym\tsym2\tamt\tprice\ttimestamp\ttimestamp1
                             1\tmsft\t\t22.463\tnull\t2018-01-01T00:12:00.000000Z\t
                             2\tgoogl\tgoogl\t29.92\t0.885\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z
@@ -7665,13 +7671,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tmsft\tmsft\t36.798\t0.051000000000000004\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:50:00.000000Z
                             19\tmsft\tmsft\t66.98\t0.051000000000000004\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:50:00.000000Z
                             20\tgoogl\tgoogl\t26.369\t0.6900000000000001\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    fullFatJoin
-            );
+                            """);
         });
     }
 
@@ -7725,14 +7725,11 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select x.c, x.a, b, a+b from x join y on y.m = x.c and 1 > 10",
-                    null,
-                    true,
-                    true,
-                    fullFatJoin
-            );
+            assertQuery("select x.c, x.a, b, a+b from x join y on y.m = x.c and 1 > 10")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -7756,14 +7753,12 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10",
-                    null,
-                    false,
-                    true,
-                    fullFatJoin
-            );
+            assertQuery("select x.c, x.a, b from x join y on y.m = x.c and 1 < 10")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -7852,14 +7847,12 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)",
-                    null,
-                    false,
-                    true,
-                    fullFatJoin
-            );
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -7932,14 +7925,12 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select * from x join y on (kk)",
-                    null,
-                    false,
-                    true,
-                    fullFatJoin
-            );
+            assertQuery("select * from x join y on (kk)")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -7992,14 +7983,12 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
             execute("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)",
-                    null,
-                    false,
-                    true,
-                    fullFatJoin
-            );
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -8038,8 +8027,11 @@ public class JoinTest extends AbstractCairoTest {
             execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
             execute("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
-            assertQueryFullFatNoLeakCheck(
-                    expected +
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, b, d")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .expectSize()
+                    .returns(expected +
                             "7\t253\t14\t228\t214\n" +
                             "7\t253\t14\t723\t709\n" +
                             "8\t431\t0\t348\t348\n" +
@@ -8047,13 +8039,7 @@ public class JoinTest extends AbstractCairoTest {
                             "9\t100\t8\t456\t448\n" +
                             "9\t100\t8\t667\t659\n" +
                             "9\t100\t19\t456\t437\n" +
-                            "9\t100\t19\t667\t648\n",
-                    "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, b, d",
-                    null,
-                    true,
-                    true,
-                    fullFatJoin
-            );
+                            "9\t100\t19\t667\t648\n");
         });
     }
 
@@ -8090,14 +8076,10 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
             // filter is applied to final join result
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where d-b > 100 order by z.c, d-b",
-                    null,
-                    true,
-                    false,
-                    fullFatJoin
-            );
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where d-b > 100 order by z.c, d-b")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .returns(expected);
         });
     }
 
@@ -8242,8 +8224,11 @@ public class JoinTest extends AbstractCairoTest {
             execute("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)");
             execute("insert into z select rnd_symbol('K','P','L') c, abs(rnd_int() % 1000) d from long_sequence(6)");
 
-            assertQueryFullFatNoLeakCheck(
-                    """
+            assertQuery("select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d, d-b")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .expectSize()
+                    .returns("""
                             xc\tzc\tyc\ta\tb\td\tcolumn
                             \t\t\t521\t69\t2\t-67
                             \t\t\t598\t69\t2\t-67
@@ -8331,13 +8316,7 @@ public class JoinTest extends AbstractCairoTest {
                             B\tB\tB\t439\t72\t933\t861
                             L\tL\tL\t148\t52\t121\t69
                             L\tL\tL\t148\t38\t121\t83
-                            """,
-                    "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d, d-b",
-                    null,
-                    true,
-                    true,
-                    fullFatJoin
-            );
+                            """);
 
         });
     }
@@ -8375,8 +8354,11 @@ public class JoinTest extends AbstractCairoTest {
             execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
             execute("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
-            assertQueryFullFatNoLeakCheck(
-                    expected +
+            assertQuery("select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, b, d")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .expectSize()
+                    .returns(expected +
                             "7\t253\t14\t228\t267\n" +
                             "7\t253\t14\t723\t267\n" +
                             "7\t253\t35\t228\t288\n" +
@@ -8388,13 +8370,7 @@ public class JoinTest extends AbstractCairoTest {
                             "9\t100\t38\t456\t138\n" +
                             "9\t100\t38\t667\t138\n" +
                             "9\t100\t63\t456\t163\n" +
-                            "9\t100\t63\t667\t163\n",
-                    "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, b, d",
-                    null,
-                    true,
-                    true,
-                    fullFatJoin
-            );
+                            "9\t100\t63\t667\t163\n");
         });
     }
 
@@ -8463,32 +8439,20 @@ public class JoinTest extends AbstractCairoTest {
                     "null\tnull\tnull\tfalse\t\tnull\tnull\t0\t\t\tnull\t\t0\t\t\t11\t12\t-2099411412\ttrue\t\tnull\tnull\t119\t2015-09-08T05:51:33.432Z\tYRZL\t8196152051414471878\t1970-01-01T02:46:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n";
 
             // filter is applied to final join result
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select * from x left join y on (kk) order by x.id desc, y.id desc",
-                    null,
-                    true,
-                    false,
-                    fullFatJoins
-            );
+            assertQuery("select * from x left join y on (kk) order by x.id desc, y.id desc")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoins)
+                    .returns(expected);
 
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select x.*, y.* from y right join x on (kk) order by x.id desc, y.id desc",
-                    null,
-                    true,
-                    false,
-                    fullFatJoins
-            );
+            assertQuery("select x.*, y.* from y right join x on (kk) order by x.id desc, y.id desc")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoins)
+                    .returns(expected);
 
-            assertQueryFullFatNoLeakCheck(
-                    fullJoinExpected,
-                    "select * from x full join y on (kk) order by x.id desc, y.id desc",
-                    null,
-                    true,
-                    false,
-                    fullFatJoins
-            );
+            assertQuery("select * from x full join y on (kk) order by x.id desc, y.id desc")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoins)
+                    .returns(fullJoinExpected);
         });
     }
 
@@ -8530,35 +8494,27 @@ public class JoinTest extends AbstractCairoTest {
             execute("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
             execute("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
-            assertQueryFullFatNoLeakCheck(
-                    expected +
+            assertQuery("select x.c, x.a, b from x left join y on y.m = x.c order by x.c, b")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoins)
+                    .returns(expected +
                             "11\t467\tnull\n" +
                             "12\t347\t0\n" +
                             "12\t347\t7\n" +
                             "13\t244\tnull\n" +
                             "14\t197\t50\n" +
-                            "14\t197\t68\n",
-                    "select x.c, x.a, b from x left join y on y.m = x.c order by x.c, b",
-                    null,
-                    true,
-                    false,
-                    fullFatJoins
-            );
+                            "14\t197\t68\n");
 
-            assertQueryFullFatNoLeakCheck(
-                    expected +
+            assertQuery("select x.c, x.a, b from y right join x on y.m = x.c order by x.c, b")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoins)
+                    .returns(expected +
                             "11\t467\tnull\n" +
                             "12\t347\t0\n" +
                             "12\t347\t7\n" +
                             "13\t244\tnull\n" +
                             "14\t197\t50\n" +
-                            "14\t197\t68\n",
-                    "select x.c, x.a, b from y right join x on y.m = x.c order by x.c, b",
-                    null,
-                    true,
-                    false,
-                    fullFatJoins
-            );
+                            "14\t197\t68\n");
         });
     }
 

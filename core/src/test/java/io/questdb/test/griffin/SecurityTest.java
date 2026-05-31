@@ -244,11 +244,10 @@ public class SecurityTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("cust_id\tccy\tbalance\n1\tEUR\t140.6\n");
 
-            try {
-                assertExceptionNoLeakCheck("alter table balances add column newcol int", readOnlyExecutionContext);
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("permission denied"));
-            }
+            assertQuery("alter table balances add column newcol int")
+                    .withContext(readOnlyExecutionContext)
+                    .noLeakCheck()
+                    .failsWith("permission denied");
             assertQuery("select * from balances")
                     .noLeakCheck()
                     .expectSize()
@@ -410,12 +409,11 @@ public class SecurityTest extends AbstractCairoTest {
     @Test
     public void testCopyDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                execute("create table testDisallowCopySerial (l long)");
-                assertExceptionNoLeakCheck("copy testDisallowCopySerial from '/test-alltypes.csv' with header true", readOnlyExecutionContext);
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.toString(), "permission denied");
-            }
+            execute("create table testDisallowCopySerial (l long)");
+            assertQuery("copy testDisallowCopySerial from '/test-alltypes.csv' with header true")
+                    .withContext(readOnlyExecutionContext)
+                    .noLeakCheck()
+                    .failsWith("permission denied");
         });
     }
 
@@ -589,14 +587,12 @@ public class SecurityTest extends AbstractCairoTest {
                             " from long_sequence(1000)) timestamp(ts2)"
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                    "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                    null,
-                    false,
-                    true,
-                    true
-            );
+            assertQuery("select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
+                    .noRandomAccess()
+                    .expectSize()
+                    .fullFatJoins()
+                    .noLeakCheck()
+                    .returns("sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n");
             memoryRestrictedCompiler.setFullFatJoins(true);
             try {
                 assertQueryNoLeakCheck(
@@ -635,14 +631,11 @@ public class SecurityTest extends AbstractCairoTest {
                             " from long_sequence(1000)) timestamp(ts2)"
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                    "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                    null,
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
+                    .noRandomAccess()
+                    .fullFatJoins()
+                    .noLeakCheck()
+                    .returns("sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n");
 
             memoryRestrictedCompiler.setFullFatJoins(true);
             try {
@@ -1097,11 +1090,10 @@ public class SecurityTest extends AbstractCairoTest {
     public void testRenameTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            try {
-                assertExceptionNoLeakCheck("rename table balances to newname", readOnlyExecutionContext);
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("permission denied"));
-            }
+            assertQuery("rename table balances to newname")
+                    .withContext(readOnlyExecutionContext)
+                    .noLeakCheck()
+                    .failsWith("permission denied");
             assertQuery("select count() from balances")
                     .noRandomAccess()
                     .expectSize()
