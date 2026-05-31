@@ -105,32 +105,26 @@ public class ExportActivityFunctionFactoryTest extends AbstractCairoTest {
             );
             adminEntry.setStartTime(3000, 2);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                assertQueryNoLeakCheck(
-                        compiler,
-                        """
+                assertQuery("select worker_id, username, start_time, phase, export_path, request_source, request_source, export_sql, message from export_activity() order by start_time")
+                        .noLeakCheck()
+                        .withCompiler(compiler)
+                        .withContext(adminUserContext)
+                        .timestamp("start_time")
+                        .returns("""
                                 worker_id\tusername\tstart_time\tphase\texport_path\trequest_source\trequest_source1\texport_sql\tmessage
                                 1\tbob\t1970-01-01T00:00:00.002000Z\twait_to_run\tuser_export.parquet\tcopy sql\tcopy sql\tcopy test_table to 'user_export.parquet'\t
                                 2\tadmin\t1970-01-01T00:00:00.003000Z\twait_to_run\tadmin_export.parquet\thttp export\thttp export\tcopy test_table to 'admin_export.parquet'\t
-                                """,
-                        "select worker_id, username, start_time, phase, export_path, request_source, request_source, export_sql, message from export_activity() order by start_time",
-                        "start_time",
-                        adminUserContext,
-                        true,
-                        false
-                );
+                                """);
 
-                assertQueryNoLeakCheck(
-                        compiler,
-                        """
+                assertQuery("select worker_id, username, start_time, phase, export_path, request_source, export_sql, message from export_activity()")
+                        .noLeakCheck()
+                        .withCompiler(compiler)
+                        .withContext(regularUserContext)
+                        .noRandomAccess()
+                        .returns("""
                                 worker_id\tusername\tstart_time\tphase\texport_path\trequest_source\texport_sql\tmessage
                                 1\tbob\t1970-01-01T00:00:00.002000Z\twait_to_run\tuser_export.parquet\tcopy sql\tcopy test_table to 'user_export.parquet'\t
-                                """,
-                        "select worker_id, username, start_time, phase, export_path, request_source, export_sql, message from export_activity()",
-                        null,
-                        regularUserContext,
-                        false,
-                        false
-                );
+                                """);
             } finally {
                 copyExportContext.releaseEntry(userEntry);
                 copyExportContext.releaseEntry(adminEntry);

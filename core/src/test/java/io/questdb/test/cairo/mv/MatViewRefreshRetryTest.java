@@ -80,15 +80,13 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
             );
 
             drainWalAndMatViewQueues();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             view_name\tview_status
                             price_1h\tvalid
-                            """,
-                    "select view_name, view_status from materialized_views",
-                    null,
-                    false
-            );
+                            """);
 
             assertQuery("select count() from wal_transactions('price_1h')")
                     .noLeakCheck()
@@ -140,29 +138,25 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
             // Set RSS limit, so that the refresh will fail due to OOM.
             Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 500 * 1024); // 500KB gap
             drainWalAndMatViewQueues();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             view_name\tview_status
                             price_1h\tinvalid
-                            """,
-                    "select view_name, view_status from materialized_views",
-                    null,
-                    false
-            );
+                            """);
 
             // Now, remove the limit and run full refresh. This time, it should succeed.
             Unsafe.setRssMemLimit(0);
             execute("refresh materialized view price_1h full;");
             drainWalAndMatViewQueues();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             view_name\tview_status
                             price_1h\tvalid
-                            """,
-                    "select view_name, view_status from materialized_views",
-                    null,
-                    false
-            );
+                            """);
         });
     }
 }

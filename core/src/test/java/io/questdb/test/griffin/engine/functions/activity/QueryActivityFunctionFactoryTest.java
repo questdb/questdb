@@ -194,15 +194,12 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                     }
 
                     // regular user can't see admins command
-                    assertQueryNoLeakCheck(
-                            compiler,
-                            "query_id\tquery\n",
-                            activityQuery,
-                            null,
-                            regularUserContext1,
-                            false,
-                            false
-                    );
+                    assertQuery(activityQuery)
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(regularUserContext1)
+                            .noRandomAccess()
+                            .returns("query_id\tquery\n");
 
                     execute("cancel query " + queryId, adminUserContext2);
                 }

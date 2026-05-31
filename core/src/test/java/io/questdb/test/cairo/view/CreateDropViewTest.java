@@ -119,8 +119,11 @@ public class CreateDropViewTest extends AbstractViewTest {
             final String query2 = "select ts, k2, max(v) as v_max from " + TABLE2 + " where v > 6";
             createView(VIEW2, query2, TABLE2);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(TABLE1)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tk\tk2\tv
                             1970-01-01T00:00:00.000000Z\tk0\tk2_0\t0
                             1970-01-01T00:00:10.000000Z\tk1\tk2_1\t1
@@ -131,15 +134,13 @@ public class CreateDropViewTest extends AbstractViewTest {
                             1970-01-01T00:01:00.000000Z\tk6\tk2_6\t6
                             1970-01-01T00:01:10.000000Z\tk7\tk2_7\t7
                             1970-01-01T00:01:20.000000Z\tk8\tk2_8\t8
-                            """,
-                    TABLE1,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(TABLE2)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tk\tk2\tv
                             1970-01-01T00:00:00.000000Z\tk0\tk2_0\t0
                             1970-01-01T00:00:10.000000Z\tk1\tk2_1\t1
@@ -150,32 +151,27 @@ public class CreateDropViewTest extends AbstractViewTest {
                             1970-01-01T00:01:00.000000Z\tk6\tk2_6\t6
                             1970-01-01T00:01:10.000000Z\tk7\tk2_7\t7
                             1970-01-01T00:01:20.000000Z\tk8\tk2_8\t8
-                            """,
-                    TABLE2,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(VIEW1)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tk\tv_max
                             1970-01-01T00:00:50.000000Z\tk5\t5
                             1970-01-01T00:01:00.000000Z\tk6\t6
                             1970-01-01T00:01:10.000000Z\tk7\t7
                             1970-01-01T00:01:20.000000Z\tk8\t8
-                            """,
-                    VIEW1
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(VIEW2)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tk2\tv_max
                             1970-01-01T00:01:10.000000Z\tk2_7\t7
                             1970-01-01T00:01:20.000000Z\tk2_8\t8
-                            """,
-                    VIEW2
-            );
+                            """);
         });
     }
 
@@ -322,25 +318,25 @@ public class CreateDropViewTest extends AbstractViewTest {
             final String query2 = "select ts, k2, max(v) as v_max from " + TABLE2 + " where v > 6";
             createView(VIEW2, query2, TABLE2);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(VIEW1)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tk\tv_max
                             1970-01-01T00:00:50.000000Z\tk5\t5
                             1970-01-01T00:01:00.000000Z\tk6\t6
                             1970-01-01T00:01:10.000000Z\tk7\t7
                             1970-01-01T00:01:20.000000Z\tk8\t8
-                            """,
-                    VIEW1
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, v_max from " + VIEW2)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ts\tv_max
                             1970-01-01T00:01:10.000000Z\t7
                             1970-01-01T00:01:20.000000Z\t8
-                            """,
-                    "select ts, v_max from " + VIEW2
-            );
+                            """);
 
             execute("DROP VIEW " + VIEW1);
             drainWalQueue();

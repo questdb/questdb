@@ -89,35 +89,32 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testBitAndStr() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '2.1.1.1' & '2.2.2.2'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '2.1.1.1' & '2.2.2.2'")
                 .expectSize()
                 .returns("""
                         column
                         2.0.0.0
-                        """));
+                        """);
     }
 
     @Test
     public void testBitAndStr2() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select '2.2.2.2' & ipv4 '2.1.1.1'")
-                .noLeakCheck()
+        assertQuery("select '2.2.2.2' & ipv4 '2.1.1.1'")
                 .expectSize()
                 .returns("""
                         column
                         2.0.0.0
-                        """));
+                        """);
     }
 
     @Test
     public void testBroadcastAddrUseCase() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select (~ netmask('68.11.9.2/8')) | ipv4 '68.11.9.2'")
-                .noLeakCheck()
+        assertQuery("select (~ netmask('68.11.9.2/8')) | ipv4 '68.11.9.2'")
                 .expectSize()
                 .returns("""
                         column
                         68.255.255.255
-                        """));
+                        """);
     }
 
     @Test
@@ -699,46 +696,42 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testExplicitCastIPv4ToStr() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1'::string")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1'::string")
                 .expectSize()
                 .returns("""
                         cast
                         1.1.1.1
-                        """));
+                        """);
     }
 
     @Test
     public void testExplicitCastIPv4ToStr2() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select '1.1.1.1'::ipv4::string")
-                .noLeakCheck()
+        assertQuery("select '1.1.1.1'::ipv4::string")
                 .expectSize()
                 .returns("""
                         cast
                         1.1.1.1
-                        """));
+                        """);
     }
 
     @Test
     public void testExplicitCastIPv4ToVarchar() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1'::varchar")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1'::varchar")
                 .expectSize()
                 .returns("""
                         cast
                         1.1.1.1
-                        """));
+                        """);
     }
 
     @Test
     public void testExplicitCastIPv4ToVarchar2() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select '1.1.1.1'::ipv4::varchar")
-                .noLeakCheck()
+        assertQuery("select '1.1.1.1'::ipv4::varchar")
                 .expectSize()
                 .returns("""
                         cast
                         1.1.1.1
-                        """));
+                        """);
     }
 
     @Test
@@ -783,13 +776,12 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testExplicitCastStrIPv4() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ~ ipv4 '2.2.2.2'")
-                .noLeakCheck()
+        assertQuery("select ~ ipv4 '2.2.2.2'")
                 .expectSize()
                 .returns("""
                         column
                         253.253.253.253
-                        """));
+                        """);
     }
 
     @Test
@@ -852,9 +844,12 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(100))");
             execute("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(100))");
-            assertQueryNoLeakCheckWithFatJoin(
-                    "select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.ip",
-                    """
+            assertQuery("select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.ip")
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count\tip\tip2\tcount2
                             1\t12.5.9.227\t12.5.9.227\t2
                             1\t12.5.9.23\t12.5.9.23\t2
@@ -888,12 +883,7 @@ public class IPv4Test extends AbstractCairoTest {
                             1\t12.5.9.28\t12.5.9.28\t2
                             1\t12.5.9.20\t12.5.9.20\t2
                             1\t12.5.9.20\t12.5.9.20\t2
-                            """,
-                    null,
-                    true,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -916,13 +906,12 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testGreaterThanEqIPv4() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '34.11.45.3' >= ipv4 '22.1.200.89'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '34.11.45.3' >= ipv4 '22.1.200.89'")
                 .expectSize()
                 .returns("""
                         column
                         true
-                        """));
+                        """);
     }
 
     @Test
@@ -933,46 +922,42 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testGreaterThanEqIPv4Null() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '34.11.45.3' >= ipv4 '0.0.0.0'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '34.11.45.3' >= ipv4 '0.0.0.0'")
                 .expectSize()
                 .returns("""
                         column
                         false
-                        """));
+                        """);
     }
 
     @Test
     public void testGreaterThanEqIPv4Null2() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '34.11.45.3' >= null")
-                .noLeakCheck()
+        assertQuery("select ipv4 '34.11.45.3' >= null")
                 .expectSize()
                 .returns("""
                         column
                         false
-                        """));
+                        """);
     }
 
     @Test
     public void testGreaterThanEqIPv4Null3() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select null >= ipv4 '34.11.45.3'")
-                .noLeakCheck()
+        assertQuery("select null >= ipv4 '34.11.45.3'")
                 .expectSize()
                 .returns("""
                         column
                         false
-                        """));
+                        """);
     }
 
     @Test
     public void testGreaterThanIPv4() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '34.11.45.3' > ipv4 '22.1.200.89'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '34.11.45.3' > ipv4 '22.1.200.89'")
                 .expectSize()
                 .returns("""
                         column
                         true
-                        """));
+                        """);
     }
 
     @Test
@@ -1051,24 +1036,22 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4BitOr() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1' | '255.0.0.0'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1' | '255.0.0.0'")
                 .expectSize()
                 .returns("""
                         column
                         255.1.1.1
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4BitOr2() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select '1.1.1.1' | ipv4 '255.0.0.0'")
-                .noLeakCheck()
+        assertQuery("select '1.1.1.1' | ipv4 '255.0.0.0'")
                 .expectSize()
                 .returns("""
                         column
                         255.1.1.1
-                        """));
+                        """);
     }
 
     @Test
@@ -1088,13 +1071,12 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4BitwiseAndConst() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1' & ipv4 '0.0.1.1'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1' & ipv4 '0.0.1.1'")
                 .expectSize()
                 .returns("""
                         column
                         0.0.1.1
-                        """));
+                        """);
     }
 
     @Test
@@ -1250,12 +1232,12 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4BitwiseAndStr() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select '1.1.1.1' & '0.0.1.1'")
+        assertQuery("select '1.1.1.1' & '0.0.1.1'")
                 .expectSize()
                 .returns("""
                         column
                         0.0.1.1
-                        """));
+                        """);
     }
 
     @Test
@@ -1384,13 +1366,12 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4BitwiseNotConst() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ~ ipv4 '1.1.1.1'")
-                .noLeakCheck()
+        assertQuery("select ~ ipv4 '1.1.1.1'")
                 .expectSize()
                 .returns("""
                         column
                         254.254.254.254
-                        """));
+                        """);
     }
 
     @Test
@@ -1629,23 +1610,22 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4BitwiseOrConst() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1' | ipv4 '255.0.0.0'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1' | ipv4 '255.0.0.0'")
                 .expectSize()
                 .returns("""
                         column
                         255.1.1.1
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4BitwiseOrStr() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select '1.1.1.1' | '0.0.1.1'")
+        assertQuery("select '1.1.1.1' | '0.0.1.1'")
                 .expectSize()
                 .returns("""
                         column
                         1.1.1.1
-                        """));
+                        """);
     }
 
     @Test
@@ -2558,34 +2538,32 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4MinusIPv4Char() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1' - '9'")
+        assertQuery("select ipv4 '1.1.1.1' - '9'")
                 .expectSize()
                 .returns("""
                         column
                         1.1.0.248
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4MinusIPv4Const() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1' - ipv4 '255.255.255.255'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1' - ipv4 '255.255.255.255'")
                 .expectSize()
                 .returns("""
                         column
                         -4278124286
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4MinusIPv4ConstNull() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '0.0.0.0' - ipv4 '1.1.1.1'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '0.0.0.0' - ipv4 '1.1.1.1'")
                 .expectSize()
                 .returns("""
                         column
                         null
-                        """));
+                        """);
     }
 
     @Test
@@ -2658,13 +2636,12 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4MinusIPv4Str() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1' - '0.0.0.1'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1' - '0.0.0.1'")
                 .expectSize()
                 .returns("""
                         column
                         16843008
-                        """));
+                        """);
     }
 
     @Test
@@ -2737,35 +2714,32 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4MinusIntConst() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1' - 1")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1' - 1")
                 .expectSize()
                 .returns("""
                         column
                         1.1.1.0
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4MinusIntConst2() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1' - 16843008")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1' - 16843008")
                 .expectSize()
                 .returns("""
                         column
                         0.0.0.1
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4MinusIntConstOverflow() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1' - 16843010")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1' - 16843010")
                 .expectSize()
                 .returns("""
                         column
                         
-                        """));
+                        """);
     }
 
     @Test
@@ -3580,68 +3554,62 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4PlusIntConst() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1' + 20")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1' + 20")
                 .expectSize()
                 .returns("""
                         column
                         1.1.1.21
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4PlusIntConst2() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '255.255.255.20' + 235")
-                .noLeakCheck()
+        assertQuery("select ipv4 '255.255.255.20' + 235")
                 .expectSize()
                 .returns("""
                         column
                         255.255.255.255
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4PlusIntConst3() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select  ('255.255.255.255')::ipv4 + 10")
-                .noLeakCheck()
+        assertQuery("select  ('255.255.255.255')::ipv4 + 10")
                 .expectSize()
                 .returns("""
                         column
                         
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4PlusIntConstNull() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '0.0.0.0' + 20")
-                .noLeakCheck()
+        assertQuery("select ipv4 '0.0.0.0' + 20")
                 .expectSize()
                 .returns("""
                         column
                         
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4PlusIntConstOverflow() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '255.255.255.255' + 1")
-                .noLeakCheck()
+        assertQuery("select ipv4 '255.255.255.255' + 1")
                 .expectSize()
                 .returns("""
                         column
                         
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4PlusIntConstOverflow2() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '255.255.255.20' + 236")
-                .noLeakCheck()
+        assertQuery("select ipv4 '255.255.255.20' + 236")
                 .expectSize()
                 .returns("""
                         column
                         
-                        """));
+                        """);
     }
 
     @Test
@@ -4116,13 +4084,12 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4StrBadStr() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select netmask('bdfsir/33')")
-                .noLeakCheck()
+        assertQuery("select netmask('bdfsir/33')")
                 .expectSize()
                 .returns("""
                         netmask
                         
-                        """));
+                        """);
     }
 
     @Test
@@ -4244,68 +4211,62 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4StrMinusIPv4() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select '1.1.1.1' - ipv4 '0.0.0.1'")
-                .noLeakCheck()
+        assertQuery("select '1.1.1.1' - ipv4 '0.0.0.1'")
                 .expectSize()
                 .returns("""
                         column
                         16843008
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4StrMinusIPv4Str() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select '1.1.1.1' - '0.0.0.1'")
-                .noLeakCheck()
+        assertQuery("select '1.1.1.1' - '0.0.0.1'")
                 .expectSize()
                 .returns("""
                         column
                         16843008
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4StrMinusInt() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1' - 5")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1' - 5")
                 .expectSize()
                 .returns("""
                         column
                         1.1.0.252
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4StrNetmask() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select netmask('68.11.22.1/28')")
-                .noLeakCheck()
+        assertQuery("select netmask('68.11.22.1/28')")
                 .expectSize()
                 .returns("""
                         netmask
                         255.255.255.240
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4StrNetmaskNull() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select netmask('68.11.22.1/33')")
-                .noLeakCheck()
+        assertQuery("select netmask('68.11.22.1/33')")
                 .expectSize()
                 .returns("""
                         netmask
                         
-                        """));
+                        """);
     }
 
     @Test
     public void testIPv4StrPlusInt() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1' + 5")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1' + 5")
                 .expectSize()
                 .returns("""
                         column
                         1.1.1.6
-                        """));
+                        """);
     }
 
     @Test
@@ -4599,13 +4560,12 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastStrIPv42() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '2.2.2.2' <= '1.1.1.1'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '2.2.2.2' <= '1.1.1.1'")
                 .expectSize()
                 .returns("""
                         column
                         false
-                        """));
+                        """);
     }
 
     @Test
@@ -4980,57 +4940,52 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIntPlusIPv4Const() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select 20 + ipv4 '1.1.1.1'")
-                .noLeakCheck()
+        assertQuery("select 20 + ipv4 '1.1.1.1'")
                 .expectSize()
                 .returns("""
                         column
                         1.1.1.21
-                        """));
+                        """);
     }
 
     @Test
     public void testIntPlusIPv4Const2() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select 235 + ipv4 '255.255.255.20'")
-                .noLeakCheck()
+        assertQuery("select 235 + ipv4 '255.255.255.20'")
                 .expectSize()
                 .returns("""
                         column
                         255.255.255.255
-                        """));
+                        """);
     }
 
     @Test
     public void testIntPlusIPv4ConstNull() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select 20 + ipv4 '0.0.0.0'")
-                .noLeakCheck()
+        assertQuery("select 20 + ipv4 '0.0.0.0'")
                 .expectSize()
                 .returns("""
                         column
                         
-                        """));
+                        """);
     }
 
     @Test
     public void testIntPlusIPv4ConstOverflow() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select 1 + ipv4 '255.255.255.255'")
-                .noLeakCheck()
+        assertQuery("select 1 + ipv4 '255.255.255.255'")
                 .expectSize()
                 .returns("""
                         column
                         
-                        """));
+                        """);
     }
 
     @Test
     public void testIntPlusIPv4ConstOverflow2() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select 236 + ipv4 '255.255.255.20'")
-                .noLeakCheck()
+        assertQuery("select 236 + ipv4 '255.255.255.20'")
                 .expectSize()
                 .returns("""
                         column
                         
-                        """));
+                        """);
     }
 
     @Test
@@ -5153,18 +5108,17 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIntPlusIPv4Str() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select 5 + ipv4 '1.1.1.1'")
-                .noLeakCheck()
+        assertQuery("select 5 + ipv4 '1.1.1.1'")
                 .expectSize()
                 .returns("""
                         column
                         1.1.1.6
-                        """));
+                        """);
     }
 
     @Test
     public void testIntPlusIPv4Var() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select bytes + ip from test")
+        assertQuery("select bytes + ip from test")
                 .ddl("create table test as " +
                         "(" +
                         "  select" +
@@ -5277,7 +5231,7 @@ public class IPv4Test extends AbstractCairoTest {
                         0.0.2.134
                         0.0.2.79
                         0.0.3.98
-                        """));
+                        """);
     }
 
     @Test
@@ -5417,24 +5371,22 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testLessThanEqIPv4() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '34.11.45.3' <= ipv4 '34.11.45.3'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '34.11.45.3' <= ipv4 '34.11.45.3'")
                 .expectSize()
                 .returns("""
                         column
                         true
-                        """));
+                        """);
     }
 
     @Test
     public void testLessThanIPv4() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '34.11.45.3' < ipv4 '22.1.200.89'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '34.11.45.3' < ipv4 '22.1.200.89'")
                 .expectSize()
                 .returns("""
                         column
                         false
-                        """));
+                        """);
     }
 
     @Test
@@ -5898,13 +5850,12 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testNullNetmask() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select netmask(null)")
-                .noLeakCheck()
+        assertQuery("select netmask(null)")
                 .expectSize()
                 .returns("""
                         netmask
                         
-                        """));
+                        """);
     }
 
     @Test
@@ -6259,35 +6210,32 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testStrIPv4Cast() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1'")
                 .expectSize()
                 .returns("""
                         cast
                         1.1.1.1
-                        """));
+                        """);
     }
 
     @Test
     public void testStrIPv4CastInvalid() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1'")
                 .expectSize()
                 .returns("""
                         cast
                         1.1.1.1
-                        """));
+                        """);
     }
 
     @Test
     public void testStrIPv4CastNull() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select ipv4 '1.1.1.1'")
-                .noLeakCheck()
+        assertQuery("select ipv4 '1.1.1.1'")
                 .expectSize()
                 .returns("""
                         cast
                         1.1.1.1
-                        """));
+                        """);
     }
 
     @Test
