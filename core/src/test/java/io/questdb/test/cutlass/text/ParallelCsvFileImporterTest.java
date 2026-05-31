@@ -3173,9 +3173,12 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111\t666.660
                         """);
 
-        assertQueryNoLeakCheck(
-                compiler,
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+        assertQuery("show columns from alltypes")
+                .noLeakCheck()
+                .withCompiler(compiler)
+                .withContext(sqlExecutionContext)
+                .noRandomAccess()
+                .returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
                         "bo\tBOOLEAN\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
                         "by\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
                         "sh\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
@@ -3191,13 +3194,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         "l256\tLONG256\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
                         "ge\t" + stringTypeName + "\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
                         "uid\tUUID\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                        "dec\tDECIMAL(18,3)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n",
-                "show columns from alltypes",
-                null,
-                sqlExecutionContext,
-                false,
-                false
-        );
+                        "dec\tDECIMAL(18,3)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n");
     }
 
     private void importAndCleanupTable(
@@ -3226,15 +3223,13 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         );
         importer.process(AllowAllSecurityContext.INSTANCE);
         importer.clear();
-        assertQueryNoLeakCheck(
-                compiler,
-                "cnt\n" + expectedCount + "\n",
-                "select count(*) cnt from " + tableName,
-                null,
-                false,
-                context,
-                true
-        );
+        assertQuery("select count(*) cnt from " + tableName)
+                .noLeakCheck()
+                .withCompiler(compiler)
+                .withContext(context)
+                .noRandomAccess()
+                .expectSize()
+                .returns("cnt\n" + expectedCount + "\n");
         CairoEngine cairoEngine = context.getCairoEngine();
         cairoEngine.execute("drop table " + tableName, context);
     }
@@ -3395,18 +3390,15 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         9\t2025-08-13T00:00:00.000009Z\t2025-08-13T00:00:00.000000009Z
                         """);
 
-        assertQueryNoLeakCheck(
-                compiler,
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+        assertQuery("show columns from timestamp_test")
+                .noLeakCheck()
+                .withCompiler(compiler)
+                .withContext(sqlExecutionContext)
+                .noRandomAccess()
+                .returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
                         "id\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
                         "ts\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts")) + "\tfalse\t\t\n" +
-                        "ts_ns\tTIMESTAMP_NS\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts_ns")) + "\tfalse\t\t\n",
-                "show columns from timestamp_test",
-                null,
-                sqlExecutionContext,
-                false,
-                false
-        );
+                        "ts_ns\tTIMESTAMP_NS\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts_ns")) + "\tfalse\t\t\n");
     }
 
     private void testImportTooSmallFileBuffer0(String tableName) throws Exception {
