@@ -20156,7 +20156,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             }
 
                             try {
-                                assertSql("count\n10\n", query);
+                                assertQuery(query)
+                                        .noLeakCheck()
+                                        .returnsOnce("count\n10\n");
                             } catch (Exception e) {
                                 throw new AssertionError("Failed for query: " + query, e);
                             }
@@ -21049,13 +21051,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
     protected void assertQueryAndPlan(String query, String plan, String expectedResult, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertPlanNoLeakCheck(query, plan);
 
-        assertQueryNoLeakCheck(
-                expectedResult,
-                query,
-                expectedTimestamp,
-                supportsRandomAccess,
-                expectSize
-        );
+        assertQuery(query)
+                .noLeakCheck()
+                .timestamp(expectedTimestamp)
+                .supportsRandomAccess(supportsRandomAccess)
+                .expectSize(expectSize)
+                .returns(expectedResult);
     }
 
     static {
