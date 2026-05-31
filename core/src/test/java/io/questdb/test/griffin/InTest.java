@@ -232,60 +232,50 @@ public class InTest extends AbstractCairoTest {
                 "FROM long_sequence(1000)" +
                 ") TIMESTAMP(ts) PARTITION BY MONTH");
 
-        assertQueryAndPlan(
-                "count\n889\n",
-                """
+        assertQuery("SELECT count(*) FROM anomaly_log " +
+                        "where action IN (-2, 0, -1) ")
+                .withPlan("""
                         Count
                             Async JIT Filter workers: 1
                               filter: action in [-2,-1,0]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: anomaly_log
-                        """,
-                "SELECT count(*) FROM anomaly_log " +
-                        "where action IN (-2, 0, -1) ",
-                null,
-                false,
-                true
-        );
-        assertQueryAndPlan(
-                "count\n1000\n",
-                """
+                        """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n889\n");
+        assertQuery("SELECT count(*) FROM anomaly_log " +
+                        "where action IN (null, -2, 0, -1) ")
+                .withPlan("""
                         Count
                             Async JIT Filter workers: 1
                               filter: action in [null,-2,-1,0]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: anomaly_log
-                        """,
-                "SELECT count(*) FROM anomaly_log " +
-                        "where action IN (null, -2, 0, -1) ",
-                null,
-                false,
-                true
-        );
+                        """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n1000\n");
 
         bindVariableService.setInt("a", -1);
         bindVariableService.setInt("b", -2);
         bindVariableService.setInt("c", 0);
         bindVariableService.setInt("d", Numbers.INT_NULL);
-        assertQueryAndPlan(
-                "count\n1000\n",
-                """
+        assertQuery("SELECT count(*) FROM anomaly_log " +
+                        "where action IN (:a, :b, :c, :d) ")
+                .withPlan("""
                         Count
                             Async JIT Filter workers: 1
                               filter: action in [null,-2,-1,0]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: anomaly_log
-                        """,
-                "SELECT count(*) FROM anomaly_log " +
-                        "where action IN (:a, :b, :c, :d) ",
-
-                null,
-                false,
-                true
-        );
+                        """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n1000\n");
     }
 
     @Test

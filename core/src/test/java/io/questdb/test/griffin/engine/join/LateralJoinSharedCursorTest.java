@@ -74,13 +74,19 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     (25.0, 0.2, '2024-01-01T00:00:01.000000Z')
                     """);
 
-            assertQueryAndPlan(
-                    """
-                            category\tregion\ttotal\trate
-                            A\tUS\t30.0\t0.1
-                            A\tUS\t30.0\t0.2
-                            """,
-                    enableParallelGroupBy ? """
+            assertQuery("""
+                            SELECT o.category, o.region, o.total, sub.rate
+                            FROM (
+                                SELECT category, region, sum(amount) AS total
+                                FROM orders
+                                GROUP BY category, region
+                            ) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_amount <= o.total
+                            ) sub
+                            ORDER BY o.category, o.region, sub.rate
+                            """)
+                    .withPlan(enableParallelGroupBy ? """
                             Encode sort
                               keys: [category, region, rate]
                                 SelectedRecord
@@ -140,21 +146,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                                                                         PageFrame
                                                                             Row forward scan
                                                                             Frame forward scan on: orders
-                            """,
-                    """
-                            SELECT o.category, o.region, o.total, sub.rate
-                            FROM (
-                                SELECT category, region, sum(amount) AS total
-                                FROM orders
-                                GROUP BY category, region
-                            ) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY o.category, o.region, sub.rate
-                            """,
-                    null, true, true
-            );
+                            """)
+                    .expectSize()
+                    .returns("""
+                            category\tregion\ttotal\trate
+                            A\tUS\t30.0\t0.1
+                            A\tUS\t30.0\t0.2
+                            """);
         });
     }
 
