@@ -335,30 +335,26 @@ public class SecurityTest extends AbstractCairoTest {
                     " from long_sequence(10000)) timestamp(ts1)");
             memoryRestrictedEngine.reloadTableNames();
 
-            assertQueryNoLeakCheck(
-                    memoryRestrictedCompiler,
-                    """
+            assertQuery("select sum(d1) from tb1 where d1 < 0.2")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sum
                             165.6121723103405
-                            """,
-                    "select sum(d1) from tb1 where d1 < 0.2",
-                    null,
-                    false,
-                    readOnlyExecutionContext,
-                    true
-            );
+                            """);
             Assert.assertTrue(nCheckInterruptedCalls.get() > 0);
             try {
                 setMaxCircuitBreakerChecks(2);
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
-                        "select sum(d1) from tb1 where d1 < 0.2",
-                        null,
-                        false,
-                        readOnlyExecutionContext,
-                        true
-                );
+                assertQuery("select sum(d1) from tb1 where d1 < 0.2")
+                        .noLeakCheck()
+                        .withCompiler(memoryRestrictedCompiler)
+                        .withContext(readOnlyExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n");
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("Interrupting SQL processing, max calls is 2"));
@@ -1121,30 +1117,24 @@ public class SecurityTest extends AbstractCairoTest {
                     " from long_sequence(4000)) timestamp(ts)");
 
             memoryRestrictedEngine.reloadTableNames();
-            assertQueryNoLeakCheck(
-                    memoryRestrictedCompiler,
-                    """
+            assertQuery("select sym2, count() from tb1 order by sym2")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .expectSize()
+                    .returns("""
                             sym2\tcount
                             ED\t1968
                             RQ\t2032
-                            """,
-                    "select sym2, count() from tb1 order by sym2",
-                    null,
-                    true,
-                    readOnlyExecutionContext,
-                    true
-            );
+                            """);
 
             try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, count() from tb1 order by sym1, count()",
-                        null,
-                        true,
-                        readOnlyExecutionContext,
-                        true
-                );
+                assertQuery("select sym1, count() from tb1 order by sym1, count()")
+                        .noLeakCheck()
+                        .withCompiler(memoryRestrictedCompiler)
+                        .withContext(readOnlyExecutionContext)
+                        .expectSize()
+                        .returns("TOO MUCH");
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("memory exceeded in EncodedSort"));
