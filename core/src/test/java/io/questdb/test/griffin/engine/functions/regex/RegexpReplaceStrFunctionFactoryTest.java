@@ -36,26 +36,22 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullRegex() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select regexp_replace('abc', null, 'def')")
+                .expectSize()
+                .returns("""
                         regexp_replace
                         
-                        """,
-                "select regexp_replace('abc', null, 'def')",
-                true
-        );
+                        """);
     }
 
     @Test
     public void testNullReplacement() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select regexp_replace('abc', 'a', null)")
+                .expectSize()
+                .returns("""
                         regexp_replace
                         
-                        """,
-                "select regexp_replace('abc', 'a', null)",
-                true
-        );
+                        """);
     }
 
     @Test

@@ -36,12 +36,10 @@ public class NotMatchStrFunctionFactoryTest extends AbstractCairoTest {
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_str() name from long_sequence(2000))");
-            assertQuery(
-                    "name\n",
-                    "select * from x where name !~ null",
-                    true,
-                    true
-            );
+            assertQuery("select * from x where name !~ null")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("name\n");
         });
     }
 

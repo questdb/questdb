@@ -26,13 +26,10 @@ package io.questdb.test.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
-
-import static org.junit.Assert.assertTrue;
 
 public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
 
@@ -70,15 +67,16 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testEmptyLike() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('ABCGE' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('SBDHDJ' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('BDGDGGG' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('AAAAVVV' as varchar) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('ABCGE' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('SBDHDJ' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('BDGDGGG' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('AAAAVVV' as varchar) as name from long_sequence(1)
+                            )"""
             );
 
             assertQuery("select * from x where name like ''")
@@ -91,15 +89,16 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testInvalidRegex() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('ABCGE' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('SBDHDJ' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('BDGDGGG' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('AAAAVVV' as varchar) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('ABCGE' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('SBDHDJ' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('BDGDGGG' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('AAAAVVV' as varchar) as name from long_sequence(1)
+                            )"""
             );
 
             assertQuery("select * from x where name like '[][n'")
@@ -124,41 +123,19 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLikeEscapeAtEndRegConstFunc() throws Exception {
         String createTable = "CREATE TABLE myTable (name varchar)";
-        String insertRow = "INSERT INTO myTable (name) VALUES ('.\\docs\\');";
-
         String query = "SELECT * FROM myTable WHERE name LIKE '%docs\\';";
-        String expected1 = "name\n";
-        String expected2 = "";
-        assertMemoryLeak(() -> {
-            try {
-                assertQueryNoLeakCheck(expected1, query, createTable, null, insertRow, expected2, true, true, true);
-                Assert.fail();
-            } catch (SqlException e) {
-                String expectedMessage = "[5] found [tok='%docs\\', len=6] LIKE pattern must not end with escape character";
-                String actualMessage = e.getMessage();
-                assertTrue(actualMessage.contains(expectedMessage));
-            }
-        });
+        assertQuery(query)
+                .ddl(createTable)
+                .fails(5, "found [tok='%docs\\', len=6] LIKE pattern must not end with escape character");
     }
 
     @Test
     public void testLikeEscapeAtEndRegExpFunc() throws Exception {
         String createTable = "CREATE TABLE myTable (name varchar)";
-        String insertRow = "INSERT INTO myTable  (name) VALUES ('.\\docs\\');";
-
         String query = "SELECT * FROM myTable WHERE name LIKE '_%docs\\';";
-        String expected1 = "name\n";
-        String expected2 = "";
-        assertMemoryLeak(() -> {
-            try {
-                assertQueryNoLeakCheck(expected1, query, createTable, null, insertRow, expected2, true, true, true);
-                Assert.fail();
-            } catch (SqlException e) {
-                String expectedMessage = "[6] found [tok='_%docs\\', len=7] LIKE pattern must not end with escape character";
-                String actualMessage = e.getMessage();
-                assertTrue(actualMessage.contains(expectedMessage));
-            }
-        });
+        assertQuery(query)
+                .ddl(createTable)
+                .fails(6, "found [tok='_%docs\\', len=7] LIKE pattern must not end with escape character");
     }
 
     @Test
@@ -170,7 +147,12 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
         String expected1 = "name\n";
         String expected2 = "name\n";
 
-        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+        assertQuery(query)
+                .ddl(createTable)
+                .mutateWith(insertRow)
+                .expectSize()
+                .sizeMayVary()
+                .returns(expected1, expected2);
     }
 
     @Test
@@ -182,7 +164,12 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
         String expected1 = "name\n";
         String expected2 = "name\nThe path is \\_ignore\n";
 
-        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+        assertQuery(query)
+                .ddl(createTable)
+                .mutateWith(insertRow)
+                .expectSize()
+                .sizeMayVary()
+                .returns(expected1, expected2);
     }
 
     @Test
@@ -194,7 +181,12 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
         String expected1 = "name\n";
         String expected2 = "name\nThe path is \\_ignore\n";
 
-        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+        assertQuery(query)
+                .ddl(createTable)
+                .mutateWith(insertRow)
+                .expectSize()
+                .sizeMayVary()
+                .returns(expected1, expected2);
     }
 
     @Test
@@ -206,27 +198,35 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
         String expected1 = "name\n";
         String expected2 = "name\n\\\\?\\D:\\path\n";
 
-        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+        assertQuery(query)
+                .ddl(createTable)
+                .mutateWith(insertRow)
+                .expectSize()
+                .sizeMayVary()
+                .returns(expected1, expected2);
     }
 
     @Test
     public void testLikePercentageAtEnd() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('ABCGE' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('SBDHDJ' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('BDGDGGG' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('AAAAVVV' as varchar) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('ABCGE' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('SBDHDJ' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('BDGDGGG' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('AAAAVVV' as varchar) as name from long_sequence(1)
+                            )"""
             );
             assertQuery("select * from x where name like 'ABC%'")
                     .noLeakCheck()
-                    .returns("name\n" +
-                            "ABCGE\n");
+                    .returns("""
+                            name
+                            ABCGE
+                            """);
         });
     }
 
@@ -234,18 +234,21 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testLikePercentageAtEndNonAscii() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('фу' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('бар' as varchar) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('баз' as varchar) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('фу' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('бар' as varchar) as name from long_sequence(1)
+                            union
+                            select cast('баз' as varchar) as name from long_sequence(1)
+                            )"""
             );
             assertQuery("select * from x where name like 'фу%'")
                     .noLeakCheck()
-                    .returns("name\n" +
-                            "фу\n");
+                    .returns("""
+                            name
+                            фу
+                            """);
         });
     }
 
@@ -307,21 +310,23 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
             execute("create table x as (select rnd_varchar('H', 'A', 'ZK') name from long_sequence(20))");
             assertQuery("select * from x where not name like 'H'")
                     .noLeakCheck()
-                    .returns("name\n" +
-                            "A\n" +
-                            "ZK\n" +
-                            "ZK\n" +
-                            "ZK\n" +
-                            "ZK\n" +
-                            "A\n" +
-                            "A\n" +
-                            "A\n" +
-                            "ZK\n" +
-                            "A\n" +
-                            "A\n" +
-                            "A\n" +
-                            "A\n" +
-                            "A\n");
+                    .returns("""
+                            name
+                            A
+                            ZK
+                            ZK
+                            ZK
+                            ZK
+                            A
+                            A
+                            A
+                            ZK
+                            A
+                            A
+                            A
+                            A
+                            A
+                            """);
         });
     }
 
@@ -331,31 +336,33 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
             execute("create table x as (select rnd_varchar('KL', 'VK', 'XJ', 'TTT') name from long_sequence(30))");
             assertQuery("select * from x where not name like 'XJ'")
                     .noLeakCheck()
-                    .returns("name\n" +
-                            "KL\n" +
-                            "VK\n" +
-                            "TTT\n" +
-                            "VK\n" +
-                            "TTT\n" +
-                            "TTT\n" +
-                            "KL\n" +
-                            "KL\n" +
-                            "KL\n" +
-                            "TTT\n" +
-                            "VK\n" +
-                            "KL\n" +
-                            "KL\n" +
-                            "VK\n" +
-                            "VK\n" +
-                            "TTT\n" +
-                            "TTT\n" +
-                            "KL\n" +
-                            "VK\n" +
-                            "TTT\n" +
-                            "KL\n" +
-                            "KL\n" +
-                            "TTT\n" +
-                            "KL\n");
+                    .returns("""
+                            name
+                            KL
+                            VK
+                            TTT
+                            VK
+                            TTT
+                            TTT
+                            KL
+                            KL
+                            KL
+                            TTT
+                            VK
+                            KL
+                            KL
+                            VK
+                            VK
+                            TTT
+                            TTT
+                            KL
+                            VK
+                            TTT
+                            KL
+                            KL
+                            TTT
+                            KL
+                            """);
         });
     }
 
@@ -397,7 +404,11 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     }
 
     private void assertLike(String expected, String query) throws Exception {
-        assertQueryNoLeakCheck(expected, query, null, true, false);
-        assertQueryNoLeakCheck(expected, query.replace("like", "ilike"), null, true, false);
+        assertQuery(query)
+                .noLeakCheck()
+                .returns(expected);
+        assertQuery(query.replace("like", "ilike"))
+                .noLeakCheck()
+                .returns(expected);
     }
 }

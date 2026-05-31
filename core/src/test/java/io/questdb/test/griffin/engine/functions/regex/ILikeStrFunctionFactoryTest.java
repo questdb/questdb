@@ -67,15 +67,16 @@ public class ILikeStrFunctionFactoryTest extends AbstractCairoTest {
     public void testEmptyLike() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('SBDHDJ' as string) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('BDGDGGG' as string) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('ABCGE' as string) as name from long_sequence(1)
+                            union
+                            select cast('SBDHDJ' as string) as name from long_sequence(1)
+                            union
+                            select cast('BDGDGGG' as string) as name from long_sequence(1)
+                            union
+                            select cast('AAAAVVV' as string) as name from long_sequence(1)
+                            )"""
             );
             assertQuery("select * from x where name ilike ''")
                     .noLeakCheck()
@@ -87,15 +88,16 @@ public class ILikeStrFunctionFactoryTest extends AbstractCairoTest {
     public void testInvalidRegex() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('SBDHDJ' as string) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('BDGDGGG' as string) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('ABCGE' as string) as name from long_sequence(1)
+                            union
+                            select cast('SBDHDJ' as string) as name from long_sequence(1)
+                            union
+                            select cast('BDGDGGG' as string) as name from long_sequence(1)
+                            union
+                            select cast('AAAAVVV' as string) as name from long_sequence(1)
+                            )"""
             );
             assertQuery("select * from x where name ilike '[][n'")
                     .noLeakCheck()
@@ -107,20 +109,23 @@ public class ILikeStrFunctionFactoryTest extends AbstractCairoTest {
     public void testLikeCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table x as (\n" +
-                            "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('SBDHDJ' as string) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('BDGDGGG' as string) as name from long_sequence(1)\n" +
-                            "union\n" +
-                            "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
-                            ")"
+                    """
+                            create table x as (
+                            select cast('ABCGE' as string) as name from long_sequence(1)
+                            union
+                            select cast('SBDHDJ' as string) as name from long_sequence(1)
+                            union
+                            select cast('BDGDGGG' as string) as name from long_sequence(1)
+                            union
+                            select cast('AAAAVVV' as string) as name from long_sequence(1)
+                            )"""
             );
             assertQuery("select * from x where name ilike 'aBcGe'")
                     .noLeakCheck()
-                    .returns("name\n" +
-                            "ABCGE\n");
+                    .returns("""
+                            name
+                            ABCGE
+                            """);
         });
     }
 
@@ -154,101 +159,116 @@ public class ILikeStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLikePercentageAtEnd() throws Exception {
         assertMemoryLeak(() -> {
-            String sql = "create table x as (\n" +
-                    "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('SBDHDJ' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('BDGDGGG' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
-                    ")";
+            String sql = """
+                    create table x as (
+                    select cast('ABCGE' as string) as name from long_sequence(1)
+                    union
+                    select cast('SBDHDJ' as string) as name from long_sequence(1)
+                    union
+                    select cast('BDGDGGG' as string) as name from long_sequence(1)
+                    union
+                    select cast('AAAAVVV' as string) as name from long_sequence(1)
+                    )""";
             execute(sql);
             assertQuery("select * from x where name ilike 'AbC%'")
                     .noLeakCheck()
-                    .returns("name\n" +
-                            "ABCGE\n");
+                    .returns("""
+                            name
+                            ABCGE
+                            """);
         });
     }
 
     @Test
     public void testLikePercentageAtStart() throws Exception {
         assertMemoryLeak(() -> {
-            String sql = "create table x as (\n" +
-                    "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('SBDHDJ' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('BDGDGGG' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
-                    ")";
+            String sql = """
+                    create table x as (
+                    select cast('ABCGE' as string) as name from long_sequence(1)
+                    union
+                    select cast('SBDHDJ' as string) as name from long_sequence(1)
+                    union
+                    select cast('BDGDGGG' as string) as name from long_sequence(1)
+                    union
+                    select cast('AAAAVVV' as string) as name from long_sequence(1)
+                    )""";
             execute(sql);
             assertQuery("select * from x where name ilike '%GgG'")
                     .noLeakCheck()
-                    .returns("name\n" +
-                            "BDGDGGG\n");
+                    .returns("""
+                            name
+                            BDGDGGG
+                            """);
         });
     }
 
     @Test
     public void testLikePercentageAtStartAndEnd() throws Exception {
         assertMemoryLeak(() -> {
-            String sql = "create table x as (\n" +
-                    "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('SBDHDJ' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('BDGDGGG' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
-                    ")";
+            String sql = """
+                    create table x as (
+                    select cast('ABCGE' as string) as name from long_sequence(1)
+                    union
+                    select cast('SBDHDJ' as string) as name from long_sequence(1)
+                    union
+                    select cast('BDGDGGG' as string) as name from long_sequence(1)
+                    union
+                    select cast('AAAAVVV' as string) as name from long_sequence(1)
+                    )""";
             execute(sql);
             assertQuery("select * from x where name ilike '%BcG%'")
                     .noLeakCheck()
-                    .returns("name\n" +
-                            "ABCGE\n");
+                    .returns("""
+                            name
+                            ABCGE
+                            """);
         });
     }
 
     @Test
     public void testLikeStringUnderscoreAtStartAndEnd() throws Exception {
         assertMemoryLeak(() -> {
-            String sql = "create table x as (\n" +
-                    "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('SBDHDJ' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('BDGDGGG' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
-                    ")";
+            String sql = """
+                    create table x as (
+                    select cast('ABCGE' as string) as name from long_sequence(1)
+                    union
+                    select cast('SBDHDJ' as string) as name from long_sequence(1)
+                    union
+                    select cast('BDGDGGG' as string) as name from long_sequence(1)
+                    union
+                    select cast('AAAAVVV' as string) as name from long_sequence(1)
+                    )""";
             execute(sql);
             assertQuery("select * from x where name ilike '_BC__'")
                     .noLeakCheck()
-                    .returns("name\n" +
-                            "ABCGE\n");
+                    .returns("""
+                            name
+                            ABCGE
+                            """);
         });
     }
 
     @Test
     public void testLikeUnderscoreAndPercentage() throws Exception {
         assertMemoryLeak(() -> {
-            String sql = "create table x as (\n" +
-                    "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('SBDHDJ' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('BDGDGGG' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
-                    ")";
+            String sql = """
+                    create table x as (
+                    select cast('ABCGE' as string) as name from long_sequence(1)
+                    union
+                    select cast('SBDHDJ' as string) as name from long_sequence(1)
+                    union
+                    select cast('BDGDGGG' as string) as name from long_sequence(1)
+                    union
+                    select cast('AAAAVVV' as string) as name from long_sequence(1)
+                    )""";
             execute(sql);
             assertQuery("select * from x where name ilike '_B%'")
                     .noLeakCheck()
-                    .returns("name\n" +
-                            "ABCGE\n" +
-                            "SBDHDJ\n");
+                    .returns("""
+                            name
+                            ABCGE
+                            SBDHDJ
+                            """);
         });
     }
 
@@ -266,19 +286,21 @@ public class ILikeStrFunctionFactoryTest extends AbstractCairoTest {
             execute("create table x as (select rnd_str('a', 'BC', 'h', 'H', 'k') name from long_sequence(20))");
             assertQuery("select * from x where not name ilike 'H'")
                     .noLeakCheck()
-                    .returns("name\n" +
-                            "a\n" +
-                            "BC\n" +
-                            "BC\n" +
-                            "k\n" +
-                            "BC\n" +
-                            "BC\n" +
-                            "BC\n" +
-                            "k\n" +
-                            "BC\n" +
-                            "BC\n" +
-                            "a\n" +
-                            "k\n");
+                    .returns("""
+                            name
+                            a
+                            BC
+                            BC
+                            k
+                            BC
+                            BC
+                            BC
+                            k
+                            BC
+                            BC
+                            a
+                            k
+                            """);
         });
     }
 
@@ -288,13 +310,15 @@ public class ILikeStrFunctionFactoryTest extends AbstractCairoTest {
             execute("create table x as (select rnd_str('kk', 'xJ', 'Xj', 'GU', 'XJ') name from long_sequence(20))");
             assertQuery("select * from x where not name ilike 'XJ'")
                     .noLeakCheck()
-                    .returns("name\n" +
-                            "kk\n" +
-                            "GU\n" +
-                            "GU\n" +
-                            "GU\n" +
-                            "GU\n" +
-                            "kk\n");
+                    .returns("""
+                            name
+                            kk
+                            GU
+                            GU
+                            GU
+                            GU
+                            kk
+                            """);
         });
     }
 
@@ -337,6 +361,8 @@ public class ILikeStrFunctionFactoryTest extends AbstractCairoTest {
     }
 
     private void assertLike(String expected, String query) throws Exception {
-        assertQueryNoLeakCheck(expected, query, null, true, false);
+        assertQuery(query)
+                .noLeakCheck()
+                .returns(expected);
     }
 }
