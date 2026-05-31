@@ -36,12 +36,7 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws Exception {
-        assertQuery(
-                """
-                        a0\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14
-                        \t\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t
-                        """,
-                "select first_not_null(a0) a0," +
+        assertQuery("select first_not_null(a0) a0," +
                         "     first_not_null(a1) a1," +
                         "     first_not_null(a2) a2," +
                         "     first_not_null(a3) a3," +
@@ -56,8 +51,8 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "     first_not_null(a12) a12, " +
                         "     first_not_null(a13) a13, " +
                         "     first_not_null(a14) a14 " +
-                        "from tab",
-                "create table tab as ( " +
+                        "from tab")
+                .ddl("create table tab as ( " +
                         "select cast(null as char) a0," +
                         "       cast(null as date) a1," +
                         "       cast(null as double) a2," +
@@ -73,11 +68,13 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "       cast(null as geohash(25b)) a12, " +
                         "       cast(null as geohash(35b)) a13, " +
                         "       cast(null as ipv4) a14 " +
-                        "from long_sequence(3))",
-                null,
-                false,
-                true
-        );
+                        "from long_sequence(3))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        a0\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14
+                        \t\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t
+                        """);
     }
 
     @Test

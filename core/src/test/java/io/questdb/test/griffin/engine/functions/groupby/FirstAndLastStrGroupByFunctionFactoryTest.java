@@ -39,165 +39,137 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
 
     @Test
     public void testAllNull() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select first(a1) r1, last(a1) r2 from tab")
+                .ddl("create table tab as (select cast(list(null,null,null) as string) a1 from long_sequence(3))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         r1\tr2
                         \t
-                        """,
-                "select first(a1) r1, last(a1) r2 from tab",
-                "create table tab as (select cast(list(null,null,null) as string) a1 from long_sequence(3))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testFirstNullLastSomething() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select first(a1) r1, last(a1) r2 from tab")
+                .ddl("create table tab as (select cast(list(null,'else','something') as string) a1 from long_sequence(3))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         r1\tr2
                         \tsomething
-                        """,
-                "select first(a1) r1, last(a1) r2 from tab",
-                "create table tab as (select cast(list(null,'else','something') as string) a1 from long_sequence(3))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testFirstSomethingLastNull() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select first(a1) r1, last(a1) r2 from tab")
+                .ddl("create table tab as (select cast(list('something','else',null) as string) a1 from long_sequence(3))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         r1\tr2
                         something\t
-                        """,
-                "select first(a1) r1, last(a1) r2 from tab",
-                "create table tab as (select cast(list('something','else',null) as string) a1 from long_sequence(3))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testFunctionArgument() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab")
+                .ddl("create table tab as (select rnd_str('foo','bar') a1, rnd_str('bar','baz') a2 from long_sequence(10))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         r1\tr2\tr3\tr4
                         foobar\tbarbar\tfoobar\tbarbar
-                        """,
-                "select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab",
-                "create table tab as (select rnd_str('foo','bar') a1, rnd_str('bar','baz') a2 from long_sequence(10))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testFunctionArgumentAllNulls() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab")
+                .ddl("create table tab as (select rnd_str(null) a1, rnd_str(null) a2 from long_sequence(10))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         r1\tr2\tr3\tr4
                         \t\t\t
-                        """,
-                "select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab",
-                "create table tab as (select rnd_str(null) a1, rnd_str(null) a2 from long_sequence(10))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testFunctionArgumentSomeNulls() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab")
+                .ddl("create table tab as (select rnd_str('foo','bar',null) a1, rnd_str('bar','baz',null) a2 from long_sequence(10))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         r1\tr2\tr3\tr4
                         foobar\tfoobaz\tfoobar\tfoobaz
-                        """,
-                "select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab",
-                "create table tab as (select rnd_str('foo','bar',null) a1, rnd_str('bar','baz',null) a2 from long_sequence(10))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testGroupByOverUnion() throws Exception {
-        assertQuery(
-                """
-                        first\tlast\tfirst_nn\tlast_nn
-                        TJWCPSWHYR\t10\tTJWCPSWHYR\t10
-                        """,
-                "select first(s) first, last(s) last, first_not_null(s) first_nn, last_not_null(s) last_nn " +
-                        "from (x union select x::string s, x::timestamp ts from long_sequence(10))",
-                "create table x as (" +
+        assertQuery("select first(s) first, last(s) last, first_not_null(s) first_nn, last_not_null(s) last_nn " +
+                        "from (x union select x::string s, x::timestamp ts from long_sequence(10))")
+                .ddl("create table x as (" +
                         "select * from (" +
                         "   select " +
                         "       rnd_str(10, 10, 0) s, " +
                         "       timestamp_sequence(0, 100000) ts " +
                         "   from long_sequence(10)" +
-                        ") timestamp(ts))",
-                null,
-                false,
-                true
-        );
+                        ") timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        first\tlast\tfirst_nn\tlast_nn
+                        TJWCPSWHYR\t10\tTJWCPSWHYR\t10
+                        """);
     }
 
     @Test
     public void testGroupKeyedFirstLastAllNulls() throws Exception {
-        assertQuery(
-                """
-                        a\tfirst\tlast\tfirst_not_null\tlast_not_null
-                        a\t\t\t\t
-                        b\t\t\t\t
-                        c\t\t\t\t
-                        """,
-                "select a, first(s), last(s), first_not_null(s), last_not_null(s) from x order by a",
-                "create table x as (" +
+        assertQuery("select a, first(s), last(s), first_not_null(s), last_not_null(s) from x order by a")
+                .ddl("create table x as (" +
                         "select * from (" +
                         "   select " +
                         "       rnd_symbol('a','b','c') a," +
                         "       null::string s, " +
                         "       timestamp_sequence(0, 100000) ts " +
                         "   from long_sequence(10)" +
-                        ") timestamp(ts))",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(ts))")
+                .expectSize()
+                .returns("""
+                        a\tfirst\tlast\tfirst_not_null\tlast_not_null
+                        a\t\t\t\t
+                        b\t\t\t\t
+                        c\t\t\t\t
+                        """);
     }
 
     @Test
     public void testGroupKeyedManyRows() throws Exception {
-        assertQuery(
-                """
-                        sum
-                        9877
-                        """,
-                "select sum(length(first) + length(last) + length(first_nn) + length(last_nn)) " +
+        assertQuery("select sum(length(first) + length(last) + length(first_nn) + length(last_nn)) " +
                         "from " +
                         "( " +
                         "   select a, first(s) first, last(s) last, first_not_null(s) first_nn, last_not_null(s) last_nn " +
                         "   from x " +
-                        ")",
-                "create table x as (" +
+                        ")")
+                .ddl("create table x as (" +
                         "select * from (" +
                         "   select " +
                         "       rnd_symbol(300,10,10,0) a," +
                         "       rnd_str(400, 10, 10, 3) s, " +
                         "       timestamp_sequence(0, 100000) ts " +
                         "   from long_sequence(3000)" +
-                        ") timestamp(ts))",
-                null,
-                false,
-                true
-        );
+                        ") timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sum
+                        9877
+                        """);
     }
 
     @Test

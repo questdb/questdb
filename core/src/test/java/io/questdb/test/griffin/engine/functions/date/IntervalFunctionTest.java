@@ -149,65 +149,69 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     @Test
     public void testIntervalMixedTimestampTypes() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck("""
+            assertQuery("select interval(x::timestamp, (x+10_000_000)::timestamp_ns) from long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             ('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.010Z')
-                            """,
-                    "select interval(x::timestamp, (x+10_000_000)::timestamp_ns) from long_sequence(1)");
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select interval(x::timestamp, (x+10_000_000)::timestamp_ns) from long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             ('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.010Z')
-                            """,
-                    "select interval(x::timestamp, (x+10_000_000)::timestamp_ns) from long_sequence(1)"
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select interval(x::timestamp_ns, (x+10_000)::timestamp) from long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             ('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.010Z')
-                            """,
-                    "select interval(x::timestamp_ns, (x+10_000)::timestamp) from long_sequence(1)"
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select interval(null::timestamp_ns, x::timestamp) from long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             
-                            """,
-                    "select interval(null::timestamp_ns, x::timestamp) from long_sequence(1)"
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select interval(x, null::timestamp) from long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             
-                            """,
-                    "select interval(x, null::timestamp) from long_sequence(1)"
-            );
+                            """);
 
 
             execute("create table test_mixed (ts_micro timestamp, ts_nano timestamp_ns)");
             execute("insert into test_mixed values ('2000-01-01T00:00:00.000Z', '2000-01-01T00:00:10.000Z')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select interval(ts_micro, ts_nano) from test_mixed")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             ('2000-01-01T00:00:00.000Z', '2000-01-01T00:00:10.000Z')
-                            """,
-                    "select interval(ts_micro, ts_nano) from test_mixed"
-            );
+                            """);
 
-            assertException("select interval(ts_nano, ts_micro) from test_mixed", 0, "invalid interval boundaries");
-            assertException("select interval(ts_micro + 11_000_000, ts_nano) from test_mixed", 0, "invalid interval boundaries");
+            assertQuery("select interval(ts_nano, ts_micro) from test_mixed")
+                    .fails(0, "invalid interval boundaries");
+            assertQuery("select interval(ts_micro + 11_000_000, ts_nano) from test_mixed")
+                    .fails(0, "invalid interval boundaries");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select interval(ts_nano, ts_micro + 10_000_000) from test_mixed")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             interval
                             ('2000-01-01T00:00:10.000Z', '2000-01-01T00:00:10.000Z')
-                            """,
-                    "select interval(ts_nano, ts_micro + 10_000_000) from test_mixed"
-            );
+                            """);
         });
     }
 
@@ -437,11 +441,9 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     @Test
     public void testInvalidIntervalBoundaries() throws Exception {
         assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck(
-                    "select interval(2,1)",
-                    7,
-                    "invalid interval boundaries"
-            );
+            assertQuery("select interval(2,1)")
+                    .noLeakCheck()
+                    .fails(7, "invalid interval boundaries");
 
             try {
                 try (

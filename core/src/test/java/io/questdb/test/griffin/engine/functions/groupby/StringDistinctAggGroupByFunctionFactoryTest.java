@@ -35,14 +35,11 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 string_distinct_agg
                 
                 """;
-        assertQuery(
-                expected,
-                "select string_distinct_agg(null, ',') from x",
-                "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select string_distinct_agg(null, ',') from x")
+                .ddl("create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
         assertQuery("select string_agg(distinct null, ',') from x")
                 .noRandomAccess()
                 .expectSize()
@@ -55,14 +52,11 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 string_distinct_agg
                 aaa
                 """;
-        assertQuery(
-                expected,
-                "select string_distinct_agg('aaa', ',') from x",
-                "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select string_distinct_agg('aaa', ',') from x")
+                .ddl("create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
         assertQuery("select string_agg(distinct 'aaa', ',') from x")
                 .noRandomAccess()
                 .expectSize()
@@ -80,21 +74,17 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 e\tabc,ccc
                 f\tccc,abc,bbb
                 """;
-        assertQuery(
-                expected,
-                "select a, string_distinct_agg(s, ',') from x order by a",
-                "create table x as (" +
+        assertQuery("select a, string_distinct_agg(s, ',') from x order by a")
+                .ddl("create table x as (" +
                         "select * from (" +
                         "   select " +
                         "       rnd_symbol('a','b','c','d','e','f') a," +
                         "       rnd_str('abc', 'aaa', 'bbb', 'ccc') s, " +
                         "       timestamp_sequence(0, 100000) ts " +
                         "   from long_sequence(30)" +
-                        ") timestamp(ts))",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(ts))")
+                .expectSize()
+                .returns(expected);
         assertQuery("select a, string_agg(distinct s, ',') from x group by a order by a")
                 .expectSize()
                 .returns(expected);
@@ -108,21 +98,17 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 b\t
                 c\t
                 """;
-        assertQuery(
-                expected,
-                "select a, string_distinct_agg(s, ',') from x order by a",
-                "create table x as (" +
+        assertQuery("select a, string_distinct_agg(s, ',') from x order by a")
+                .ddl("create table x as (" +
                         "select * from (" +
                         "   select " +
                         "       rnd_symbol('a','b','c') a," +
                         "       null::string s, " +
                         "       timestamp_sequence(0, 100000) ts " +
                         "   from long_sequence(5)" +
-                        ") timestamp(ts))",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(ts))")
+                .expectSize()
+                .returns(expected);
         assertQuery("select a, string_agg(distinct s, ',') from x group by a order by a")
                 .expectSize()
                 .returns(expected);
@@ -134,21 +120,18 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 max
                 15
                 """;
-        assertQuery(
-                expected,
-                "select max(length(agg)) from (select a, string_distinct_agg(s, ',') agg from x)",
-                "create table x as (" +
+        assertQuery("select max(length(agg)) from (select a, string_distinct_agg(s, ',') agg from x)")
+                .ddl("create table x as (" +
                         "select * from (" +
                         "   select " +
                         "       rnd_symbol(200,10,10,0) a," +
                         "       rnd_str('abc', 'aaa', 'bbb', 'ccc') s, " +
                         "       timestamp_sequence(0, 100000) ts " +
                         "   from long_sequence(1000)" +
-                        ") timestamp(ts))",
-                null,
-                false,
-                true
-        );
+                        ") timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
         assertQuery("select max(length(agg)) from (select a, string_agg(distinct s, ',') agg from x)")
                 .noRandomAccess()
                 .expectSize()
@@ -162,21 +145,17 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 \taaa
                 a\taaa
                 """;
-        assertQuery(
-                expected,
-                "select a, string_distinct_agg(s, ',') from x",
-                "create table x as (" +
+        assertQuery("select a, string_distinct_agg(s, ',') from x")
+                .ddl("create table x as (" +
                         "select * from (" +
                         "   select " +
                         "       rnd_symbol(null, 'a') a," +
                         "       rnd_str(null, 'aaa') s, " +
                         "       timestamp_sequence(0, 100000) ts " +
                         "   from long_sequence(20)" +
-                        ") timestamp(ts))",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(ts))")
+                .expectSize()
+                .returns(expected);
         assertQuery("select a, string_agg(distinct s, ',') from x")
                 .expectSize()
                 .returns(expected);
@@ -188,14 +167,11 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 string_distinct_agg
                 abc,bbb,aaa,ccc
                 """;
-        assertQuery(
-                expected,
-                "select string_distinct_agg(s, ',') from x",
-                "create table x as (select * from (select rnd_str('abc', 'aaa', 'bbb', 'ccc') s, timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select string_distinct_agg(s, ',') from x")
+                .ddl("create table x as (select * from (select rnd_str('abc', 'aaa', 'bbb', 'ccc') s, timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
         assertQuery("select string_agg(distinct s, ',') from x")
                 .noRandomAccess()
                 .expectSize()
@@ -214,30 +190,20 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 string_distinct_agg
                 abc
                 """;
-        assertQuery(
-                expected,
-                "select string_distinct_agg(s, ',') from x",
-                ddl,
-                null,
-                ddl2,
-                expected2,
-                false,
-                true,
-                false
-        );
+        assertQuery("select string_distinct_agg(s, ',') from x")
+                .ddl(ddl)
+                .mutateWith(ddl2)
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected, expected2);
 
         execute("drop table x");
 
-        assertQuery(
-                expected,
-                "select string_agg(distinct s, ',') from x",
-                ddl,
-                null,
-                ddl2,
-                expected2,
-                false,
-                true,
-                false
-        );
+        assertQuery("select string_agg(distinct s, ',') from x")
+                .ddl(ddl)
+                .mutateWith(ddl2)
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected, expected2);
     }
 }

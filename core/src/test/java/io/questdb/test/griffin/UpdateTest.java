@@ -2482,7 +2482,6 @@ public class UpdateTest extends AbstractCairoTest {
 
             assertQuery("up")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .expectSize()
                     .returns("""
                             ts\tx

@@ -253,21 +253,21 @@ public class GroupByFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedAvgIntSomeNaNRandomOrder() throws Exception {
-        assertQueryExpectSize("""
-                        avg\ts\tavg1
-                        4765.307692307692\taa\t4765.307692307692
-                        4421.6578947368425\tbb\t4421.6578947368425
-                        """,
-                "select avg(d) avg, s, avg(d) from x order by s",
-                "create table x as " +
+        assertQuery("select avg(d) avg, s, avg(d) from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_int(0, 10000, 1) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        avg\ts\tavg1
+                        4765.307692307692\taa\t4765.307692307692
+                        4421.6578947368425\tbb\t4421.6578947368425
+                        """);
     }
 
     @Test
@@ -331,21 +331,21 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedKSumKSumDoubleSomeNaN() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
-        assertQueryExpectSize("""
-                        s\tksum\tksum1
-                        aa\t416262.47294392\t416262.47294392
-                        bb\t416933.34165981\t416933.34165981
-                        """,
-                "select s, round(ksum(d), 8) ksum, round(ksum(d), 8) ksum1 from x order by s",
-                "create table x as " +
+        assertQuery("select s, round(ksum(d), 8) ksum, round(ksum(d), 8) ksum1 from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_double(2) d" +
                         " from" +
                         " long_sequence(2000000)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tksum\tksum1
+                        aa\t416262.47294392\t416262.47294392
+                        bb\t416933.34165981\t416933.34165981
+                        """);
     }
 
     @Test
@@ -427,59 +427,59 @@ public class GroupByFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedMaxIntAllNaN() throws Exception {
-        assertQueryExpectSize("""
-                        s\tmax
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, max(d) max from x order by s",
-                "create table x as " +
+        assertQuery("select s, max(d) max from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(NaN as int) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmax
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
     public void testKeyedMaxIntSomeNaN() throws Exception {
-        assertQueryExpectSize("""
-                        s\tmax
-                        aa\t9910
-                        bb\t9947
-                        """,
-                "select s, max(d) max from x order by s",
-                "create table x as " +
+        assertQuery("select s, max(d) max from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " rnd_int(0, 10000, 1) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmax
+                        aa\t9910
+                        bb\t9947
+                        """);
     }
 
     @Test
     public void testKeyedMaxLongAllNaN() throws Exception {
-        assertQueryExpectSize("""
-                        s\tmax
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, max(d) max from x order by s",
-                "create table x as " +
+        assertQuery("select s, max(d) max from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(NaN as long) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmax
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
@@ -560,21 +560,21 @@ public class GroupByFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedMinDateSomeNaN() throws Exception {
-        assertQueryExpectSize("""
-                        s\tmin
-                        aa\t1970-01-01T00:00:00.320Z
-                        bb\t1970-01-01T00:00:00.085Z
-                        """,
-                "select s, min(d) min from x order by s",
-                "create table x as " +
+        assertQuery("select s, min(d) min from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(rnd_long(0, 10000, 1) as date) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmin
+                        aa\t1970-01-01T00:00:00.320Z
+                        bb\t1970-01-01T00:00:00.085Z
+                        """);
     }
 
     @Test
@@ -598,21 +598,21 @@ public class GroupByFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedMinIntAllNaN() throws Exception {
-        assertQueryExpectSize("""
-                        s\tmin
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, min(d) min from x order by s",
-                "create table x as " +
+        assertQuery("select s, min(d) min from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " cast(NaN as int) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tmin
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test
@@ -731,21 +731,21 @@ public class GroupByFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedSumDoubleAllNaN() throws Exception {
-        assertQueryExpectSize("""
-                        s\tsum
-                        aa\tnull
-                        bb\tnull
-                        """,
-                "select s, sum(d) sum from x order by s",
-                "create table x as " +
+        assertQuery("select s, sum(d) sum from x order by s")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
                         " null::double d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")"
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        s\tsum
+                        aa\tnull
+                        bb\tnull
+                        """);
     }
 
     @Test

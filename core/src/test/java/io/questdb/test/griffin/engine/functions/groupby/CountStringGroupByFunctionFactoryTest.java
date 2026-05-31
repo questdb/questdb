@@ -38,14 +38,10 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 b\t1
                 c\t1
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct('42') from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select a, count_distinct('42') from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns(expected);
         assertQuery("select a, count(distinct '42') from x order by a")
                 .expectSize()
                 .returns(expected);
@@ -60,14 +56,11 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                     b\t3
                     c\t3
                     """;
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select a, count_distinct(concat(s, s)) from x order by a",
-                    "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select a, count_distinct(concat(s, s)) from x order by a")
+                    .noLeakCheck()
+                    .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))")
+                    .expectSize()
+                    .returns(expected);
             assertQuery("select a, count(distinct concat(s, s)) from x order by a")
                     .noLeakCheck()
                     .expectSize()
@@ -96,14 +89,10 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 e\t2
                 f\t3
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(s) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select a, count_distinct(s) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))")
+                .expectSize()
+                .returns(expected);
         assertQuery("select a, count(distinct s) from x order by a")
                 .expectSize()
                 .returns(expected);
@@ -115,14 +104,11 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 count_distinct
                 6
                 """;
-        assertQuery(
-                expected,
-                "select count_distinct(s) from x",
-                "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select count_distinct(s) from x")
+                .ddl("create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
         assertQuery("select count(distinct s) from x")
                 .noRandomAccess()
                 .expectSize()
@@ -135,14 +121,11 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 count_distinct
                 4
                 """;
-        assertQuery(
-                expected,
-                "select count_distinct(s) from x",
-                "create table x as (select * from (select rnd_symbol(null, 'xx2', '00s', '544', 'rraa', null) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select count_distinct(s) from x")
+                .ddl("create table x as (select * from (select rnd_symbol(null, 'xx2', '00s', '544', 'rraa', null) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
         assertQuery("select count(distinct s) from x")
                 .noRandomAccess()
                 .expectSize()
@@ -157,14 +140,10 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 b\t0
                 c\t0
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(cast(null as STRING)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+        assertQuery("select a, count_distinct(cast(null as STRING)) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns(expected);
         assertQuery("select a, count(distinct cast(null as STRING)) from x order by a")
                 .expectSize()
                 .returns(expected);
@@ -185,14 +164,11 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 1970-01-01T00:00:08.000000Z\t6
                 1970-01-01T00:00:09.000000Z\t5
                 """;
-        assertQuery(
-                expected,
-                "select ts, count_distinct(s) from x sample by 1s fill(linear)",
-                "create table x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                true,
-                true
-        );
+        assertQuery("select ts, count_distinct(s) from x sample by 1s fill(linear)")
+                .ddl("create table x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
         assertQuery("select ts, count(distinct s) from x sample by 1s fill(linear)")
                 .timestamp("ts")
                 .expectSize()
@@ -250,13 +226,11 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 1970-01-01T00:00:08.000000Z\t6
                 1970-01-01T00:00:09.000000Z\t5
                 """;
-        assertQuery(
-                expected,
-                "select ts, count_distinct(s) from x sample by 1s fill(99)",
-                "create table x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                false
-        );
+        assertQuery("select ts, count_distinct(s) from x sample by 1s fill(99)")
+                .ddl("create table x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
         assertQuery("select ts, count(distinct s) from x sample by 1s fill(99)")
                 .timestamp("ts")
                 .noRandomAccess()
@@ -320,13 +294,11 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 a\t1\t1970-01-01T00:00:09.000000Z
                 f\t1\t1970-01-01T00:00:09.000000Z
                 """;
-        assertQuery(
-                expected,
-                "select a, count_distinct(s), ts from x sample by 1s ALIGN TO FIRST OBSERVATION",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                false
-        );
+        assertQuery("select a, count_distinct(s), ts from x sample by 1s ALIGN TO FIRST OBSERVATION")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
         assertQuery("select a, count(distinct s), ts from x sample by 1s ALIGN TO FIRST OBSERVATION")
                 .timestamp("ts")
                 .noRandomAccess()

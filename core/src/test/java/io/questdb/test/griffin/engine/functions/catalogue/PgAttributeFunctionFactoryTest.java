@@ -57,8 +57,10 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                                                 Frame forward scan on: y
                             """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tb
                             0\t3
                             0\t2
@@ -70,13 +72,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                             2\t3
                             2\t2
                             2\t1
-                            """,
-                    query,
-                    null,
-                    true,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -154,14 +150,10 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                     ) result;\s
                 """;
 
-        assertQuery(
-                "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\tKEYS\tA_ATTNUM\tRAW\n",
-                query,
-                "create table x(a int)",
-                null,
-                false,
-                false
-        );
+        assertQuery(query)
+                .ddl("create table x(a int)")
+                .noRandomAccess()
+                .returns("TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\tKEYS\tA_ATTNUM\tRAW\n");
     }
 
     @Test
@@ -198,13 +190,9 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                 WHERE A_ATTNUM = (result.KEYS).x \s
                 ORDER BY result.table_name, result.PK_NAME, result.KEY_SEQ;""";
 
-        assertQuery(
-                "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\n",
-                query,
-                "create table x(a int)",
-                null,
-                true
-        );
+        assertQuery(query)
+                .ddl("create table x(a int)")
+                .returns("TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\n");
     }
 
     @Test
@@ -245,14 +233,9 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                     WHERE A_ATTNUM = (result.KEYS).x \s
                     ORDER BY result.TABLE_NAME, result.pk_name, result.KEY_SEQ;""";
 
-            assertQuery(
-                    "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\tKEYS\tA_ATTNUM\tRAW\n",
-                    query,
-                    "create table x(a int)",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery(query)
+                    .ddl("create table x(a int)")
+                    .returns("TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\tKEYS\tA_ATTNUM\tRAW\n");
         });
     }
 
@@ -262,23 +245,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
             execute("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)");
             engine.releaseAllWriters();
 
-            assertQueryNoLeakCheck(
-                    """
-                            nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattnum\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype
-                            public\ty\ta\t23\tfalse\t-1\t4\t0\t1\t\t\t\t0\tb
-                            public\ty\tb\t21\tfalse\t-1\t2\t0\t2\t\t\t\t0\tb
-                            public\ty\tc\t21\tfalse\t-1\t2\t0\t3\t\t\t\t0\tb
-                            public\ty\td\t20\tfalse\t-1\t8\t0\t4\t\t\t\t0\tb
-                            public\ty\te\t1042\tfalse\t5\t-1\t0\t5\t\t\t\t0\tb
-                            public\ty\tf\t1043\tfalse\t-1\t-1\t0\t6\t\t\t\t0\tb
-                            public\ty\tg\t16\tfalse\t-1\t1\t0\t7\t\t\t\t0\tb
-                            public\ty\th\t1043\tfalse\t-1\t-1\t0\t8\t\t\t\t0\tb
-                            public\ty\ti\t700\tfalse\t-1\t4\t0\t9\t\t\t\t0\tb
-                            public\ty\tj\t701\tfalse\t-1\t8\t0\t10\t\t\t\t0\tb
-                            public\ty\tk\t1114\tfalse\t-1\t8\t0\t11\t\t\t\t0\tb
-                            public\ty\tl\t1114\tfalse\t-1\t8\t0\t12\t\t\t\t0\tb
-                            """,
-                    """
+            assertQuery("""
                             SELECT * FROM (
                                 SELECT\s
                                     n.nspname,
@@ -313,23 +280,11 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                             ORDER BY\s
                                 nspname,
                                 c.relname,
-                                attnum""",
-                    "create table x(a int)",
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testKafkaQuery31() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)");
-            engine.releaseAllWriters();
-
-            assertQueryNoLeakCheck(
-                    """
+                                attnum""")
+                    .noLeakCheck()
+                    .ddl("create table x(a int)")
+                    .expectSize()
+                    .returns("""
                             nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattnum\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype
                             public\ty\ta\t23\tfalse\t-1\t4\t0\t1\t\t\t\t0\tb
                             public\ty\tb\t21\tfalse\t-1\t2\t0\t2\t\t\t\t0\tb
@@ -343,8 +298,17 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                             public\ty\tj\t701\tfalse\t-1\t8\t0\t10\t\t\t\t0\tb
                             public\ty\tk\t1114\tfalse\t-1\t8\t0\t11\t\t\t\t0\tb
                             public\ty\tl\t1114\tfalse\t-1\t8\t0\t12\t\t\t\t0\tb
-                            """,
-                    """
+                            """);
+        });
+    }
+
+    @Test
+    public void testKafkaQuery31() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)");
+            engine.releaseAllWriters();
+
+            assertQuery("""
                             SELECT * FROM (
                                 SELECT\s
                                     n.nspname,
@@ -376,78 +340,83 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                                     AND c.relname LIKE E'y'
                                 order by a.attnum\
                                 ) c\s
-                            """,
-                    "create table x(a int)",
-                    null,
-                    true,
-                    true
-            );
+                            """)
+                    .noLeakCheck()
+                    .ddl("create table x(a int)")
+                    .expectSize()
+                    .returns("""
+                            nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattnum\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype
+                            public\ty\ta\t23\tfalse\t-1\t4\t0\t1\t\t\t\t0\tb
+                            public\ty\tb\t21\tfalse\t-1\t2\t0\t2\t\t\t\t0\tb
+                            public\ty\tc\t21\tfalse\t-1\t2\t0\t3\t\t\t\t0\tb
+                            public\ty\td\t20\tfalse\t-1\t8\t0\t4\t\t\t\t0\tb
+                            public\ty\te\t1042\tfalse\t5\t-1\t0\t5\t\t\t\t0\tb
+                            public\ty\tf\t1043\tfalse\t-1\t-1\t0\t6\t\t\t\t0\tb
+                            public\ty\tg\t16\tfalse\t-1\t1\t0\t7\t\t\t\t0\tb
+                            public\ty\th\t1043\tfalse\t-1\t-1\t0\t8\t\t\t\t0\tb
+                            public\ty\ti\t700\tfalse\t-1\t4\t0\t9\t\t\t\t0\tb
+                            public\ty\tj\t701\tfalse\t-1\t8\t0\t10\t\t\t\t0\tb
+                            public\ty\tk\t1114\tfalse\t-1\t8\t0\t11\t\t\t\t0\tb
+                            public\ty\tl\t1114\tfalse\t-1\t8\t0\t12\t\t\t\t0\tb
+                            """);
         });
     }
 
     @Test
     public void testPgAttributeFunc() throws Exception {
-        assertQuery(
-                """
+        assertQuery("pg_catalog.pg_attribute;")
+                .ddl("create table x(a int)")
+                .noRandomAccess()
+                .returns("""
                         attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
                         1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
-                        """,
-                "pg_catalog.pg_attribute;",
-                "create table x(a int)",
-                null,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testPgAttributeFuncNoPrefix() throws Exception {
-        assertQuery(
-                "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n",
-                "pg_attribute;",
-                null,
-                null,
-                false
-        );
+        assertQuery("pg_attribute;")
+                .ddl(null)
+                .noRandomAccess()
+                .returns("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n");
     }
 
     @Test
     public void testPgAttributeFuncNoTables() throws Exception {
-        assertQuery(
-                "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n",
-                "pg_catalog.pg_attribute;",
-                null,
-                null,
-                false
-        );
+        assertQuery("pg_catalog.pg_attribute;")
+                .ddl(null)
+                .noRandomAccess()
+                .returns("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n");
     }
 
     @Test
     public void testPgAttributeFuncWith2Tables() throws Exception {
-        assertQuery("""
+        assertQuery("pg_catalog.pg_attribute order by 1;")
+                .ddl("create table x(a int)")
+                .mutateWith("create table y(a double, b string)")
+                .returns("""
                         attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
                         1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
-                        """,
-                "pg_catalog.pg_attribute order by 1;",
-                "create table x(a int)",
-                null,
-                "create table y(a double, b string)",
-                """
+                        """, """
                         attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
                         1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
                         2\ta\t1\t701\tfalse\t-1\t8\t\tfalse\ttrue
                         2\tb\t2\t1043\tfalse\t-1\t-1\t\tfalse\ttrue
-                        """, true, false, false);
+                        """);
     }
 
     @Test
     public void testPgAttributeFuncWith2TablesLimit1() throws Exception {
-        assertQuery("""
+        assertQuery("pg_catalog.pg_attribute order by 1 limit 1;")
+                .ddl("create table x(a int)")
+                .mutateWith("create table y(a double, b string)")
+                .returns("""
                 attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
                 1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
-                """, "pg_catalog.pg_attribute order by 1 limit 1;", "create table x(a int)", null, "create table y(a double, b string)", """
+                """, """
                 attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
                 1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
-                """, true, false, false);
+                """);
     }
 
     @Test
@@ -486,16 +455,12 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                     WHERE true \s
                     ORDER BY nspname,c.relname --,attnum""";
 
-            assertQuery(
-                    """
+            assertQuery(query)
+                    .ddl("create table x(a int)")
+                    .returns("""
                             nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype
                             public\tx\ta\t23\tfalse\t-1\t4\t0\t\t\t\t0\tb
-                            """,
-                    query,
-                    "create table x(a int)",
-                    null,
-                    true
-            );
+                            """);
         });
     }
 }

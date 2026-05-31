@@ -31,19 +31,15 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
 
     @Test
     public void testConstant() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, approx_count_distinct(42L) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns("""
                         a\tapprox_count_distinct
                         a\t1
                         b\t1
                         c\t1
-                        """,
-                "select a, approx_count_distinct(42L) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -51,16 +47,14 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
         assertMemoryLeak(() -> {
             execute("create table x as (select * from (select rnd_long(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count_distinct
                             631858
-                            """,
-                    "select count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
             long[] expectedEstimates = new long[]{
                     564553L,
@@ -80,14 +74,12 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                     632460L
             };
             for (int precision = 4; precision <= 18; precision++) {
-                assertQueryNoLeakCheck(
-                        "approx_count_distinct" + precision + "\n" +
-                                expectedEstimates[precision - 4] + "\n",
-                        "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
-                        null,
-                        false,
-                        true
-                );
+                assertQuery("select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("approx_count_distinct" + precision + "\n" +
+                                expectedEstimates[precision - 4] + "\n");
             }
         });
     }
@@ -97,29 +89,25 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
         assertMemoryLeak(() -> {
             execute("create table x as (select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count_distinct
                             6
-                            """,
-                    "select count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
             long[] expectedEstimates = new long[]{
                     5L, 5L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L
             };
             for (int precision = 4; precision <= 18; precision++) {
-                assertQueryNoLeakCheck(
-                        "approx_count_distinct" + precision + "\n" +
-                                expectedEstimates[precision - 4] + "\n",
-                        "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
-                        null,
-                        false,
-                        true
-                );
+                assertQuery("select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("approx_count_distinct" + precision + "\n" +
+                                expectedEstimates[precision - 4] + "\n");
             }
         });
     }
@@ -133,14 +121,11 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                     b\t4
                     c\t4
                     """;
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select a, approx_count_distinct(s * 42) from x order by a",
-                    "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_long(1, 8, 0) s from long_sequence(20)))",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select a, approx_count_distinct(s * 42) from x order by a")
+                    .noLeakCheck()
+                    .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_long(1, 8, 0) s from long_sequence(20)))")
+                    .expectSize()
+                    .returns(expected);
             // multiplication shouldn't affect the number of distinct values,
             // so the result should stay the same
             assertQuery("select a, approx_count_distinct(s) from x order by a")
@@ -156,8 +141,10 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
             execute("create table x as (" +
                     "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long(0, 100000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)" +
                     ") timestamp(ts))");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select a, count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tcount_distinct
                             a\t80933
                             b\t81171
@@ -165,14 +152,11 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                             d\t81362
                             e\t81187
                             f\t81314
-                            """,
-                    "select a, count_distinct(s) from x order by a",
-                    null,
-                    true,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select a, approx_count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tapprox_count_distinct
                             a\t82605
                             b\t82054
@@ -180,12 +164,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                             d\t81954
                             e\t82211
                             f\t81957
-                            """,
-                    "select a, approx_count_distinct(s) from x order by a",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -195,8 +174,10 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
             execute("create table x as (" +
                     "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)" +
                     ") timestamp(ts))");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select a, count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tcount_distinct
                             a\t2
                             b\t1
@@ -204,14 +185,11 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                             d\t4
                             e\t4
                             f\t3
-                            """,
-                    "select a, count_distinct(s) from x order by a",
-                    null,
-                    true,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select a, approx_count_distinct(s) from x order by a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tapprox_count_distinct
                             a\t2
                             b\t1
@@ -219,12 +197,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                             d\t4
                             e\t4
                             f\t3
-                            """,
-                    "select a, approx_count_distinct(s) from x order by a",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -232,26 +205,22 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     public void testGroupNotKeyedDenseHLL() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select * from (select rnd_long(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count_distinct
                             631858
-                            """,
-                    "select count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select approx_count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_count_distinct
                             637899
-                            """,
-                    "select approx_count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -259,26 +228,22 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     public void testGroupNotKeyedSparseHLL() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count_distinct
                             6
-                            """,
-                    "select count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select approx_count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             approx_count_distinct
                             6
-                            """,
-                    "select approx_count_distinct(s) from x",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -297,8 +262,16 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                     637899
                     """;
 
-            assertQueryNoLeakCheck(expectedExact, "select count_distinct(s) from x", null, false, true);
-            assertQueryNoLeakCheck(expectedEstimated, "select approx_count_distinct(s) from x", null, false, true);
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedExact);
+            assertQuery("select approx_count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedEstimated);
 
             execute("insert into x values(cast(null as LONG), '2021-05-21')");
             execute("insert into x values(cast(null as LONG), '1970-01-01')");
@@ -330,8 +303,16 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                     6
                     """;
 
-            assertQueryNoLeakCheck(expectedExact, "select count_distinct(s) from x", null, false, true);
-            assertQueryNoLeakCheck(expectedEstimated, "select approx_count_distinct(s) from x", null, false, true);
+            assertQuery("select count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedExact);
+            assertQuery("select approx_count_distinct(s) from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedEstimated);
 
             execute("insert into x values(cast(null as LONG), '2021-05-21')");
             execute("insert into x values(cast(null as LONG), '1970-01-01')");
@@ -350,62 +331,56 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
 
     @Test
     public void testInterpolation() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select ts, approx_count_distinct(s) from x sample by 1s fill(linear) limit 2")
+                .ddl("create table x as (select * from (select rnd_long(0, 16, 0) s, timestamp_sequence(0, 60000000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .returns("""
                         ts\tapprox_count_distinct
                         1970-01-01T00:00:00.000000Z\t1
                         1970-01-01T00:00:01.000000Z\t1
-                        """,
-                "select ts, approx_count_distinct(s) from x sample by 1s fill(linear) limit 2",
-                "create table x as (select * from (select rnd_long(0, 16, 0) s, timestamp_sequence(0, 60000000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testNoValues() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select approx_count_distinct(a) from x")
+                .ddl("create table x (a long)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         approx_count_distinct
                         0
-                        """,
-                "select approx_count_distinct(a) from x",
-                "create table x (a long)",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testNullConstant() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, approx_count_distinct(cast(null as LONG)) from x order by a")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))")
+                .expectSize()
+                .returns("""
                         a\tapprox_count_distinct
                         a\t0
                         b\t0
                         c\t0
-                        """,
-                "select a, approx_count_distinct(cast(null as LONG)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testPrecisionOutOfRange() throws Exception {
-        assertException("select approx_count_distinct(x, 3) from long_sequence(1)", 7, "precision must be between 4 and 18");
-        assertException("select approx_count_distinct(x, 19) from long_sequence(1)", 7, "precision must be between 4 and 18");
+        assertQuery("select approx_count_distinct(x, 3) from long_sequence(1)")
+                .fails(7, "precision must be between 4 and 18");
+        assertQuery("select approx_count_distinct(x, 19) from long_sequence(1)")
+                .fails(7, "precision must be between 4 and 18");
     }
 
     @Test
     public void testSampleFillLinear() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select ts, approx_count_distinct(s) from x sample by 1s fill(linear)")
+                .ddl("create table x as (select * from (select rnd_long(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
                         ts\tapprox_count_distinct
                         1970-01-01T00:00:00.000000Z\t9
                         1970-01-01T00:00:01.000000Z\t7
@@ -417,13 +392,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                         1970-01-01T00:00:07.000000Z\t8
                         1970-01-01T00:00:08.000000Z\t7
                         1970-01-01T00:00:09.000000Z\t9
-                        """,
-                "select ts, approx_count_distinct(s) from x sample by 1s fill(linear)",
-                "create table x as (select * from (select rnd_long(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -442,8 +411,11 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
 
     @Test
     public void testSampleFillValue() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select ts, approx_count_distinct(s) from x sample by 1s fill(99)")
+                .ddl("create table x as (select * from (select rnd_long(0, 8, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
                         ts\tapprox_count_distinct
                         1970-01-01T00:00:00.000000Z\t5
                         1970-01-01T00:00:01.000000Z\t8
@@ -455,18 +427,16 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                         1970-01-01T00:00:07.000000Z\t6
                         1970-01-01T00:00:08.000000Z\t6
                         1970-01-01T00:00:09.000000Z\t7
-                        """,
-                "select ts, approx_count_distinct(s) from x sample by 1s fill(99)",
-                "create table x as (select * from (select rnd_long(0, 8, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                false
-        );
+                        """);
     }
 
     @Test
     public void testSampleKeyed() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select a, approx_count_distinct(s), ts from x sample by 5s align to first observation")
+                .ddl("create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long(0, 12, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
                         a\tapprox_count_distinct\tts
                         a\t4\t1970-01-01T00:00:00.000000Z
                         f\t9\t1970-01-01T00:00:00.000000Z
@@ -480,11 +450,6 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                         e\t6\t1970-01-01T00:00:05.000000Z
                         d\t8\t1970-01-01T00:00:05.000000Z
                         a\t5\t1970-01-01T00:00:05.000000Z
-                        """,
-                "select a, approx_count_distinct(s), ts from x sample by 5s align to first observation",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long(0, 12, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                false
-        );
+                        """);
     }
 }
