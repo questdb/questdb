@@ -120,105 +120,95 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 );
                 Assert.assertTrue(Files.exists(path.$()));
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
-                assertQueryNoLeakCheck(
-                        "id\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id = -999",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id = -999")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-                assertQueryNoLeakCheck(
-                        "id\n42\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id = 42",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id = 42")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n42\n");
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
-                assertQueryNoLeakCheck(
-                        "name\n",
-                        "SELECT name FROM read_parquet('x.parquet') WHERE name = 'no_such_value'",
-                        null, parallel, false
-                );
+                assertQuery("SELECT name FROM read_parquet('x.parquet') WHERE name = 'no_such_value'")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("name\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-                assertQueryNoLeakCheck(
-                        "name\nval_100\n",
-                        "SELECT name FROM read_parquet('x.parquet') WHERE name = 'val_100'",
-                        null, parallel, false
-                );
+                assertQuery("SELECT name FROM read_parquet('x.parquet') WHERE name = 'val_100'")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("name\nval_100\n");
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
-                assertQueryNoLeakCheck(
-                        "id\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id IN (-1, -2, -3)",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id IN (-1, -2, -3)")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
                 bindVariableService.clear();
                 bindVariableService.setInt("v", -999);
-                assertQueryNoLeakCheck(
-                        "id\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id = :v",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id = :v")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
                 bindVariableService.clear();
                 bindVariableService.setInt("v", 42);
-                assertQueryNoLeakCheck(
-                        "id\n42\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id = :v",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id = :v")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n42\n");
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
                 bindVariableService.clear();
                 bindVariableService.setStr("v", "no_such_value");
-                assertQueryNoLeakCheck(
-                        "name\n",
-                        "SELECT name FROM read_parquet('x.parquet') WHERE name = :v",
-                        null, parallel, false
-                );
+                assertQuery("SELECT name FROM read_parquet('x.parquet') WHERE name = :v")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("name\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
                 bindVariableService.clear();
                 bindVariableService.setInt(0, -999);
-                assertQueryNoLeakCheck(
-                        "id\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id = $1",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id = $1")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
-                assertQueryNoLeakCheck(
-                        "id\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id IS NULL",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id IS NULL")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-                assertQueryNoLeakCheck(
-                        "cnt\n" + rows + "\n",
-                        "SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id IS NOT NULL",
-                        null, false, true
-                );
+                assertQuery("SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id IS NOT NULL")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("cnt\n" + rows + "\n");
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
-                assertQueryNoLeakCheck(
-                        "cnt\n10\n",
-                        "SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id BETWEEN 10 AND 1",
-                        null, false, true
-                );
+                assertQuery("SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id BETWEEN 10 AND 1")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("cnt\n10\n");
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
-                assertQueryNoLeakCheck(
-                        "cnt\n0\n",
-                        "SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id BETWEEN -100 AND -50",
-                        null, false, true
-                );
+                assertQuery("SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id BETWEEN -100 AND -50")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("cnt\n0\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
             }
         });
@@ -471,8 +461,12 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         query,
                         expectedPlan
                 );
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery(query + " limit 10")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .supportsRandomAccess(parallel)
+                        .expectSize()
+                        .returns("""
                                 id\tts
                                 1\t1970-01-01T00:00:01.000000Z
                                 2\t1970-01-01T00:00:02.000000Z
@@ -484,12 +478,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                                 8\t1970-01-01T00:00:08.000000Z
                                 9\t1970-01-01T00:00:09.000000Z
                                 10\t1970-01-01T00:00:10.000000Z
-                                """,
-                        query + " limit 10",
-                        "ts",
-                        parallel,
-                        true
-                );
+                                """);
             }
         });
     }
@@ -735,15 +724,17 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 PartitionEncoder.encode(partitionDescriptor, path);
                 Assert.assertTrue(Files.exists(path.$()));
 
-                assertSql(
-                        """
+                assertQuery("SELECT * FROM read_parquet('x.parquet')")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .supportsRandomAccess(parallel)
+                        .expectSize()
+                        .returns("""
                                 id\tval\tts
                                 AAA\t1\t2024-01-01T00:00:00.000000Z
                                 BBB\t2\t2024-01-01T01:00:00.000000Z
                                 AAA\t3\t2024-01-01T02:00:00.000000Z
-                                """,
-                        "SELECT * FROM read_parquet('x.parquet')"
-                );
+                                """);
             }
         });
     }
@@ -1830,8 +1821,12 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
                 sink.clear();
                 sink.put("select * from read_parquet('").put(path).put("')");
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery(sink)
+                        .noLeakCheck()
+                        .timestamp("a_ts")
+                        .supportsRandomAccess(parallel)
+                        .expectSize()
+                        .returns("""
                                 id\ta_long\ta_str\ta_varchar\tan_array\ta_boolean\ta_short\ta_byte\ta_char\ta_uuid\ta_double\ta_float\ta_sym\ta_date\ta_long256\ta_ip\ta_geo_byte\ta_geo_short\ta_geo_int\ta_geo_long\ta_bin\ta_ts\ta_ns
                                 null\tnull\t\t\tnull\tfalse\t0\t0\t\t\tnull\tnull\t\t2015-11-24T20:19:13.843Z\t0x2705e02c613acfc405374f5fbcef4819523eb59d99c647af9840ad8800156d26\t138.69.22.149\t0000\t11001010\t0000101000111011\t10100111010101011100000010101100\t\t2015-01-01T00:00:00.000000Z\t2015-01-01T00:00:00.000000000Z
                                 2\t-461611463\tHYRX\t0L#YS\\%~\\2o#/ZUAI6Q,]K+BuHiX\t[0.8001121139739173,0.38642336707855873,0.92050039469858,0.16381374773748514,0.456344569609078,0.8664158914718532,0.40455469747939254,0.4149517697653501,0.5659429139861241,0.05384400312338511]\ttrue\t10633\t99\tU\t516e1efd-8bbc-4cf6-b7b4-f6e41fbfd55f\t0.9566236549439661\t0.11585981\tGPGW\t2015-08-13T19:00:41.832Z\t0x772c8b7f9505620ebbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea61\t160.13.39.44\t1011\t01111111\t1001110001101111\t01100001100100000101101000010010\t\t2015-01-02T00:00:00.000000Z\t2015-01-02T00:00:00.000000000Z
@@ -1847,13 +1842,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                                 null\tnull\t\t\tnull\tfalse\t0\t0\t\t\tnull\tnull\t\t\t0x25ab6a3b3808d94d30ec2498d018efdd67bf677cfe82f2528ebaf26ca19a89b9\t213.3.185.243\t0010\t01011011\t0100011111011011\t11110011001101101110011001111101\t00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1
                                 00000010 00\t2015-01-09T00:00:00.000000Z\t2015-01-09T00:00:00.000000000Z
                                 10\t2013697528\t\t\t[0.15274858078119136,0.7887510806568455,0.7468602267994937,0.23567419576658333,0.9976896430755934]\ttrue\t12861\t120\tI\ta0cd12e6-d39f-469a-9f88-06288f4b53ad\t0.9316283568969537\t0.8791439\tGPGW\t2015-03-04T04:42:20.407Z\t0x8ca81bb363d7ac4585afb517c8aee023d107b1affff76a2c79189b578191a8f6\t248.76.18.163\t0011\t11001010\t1101000010010101\t10101011110101111111110000001011\t00000000 87 28 92 a3 9b e3 cb c2 64 8a b0 35\t2015-01-10T00:00:00.000000Z\t2015-01-10T00:00:00.000000000Z
-                                """,
-                        sink,
-                        null,
-                        "a_ts",
-                        parallel,
-                        true
-                );
+                                """);
             }
         });
     }

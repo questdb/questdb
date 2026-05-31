@@ -15121,23 +15121,20 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
                     .replace("in ('a')", "in ('a', 'none')");
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    forceNoIndexQuery,
-                    insert,
-                    "k",
-                    supportsRandomAccess,
-                    expectSize
-            );
+            assertQuery(forceNoIndexQuery)
+                    .noLeakCheck()
+                    .ddl(insert)
+                    .timestamp("k")
+                    .supportsRandomAccess(supportsRandomAccess)
+                    .expectSize(expectSize)
+                    .returns(expected);
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    query,
-                    null,
-                    "k",
-                    supportsRandomAccess,
-                    expectSize
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .supportsRandomAccess(supportsRandomAccess)
+                    .expectSize(expectSize)
+                    .returns(expected);
         });
     }
 
@@ -15152,23 +15149,19 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
             String forceNoIndexQuery = query.replace("and s = null", " ");
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    forceNoIndexQuery,
-                    null,
-                    "k",
-                    supportsRandomAccess,
-                    expectSize
-            );
+            assertQuery(forceNoIndexQuery)
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .supportsRandomAccess(supportsRandomAccess)
+                    .expectSize(expectSize)
+                    .returns(expected);
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    query,
-                    null,
-                    "k",
-                    supportsRandomAccess,
-                    expectSize
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .supportsRandomAccess(supportsRandomAccess)
+                    .expectSize(expectSize)
+                    .returns(expected);
         });
     }
 
