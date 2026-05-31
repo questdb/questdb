@@ -74,7 +74,9 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyPool() throws Exception {
-        assertQuery("table_name\towner_thread_id\tlast_access_timestamp\tcurrent_txn\n", "select * from reader_pool()", null);
+        assertQuery("select * from reader_pool()")
+                .noRandomAccess()
+                .returns("table_name\towner_thread_id\tlast_access_timestamp\tcurrent_txn\n");
     }
 
     @Test
@@ -242,14 +244,13 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
                             2020-01-01T00:00:00.000000Z\t2
                             """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select table_name, owner_thread_id, current_txn from reader_pool")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_name\towner_thread_id\tcurrent_txn
                             tab1\tnull\t1
-                            """,
-                    "select table_name, owner_thread_id, current_txn from reader_pool",
-                    null
-            );
+                            """);
         });
     }
 
