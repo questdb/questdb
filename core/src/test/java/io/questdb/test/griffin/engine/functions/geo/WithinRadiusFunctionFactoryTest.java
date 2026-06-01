@@ -38,13 +38,12 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (0.0, 0.0)");
 
             // Constant negative radius should be optimized to constant false
-            assertSql(
-                    """
+            assertQuery("explain select * from points where within_radius(x, y, 0.0, 0.0, -5.0)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Empty table
-                            """,
-                    "explain select * from points where within_radius(x, y, 0.0, 0.0, -5.0)"
-            );
+                            """);
         });
     }
 
@@ -55,13 +54,12 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (0.0, 0.0)");
 
             // Constant NaN radius should be optimized to constant false
-            assertSql(
-                    """
+            assertQuery("explain select * from points where within_radius(x, y, 0.0, 0.0, NaN)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Empty table
-                            """,
-                    "explain select * from points where within_radius(x, y, 0.0, 0.0, NaN)"
-            );
+                            """);
         });
     }
 
@@ -71,17 +69,16 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
             execute("create table points (x double, y double)");
 
             // Plan should show constant center and radius values
-            assertSql(
-                    """
+            assertQuery("explain select * from points where within_radius(x, y, 0.0, 0.0, 10.0)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: within_radius(x,y,0.0,0.0,10.0)
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: points
-                            """,
-                    "explain select * from points where within_radius(x, y, 0.0, 0.0, 10.0)"
-            );
+                            """);
         });
     }
 
@@ -239,7 +236,7 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select count(*) from points where within_radius(x, y, 0.0, 0.0, 50.0)";
 
                         // Verify the query plan shows parallel execution
@@ -285,7 +282,7 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // Compare within_radius result with equivalent manual distance check
                         // radius 50, so radius^2 = 2500
                         String geoWithinRadiusQuery = "select count(*) from points where within_radius(x, y, 0.0, 0.0, 50.0)";
@@ -317,7 +314,7 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select count(*) from points where within_radius(x, y, 0.0, 0.0, 50.0)";
 
                         // Run query and verify results are consistent

@@ -5077,38 +5077,38 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("insert into tab values ('d2', 'c2', 222, 6, 5)");
 
             // select all columns
-            assertSql(
-                    """
+            assertQuery("(select id, name, max(value) value, max(ts) ts from tab sample by 1T align to first observation) latest on ts partition by id")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             id\tname\tvalue\tts
                             d1\tc2\t123\t1970-01-01T00:00:00.000004Z
                             d2\tc2\t222\t1970-01-01T00:00:00.000006Z
-                            """, "(select id, name, max(value) value, max(ts) ts from tab sample by 1T align to first observation) latest on ts partition by id"
-            );
+                            """);
 
             // partition by multiple columns
-            assertSql(
-                    """
+            assertQuery("(select id, name, max(value) value, max(ts) ts from tab sample by 1T align to first observation) latest on ts partition by id, name")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             id\tname\tvalue\tts
                             d1\tc1\t113\t1970-01-01T00:00:00.000003Z
                             d1\tc2\t123\t1970-01-01T00:00:00.000004Z
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z
                             d2\tc2\t222\t1970-01-01T00:00:00.000006Z
-                            """, "(select id, name, max(value) value, max(ts) ts from tab sample by 1T align to first observation) latest on ts partition by id, name"
-            );
+                            """);
 
             // select subset of columns
-            assertSql(
-                    """
+            assertQuery("select value, ts from (select id, name, max(value) value, max(ts) ts from tab sample by 1T align to first observation) latest on ts partition by id")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value\tts
                             123\t1970-01-01T00:00:00.000004Z
                             222\t1970-01-01T00:00:00.000006Z
-                            """, "select value, ts from (select id, name, max(value) value, max(ts) ts from tab sample by 1T align to first observation) latest on ts partition by id"
-            );
+                            """);
 
             // empty sub-query
-            assertSql(
-                    "id\tname\tvalue\tts\n", "(select id, name, max(value) value, max(ts) ts from tab where id in('c3') sample by 1T align to first observation) latest on ts partition by id"
-            );
+            assertQuery("(select id, name, max(value) value, max(ts) ts from tab where id in('c3') sample by 1T align to first observation) latest on ts partition by id")
+                    .noLeakCheck()
+                    .returnsOnce("id\tname\tvalue\tts\n");
         });
     }
 

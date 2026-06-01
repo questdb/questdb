@@ -117,83 +117,77 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             execute("create table tab (ts timestamp, i long, s symbol) timestamp(ts)");
 
             // Test plan for percent_rank() over () - no partition, no order
-            assertSql(
-                    """
+            assertQuery("explain select ts, percent_rank() over () from tab")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Window
                               functions: [percent_rank() over ()]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, percent_rank() over () from tab"
-            );
+                            """);
 
             // Test plan for percent_rank() over (partition by s) - with partition, no order
-            assertSql(
-                    """
+            assertQuery("explain select ts, percent_rank() over (partition by s) from tab")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Window
                               functions: [percent_rank() over (partition by [s])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, percent_rank() over (partition by s) from tab"
-            );
+                            """);
 
             // Test plan for percent_rank() over (order by ts) - no partition, with order
-            assertSql(
-                    """
+            assertQuery("explain select ts, percent_rank() over (order by ts) from tab")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             CachedWindow
                               unorderedFunctions: [percent_rank() over (order by [ts])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, percent_rank() over (order by ts) from tab"
-            );
+                            """);
 
             // Test plan for percent_rank() over (partition by s order by ts) - with partition and order
-            assertSql(
-                    """
+            assertQuery("explain select ts, percent_rank() over (partition by s order by ts) from tab")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             CachedWindow
                               unorderedFunctions: [percent_rank() over (partition by [s] order by [ts])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, percent_rank() over (partition by s order by ts) from tab"
-            );
+                            """);
 
             // ORDER BY non-timestamp -> dismissOrder=false (grouped) path. Before the
             // SqlCodeGenerator fix that forwards ac.getOrderBy() to initRecordComparator,
             // this branch left orderBy null and toPlan rendered "order by null".
-            assertSql(
-                    """
+            assertQuery("explain select ts, percent_rank() over (order by i) from tab")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             CachedWindow
                               orderedFunctions: [[i] => [percent_rank() over (order by [i])]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, percent_rank() over (order by i) from tab"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("explain select ts, percent_rank() over (partition by s order by i) from tab")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             CachedWindow
                               orderedFunctions: [[i] => [percent_rank() over (partition by [s] order by [i])]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, percent_rank() over (partition by s order by i) from tab"
-            );
+                            """);
         });
     }
 

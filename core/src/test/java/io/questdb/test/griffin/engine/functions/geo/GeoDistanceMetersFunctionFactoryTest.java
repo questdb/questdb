@@ -100,17 +100,16 @@ public class GeoDistanceMetersFunctionFactoryTest extends AbstractCairoTest {
             execute("create table points (lat double, lon double)");
 
             // Plan should show constant lat1/lon1 values
-            assertSql(
-                    """
+            assertQuery("explain select lat, lon, geo_distance_meters(40.0, -73.0, lat, lon) from points")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             VirtualRecord
                               functions: [lat,lon,geo_distance_meters(40.0,-73.0,lat,lon)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: points
-                            """,
-                    "explain select lat, lon, geo_distance_meters(40.0, -73.0, lat, lon) from points"
-            );
+                            """);
         });
     }
 

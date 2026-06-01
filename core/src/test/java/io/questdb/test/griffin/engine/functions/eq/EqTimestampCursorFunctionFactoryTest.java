@@ -196,8 +196,9 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000000Z
                             """);
 
-            assertSql(
-                    """
+            assertQuery("explain select * from x where ts = (select ts::varchar from x limit 2)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: ts=cursor\s
@@ -210,9 +211,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where ts = (select ts::varchar from x limit 2)"
-            );
+                            """);
         });
     }
 
@@ -450,8 +449,9 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
                             """);
 
-            assertSql(
-                    """
+            assertQuery("explain select * from x where ts = (select ts::varchar from x limit 2)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: ts=cursor\s
@@ -464,9 +464,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where ts = (select ts::varchar from x limit 2)"
-            );
+                            """);
         });
     }
 

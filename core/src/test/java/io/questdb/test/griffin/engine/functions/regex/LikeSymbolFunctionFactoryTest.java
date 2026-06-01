@@ -62,17 +62,16 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                 }
             }
 
-            assertSql(
-                    """
+            assertQuery("explain select * from x where name like '%' || :sym || '%'")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: name ~ concat(['%',:sym::string,'%']) [case-sensitive] [state-shared]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where name like '%' || :sym || '%'"
-            );
+                            """);
         });
     }
 
@@ -494,80 +493,74 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertLike("s\nv\nvv\n", "select * from x where s like '%'");
             assertLike("s\nv\nvv\n", "select * from x where s like 'v%'");
 
-            assertSql(
-                    """
+            assertQuery("explain select * from x where s ilike 'v%'")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: s ilike v% [state-shared]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where s ilike 'v%'"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("explain select * from x where s like 'v%'")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: s like v% [state-shared]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where s like 'v%'"
-            );
+                            """);
 
             assertLike("s\nv\nvv\n", "select * from x where s like '%v'");
 
-            assertSql(
-                    """
+            assertQuery("explain select * from x where s like '%v'")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: s like %v [state-shared]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where s like '%v'"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("explain select * from x where s ilike '%v'")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: s ilike %v [state-shared]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where s ilike '%v'"
-            );
+                            """);
 
             assertLike("s\nv\nvv\n", "select * from x where s like '%v%'");
-            assertSql(
-                    """
+            assertQuery("explain select * from x where s like '%v%'")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: s like %v% [state-shared]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where s like '%v%'"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("explain select * from x where s ilike '%v%'")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: s ilike %v% [state-shared]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where s ilike '%v%'"
-            );
+                            """);
             assertLike("s\n", "select * from x where s like 'w%'");
             assertLike("s\n", "select * from x where s like '%w'");
             assertLike("s\nv\nvv\n", "select * from x where s like '%%'");

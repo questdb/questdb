@@ -36,11 +36,12 @@ public class CountColumnTest extends AbstractCairoTest {
                     "symbol", "geohash(5b)", "geohash(10b)", "geohash(20b)", "geohash(40b) "};
 
             for (String type : types) {
-                assertSql(
-                        "count\n" +
-                                "0\n",
-                        "select count(cast(null as " + type + "))"
-                );
+                assertQuery("select count(cast(null as " + type + "))")
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                count
+                                0
+                                """);
             }
         });
     }
@@ -92,14 +93,16 @@ public class CountColumnTest extends AbstractCairoTest {
                 "count(gl) cgl " +
                 "from x order by k")
                 .expectSize()
-                .returns("k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "null\t3\t3\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
-                        "0\t1\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
-                        "1\t1\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
-                        "2\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\n" +
-                        "3\t2\t2\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
-                        "4\t2\t2\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\n" +
-                        "5\t1\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n");
+                .returns("""
+                        k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl
+                        null\t3\t3\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
+                        0\t1\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
+                        1\t1\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
+                        2\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                        3\t2\t2\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
+                        4\t2\t2\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                        5\t1\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
+                        """);
     }
 
     @Test
@@ -169,8 +172,10 @@ public class CountColumnTest extends AbstractCairoTest {
                         " select 0, null, null, null, null, null, null, null, null, null, null, null, null, null from long_sequence(1)" +
                         ")")
                 .expectSize()
-                .returns("k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "0\t2\t2\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\n");
+                .returns("""
+                        k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl
+                        0\t2\t2\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                        """);
     }
 
     @Test
@@ -200,9 +205,11 @@ public class CountColumnTest extends AbstractCairoTest {
                         " select null, null, null, null, null, null, null, null, null, null, null, null, null, null from long_sequence(1)" +
                         ")")
                 .expectSize()
-                .returns("k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "null\t1\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
-                        "0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\n");
+                .returns("""
+                        k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl
+                        null\t1\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
+                        0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                        """);
     }
 
     @Test
@@ -232,8 +239,10 @@ public class CountColumnTest extends AbstractCairoTest {
                         " select 0, null, null , null, null, null, null, null, null, null, null, null, null, null, null from long_sequence(1000)" +
                         ")")
                 .expectSize()
-                .returns("k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcvar\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "0\t1000\t1000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n");
+                .returns("""
+                        k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcvar\tcsym\tcgb\tcgs\tcgi\tcgl
+                        0\t1000\t1000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
+                        """);
     }
 
     @Test
@@ -278,17 +287,19 @@ public class CountColumnTest extends AbstractCairoTest {
                         " long_sequence(100000)" +
                         ")")
                 .expectSize()
-                .returns("k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcvar\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "0\t10000\t10000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
-                        "1\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8392\t10000\t10000\t10000\t10000\t10000\n" +
-                        "2\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8341\t10000\t10000\t10000\t10000\t10000\n" +
-                        "3\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8327\t10000\t10000\t10000\t10000\t10000\n" +
-                        "4\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8298\t10000\t10000\t10000\t10000\t10000\n" +
-                        "5\t10000\t10000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
-                        "6\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8372\t10000\t10000\t10000\t10000\t10000\n" +
-                        "7\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8346\t10000\t10000\t10000\t10000\t10000\n" +
-                        "8\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8273\t10000\t10000\t10000\t10000\t10000\n" +
-                        "9\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8378\t10000\t10000\t10000\t10000\t10000\n");
+                .returns("""
+                        k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcvar\tcsym\tcgb\tcgs\tcgi\tcgl
+                        0\t10000\t10000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
+                        1\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8392\t10000\t10000\t10000\t10000\t10000
+                        2\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8341\t10000\t10000\t10000\t10000\t10000
+                        3\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8327\t10000\t10000\t10000\t10000\t10000
+                        4\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8298\t10000\t10000\t10000\t10000\t10000
+                        5\t10000\t10000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
+                        6\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8372\t10000\t10000\t10000\t10000\t10000
+                        7\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8346\t10000\t10000\t10000\t10000\t10000
+                        8\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8273\t10000\t10000\t10000\t10000\t10000
+                        9\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8378\t10000\t10000\t10000\t10000\t10000
+                        """);
     }
 
     @Test
@@ -329,8 +340,10 @@ public class CountColumnTest extends AbstractCairoTest {
                         ")")
                 .noRandomAccess()
                 .expectSize()
-                .returns("c1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcvar\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n");
+                .returns("""
+                        c1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcvar\tcsym\tcgb\tcgs\tcgi\tcgl
+                        0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
+                        """);
     }
 
     @Test
@@ -359,8 +372,10 @@ public class CountColumnTest extends AbstractCairoTest {
                         ")")
                 .noRandomAccess()
                 .expectSize()
-                .returns("c1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "2\t2\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\n");
+                .returns("""
+                        c1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl
+                        2\t2\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1
+                        """);
     }
 
     @Test
@@ -389,8 +404,10 @@ public class CountColumnTest extends AbstractCairoTest {
                         ")")
                 .noRandomAccess()
                 .expectSize()
-                .returns("c1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "1000\t1000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n");
+                .returns("""
+                        c1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl
+                        1000\t1000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
+                        """);
     }
 
     @Test
@@ -432,8 +449,10 @@ public class CountColumnTest extends AbstractCairoTest {
                         ")")
                 .noRandomAccess()
                 .expectSize()
-                .returns("c1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "100000\t100000\t80000\t80000\t80000\t80000\t80000\t80000\t80000\t80000\t80000\t80000\t80000\t80000\t80000\n");
+                .returns("""
+                        c1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl
+                        100000\t100000\t80000\t80000\t80000\t80000\t80000\t80000\t80000\t80000\t80000\t80000\t80000\t80000\t80000
+                        """);
     }
 
     @Test
@@ -453,20 +472,22 @@ public class CountColumnTest extends AbstractCairoTest {
                         " long_sequence(10000000)" +
                         ")")
                 .expectSize()
-                .returns("k\tc1\tcstar\tci\tcl\n" +
-                        "null\t769230\t769230\t615384\t615384\n" +
-                        "1\t769231\t769231\t615385\t615385\n" +
-                        "2\t769231\t769231\t615385\t615385\n" +
-                        "3\t769231\t769231\t615385\t615385\n" +
-                        "4\t769231\t769231\t615385\t615385\n" +
-                        "5\t769231\t769231\t615384\t615384\n" +
-                        "6\t769231\t769231\t615385\t615385\n" +
-                        "7\t769231\t769231\t615385\t615385\n" +
-                        "8\t769231\t769231\t615385\t615385\n" +
-                        "9\t769231\t769231\t615385\t615385\n" +
-                        "10\t769231\t769231\t615384\t615384\n" +
-                        "11\t769230\t769230\t615384\t615384\n" +
-                        "12\t769230\t769230\t615384\t615384\n");
+                .returns("""
+                        k\tc1\tcstar\tci\tcl
+                        null\t769230\t769230\t615384\t615384
+                        1\t769231\t769231\t615385\t615385
+                        2\t769231\t769231\t615385\t615385
+                        3\t769231\t769231\t615385\t615385
+                        4\t769231\t769231\t615385\t615385
+                        5\t769231\t769231\t615384\t615384
+                        6\t769231\t769231\t615385\t615385
+                        7\t769231\t769231\t615385\t615385
+                        8\t769231\t769231\t615385\t615385
+                        9\t769231\t769231\t615385\t615385
+                        10\t769231\t769231\t615384\t615384
+                        11\t769230\t769230\t615384\t615384
+                        12\t769230\t769230\t615384\t615384
+                        """);
     }
 
     @Test
@@ -490,14 +511,16 @@ public class CountColumnTest extends AbstractCairoTest {
                 "count(l) cl " +
                 "from x order by k")
                 .expectSize()
-                .returns("k\tc1\tcstar\tci\tcl\n" +
-                        "null\t3\t3\t0\t0\n" +
-                        "0\t1\t1\t0\t0\n" +
-                        "1\t1\t1\t0\t0\n" +
-                        "2\t1\t1\t1\t1\n" +
-                        "3\t2\t2\t0\t0\n" +
-                        "4\t2\t2\t1\t1\n" +
-                        "5\t1\t1\t0\t0\n");
+                .returns("""
+                        k\tc1\tcstar\tci\tcl
+                        null\t3\t3\t0\t0
+                        0\t1\t1\t0\t0
+                        1\t1\t1\t0\t0
+                        2\t1\t1\t1\t1
+                        3\t2\t2\t0\t0
+                        4\t2\t2\t1\t1
+                        5\t1\t1\t0\t0
+                        """);
 
         assertQuery("select hour(tstmp), " +
                 "count(1) c1, " +
@@ -507,12 +530,14 @@ public class CountColumnTest extends AbstractCairoTest {
                 "from x " +
                 "order by 1")
                 .expectSize()
-                .returns("hour\tc1\tcstar\tci\tcl\n" +
-                        "0\t2\t2\t0\t0\n" +
-                        "1\t2\t2\t0\t0\n" +
-                        "2\t2\t2\t0\t0\n" +
-                        "3\t3\t3\t1\t1\n" +
-                        "4\t2\t2\t1\t1\n");
+                .returns("""
+                        hour\tc1\tcstar\tci\tcl
+                        0\t2\t2\t0\t0
+                        1\t2\t2\t0\t0
+                        2\t2\t2\t0\t0
+                        3\t3\t3\t1\t1
+                        4\t2\t2\t1\t1
+                        """);
     }
 
     @Test
@@ -538,8 +563,10 @@ public class CountColumnTest extends AbstractCairoTest {
                         ")")
                 .noRandomAccess()
                 .expectSize()
-                .returns("c1\tcstar\tci\tcl\tdl\tddat\tdts\n" +
-                        "100000\t100000\t80000\t80000\t80000\t80000\t80000\n");
+                .returns("""
+                        c1\tcstar\tci\tcl\tdl\tddat\tdts
+                        100000\t100000\t80000\t80000\t80000\t80000\t80000
+                        """);
     }
 
 

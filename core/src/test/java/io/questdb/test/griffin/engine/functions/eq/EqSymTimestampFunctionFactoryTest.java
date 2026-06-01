@@ -212,18 +212,18 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDynamicSymbolTable() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql(
-                    """
+            assertQuery("select x from long_sequence(10) where rnd_symbol('1','3','5') = 3::timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             x
                             3
                             8
                             10
-                            """,
-                    "select x from long_sequence(10) where rnd_symbol('1','3','5') = 3::timestamp"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select x from long_sequence(10) where rnd_symbol('1','3','5') = 3::timestamp_ns")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             x
                             1
                             3
@@ -231,9 +231,7 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
                             5
                             8
                             10
-                            """,
-                    "select x from long_sequence(10) where rnd_symbol('1','3','5') = 3::timestamp_ns"
-            );
+                            """);
         });
     }
 

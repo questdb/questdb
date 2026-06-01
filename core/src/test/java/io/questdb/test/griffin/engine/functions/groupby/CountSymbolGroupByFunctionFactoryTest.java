@@ -166,12 +166,16 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
             long s1 = rnd.getSeed1();
             final String sqlA = "with x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))\n" +
                     "select ts, count_distinct(s) from x sample by 1s";
-            assertSql(expected, sqlA);
+            assertQuery(sqlA)
+                    .noLeakCheck()
+                    .returnsOnce(expected);
 
             rnd.reset(s0, s1);
             final String sqlB = "with x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))\n" +
                     "select ts, count(distinct s) from x sample by 1s";
-            assertSql(expected, sqlB);
+            assertQuery(sqlB)
+                    .noLeakCheck()
+                    .returnsOnce(expected);
         });
     }
 
