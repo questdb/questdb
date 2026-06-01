@@ -56,6 +56,14 @@ pub struct WriteOptions {
     /// Minimum compression ratio (uncompressed/compressed) to keep compressed output.
     /// A value of 0.0 (or <= 1.0) means always keep compressed output.
     pub min_compression_ratio: f64,
+    /// When true, the writer fails loudly if a STRING or SYMBOL column contains
+    /// unpaired UTF-16 surrogates (WTF-16). When false, unpaired surrogates are
+    /// silently replaced with the Unicode REPLACEMENT CHARACTER (U+FFFD), which
+    /// matches QwpColumnScratch.encodeUtf8 and Rust stdlib's from_utf16_lossy.
+    /// Lossy substitution is the default for the export side because Java
+    /// strings are intrinsically WTF-16 and unpaired surrogates can legitimately
+    /// reach the writer.
+    pub strict_utf16: bool,
 }
 
 pub struct ParquetWriter<W: Write> {
@@ -83,6 +91,9 @@ pub struct ParquetWriter<W: Write> {
     min_compression_ratio: f64,
     /// Partition squash tracker value to embed in QdbMeta footer (-1 = not set)
     squash_tracker: i64,
+    /// When true, fail loudly on unpaired UTF-16 surrogates. Defaults to false
+    /// (lossy U+FFFD substitution).
+    strict_utf16: bool,
 }
 
 impl<W: Write> ParquetWriter<W> {
@@ -105,6 +116,7 @@ impl<W: Write> ParquetWriter<W> {
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
             min_compression_ratio: 0.0,
             squash_tracker: -1,
+            strict_utf16: false,
         }
     }
 
@@ -185,6 +197,13 @@ impl<W: Write> ParquetWriter<W> {
         self
     }
 
+    /// When true, fail loudly on unpaired UTF-16 surrogates in STRING/SYMBOL
+    /// columns. When false (default), substitute U+FFFD.
+    pub fn with_strict_utf16(mut self, strict_utf16: bool) -> Self {
+        self.strict_utf16 = strict_utf16;
+        self
+    }
+
     fn write_options(&self) -> WriteOptions {
         WriteOptions {
             write_statistics: self.statistics,
@@ -195,6 +214,7 @@ impl<W: Write> ParquetWriter<W> {
             raw_array_encoding: self.raw_array_encoding,
             bloom_filter_fpp: self.bloom_filter_fpp,
             min_compression_ratio: self.min_compression_ratio,
+            strict_utf16: self.strict_utf16,
         }
     }
 

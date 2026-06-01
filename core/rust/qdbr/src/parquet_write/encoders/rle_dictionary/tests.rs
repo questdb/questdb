@@ -27,6 +27,7 @@ fn write_options() -> WriteOptions {
         raw_array_encoding: false,
         bloom_filter_fpp: 0.01,
         min_compression_ratio: 0.0,
+        strict_utf16: false,
     }
 }
 
@@ -489,7 +490,10 @@ fn dict_all_nulls_partition() {
 }
 
 #[test]
-fn dict_string_invalid_utf16_errors() {
+fn dict_string_invalid_utf16_strict_errors() {
+    // Strict mode reproduces the historical fail-loud behaviour: an unpaired
+    // UTF-16 surrogate in a STRING column triggers a layout error so the
+    // export aborts rather than silently substituting U+FFFD.
     let mut data = Vec::new();
     data.extend_from_slice(&1i32.to_le_bytes());
     data.extend_from_slice(&0xD800u16.to_le_bytes());
@@ -512,8 +516,68 @@ fn dict_string_invalid_utf16_errors() {
     )
     .unwrap();
     let pt = primitive_type_for(ColumnTypeTag::String);
-    let result = encode_string(&[col], 0, offsets.len(), &pt, write_options(), None);
+    let opts = WriteOptions { strict_utf16: true, ..write_options() };
+    let result = encode_string(&[col], 0, offsets.len(), &pt, opts, None);
     assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("invalid UTF-16 data"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn dict_string_invalid_utf16_lossy_substitutes() {
+    // Default (lossy) mode must succeed: the unpaired surrogate is replaced
+    // with U+FFFD. The dictionary should contain exactly one entry holding the
+    // 3-byte UTF-8 encoding of U+FFFD (0xEF 0xBF 0xBD), prefixed by its 4-byte
+    // little-endian length. Asserting the bytes directly catches a regression
+    // where the encoder writes some other replacement (e.g. '?' or empty).
+    let mut data = Vec::new();
+    data.extend_from_slice(&1i32.to_le_bytes());
+    data.extend_from_slice(&0xD800u16.to_le_bytes());
+    let offsets: Vec<i64> = vec![0];
+    let col = Column::from_raw_data(
+        0,
+        "col",
+        ColumnTypeTag::String.into_type().code(),
+        0,
+        offsets.len(),
+        data.as_ptr(),
+        data.len(),
+        offsets.as_ptr() as *const u8,
+        offsets.len() * std::mem::size_of::<i64>(),
+        std::ptr::null(),
+        0,
+        false,
+        false,
+        0,
+    )
+    .unwrap();
+    let pt = primitive_type_for(ColumnTypeTag::String);
+    let pages = encode_string(&[col], 0, offsets.len(), &pt, write_options(), None)
+        .expect("lossy default must succeed");
+    let dicts = dict_pages(&pages);
+    assert_eq!(dicts.len(), 1, "expected exactly one dictionary page");
+    assert_eq!(dicts[0].num_values, 1, "expected one dictionary entry");
+
+    // Plain-encoded byte-array dictionary layout: 4-byte LE length, then payload.
+    let buf = &dicts[0].buffer;
+    assert_eq!(
+        buf.len(),
+        4 + 3,
+        "dict entry should be a 4-byte length followed by 3 UTF-8 bytes"
+    );
+    assert_eq!(
+        &buf[0..4],
+        &3i32.to_le_bytes(),
+        "entry length prefix must be 3"
+    );
+    assert_eq!(
+        &buf[4..7],
+        &[0xEFu8, 0xBF, 0xBD],
+        "lossy substitution must write the UTF-8 encoding of U+FFFD"
+    );
 }
 
 #[test]

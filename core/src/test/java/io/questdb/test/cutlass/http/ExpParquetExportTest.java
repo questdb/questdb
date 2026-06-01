@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
+import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
@@ -48,6 +49,7 @@ import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.QueryAssertion;
@@ -1316,6 +1318,127 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     String expectedError = "{\"query\":\"SELECT * FROM codec_invalid_test\",\"error\":\"invalid compression codec[invalid_codec], expected one of: uncompressed, snappy, gzip, brotli, zstd, lz4_raw\",\"position\":0}";
                     testHttpClient.assertGet("/exp", expectedError, params, null, null);
                 });
+    }
+
+    // Reproducer for issue #7079. `SELECT 0xDFDA::char::string` produces a
+    // STRING containing a lone UTF-16 low surrogate. The exported parquet
+    // file requires valid UTF-8, so the export path must either substitute
+    // U+FFFD (lossy default, matches QwpColumnScratch + Java's getBytes UTF-8)
+    // or fail loudly when the user opts into strict mode via
+    // `cairo.parquet.export.fail.on.invalid.utf16`.
+    //
+    // The export side (HTTP /exp, SQL COPY TO PARQUET) defaults to lossy
+    // because the output is an ephemeral file derived from a live query
+    // result. The storage side (CONVERT PARTITION TO PARQUET, O3 writes)
+    // defaults to STRICT because Chars.copyStrChars preserves lone surrogates
+    // verbatim through WAL apply, so a lossy default there would silently
+    // and irreversibly rewrite persisted rows on disk. Storage round-trip
+    // behaviour is covered by ParquetTest.testConvertPartitionWithLone-
+    // SurrogateStrictRejects / LossyAllows.
+    @Test
+    public void testParquetExportInvalidUtf16LossyByDefault() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    // The default lossy mode must succeed: the lone surrogate
+                    // is silently substituted with U+FFFD during parquet
+                    // encoding. Assert the 200 status, the parquet file magic
+                    // 'PAR1' at the start of the body, AND that the U+FFFD
+                    // UTF-8 byte sequence (0xEF 0xBF 0xBD) appears somewhere
+                    // in the payload. A regression that NULL-encodes the row,
+                    // writes empty, or substitutes a different replacement
+                    // (e.g. '?') would now fail.
+                    params.clear();
+                    params.put("query", "SELECT 0xDFDA::char::string AS c");
+                    params.put("fmt", "parquet");
+                    try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                        HttpClient.Request request = httpClient.newRequest("localhost", 9001);
+                        request.GET()
+                                .url("/exp")
+                                .query("query", "SELECT 0xDFDA::char::string AS c")
+                                .query("fmt", "parquet");
+                        try (var headers = request.send()) {
+                            headers.await();
+                            TestUtils.assertEquals("200", headers.getStatusCode());
+
+                            // Drain the response body into a single byte array
+                            // so we can both verify the PAR1 magic prefix and
+                            // scan for the U+FFFD UTF-8 sequence.
+                            java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+                            Fragment fragment;
+                            while ((fragment = headers.getResponse().recv()) != null) {
+                                final long len = fragment.hi() - fragment.lo();
+                                for (long i = 0; i < len; i++) {
+                                    body.write(Unsafe.getByte(fragment.lo() + i) & 0xFF);
+                                }
+                            }
+                            byte[] bytes = body.toByteArray();
+                            Assert.assertTrue("parquet body must be > 4 bytes", bytes.length > 4);
+                            Assert.assertEquals("parquet magic byte 0", (byte) 'P', bytes[0]);
+                            Assert.assertEquals("parquet magic byte 1", (byte) 'A', bytes[1]);
+                            Assert.assertEquals("parquet magic byte 2", (byte) 'R', bytes[2]);
+                            Assert.assertEquals("parquet magic byte 3", (byte) '1', bytes[3]);
+
+                            // Scan for U+FFFD UTF-8 = 0xEF 0xBF 0xBD.
+                            boolean foundReplacement = false;
+                            for (int i = 0; i + 2 < bytes.length; i++) {
+                                if ((bytes[i] & 0xFF) == 0xEF
+                                        && (bytes[i + 1] & 0xFF) == 0xBF
+                                        && (bytes[i + 2] & 0xFF) == 0xBD) {
+                                    foundReplacement = true;
+                                    break;
+                                }
+                            }
+                            Assert.assertTrue(
+                                    "lossy export must contain U+FFFD UTF-8 bytes (0xEF 0xBF 0xBD)",
+                                    foundReplacement
+                            );
+                        }
+                    }
+                });
+    }
+
+    // Companion to testParquetExportInvalidUtf16LossyByDefault: with the
+    // strict-mode opt-in set, the export must fail loudly with the historical
+    // "invalid UTF-16 data in string column" error. Boots a dedicated server
+    // because the flag is read at server start via PropServerConfiguration.
+    @Test
+    public void testParquetExportInvalidUtf16StrictMode() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            int fragmentation = 300 + rnd.nextInt(100);
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
+                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
+                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.CAIRO_PARQUET_EXPORT_FAIL_ON_INVALID_UTF16.getEnvVarName(), "true"
+            )) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
+                    request.GET()
+                            .url("/exp")
+                            .query("query", "SELECT 0xDFDA::char::string AS c")
+                            .query("fmt", "parquet");
+
+                    try (var headers = request.send()) {
+                        headers.await();
+                        // Strict mode must restore the historical error path:
+                        // 400 status with a body that names "invalid UTF-16
+                        // data". Asserting the status code separately catches a
+                        // regression where the export silently writes a 200 OK
+                        // alongside an "error" body, or any other status drift.
+                        TestUtils.assertEquals("400", headers.getStatusCode());
+                        StringSink body = new StringSink();
+                        Fragment fragment;
+                        while ((fragment = headers.getResponse().recv()) != null) {
+                            Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), body);
+                        }
+                        TestUtils.assertContains(body, "invalid UTF-16 data");
+                    }
+                }
+            }
+        });
     }
 
     @Test

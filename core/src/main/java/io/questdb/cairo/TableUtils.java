@@ -2005,6 +2005,7 @@ public final class TableUtils {
                         bloomFilterColumnCount,
                         fpp,
                         minCompressionRatio,
+                        configuration.isPartitionEncoderParquetFailOnInvalidUtf16(),
                         Files.toOsFd(parquetMetaFd),
                         squashTracker
                 );

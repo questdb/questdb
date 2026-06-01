@@ -430,6 +430,114 @@ public class ParquetTest extends AbstractCairoTest {
         });
     }
 
+    // M3: SYMBOL valid-pair over-substitution guard. The fix must NOT touch
+    // valid surrogate pairs on the SYMBOL path either - a regression that
+    // matches any value in 0xD800-0xDFFF without checking for a paired low
+    // surrogate would silently corrupt every emoji in a SYMBOL column.
+    @Test
+    public void testConvertPartitionSymbolValidSurrogatePairUnaffected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x_sym_pair (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    "INSERT INTO x_sym_pair VALUES " +
+                            "('😀', '2024-01-01T00:00:00.000000Z'), " +
+                            "('latest', '2024-01-02T00:00:00.000000Z')"
+            );
+            execute("ALTER TABLE x_sym_pair CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            assertQuery("SELECT s AS c FROM x_sym_pair WHERE ts = '2024-01-01'")
+                    .returns("c\n😀\n");
+        });
+    }
+
+    // Regression guard for #7079: a VALID UTF-16 surrogate pair (here
+    // U+1F600 "grinning face", encoded as the pair 0xD83D 0xDE00) must
+    // round-trip through CONVERT PARTITION TO PARQUET unchanged. The
+    // lossy-substitution fix for unpaired surrogates must NOT touch valid
+    // pairs, otherwise every emoji and every CJK extension character
+    // exported to parquet would silently turn into U+FFFD. Lossy and strict
+    // behaviour on UNPAIRED surrogates is exercised by the dedicated CONVERT
+    // tests below (testConvertPartitionWithLoneSurrogateStrictRejects,
+    // testConvertPartitionWithLoneSurrogateLossyAllows) — Chars.copyStrChars
+    // is a verbatim Unsafe.putChar copy that preserves lone surrogates intact
+    // through WAL apply, so the storage path DOES carry them to the encoder.
+    @Test
+    public void testConvertPartitionValidSurrogatePairUnaffected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x_pair (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Two partitions: '2024-01-01' is older and convertible,
+            // '2024-01-02' keeps the latest partition active so the
+            // older one is no longer the active one (QuestDB refuses to
+            // convert the active partition). CONVERT must therefore
+            // target only the older one with an explicit LIST clause.
+            // '\uD83D\uDE00' is U+1F600 "grinning face" encoded as a valid
+            // surrogate pair. javac resolves the escapes at compile time so
+            // the SQL parser sees the actual character. Source file stays ASCII.
+            execute(
+                    "INSERT INTO x_pair VALUES " +
+                            "('\uD83D\uDE00', '2024-01-01T00:00:00.000000Z'), " +
+                            "('latest', '2024-01-02T00:00:00.000000Z')"
+            );
+            execute("ALTER TABLE x_pair CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            assertQuery("SELECT s AS c FROM x_pair WHERE ts = '2024-01-01'")
+                    .returns("c\n\uD83D\uDE00\n");
+        });
+    }
+
+    // Storage-side lossy round-trip: with the strict default overridden to
+    // false, CONVERT PARTITION TO PARQUET must silently substitute U+FFFD for
+    // a lone surrogate that survived WAL apply via Chars.copyStrChars. This
+    // documents the corruption that the strict default protects against.
+    @Test
+    public void testConvertPartitionWithLoneSurrogateLossyAllows() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_FAIL_ON_INVALID_UTF16, false);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x_lossy (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 0xDFDA is a lone low surrogate. The CHAR -> STRING cast preserves
+            // the raw code unit, and Chars.copyStrChars carries it through WAL
+            // apply intact to the storage encoder.
+            execute(
+                    "INSERT INTO x_lossy VALUES " +
+                            "(0xDFDA::char::string, '2024-01-01T00:00:00.000000Z'), " +
+                            "('latest', '2024-01-02T00:00:00.000000Z')"
+            );
+            execute("ALTER TABLE x_lossy CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            // Re-read from parquet: U+FFFD is what remains after the lossy
+            // encode. '\uFFFD' is the single UTF-16 code unit for U+FFFD.
+            assertQuery("SELECT s AS c FROM x_lossy WHERE ts = '2024-01-01'")
+                    .returns("c\n\uFFFD\n");
+        });
+    }
+
+    // Storage-side strict default: CONVERT PARTITION TO PARQUET must reject a
+    // partition that contains a lone surrogate. Without this guard, the row's
+    // raw UTF-16 byte 0xDFDA would be silently rewritten to U+FFFD on disk,
+    // which is exactly the regression bluestreak flagged on the original PR.
+    @Test
+    public void testConvertPartitionWithLoneSurrogateStrictRejects() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x_strict (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    "INSERT INTO x_strict VALUES " +
+                            "(0xDFDA::char::string, '2024-01-01T00:00:00.000000Z'), " +
+                            "('latest', '2024-01-02T00:00:00.000000Z')"
+            );
+            try {
+                execute("ALTER TABLE x_strict CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                Assert.fail("strict default must reject lone surrogate");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF-16 data");
+            }
+
+            // The native row must survive: strict mode aborts the CONVERT,
+            // leaving the data on disk untouched (still readable as 0xDFDA).
+            assertQuery("SELECT s AS c FROM x_strict WHERE ts = '2024-01-01'")
+                    .returns("c\n\uDFDA\n");
+        });
+    }
+
     @Test
     public void testConvertToNativeFailure() throws Exception {
         // Verify that we aren't closing garbage fds when parquetDecoder.of() fail.
@@ -2627,6 +2735,97 @@ public class ParquetTest extends AbstractCairoTest {
                             3\t2020-01-03T00:00:00.000000Z
                             3\t2020-01-03T00:00:00.000000Z
                             """);
+        });
+    }
+
+    // O3 lossy round-trip: after a partition has been converted to parquet,
+    // an O3 INSERT carrying a lone surrogate must succeed when the storage
+    // strict default is overridden to false. The rewritten parquet file
+    // contains U+FFFD in place of the unpaired code unit. Without the
+    // strict-default flip in this PR, this would be the SILENT behaviour
+    // on every storage path.
+    @Test
+    public void testO3IntoParquetPartitionWithLoneSurrogateLossyAllows() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_FAIL_ON_INVALID_UTF16, false);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x_o3_lossy (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    "INSERT INTO x_o3_lossy VALUES " +
+                            "('first', '2020-01-01T00:00:00.000000Z'), " +
+                            "('second', '2020-01-02T00:00:00.000000Z')"
+            );
+            execute("ALTER TABLE x_o3_lossy CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            // Now O3 insert a lone surrogate into the already-parquet partition.
+            execute("INSERT INTO x_o3_lossy VALUES (0xDFDA::char::string, '2020-01-01T00:00:01.000000Z')");
+
+            // Lossy substitution writes U+FFFD; both rows are visible.
+            assertQuery("SELECT s FROM x_o3_lossy WHERE ts < '2020-01-02'")
+                    .returns("s\nfirst\n�\n");
+        });
+    }
+
+    // M2/M3: strict CONVERT on a WAL table. WAL apply hits the parquet
+    // encoder, the strict default rejects the encode, and ApplyWal2TableJob
+    // catches the CairoException and suspends the table rather than surfacing
+    // a synchronous error to the ALTER caller. This is the trade-off
+    // bluestreak flagged: the strict default keeps persisted data safe, but
+    // on a WAL table the user must look at wal_tables() to discover the
+    // failure. Tested here so future changes to WAL error handling stay
+    // visible. The non-WAL synchronous CairoException path is covered by
+    // testConvertPartitionWithLoneSurrogateStrictRejects above.
+    @Test
+    public void testO3WalConvertWithLoneSurrogateStrictSuspendsTable() throws Exception {
+        // Explicit set: other tests in this class flip the flag to false to
+        // exercise the lossy path, and JUnit-level property propagation can
+        // leak that state into this test. Pin strict explicitly so the result
+        // is deterministic regardless of execution order.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_FAIL_ON_INVALID_UTF16, true);
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x_wal_strict (s STRING, ts TIMESTAMP) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            execute(
+                    "INSERT INTO x_wal_strict VALUES " +
+                            "(0xDFDA::char::string, '2020-01-01T00:00:00.000000Z'), " +
+                            "('latest', '2020-01-02T00:00:00.000000Z')"
+            );
+            drainWalQueue();
+
+            // Before the CONVERT, the table is healthy.
+            assertQuery("SELECT name, suspended FROM wal_tables() WHERE name = 'x_wal_strict'")
+                    .noRandomAccess()
+                    .returns("name\tsuspended\nx_wal_strict\tfalse\n");
+
+            // CONVERT is dispatched through WAL apply. The encoder strict
+            // default rejects the lone surrogate; WAL apply catches the
+            // CairoException and marks the table suspended. The suspend
+            // notification reaches the SeqTxnTracker asynchronously, so poll
+            // wal_tables() via assertEventually rather than asserting once
+            // immediately after drainWalQueue.
+            execute("ALTER TABLE x_wal_strict CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Direct cursor read of the engine's live SeqTxnTracker state.
+            // The fluent assertQuery path through QueryAssertion was returning
+            // a stale snapshot (the earlier pre-CONVERT compilation), so we
+            // bypass it here and inspect the record directly via select().
+            try (
+                    RecordCursorFactory factory = select(
+                            "SELECT name, suspended FROM wal_tables() WHERE name = 'x_wal_strict'"
+                    );
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertTrue("expected one wal_tables row", cursor.hasNext());
+                Assert.assertEquals(
+                        "x_wal_strict",
+                        cursor.getRecord().getStrA(0).toString()
+                );
+                Assert.assertTrue(
+                        "table must be suspended after strict CONVERT failed",
+                        cursor.getRecord().getBool(1)
+                );
+            }
         });
     }
 

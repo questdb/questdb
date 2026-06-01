@@ -398,6 +398,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int parquetExportCompressionLevel;
     private final int parquetExportCopyReportFrequencyLines;
     private final int parquetExportDataPageSize;
+    private final boolean parquetExportFailOnInvalidUtf16;
     private final boolean parquetExportRawArrayEncoding;
     private final int parquetExportRowGroupSize;
     private final boolean parquetExportStatisticsEnabled;
@@ -407,6 +408,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionEncoderParquetCompressionCodec;
     private final int partitionEncoderParquetCompressionLevel;
     private final int partitionEncoderParquetDataPageSize;
+    private final boolean partitionEncoderParquetFailOnInvalidUtf16;
     private final double partitionEncoderParquetMinCompressionRatio;
     private final long partitionEncoderParquetO3RewriteUnusedMaxBytes;
     private final double partitionEncoderParquetO3RewriteUnusedRatio;
@@ -1683,6 +1685,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.parquetExportCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC, "LZ4_RAW"));
 
             this.parquetExportRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_RAW_ARRAY_ENCODING_ENABLED, false);
+            this.parquetExportFailOnInvalidUtf16 = getBoolean(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_FAIL_ON_INVALID_UTF16, false);
             int defaultCompressionLevel = parquetExportCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
             this.parquetExportCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COMPRESSION_LEVEL, defaultCompressionLevel);
             this.parquetExportRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_ROW_GROUP_SIZE, 100_000);
@@ -2278,6 +2281,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         // of Parquet's nested LIST encoding. Compatibility with external tools is not a concern
         // since these parquet files are internal to QuestDB.
         this.partitionEncoderParquetRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, true);
+        // Storage default is STRICT (fail loud) because CONVERT PARTITION TO PARQUET
+        // and O3 writes mutate persisted data: silently substituting U+FFFD here
+        // would irreversibly corrupt rows. The export side
+        // (cairo.parquet.export.fail.on.invalid.utf16) defaults to lossy because
+        // it produces an ephemeral file from a live query result. Operators who
+        // intentionally want lossy storage rewrites can set this flag to false.
+        //
+        // WAL behaviour: when CONVERT or O3 inserts touch a WAL table, the strict
+        // failure is observed by ApplyWal2TableJob, which logs it and may suspend
+        // the table rather than surfacing a synchronous error to the ALTER/INSERT
+        // caller. Operators running on WAL tables should monitor wal_tables() for
+        // suspended state and the server log for the "invalid UTF-16 data"
+        // diagnostic when running with this flag at its true default.
+        this.partitionEncoderParquetFailOnInvalidUtf16 = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_FAIL_ON_INVALID_UTF16, true);
         int defaultCompressionLevel = partitionEncoderParquetCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
         this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, defaultCompressionLevel);
         this.partitionEncoderParquetRowGroupSize = Math.max(4, getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000));
@@ -5295,6 +5312,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isParquetExportFailOnInvalidUtf16() {
+            return parquetExportFailOnInvalidUtf16;
+        }
+
+        @Override
         public boolean isParquetExportRawArrayEncoding() {
             return parquetExportRawArrayEncoding;
         }
@@ -5302,6 +5324,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isParquetExportStatisticsEnabled() {
             return parquetExportStatisticsEnabled;
+        }
+
+        @Override
+        public boolean isPartitionEncoderParquetFailOnInvalidUtf16() {
+            return partitionEncoderParquetFailOnInvalidUtf16;
         }
 
         @Override

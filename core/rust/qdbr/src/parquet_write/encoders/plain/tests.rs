@@ -27,6 +27,7 @@ fn write_options() -> WriteOptions {
         raw_array_encoding: false,
         bloom_filter_fpp: 0.01,
         min_compression_ratio: 0.0,
+        strict_utf16: false,
     }
 }
 
@@ -472,6 +473,278 @@ fn encode_string_utf16_round_trip() {
     assert_eq!(num_values, 3);
     assert_eq!(num_nulls, 0);
     assert_eq!(def_levels_len, 2);
+}
+
+/// T1 - Plain encoding lossy default: the original reproducer from issue
+/// #7079 now succeeds and the page data contains the UTF-8 bytes for U+FFFD
+/// (0xEF 0xBF 0xBD).
+#[test]
+fn encode_string_plain_lossy_substitutes_unpaired_surrogate() {
+    // Build a single-row STRING column whose only value is the lone low
+    // surrogate 0xDFDA - the bytes that the bug reporter produced via
+    // `SELECT 0xDFDA::char::string`.
+    let mut data = Vec::new();
+    data.extend_from_slice(&1i32.to_le_bytes()); // length: 1 char
+    data.extend_from_slice(&0xDFDAu16.to_le_bytes()); // lone low surrogate
+    let offsets: Vec<i64> = vec![0];
+    let col = Column::from_raw_data(
+        0,
+        "col",
+        ColumnTypeTag::String.into_type().code(),
+        0,
+        offsets.len(),
+        data.as_ptr(),
+        data.len(),
+        offsets.as_ptr() as *const u8,
+        offsets.len() * std::mem::size_of::<i64>(),
+        std::ptr::null(),
+        0,
+        false,
+        false,
+        0,
+    )
+    .unwrap();
+    let pt = primitive_type_for(ColumnTypeTag::String);
+
+    // Default WriteOptions has strict_utf16: false.
+    let pages = encode_string(&[col], 0, offsets.len(), &pt, write_options(), None)
+        .expect("lossy encode must succeed");
+    assert_eq!(pages.len(), 1);
+
+    // The page body must contain the UTF-8 bytes 0xEF 0xBF 0xBD somewhere -
+    // proves the surrogate was substituted with U+FFFD rather than written
+    // as-is or skipped.
+    let body = match &pages[0] {
+        Page::Data(d) => d.buffer.as_slice(),
+        _ => panic!("expected data page"),
+    };
+    assert!(
+        body.windows(3).any(|w| w == [0xEF, 0xBF, 0xBD]),
+        "page body must contain U+FFFD UTF-8 bytes (EF BF BD); body={body:?}"
+    );
+}
+
+/// T2 - Plain encoding strict mode preserves the historical "fail loud"
+/// behaviour when the new `strict_utf16` flag is set.
+#[test]
+fn encode_string_plain_strict_rejects_unpaired_surrogate() {
+    let mut data = Vec::new();
+    data.extend_from_slice(&1i32.to_le_bytes());
+    data.extend_from_slice(&0xDFDAu16.to_le_bytes());
+    let offsets: Vec<i64> = vec![0];
+    let col = Column::from_raw_data(
+        0,
+        "col",
+        ColumnTypeTag::String.into_type().code(),
+        0,
+        offsets.len(),
+        data.as_ptr(),
+        data.len(),
+        offsets.as_ptr() as *const u8,
+        offsets.len() * std::mem::size_of::<i64>(),
+        std::ptr::null(),
+        0,
+        false,
+        false,
+        0,
+    )
+    .unwrap();
+    let pt = primitive_type_for(ColumnTypeTag::String);
+
+    let opts = WriteOptions { strict_utf16: true, ..write_options() };
+    let result = encode_string(&[col], 0, offsets.len(), &pt, opts, None);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("invalid UTF-16 data"),
+        "error must mention 'invalid UTF-16 data', got: {msg}"
+    );
+}
+
+/// T8 - Valid surrogate pair regression guard. The pair `[0xD83D, 0xDE00]`
+/// encodes U+1F600 ("grinning face") as a single 4-byte UTF-8 sequence
+/// (F0 9F 98 80). The fix must NOT substitute valid pairs - only unpaired
+/// surrogates. Without this guard, an over-aggressive substitution that
+/// matched any value in 0xD800-0xDFFF would silently corrupt every emoji
+/// and every CJK extension character exported to parquet.
+#[test]
+fn encode_string_plain_preserves_valid_surrogate_pair() {
+    let mut data = Vec::new();
+    data.extend_from_slice(&2i32.to_le_bytes()); // length: 2 chars
+    data.extend_from_slice(&0xD83Du16.to_le_bytes()); // high surrogate
+    data.extend_from_slice(&0xDE00u16.to_le_bytes()); // low surrogate
+    let offsets: Vec<i64> = vec![0];
+    let col = Column::from_raw_data(
+        0,
+        "col",
+        ColumnTypeTag::String.into_type().code(),
+        0,
+        offsets.len(),
+        data.as_ptr(),
+        data.len(),
+        offsets.as_ptr() as *const u8,
+        offsets.len() * std::mem::size_of::<i64>(),
+        std::ptr::null(),
+        0,
+        false,
+        false,
+        0,
+    )
+    .unwrap();
+    let pt = primitive_type_for(ColumnTypeTag::String);
+
+    let pages = encode_string(&[col], 0, offsets.len(), &pt, write_options(), None)
+        .expect("valid pair must encode");
+    let body = match &pages[0] {
+        Page::Data(d) => d.buffer.as_slice(),
+        _ => panic!("expected data page"),
+    };
+    // The 4-byte UTF-8 form of U+1F600 must appear verbatim.
+    assert!(
+        body.windows(4).any(|w| w == [0xF0, 0x9F, 0x98, 0x80]),
+        "valid surrogate pair must encode as F0 9F 98 80; body={body:?}"
+    );
+    // U+FFFD must NOT appear - that would mean we mistakenly substituted
+    // a valid pair.
+    assert!(
+        !body.windows(3).any(|w| w == [0xEF, 0xBF, 0xBD]),
+        "valid pair must not be replaced with U+FFFD; body={body:?}"
+    );
+
+    // Strict mode also accepts valid pairs.
+    let strict_opts = WriteOptions { strict_utf16: true, ..write_options() };
+    encode_string(&[col], 0, offsets.len(), &pt, strict_opts, None)
+        .expect("valid pair must encode under strict mode too");
+}
+
+/// M3 - Multi-row mixed-shape encode_string test closing bluestreak's coverage
+/// gap. Previous encode_string tests use a single row in isolation, so a bug
+/// that breaks the second or third row of an encode batch (NULL handling, def
+/// level byte offsets, statistics interleaving) would not be caught. This
+/// test packs a NULL, a valid ASCII row, a valid supplementary-plane pair
+/// (U+1F600), and a lone low surrogate into one encode call.
+///
+/// Lossy mode: encode must succeed; the page body must contain BOTH the
+/// valid pair's UTF-8 bytes (`F0 9F 98 80`) AND the U+FFFD substitution
+/// (`EF BF BD`) for the lone surrogate row. The valid pair must NOT have
+/// been substituted by the U+FFFD fix.
+///
+/// Strict mode: encode must fail with the cross-type "invalid UTF-16 data"
+/// diagnostic on the lone-surrogate row, even though earlier rows decode
+/// cleanly. The error must NOT depend on row order — strict failure must
+/// surface no matter where the bad row sits.
+#[test]
+fn encode_string_plain_multi_row_mixed_lossy_and_strict() {
+    // Layout matches the existing helpers: data = [len_i32, utf16_codeunits...]
+    // for each row. NULL is encoded by writing length=-1 at the row's offset
+    // (matching the encode_string_with_nulls_and_column_top pattern).
+    fn build_col(rows: &[Option<&[u16]>]) -> (Vec<u8>, Vec<i64>) {
+        let mut data: Vec<u8> = Vec::new();
+        let mut offsets: Vec<i64> = Vec::with_capacity(rows.len());
+        for row in rows {
+            offsets.push(data.len() as i64);
+            match row {
+                None => {
+                    data.extend_from_slice(&(-1i32).to_le_bytes());
+                }
+                Some(utf16) => {
+                    data.extend_from_slice(&(utf16.len() as i32).to_le_bytes());
+                    for cu in utf16.iter() {
+                        data.extend_from_slice(&cu.to_le_bytes());
+                    }
+                }
+            }
+        }
+        (data, offsets)
+    }
+
+    // Row 0: NULL.
+    // Row 1: ASCII "hi" (h=0x68, i=0x69).
+    // Row 2: valid surrogate pair U+1F600 (0xD83D 0xDE00, UTF-8 F0 9F 98 80).
+    // Row 3: lone low surrogate 0xDFDA - the bug reproducer.
+    let row_ascii: Vec<u16> = vec![b'h' as u16, b'i' as u16];
+    let row_pair: Vec<u16> = vec![0xD83D, 0xDE00];
+    let row_lone: Vec<u16> = vec![0xDFDA];
+    let rows: &[Option<&[u16]>] = &[None, Some(&row_ascii), Some(&row_pair), Some(&row_lone)];
+    let (data, offsets) = build_col(rows);
+
+    let pt = primitive_type_for(ColumnTypeTag::String);
+
+    // ---- Lossy: must succeed and contain BOTH valid pair bytes and U+FFFD ----
+    {
+        let col = Column::from_raw_data(
+            0,
+            "col",
+            ColumnTypeTag::String.into_type().code(),
+            0,
+            offsets.len(),
+            data.as_ptr(),
+            data.len(),
+            offsets.as_ptr() as *const u8,
+            offsets.len() * std::mem::size_of::<i64>(),
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+        let pages = encode_string(&[col], 0, offsets.len(), &pt, write_options(), None)
+            .expect("lossy multi-row encode must succeed");
+        assert_eq!(pages.len(), 1, "expected single data page");
+        let body = match &pages[0] {
+            Page::Data(d) => d.buffer.as_slice(),
+            _ => panic!("expected data page"),
+        };
+        // The valid pair must encode as F0 9F 98 80 - over-substitution would
+        // turn this into U+FFFD U+FFFD (EF BF BD EF BF BD) instead.
+        assert!(
+            body.windows(4).any(|w| w == [0xF0, 0x9F, 0x98, 0x80]),
+            "valid surrogate pair must encode as its real UTF-8 bytes"
+        );
+        // The lone surrogate row must produce a U+FFFD substitution.
+        assert!(
+            body.windows(3).any(|w| w == [0xEF, 0xBF, 0xBD]),
+            "lone surrogate row must produce U+FFFD UTF-8 bytes"
+        );
+        // ASCII "hi" must round-trip without modification.
+        assert!(
+            body.windows(2).any(|w| w == [0x68, 0x69]),
+            "ASCII row must round-trip"
+        );
+    }
+
+    // ---- Strict: must fail with the cross-type wording ----
+    {
+        let col = Column::from_raw_data(
+            0,
+            "col",
+            ColumnTypeTag::String.into_type().code(),
+            0,
+            offsets.len(),
+            data.as_ptr(),
+            data.len(),
+            offsets.as_ptr() as *const u8,
+            offsets.len() * std::mem::size_of::<i64>(),
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+        let opts = WriteOptions { strict_utf16: true, ..write_options() };
+        let result = encode_string(&[col], 0, offsets.len(), &pt, opts, None);
+        assert!(
+            result.is_err(),
+            "strict encode must reject when ANY row carries a lone surrogate"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("invalid UTF-16 data in string column"),
+            "strict error must use the cross-type wording; got: {msg}"
+        );
+    }
 }
 
 #[test]

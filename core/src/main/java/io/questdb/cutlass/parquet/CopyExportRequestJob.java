@@ -117,6 +117,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     task.isStatisticsEnabled(),
                     task.getParquetVersion(),
                     task.isRawArrayEncoding(),
+                    task.isFailOnInvalidUtf16(),
                     task.getNowTimestampType(),
                     task.getNow(),
                     task.isDescending(),

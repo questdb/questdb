@@ -278,6 +278,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                                     bloomFilterCount,
                                     bloomFilterFpp,
                                     0.0,
+                                    task.isFailOnInvalidUtf16(),
                                     -1,
                                     -1L
                             );
