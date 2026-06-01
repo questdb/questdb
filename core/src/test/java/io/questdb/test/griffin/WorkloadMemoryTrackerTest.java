@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -45,10 +46,11 @@ import org.junit.Test;
  * {@code invalidation_reason}). WAL_APPLY only ever runs simple, join- and
  * subquery-free UPDATEs (richer forms are rejected for WAL tables at submission)
  * plus metadata ALTERs and data commits, none of which reach a tracker-wired
- * allocator -- writer/O3 memory is out of scope by design. So the WAL_APPLY
- * tests verify the acquire/bind/release lifecycle is correct and balanced under
- * an active limit rather than forcing a breach; the tracker is wired so any
- * future SQL-reachable allocation charges WAL_APPLY rather than the QUERY budget.
+ * allocator -- writer/O3 memory is out of scope by design. To still drive a real
+ * WAL_APPLY breach, the WAL tests use the dev-mode {@code alloc_tracked(l)} test
+ * function, which allocates through the bound tracker; applied inside an UPDATE
+ * its allocation charges the WAL_APPLY tracker, so a large size breaches it and
+ * suspends the table ({@code wal_tables().suspended} / {@code errorMessage}).
  * <p>
  * The limits are set in {@link #beforeClass()} because
  * {@code CairoEngine#getMemoryTrackerProvider} caches the provider on first
@@ -69,6 +71,15 @@ public class WorkloadMemoryTrackerTest extends AbstractCairoTest {
         // across the refresh's step-reduction retries, so the sleeps only slow the
         // test down before the refresh gives up and invalidates the view.
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 0);
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        // alloc_tracked(l), used by the WAL tests, is dev-mode only. Setting it on the
+        // node after super.setUp() keeps dev mode enabled for every test; the static
+        // setProperty form does not stick across the class's tests.
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
     }
 
     @Test
@@ -144,17 +155,43 @@ public class WorkloadMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalApplyUpdateFailsOnTrackedAlloc() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT x::int, x::long, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(10)");
+            drainWalQueue();
+
+            // alloc_tracked() allocates through the tracker bound while the UPDATE is
+            // applied -- the WAL_APPLY one. 1 MiB exceeds the 512 KiB WAL_APPLY limit,
+            // so apply fails and the table is suspended with the per-query message.
+            execute("UPDATE t SET v = alloc_tracked(1_048_576)");
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "name\tsuspended\toom\tworkload\n" +
+                            "t\ttrue\ttrue\ttrue\n",
+                    "SELECT name, suspended, " +
+                            "errorMessage LIKE '%query memory limit exceeded%' AS oom, " +
+                            "errorMessage LIKE '%workload=WAL_APPLY%' AS workload " +
+                            "FROM wal_tables() WHERE name = 't'",
+                    null
+            );
+        });
+    }
+
+    @Test
     public void testWalApplyUpdateRepeatedRunsReleaseAllocations() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (k INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO t SELECT x::int, x::long, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(10)");
             drainWalQueue();
 
-            // Each apply acquires and releases a WAL_APPLY tracker; assertMemoryLeak
-            // (plus the live recordPerQueryMemAlloc assert) catches an unbalanced
-            // acquire/release or a tracker leak across the repeated batches.
+            // Each apply charges a small alloc_tracked() allocation to that batch's
+            // WAL_APPLY tracker and frees it on cursor close. assertMemoryLeak (plus the
+            // live recordPerQueryMemAlloc assert) catches an unbalanced charge/free or a
+            // tracker leak across the repeated batches.
             for (int i = 0; i < 5; i++) {
-                execute("UPDATE t SET v = v + 1 WHERE k > 5");
+                execute("UPDATE t SET v = alloc_tracked(1024)");
                 drainWalQueue();
             }
             assertQueryNoLeakCheck(
@@ -173,11 +210,10 @@ public class WorkloadMemoryTrackerTest extends AbstractCairoTest {
             execute("INSERT INTO t SELECT x::int, x::long, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(10)");
             drainWalQueue();
 
-            // A join- and subquery-free UPDATE is the only shape WAL apply runs; it
-            // reaches no tracker-wired allocator, so it applies cleanly under the
-            // active WAL_APPLY limit. This guards the acquire/release wiring against
-            // breaking normal WAL apply.
-            execute("UPDATE t SET v = v + 100 WHERE k > 5");
+            // A small alloc_tracked() allocation stays under the WAL_APPLY limit, so the
+            // UPDATE applies cleanly: it charges and frees the bound tracker symmetrically
+            // and sets every row to 42.
+            execute("UPDATE t SET v = alloc_tracked(1024)");
             drainWalQueue();
 
             assertQueryNoLeakCheck(
@@ -186,12 +222,11 @@ public class WorkloadMemoryTrackerTest extends AbstractCairoTest {
                     "SELECT suspended FROM wal_tables() WHERE name = 't'",
                     null
             );
-            // v = 1..10; rows k = 6..10 each gain 100, so sum = 55 + 5 * 100 = 555.
-            // The non-keyed aggregate cursor reports a fixed size of 1, hence the
-            // explicit expectSize flag.
+            // alloc_tracked() returns 42 for all 10 rows -> sum 420. The non-keyed
+            // aggregate cursor reports a fixed size of 1, hence the explicit expectSize.
             assertQueryNoLeakCheck(
                     "sum\n" +
-                            "555\n",
+                            "420\n",
                     "SELECT sum(v) AS sum FROM t",
                     null,
                     null,
