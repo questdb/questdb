@@ -17,8 +17,8 @@ variables:
   MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 "
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
-  # Full-reactor defaults for the self-hosted Linux jobs. Hosted mac/windows jobs
-  # (hosted-jobs.yml) override these to "-pl core -am" and drop the unused web console.
+  # Full-reactor defaults for the self-hosted Linux jobs. The hosted mac/windows
+  # jobs run on demand in test-hosted-pipeline.yml, not here.
   TEST_REACTOR_ARGS: ""
   WEB_CONSOLE_PROFILE: "-P build-web-console"
 
@@ -159,13 +159,6 @@ stages:
       - template: templates/self-hosted-jobs.yml
     variables:
       excludeTests: "**/griffin/**,**/cairo/**,**/cutlass/pgwire/**,**/cutlass/http/**,**/std/*,**/std/str/**,**/std/datetime/microtime/**,**/std/fastdouble/**,**/std/bytes/**,**/log/**,**/sqllogictest/*,**/network/**"
-
-  - stage: HostedRunTestsBranches
-    displayName: "Hosted Running tests"
-    dependsOn:
-      - CheckChanges
-    jobs:
-      - template: templates/hosted-jobs.yml
 
   - stage: SelfHostedRunTestsCoverageBranches
     displayName: "SelfHosted Running tests with cover"
