@@ -3294,10 +3294,11 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testRndDoubleArray() throws Exception {
         assertMemoryLeak(() -> {
-            // Keep assertSql: rnd_double_array() produces fresh random values on
-            // each execution, so the asserted values only hold for a single run.
-            // The assertQuery builder re-reads the cursor and would see new values.
-            assertSql("rnd_double_array\n[0.08486964232560668,0.299199045961845]\n", "SELECT rnd_double_array(1)");
+            // returnsOnce(): rnd_double_array() produces fresh random values on each execution,
+            // so a single cursor pass is asserted (no re-read that would see new values).
+            assertQuery("SELECT rnd_double_array(1)")
+                    .noLeakCheck()
+                    .returnsOnce("rnd_double_array\n[0.08486964232560668,0.299199045961845]\n");
             assertQuery("SELECT rnd_double_array('1', '1', '1', '1')")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -3399,26 +3400,30 @@ public class ArrayTest extends AbstractCairoTest {
                     "too many dim lengths [nDims=2, nDimLengths=3]"
             );
 
-            assertSql("""
+            assertQuery("select rnd_double_array(2, 2, 0, 2, 2)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                     rnd_double_array
                     [[null,0.9856290845874263],[null,0.5093827001617407]]
-                    """, "select rnd_double_array(2, 2, 0, 2, 2)");
+                    """);
 
-            assertSql("""
+            assertQuery("explain select rnd_double_array(2, 1, 0, 2, 2)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             VirtualRecord
                               functions: [rnd_double_array(2,1,ignored,2,2)]
                                 long_sequence count: 1
-                            """,
-                    "explain select rnd_double_array(2, 1, 0, 2, 2)");
+                            """);
 
-            assertSql("""
+            assertQuery("explain select rnd_double_array(3, 1, 4)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             VirtualRecord
                               functions: [rnd_double_array(3,1,4)]
                                 long_sequence count: 1
-                            """,
-                    "explain select rnd_double_array(3, 1, 4)");
+                            """);
         });
     }
 
