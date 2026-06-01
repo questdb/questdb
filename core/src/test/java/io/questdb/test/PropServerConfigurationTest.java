@@ -1524,6 +1524,13 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMemoryUsageLogIntervalRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "-1");
+        assertInvalidConfiguration(properties, PropertyKey.MEMORY_USAGE_LOG_INTERVAL);
+    }
+
+    @Test
     public void testQwpUdpCommitIntervalRejectsZero() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.QWP_UDP_COMMIT_INTERVAL.getPropertyPath(), "0");

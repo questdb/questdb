@@ -30,11 +30,54 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * Not thread-safe: {@link #format(CharSink)} reuses internal scratch arrays
+ * across calls. Drive each instance from a single thread (the production caller
+ * is a {@link io.questdb.mp.SynchronizedJob} that already serializes entry).
+ */
 public final class MemoryUsageFormatter {
-    private static final int MAX_LOGGED_TAGS = 10;
+    public static final int MAX_LOGGED_TAGS = 10;
 
     private final int[] tagIndices = new int[MemoryTag.SIZE];
     private final long[] tagValues = new long[MemoryTag.SIZE];
+
+    // Exposed for testing the sort + emit logic in isolation.
+    public static void appendTopTagsByAbsoluteValue(
+            @NotNull CharSink<?> sink,
+            int[] tagIndices,
+            long[] tagValues,
+            int count,
+            int maxTags
+    ) {
+        // Partial selection sort: bring top-N by absolute value to the front.
+        final int limit = Math.min(maxTags, count);
+        for (int k = 0; k < limit; k++) {
+            int maxAt = k;
+            long maxAbs = Math.abs(tagValues[k]);
+            for (int j = k + 1; j < count; j++) {
+                final long abs = Math.abs(tagValues[j]);
+                if (abs > maxAbs) {
+                    maxAbs = abs;
+                    maxAt = j;
+                }
+            }
+            if (maxAt != k) {
+                final int tmpIdx = tagIndices[k];
+                tagIndices[k] = tagIndices[maxAt];
+                tagIndices[maxAt] = tmpIdx;
+                final long tmpVal = tagValues[k];
+                tagValues[k] = tagValues[maxAt];
+                tagValues[maxAt] = tmpVal;
+            }
+            if (k > 0) {
+                sink.putAscii(", ");
+            }
+            sink.putAscii(MemoryTag.nameOf(tagIndices[k])).putAscii('=').put(tagValues[k]);
+        }
+        if (count > limit) {
+            sink.putAscii(", and ").put(count - limit).putAscii(" more");
+        }
+    }
 
     public void format(@NotNull CharSink<?> sink) {
         final Runtime runtime = Runtime.getRuntime();
@@ -66,35 +109,7 @@ public final class MemoryUsageFormatter {
                 count++;
             }
         }
-
-        // Partial selection sort: bring top-N by absolute value to the front.
-        final int limit = Math.min(MAX_LOGGED_TAGS, count);
-        for (int k = 0; k < limit; k++) {
-            int maxAt = k;
-            long maxAbs = Math.abs(tagValues[k]);
-            for (int j = k + 1; j < count; j++) {
-                final long abs = Math.abs(tagValues[j]);
-                if (abs > maxAbs) {
-                    maxAbs = abs;
-                    maxAt = j;
-                }
-            }
-            if (maxAt != k) {
-                final int tmpIdx = tagIndices[k];
-                tagIndices[k] = tagIndices[maxAt];
-                tagIndices[maxAt] = tmpIdx;
-                final long tmpVal = tagValues[k];
-                tagValues[k] = tagValues[maxAt];
-                tagValues[maxAt] = tmpVal;
-            }
-            if (k > 0) {
-                sink.putAscii(", ");
-            }
-            sink.putAscii(MemoryTag.nameOf(tagIndices[k])).putAscii('=').put(tagValues[k]);
-        }
-        if (count > limit) {
-            sink.putAscii(", and ").put(count - limit).putAscii(" more");
-        }
+        appendTopTagsByAbsoluteValue(sink, tagIndices, tagValues, count, MAX_LOGGED_TAGS);
         sink.putAscii(']');
     }
 }
