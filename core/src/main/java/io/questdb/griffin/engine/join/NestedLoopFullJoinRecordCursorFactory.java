@@ -66,7 +66,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         this.filter = filter;
         Map matchIdsMap = null;
         try {
-            matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY);
+            matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY, false, false);
             this.cursor = new NestedLoopFullRecordCursor(columnSplit, filter, matchIdsMap, masterNullRecord, slaveNullRecord);
         } catch (Throwable e) {
             Misc.free(matchIdsMap);
@@ -144,7 +144,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
             this.filter = filter;
             this.isMatch = false;
             this.matchIdsMap = matchIdsMap;
-            isOpen = true;
+            isOpen = false;
         }
 
         @Override
@@ -237,6 +237,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
             isMasterHasNextPending = true;
             if (!isOpen) {
                 isOpen = true;
+                matchIdsMap.setMemoryTracker(executionContext.getMemoryTracker());
                 matchIdsMap.reopen();
             }
             circuitBreaker = executionContext.getCircuitBreaker();

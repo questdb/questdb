@@ -204,7 +204,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 // Lazy variant: the map skeleton is constructed but the native backing is not
                 // allocated until the first cursor's of() binds a MemoryTracker and reopens it.
                 joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes, false, false);
-                slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
+                slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages(), true);
                 isOpen = false;
             } catch (Throwable th) {
                 close();
@@ -328,6 +328,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 isOpen = true;
                 joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMap.reopen();
+                slaveChain.setMemoryTracker(executionContext.getMemoryTracker());
                 slaveChain.reopen();
             }
             this.masterCursor = masterCursor;

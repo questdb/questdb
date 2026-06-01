@@ -86,7 +86,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             this.slaveKeyCopier = slaveKeyCopier;
             this.toleranceInterval = toleranceInterval;
 
-            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, TYPES_VALUE);
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, TYPES_VALUE, false, false);
             this.cursor = new AsOfLightJoinRecordCursor(
                     columnSplit,
                     joinKeyMap,
@@ -114,7 +114,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         RecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor);
+            cursor.of(masterCursor, slaveCursor, executionContext);
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
@@ -180,7 +180,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             this.joinKeyToRowId = joinKeyToRowId;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
-            isOpen = true;
+            isOpen = false;
             if (masterTimestampType == slaveTimestampType) {
                 masterTimestampScale = slaveTimestampScale = 1L;
             } else {
@@ -305,9 +305,10 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             slaveCursor.toTop();
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
             if (!isOpen) {
                 isOpen = true;
+                joinKeyToRowId.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyToRowId.reopen();
             }
             if (symbolJoinKeyMapping != null) {

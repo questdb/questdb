@@ -50,7 +50,7 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
             LongChain slaveChain
     ) {
         super(columnSplit);
-        isOpen = true;
+        isOpen = false;
         this.joinKeyMap = joinKeyMap;
         this.slaveChain = slaveChain;
     }
@@ -136,7 +136,9 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
     protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;
+            slaveChain.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
             slaveChain.reopen();
+            joinKeyMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
             joinKeyMap.reopen();
         }
         this.masterCursor = masterCursor;

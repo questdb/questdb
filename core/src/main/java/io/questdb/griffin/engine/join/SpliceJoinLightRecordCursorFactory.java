@@ -86,7 +86,9 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             joinKeyMap = MapFactory.createUnorderedMap(
                     cairoConfiguration,
                     joinColumnTypes,
-                    valueTypes
+                    valueTypes,
+                    false,
+                    false
             );
             cursor = new SpliceJoinLightRecordCursor(
                     joinKeyMap,
@@ -116,7 +118,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         RecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor);
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -196,7 +198,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.nullMasterRecord = nullMasterRecord;
             this.nullSlaveRecord = nullSlaveRecord;
-            isOpen = true;
+            isOpen = false;
             if (masterTimestampType == slaveTimestampType) {
                 masterTimestampScale = slaveTimestampScale = 1L;
             } else {
@@ -356,9 +358,10 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             }
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
             if (!isOpen) {
                 isOpen = true;
+                joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMap.reopen();
             }
             // avoid resetting these

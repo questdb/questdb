@@ -59,7 +59,11 @@ public class MapMemoryTrackerTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void beforeClass() {
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64 * 1024L);
+        // 256 KiB clears the light hash join's 128 KiB LongChain initial page --
+        // now tracker-charged -- for the small-build success case, while the
+        // large-workload breach tests (tens of thousands of keys / rows) still
+        // exceed it.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
     }
 
     @Test
