@@ -473,6 +473,25 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP);
                 state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
                 state.setQueryType(cc.getType());
+                // Read-only boundary gate (mirrors the pg-wire gate in PGPipelineEntry and the ILP
+                // gate in TableUpdateDetails.commit): engine.isReadOnlyMode() flips to true as the
+                // FIRST step of an in-place PRIMARY->REPLICA switch cascade, before the security
+                // context resolved for this request reflects the replica role. A write/DDL submitted
+                // over /exec on a connection authorized while the node was still PRIMARY would
+                // otherwise be executed and land on a node that is already demoting (its WAL uploader
+                // may have closed), losing the write once the node settles as a replica. Re-checking
+                // the live engine state per statement closes that window for the HTTP /exec path.
+                if (engine.isReadOnlyMode()
+                        && (cc.getType() == CompiledQuery.INSERT
+                        || cc.getType() == CompiledQuery.INSERT_AS_SELECT
+                        || cc.getType() == CompiledQuery.UPDATE
+                        || cc.getType() == CompiledQuery.ALTER
+                        || cc.getType() == CompiledQuery.CREATE_TABLE
+                        || cc.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT
+                        || cc.getType() == CompiledQuery.CREATE_MAT_VIEW
+                        || cc.getType() == CompiledQuery.DROP)) {
+                    throw CairoException.authorization().put("replica access is read-only");
+                }
                 // todo: reconsider whether we need to keep the SqlCompiler instance open while executing the query
                 // the problem is the each instance of the compiler has just a single instance of the CompilerQuery object.
                 // the CompilerQuery is used as a flyweight(?) and we cannot return the SqlCompiler instance to the pool
