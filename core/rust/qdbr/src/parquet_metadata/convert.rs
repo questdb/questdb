@@ -770,20 +770,13 @@ fn designated_sorting_col(qdb_meta: &QdbMeta) -> Option<SortingCol> {
         })
 }
 
-/// Sort columns for `_pm` generation, from the parquet footer -- falling back to
-/// qdb_meta's designated timestamp when the footer's row groups declare
-/// conflicting indices (which an O3-merged partition can across the dense-index
-/// fix). The read path trusts qdb_meta over the footer, so this never aborts.
 pub(crate) fn resolve_sorting_columns(
     file_metadata: &FileMetaData,
     qdb_meta: Option<&QdbMeta>,
 ) -> ParquetResult<Vec<SortingCol>> {
-    match extract_sorting_columns(file_metadata) {
-        Ok(cols) => Ok(cols),
-        Err(e) => match qdb_meta.and_then(designated_sorting_col) {
-            Some(sc) => Ok(vec![sc]),
-            None => Err(e),
-        },
+    match qdb_meta.and_then(designated_sorting_col) {
+        Some(sc) => Ok(vec![sc]),
+        None => extract_sorting_columns(file_metadata),
     }
 }
 
@@ -1269,7 +1262,7 @@ mod tests {
         );
     }
 
-    /// End-to-end: the full Mig941 conversion (extract_sorting_columns ->
+    /// End-to-end: the full Mig941 conversion (resolve_sorting_columns ->
     /// detect_designated_timestamp -> _pm writer -> ParquetMetaReader), not just
     /// extract_sorting_columns in isolation, must tolerate an O3-merged footer
     /// that mixes a copied row group (no sort cols) with a fresh one (the ts
@@ -1759,18 +1752,13 @@ mod tests {
 
     #[test]
     fn convert_sorting_columns_propagated() {
-        // Write a parquet file with a designated timestamp - ParquetWriter
-        // should set sorting columns in the row group metadata.
+        // Write a parquet file with a designated timestamp. qdb_meta marks the
+        // designated column, which resolve_sorting_columns treats as
+        // authoritative for the _pm sort column -- so it is recorded at its
+        // dense position even when the footer's row groups omit sorting columns.
         let parquet_data = write_test_parquet(100, CompressionOptions::Uncompressed);
         let mut cursor = Cursor::new(&parquet_data);
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
-
-        // Check if sorting columns are actually present in the parquet metadata.
-        let has_sorting = metadata.row_groups.iter().any(|rg| {
-            rg.sorting_columns()
-                .as_ref()
-                .is_some_and(|sc| !sc.is_empty())
-        });
 
         let qdb_meta = extract_qdb_meta_from(&metadata);
         let (parquet_meta_bytes, parquet_meta_file_size) =
@@ -1779,16 +1767,11 @@ mod tests {
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
 
-        if has_sorting {
-            assert!(reader.sorting_column_count() > 0);
-            assert_eq!(reader.sorting_column(0).unwrap(), 0);
-        } else {
-            // If the writer doesn't set sorting columns, they won't appear.
-            assert_eq!(reader.sorting_column_count(), 0);
-        }
-
-        // Designated timestamp should still be detected from QdbMeta.
+        // The designated timestamp (from qdb_meta) is the sole sort column, at
+        // its dense position (0).
         assert!(reader.designated_timestamp().is_some());
+        assert_eq!(reader.sorting_column_count(), 1);
+        assert_eq!(reader.sorting_column(0).unwrap(), 0);
     }
 
     #[test]

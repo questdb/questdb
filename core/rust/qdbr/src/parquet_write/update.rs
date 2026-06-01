@@ -1188,14 +1188,20 @@ fn adjust_column_chunk_offsets(col: &mut ColumnChunk, offset_delta: i64) {
 
 /// File-level `sorting_columns` for a QuestDB parquet file: the designated
 /// timestamp at its dense `qdb_meta` position (not the raw timestamp slot, which
-/// goes stale after a DROP COLUMN), or `None` when there is none. Always
-/// ascending; QuestDB does not write a descending designated timestamp.
+/// goes stale after a DROP COLUMN), or `None` when there is none. The sort
+/// direction follows the designated timestamp's order, matching
+/// `designated_sorting_col` on the read path.
 fn designated_ts_sorting_columns(qdb_meta: &QdbMeta) -> Option<Vec<SortingColumn>> {
     qdb_meta
         .schema
         .iter()
         .position(|col| col.column_type.is_designated())
-        .map(|pos| vec![SortingColumn::new(pos as i32, false, false)])
+        .map(|pos| {
+            let descending = !qdb_meta.schema[pos]
+                .column_type
+                .is_designated_timestamp_ascending();
+            vec![SortingColumn::new(pos as i32, descending, false)]
+        })
 }
 
 /// Builds a thrift `RowGroup` from a list of `ColumnChunk`s, computing

@@ -283,6 +283,32 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorruptedSortingColumnCountValidatedBeforeArrayRead() throws Exception {
+        assertMemoryLeak(() -> {
+            // buildFile sets dts=-1 and no sorting columns, so SORTING_IS_DTS_ASC
+            // is clear and resolveFooter enters the explicit sorting-array bound
+            // check. The first resolveFooter caches the CRC; the second skips
+            // verifyChecksum0 (which would otherwise reject the corrupt count via
+            // the Rust header parse) and reaches the Java-side bound check, which
+            // must reject before any accessor reads past the sorting array.
+            try (ParquetMetaTestFile file = buildFile(1, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                reader.resolveFooter(Long.MAX_VALUE);
+
+                Unsafe.putInt(file.dataPtr + 20, 1_000_000_000); // HEADER_SORTING_COL_CNT_OFF
+
+                try {
+                    reader.resolveFooter(Long.MAX_VALUE);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage(), e.getMessage().contains("invalid _pm sorting column count"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCorruptedTrailer() throws Exception {
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
