@@ -63,9 +63,18 @@ public class PartitionEncoder {
             long bloomFilterColumnIndexesPtr,
             int bloomFilterColumnCount,
             double bloomFilterFpp,
-            double minCompressionRatio
+            double minCompressionRatio,
+            boolean failOnInvalidUtf16
     ) throws CairoException;
 
+    // Convenience entry point used only by tests and benchmarks.
+    // failOnInvalidUtf16 is hardcoded to false (lossy) here so benchmarks do
+    // not abort on synthetic data; production callers MUST go through the
+    // 15-argument encodeWithOptions overload and pass the configured
+    // cairo.partition.encoder.parquet.fail.on.invalid.utf16 value (defaults
+    // to true / strict). Do NOT call this overload from production paths or
+    // you will silently downgrade storage writes to lossy substitution.
+    @TestOnly
     public static void encode(PartitionDescriptor descriptor, Path destPath) {
         encodeWithOptions(
                 descriptor,
@@ -80,6 +89,10 @@ public class PartitionEncoder {
         );
     }
 
+    // Test-only convenience overload. failOnInvalidUtf16 is hardcoded to
+    // false (lossy) here for the same reason as encode() above; production
+    // callers must use the 15-argument overload below and thread the
+    // configured strict-mode flag through.
     @TestOnly
     public static void encodeWithOptions(
             PartitionDescriptor descriptor,
@@ -105,6 +118,7 @@ public class PartitionEncoder {
                 0,
                 DEFAULT_BLOOM_FILTER_FPP,
                 minCompressionRatio,
+                false, // failOnInvalidUtf16: test-only — production calls the 15-arg overload
                 -1,
                 -1L
         );
@@ -123,6 +137,7 @@ public class PartitionEncoder {
             int bloomFilterColumnCount,
             double bloomFilterFpp,
             double minCompressionRatio,
+            boolean failOnInvalidUtf16,
             int parquetMetaFd,
             long squashTracker
     ) {
@@ -157,6 +172,7 @@ public class PartitionEncoder {
                     bloomFilterColumnCount,
                     bloomFilterFpp,
                     minCompressionRatio,
+                    failOnInvalidUtf16,
                     parquetMetaFd,
                     squashTracker
             );
@@ -314,6 +330,7 @@ public class PartitionEncoder {
             int bloomFilterColumnCount,
             double bloomFilterFpp,
             double minCompressionRatio,
+            boolean failOnInvalidUtf16,
             int parquetMetaFd,
             long squashTracker
     ) throws CairoException;

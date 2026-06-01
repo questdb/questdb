@@ -169,6 +169,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     data_page_size: jlong,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
+    fail_on_invalid_utf16: jboolean,
     parquet_meta_fd: jint,
     parquet_meta_file_size: jlong,
     append_base: jlong,
@@ -219,6 +220,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             data_page_size,
             bloom_filter_fpp,
             min_compression_ratio,
+            fail_on_invalid_utf16 != 0,
             parquet_meta_fd_handle,
             parquet_meta_file_size as u64,
             append_base as u64,
@@ -479,6 +481,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_column_count: jint,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
+    fail_on_invalid_utf16: jboolean,
     parquet_meta_fd: jint,
     squash_tracker: jlong,
 ) -> jlong {
@@ -554,7 +557,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_bloom_filter_columns(bloom_filter_cols)
             .with_bloom_filter_fpp(bloom_filter_fpp)
             .with_min_compression_ratio(min_compression_ratio)
-            .with_squash_tracker(squash_tracker);
+            .with_squash_tracker(squash_tracker)
+            .with_strict_utf16(fail_on_invalid_utf16 != 0);
 
         let (schema, additional_meta) = crate::parquet_write::schema::to_parquet_schema(
             &partition,
@@ -1009,6 +1013,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_column_count: jint,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
+    fail_on_invalid_utf16: jboolean,
 ) -> *mut StreamingParquetWriter {
     let env = &mut env;
     let create = || -> ParquetResult<StreamingParquetWriter> {
@@ -1085,7 +1090,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_sorting_columns(sorting_columns.clone())
             .with_bloom_filter_columns(bloom_filter_cols)
             .with_bloom_filter_fpp(bloom_fpp)
-            .with_min_compression_ratio(min_compression_ratio);
+            .with_min_compression_ratio(min_compression_ratio)
+            .with_strict_utf16(fail_on_invalid_utf16 != 0);
         let chunked_writer = parquet_writer.chunked_with_compressions(
             parquet_schema,
             encodings,

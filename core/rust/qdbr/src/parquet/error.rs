@@ -41,7 +41,6 @@ pub enum ParquetErrorReason {
     InvalidType,
     InvalidLayout,
     Utf8Decode(std::str::Utf8Error),
-    Utf16Decode(std::char::DecodeUtf16Error),
     Io(Arc<std::io::Error>),
     ParquetMeta(qdb_parquet_meta::error::ParquetMetaErrorKind),
 
@@ -71,7 +70,6 @@ impl ParquetErrorReason {
             ParquetErrorReason::Parquet2(err) => Some(err),
             ParquetErrorReason::QdbMeta(err) => Some(err.as_ref()),
             ParquetErrorReason::Utf8Decode(err) => Some(err),
-            ParquetErrorReason::Utf16Decode(err) => Some(err),
             ParquetErrorReason::Io(err) => Some(err.as_ref()),
             #[cfg(test)]
             ParquetErrorReason::Arrow(err) => Some(err.as_ref()),

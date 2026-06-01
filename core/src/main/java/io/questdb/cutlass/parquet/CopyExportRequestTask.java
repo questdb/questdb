@@ -70,6 +70,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private boolean descending;
     private CopyExportContext.ExportTaskEntry entry;
     private ParquetExportMode exportMode;
+    private boolean failOnInvalidUtf16;
     private CharSequence fileName;
     private RecordMetadata metadata;
     private long now;
@@ -129,6 +130,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.parquetVersion = -1;
         this.rowGroupSize = -1;
         this.statisticsEnabled = true;
+        this.failOnInvalidUtf16 = false;
         this.now = 0;
         this.nowTimestampType = 0;
         this.createOp = Misc.free(createOp);
@@ -265,6 +267,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         return descending;
     }
 
+    public boolean isFailOnInvalidUtf16() {
+        return failOnInvalidUtf16;
+    }
+
     public boolean isRawArrayEncoding() {
         return rawArrayEncoding;
     }
@@ -285,6 +291,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             boolean statisticsEnabled,
             int parquetVersion,
             boolean rawArrayEncoding,
+            boolean failOnInvalidUtf16,
             int nowTimestampType,
             long now,
             boolean descending,
@@ -309,6 +316,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.statisticsEnabled = statisticsEnabled;
         this.parquetVersion = parquetVersion;
         this.rawArrayEncoding = rawArrayEncoding;
+        this.failOnInvalidUtf16 = failOnInvalidUtf16;
         this.createOp = createOp;
         this.descending = descending;
         this.pageFrameCursor = pageFrameCursor;
@@ -640,7 +648,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     bloomFilterIndexesPtr,
                     bloomFilterCount,
                     fpp,
-                    0.0
+                    0.0,
+                    failOnInvalidUtf16
             );
         }
 

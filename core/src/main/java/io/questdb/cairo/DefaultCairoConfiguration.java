@@ -1628,12 +1628,22 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isParquetExportFailOnInvalidUtf16() {
+        return false;
+    }
+
+    @Override
     public boolean isParquetExportRawArrayEncoding() {
         return false;
     }
 
     @Override
     public boolean isParquetExportStatisticsEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isPartitionEncoderParquetFailOnInvalidUtf16() {
         return true;
     }
 
