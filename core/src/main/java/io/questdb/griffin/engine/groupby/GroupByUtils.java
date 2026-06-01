@@ -64,6 +64,8 @@ import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
@@ -91,6 +93,7 @@ public class GroupByUtils {
             SqlExecutionContext executionContext,
             RecordMetadata baseMetadata,
             int timestampIndex,
+            boolean isBaseTimestampAscending,
             boolean timestampUnimportant,
             ObjList<GroupByFunction> outGroupByFunctions,
             IntList outGroupByFunctionPositions,
@@ -226,6 +229,11 @@ public class GroupByUtils {
                         // fill type. it's to close the function properly when the validation fails
                         outGroupByFunctions.add(groupByFunc);
                         outGroupByFunctionPositions.add(node.position);
+                        if (groupByFunc instanceof TwapGroupByFunction twapFunc) {
+                            twapFunc.validateTimestampArg(timestampIndex, isBaseTimestampAscending, node.position);
+                        } else if (groupByFunc instanceof SparklineGroupByFunction sparklineFunc) {
+                            sparklineFunc.validateScanDirection(isBaseTimestampAscending, node.position);
+                        }
                         if (fillCount > 0) {
                             // index of the function relative to the list of fill values
                             // we might have the same fill value for all functions
@@ -355,6 +363,11 @@ public class GroupByUtils {
             }
             outerProjectionFunctions.clear();
             innerProjectionFunctions.clear();
+            // Every group-by function was also added to outerProjectionFunctions (same
+            // instance) and freed by the loop above. Clear the list so callers that free
+            // it on their own error path (the JOIN callsites call
+            // Misc.freeObjList(groupByFunctions)) don't close the same instance twice.
+            outGroupByFunctions.clear();
             if (extraOuterProjectionFunctions != null) {
                 for (int i = 0, n = extraOuterProjectionFunctions.size(); i < n; i++) {
                     Misc.freeObjListAndClear(extraOuterProjectionFunctions.getQuick(i));

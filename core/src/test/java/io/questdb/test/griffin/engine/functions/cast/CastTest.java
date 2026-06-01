@@ -8856,6 +8856,39 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampToTimestamp() throws Exception {
+        // ts::timestamp is an identity cast. CastTimestampToTimestampFunctionFactory
+        // returns its argument unwrapped rather than wrapping it in a converting Func.
+        // The unwrapping lets callers that inspect the argument - e.g.
+        // twap(price, ts::timestamp) - still recognize the designated-timestamp
+        // column; this pins the other half of that change: outside twap the cast
+        // must still pass the timestamp values through unchanged, including NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z'),
+                    ('2024-06-15T12:30:45.123456Z'),
+                    (cast(-1 AS TIMESTAMP)),
+                    (null)
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            c
+                            2024-01-01T00:00:00.000000Z
+                            2024-06-15T12:30:45.123456Z
+                            1969-12-31T23:59:59.999999Z
+                            
+                            """,
+                    "SELECT ts::timestamp AS c FROM t",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testTimestampToVarchar() throws Exception {
         assertQuery(
                 "a\n",
