@@ -861,8 +861,9 @@ public class LimitTest extends AbstractCairoTest {
 
                     // here the last order by (after join) confused the optimiser into removing ordering of
                     // the left part of as-of join
-                    assertSql(
-                            """
+                    assertQuery("explain with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y asof join cte order by y.ts, y.a ")
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     QUERY PLAN
                                     Encode sort
                                       keys: [ts, a]
@@ -882,14 +883,13 @@ public class LimitTest extends AbstractCairoTest {
                                                         PageFrame
                                                             Row backward scan
                                                             Frame backward scan on: x
-                                    """,
-                            "explain with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y asof join cte order by y.ts, y.a "
-                    );
+                                    """);
 
                     // here the last order by (after join) confused the optimiser into removing ordering of
                     // the left part of lt-join. There could be an optimisation opportunity here to remove
-                    assertSql(
-                            """
+                    assertQuery("explain with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts, y.a ")
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     QUERY PLAN
                                     Encode sort
                                       keys: [ts, a]
@@ -909,15 +909,14 @@ public class LimitTest extends AbstractCairoTest {
                                                         PageFrame
                                                             Row backward scan
                                                             Frame backward scan on: x
-                                    """,
-                            "explain with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts, y.a "
-                    );
+                                    """);
 
                     // here the result of as-of join is not specifically ordered, but
                     // the plan for as-of join incorrect. The left side of the join is
                     // required to be presented in ascending timestamp order.
-                    assertSql(
-                            """
+                    assertQuery("explain with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y asof join cte ")
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     QUERY PLAN
                                     SelectedRecord
                                         AsOf Join
@@ -935,9 +934,7 @@ public class LimitTest extends AbstractCairoTest {
                                                     PageFrame
                                                         Row backward scan
                                                         Frame backward scan on: x
-                                    """,
-                            "explain with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y asof join cte "
-                    );
+                                    """);
 
                     // as-of data, timestamp order is asc
                     assertQuery("with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts, y.a ")
@@ -974,8 +971,12 @@ public class LimitTest extends AbstractCairoTest {
                                     1100812407\t1970-01-01T00:00:00.009010Z\tnull\t
                                     """);
 
-                    assertSql(
-                            """
+                    assertQuery("explain " +
+                            "(select * from x order by ts, a desc limit -4)" +
+                            " union all " +
+                            "(select * from y order by ts, a limit -10)")
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     QUERY PLAN
                                     Union All
                                         Encode sort light
@@ -992,12 +993,7 @@ public class LimitTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    """,
-                            "explain " +
-                                    "(select * from x order by ts, a desc limit -4)" +
-                                    " union all " +
-                                    "(select * from y order by ts, a limit -10)"
-                    );
+                                    """);
 
                     // last 4 + last 10 rows
                     assertQuery("(select * from x order by ts, a desc limit -4)" +

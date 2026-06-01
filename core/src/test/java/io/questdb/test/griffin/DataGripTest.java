@@ -92,14 +92,14 @@ public class DataGripTest extends AbstractCairoTest {
 
     @Test
     public void testGetTxId() throws Exception {
-        assertMemoryLeak(
-                () -> assertSql("current_txid\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n", """
+        assertQuery("""
                         select case
                           when pg_catalog.pg_is_in_recovery()
                             then null
                           else
                             pg_catalog.txid_current()::varchar::bigint
-                          end as current_txid"""));
+                  end as current_txid""")
+                .returnsOnce("current_txid\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n");
     }
 
     @Test

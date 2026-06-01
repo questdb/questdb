@@ -5027,38 +5027,39 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testDottedConstAlias() throws Exception {
-        assertSql(
-                """
+        assertQuery("select '.f.e.j.hve', 'djnfkvbjke'")
+                .noLeakCheck()
+                .returnsOnce("""
                         column1\tdjnfkvbjke
                         .f.e.j.hve\tdjnfkvbjke
-                        """, "select '.f.e.j.hve', 'djnfkvbjke'"
-        );
+                        """);
     }
 
     @Test
     public void testDottedConstAlias2() throws Exception {
-        assertSql(
-                """
+        assertQuery("select '.f.e.j.hve' column1, 'djnfkvbjke', 2.2, 'a.a', 6.4")
+                .noLeakCheck()
+                .returnsOnce("""
                         column1\tdjnfkvbjke\tcolumn2\tcolumn3\tcolumn4
                         .f.e.j.hve\tdjnfkvbjke\t2.2\ta.a\t6.4
-                        """, "select '.f.e.j.hve' column1, 'djnfkvbjke', 2.2, 'a.a', 6.4"
-        );
+                        """);
     }
 
     @Test
     public void testDottedConstAlias3() throws Exception {
-        assertSql(
-                """
+        assertQuery("select '.f.e.j.hve', 'djnfkvbjke', 2.2 column1, 'aghtrtr.ahnyyn', 6.4")
+                .noLeakCheck()
+                .returnsOnce("""
                         column2\tdjnfkvbjke\tcolumn1\tcolumn3\tcolumn4
                         .f.e.j.hve\tdjnfkvbjke\t2.2\taghtrtr.ahnyyn\t6.4
-                        """, "select '.f.e.j.hve', 'djnfkvbjke', 2.2 column1, 'aghtrtr.ahnyyn', 6.4"
-        );
+                        """);
     }
 
     @Test
     public void testDottedConstAlias4() throws Exception {
-        assertSql(
-                """
+        assertQuery("select a.x, b.x from long_sequence(10) a cross join long_sequence(10) b")
+                .noLeakCheck()
+                .returnsOnce("""
                         x\tx1
                         1\t1
                         1\t2
@@ -5160,8 +5161,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         10\t8
                         10\t9
                         10\t10
-                        """, "select a.x, b.x from long_sequence(10) a cross join long_sequence(10) b"
-        );
+                        """);
     }
 
     @Test
@@ -8404,14 +8404,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
             execute("insert into x values (1), (2)");
             execute("create table y (id int, a int, b int)");
             execute("insert into y values (1, 1, 1), (1, 1, 2)");
-            assertSql(
-                    """
+            assertQuery("select x.id, y.id, y.a, y.b from x left join y on x.id = y.id and y.a = y.b order by x.id")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             id\tid1\ta\tb
                             1\t1\t1\t1
                             2\tnull\tnull\tnull
-                            """,
-                    "select x.id, y.id, y.a, y.b from x left join y on x.id = y.id and y.a = y.b order by x.id"
-            );
+                            """);
         });
     }
 
@@ -12083,27 +12082,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
         execute("INSERT INTO t2(ts, x) VALUES (1, 2)");
         engine.releaseInactive();
 
-        assertSql(
-                """
+        assertQuery("select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;")
+                .noLeakCheck()
+                .returnsOnce("""
                         TS\tts1\tx\tts11
                         1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
-                        """,
-                "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;"
-        );
-        assertSql(
-                """
+                        """);
+        assertQuery("select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;")
+                .noLeakCheck()
+                .returnsOnce("""
                         ts\tx\tts1\tx1\tTS11
                         1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000001Z
-                        """,
-                "select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;"
-        );
-        assertSql(
-                """
+                        """);
+        assertQuery("select t1.*, t2.ts from t1 asof join (select * from t2) t2;")
+                .noLeakCheck()
+                .returnsOnce("""
                         ts\tx\tts1
                         1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
-                        """,
-                "select t1.*, t2.ts from t1 asof join (select * from t2) t2;"
-        );
+                        """);
 
         assertSyntaxError(
                 "SELECT " +
@@ -12476,14 +12472,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectSumSquared() throws Exception {
-        assertSql(
-                """
+        assertQuery("select x, sum(x)*sum(x) x from long_sequence(2) order by x")
+                .noLeakCheck()
+                .returnsOnce("""
                         x1\tx
                         1\t1
                         2\t4
-                        """,
-                "select x, sum(x)*sum(x) x from long_sequence(2) order by x"
-        );
+                        """);
     }
 
     @Test

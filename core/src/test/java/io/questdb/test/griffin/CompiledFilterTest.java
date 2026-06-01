@@ -1692,7 +1692,9 @@ public class CompiledFilterTest extends AbstractCairoTest {
                             "from long_sequence(20)"
             );
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce(expected);
             assertSqlRunWithJit(query);
         });
     }

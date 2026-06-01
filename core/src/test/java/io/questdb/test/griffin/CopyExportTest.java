@@ -3881,12 +3881,14 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .returns("export_path\tnum_exported_files\tstatus\n" +
                                         exportRoot + File.separator + "output1.parquet" + "\t1\tfinished\n");
                         // Verify exported data can be read back and matches original
-                        assertSql("""
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output1" + ".parquet')")
+                                .noLeakCheck()
+                                .returnsOnce("""
                                 x
                                 1970-01-01T00:00:00.000005Z
                                 1970-01-01T00:00:00.000002Z
                                 1970-01-01T00:00:00.000000Z
-                                """, "select * from read_parquet('" + exportRoot + File.separator + "output1" + ".parquet')");
+                                """);
                     });
 
             testCopyExport(stmt, test);

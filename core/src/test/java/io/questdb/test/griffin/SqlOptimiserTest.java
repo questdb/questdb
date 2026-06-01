@@ -1663,10 +1663,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: t2
                             """);
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce("""
                     s\tts\ts1\tts1
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
-                    """, query);
+                    """);
         });
     }
 
@@ -1704,10 +1706,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: t2
                             """);
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce("""
                     s\tts\ts1\tts1
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
-                    """, query);
+                    """);
         });
     }
 
@@ -1745,10 +1749,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: t2
                             """);
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce("""
                     s\tts\ts1\tts1
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
-                    """, query);
+                    """);
         });
     }
 
@@ -1787,10 +1793,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: t2
                             """);
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce("""
                     s\tts\ts1\tts1
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
-                    """, query);
+                    """);
         });
     }
 
@@ -1828,7 +1836,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: t2
                             """);
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce("""
                     s\tts\ts1\tts1
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
                     a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z
@@ -1837,7 +1847,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:15:00.000000Z
                     b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:25:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z
-                    """, query);
+                    """);
         });
     }
 
@@ -1873,7 +1883,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                             Row forward scan
                                             Frame forward scan on: t2
                             """);
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce("""
                     s\tts\ts1\tts1
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
                     a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z
@@ -1884,7 +1896,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z
                     a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z
                     a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z
-                    """, query);
+                    """);
         });
     }
 
@@ -1921,7 +1933,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                             Frame forward scan on: t2
                             """
             );
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce("""
                     s\tts\ts1\tts1
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
                     a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z
@@ -1986,7 +2000,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z
-                    """, query);
+                    """);
         });
     }
 
@@ -2023,7 +2037,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: t2
                             """);
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce("""
                     s\tts\ts1\tts1
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
                     a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z
@@ -2088,7 +2104,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z
-                    """, query);
+                    """);
         });
     }
 
@@ -2124,7 +2140,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                             Row forward scan
                                             Frame forward scan on: t2
                             """);
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce("""
                     s\tts\ts1\tts1
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
                     a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z
@@ -2189,7 +2207,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z
-                    """, query);
+                    """);
         });
     }
 
@@ -2226,7 +2244,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: t2
                             """);
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce("""
                     s\tts\ts1\tts1
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
                     a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z
@@ -2291,7 +2311,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z
-                    """, query);
+                    """);
         });
     }
 
@@ -2329,7 +2349,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Frame forward scan on: t2
                             """
             );
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce("""
                     s\tts\ts1\tts1
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z
@@ -2394,7 +2416,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z
-                    """, query);
+                    """);
         });
     }
 
@@ -2433,7 +2455,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: t2
                             """);
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce("""
                     s\tts\ts1\tts1
                     a\t2023-09-01T00:00:00.000000Z\t\t
                     a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -2442,7 +2466,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:05:00.000000Z
                     b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:15:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\t\t
-                    """, query);
+                    """);
         });
     }
 
@@ -2483,7 +2507,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                     Frame forward scan on: t2
                             """
             );
-            assertSql("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce("""
                     s\tts\ts1\tts1
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
                     a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z
@@ -2506,7 +2532,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z
                     c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z
-                    """, query);
+                    """);
         });
     }
 

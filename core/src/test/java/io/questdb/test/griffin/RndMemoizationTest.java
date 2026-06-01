@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -54,10 +53,11 @@ public class RndMemoizationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIPv4() throws SqlException {
+    public void testIPv4() throws Exception {
         allowFunctionMemoization();
-        assertSql(
-                """
+        assertQuery("select rnd_ipv4() i, i::string from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         i\tcast
                         187.139.150.80\t187.139.150.80
                         18.206.96.238\t18.206.96.238
@@ -69,30 +69,28 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         35.86.82.23\t35.86.82.23
                         111.98.117.250\t111.98.117.250
                         205.123.179.216\t205.123.179.216
-                        """,
-                "select rnd_ipv4() i, i::string from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
     public void testMemoizedFunctionsTriggerFullMaterialization() throws Exception {
         allowFunctionMemoization();
-        assertSql(
-                """
+        assertQuery("select rnd_int()+1 x1, x1+1 x12 from long_sequence(3) order by x12;")
+                .noLeakCheck()
+                .returnsOnce("""
                         x1\tx12
                         -1148479919\t-1148479918
                         315515119\t315515120
                         1548800834\t1548800835
-                        """,
-                "select rnd_int()+1 x1, x1+1 x12 from long_sequence(3) order by x12;"
-        );
+                        """);
     }
 
     @Test
-    public void testRndArray() throws SqlException {
+    public void testRndArray() throws Exception {
         allowFunctionMemoization();
-        assertSql(
-                """
+        assertQuery("select rnd_double_array(1, 2) arr, arr[1] first_elem, first_elem * 2 doubled from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         arr	first_elem	doubled
                         [0.2845577791213847,0.20447441837877756]	0.2845577791213847	0.5691155582427694
                         [0.19202208853547864,0.5093827001617407,0.11427984775756228,0.5243722859289777,null,null,0.7261136209823622,0.4224356661645131,null,0.3100545983862456,0.1985581797355932]	0.19202208853547864	0.3840441770709573
@@ -104,16 +102,15 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         [0.8940917126581895,0.2879973939681931,null]	0.8940917126581895	1.788183425316379
                         [0.5797447096307482,0.9455893004802433,null,null,0.2185865835029681,null,0.24079155981438216,0.10643046345788132]	0.5797447096307482	1.1594894192614964
                         [null,0.3679848625908545]	null	null
-                        """,
-                "select rnd_double_array(1, 2) arr, arr[1] first_elem, first_elem * 2 doubled from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndByte() throws SqlException {
+    public void testRndByte() throws Exception {
         allowFunctionMemoization();
-        assertSql(
-                """
+        assertQuery("select rnd_byte() b, b + 10 k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         b\tk
                         76\t86
                         102\t112
@@ -125,16 +122,15 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         83\t93
                         90\t100
                         76\t86
-                        """,
-                "select rnd_byte() b, b + 10 k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndChar() throws SqlException {
+    public void testRndChar() throws Exception {
         allowFunctionMemoization();
-        assertSql(
-                """
+        assertQuery("select rnd_char() c, to_lowercase(c::string) k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         c\tk
                         V\tv
                         T\tt
@@ -146,17 +142,16 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         W\tw
                         H\th
                         Y\ty
-                        """,
-                "select rnd_char() c, to_lowercase(c::string) k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndDate() throws SqlException {
+    public void testRndDate() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                """
+        assertQuery("select rnd_date() d, d + 1 k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         d\tk
                         1970-01-01T02:07:23.856Z\t1970-01-01T02:07:23.856001Z
                         1970-01-01T02:29:52.366Z\t1970-01-01T02:29:52.366001Z
@@ -168,17 +163,16 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         1970-01-01T02:14:51.881Z\t1970-01-01T02:14:51.881001Z
                         1970-01-01T00:14:24.006Z\t1970-01-01T00:14:24.006001Z
                         1970-01-01T00:10:02.536Z\t1970-01-01T00:10:02.536001Z
-                        """,
-                "select rnd_date() d, d + 1 k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndDouble() throws SqlException {
+    public void testRndDouble() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                """
+        assertQuery("select rnd_double() d, d + 10 k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         d\tk
                         0.6607777894187332\t10.660777789418733
                         0.2246301342497259\t10.224630134249725
@@ -190,17 +184,16 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         0.9856290845874263\t10.985629084587426
                         0.22452340856088226\t10.224523408560882
                         0.5093827001617407\t10.50938270016174
-                        """,
-                "select rnd_double() d, d + 10 k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndDoubleBinary() throws SqlException {
+    public void testRndDoubleBinary() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                """
+        assertQuery("select rnd_double() * 2 d, d + 10 k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         d\tk
                         1.3215555788374664\t11.321555578837467
                         0.4492602684994518\t10.44926026849945
@@ -212,17 +205,16 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         1.9712581691748525\t11.971258169174853
                         0.44904681712176453\t10.449046817121765
                         1.0187654003234814\t11.018765400323481
-                        """,
-                "select rnd_double() * 2 d, d + 10 k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndDoubleUnary() throws SqlException {
+    public void testRndDoubleUnary() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                """
+        assertQuery("select -rnd_double() d, d + 10 k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         d\tk
                         -0.6607777894187332\t9.339222210581267
                         -0.2246301342497259\t9.775369865750275
@@ -234,17 +226,16 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         -0.9856290845874263\t9.014370915412574
                         -0.22452340856088226\t9.775476591439118
                         -0.5093827001617407\t9.49061729983826
-                        """,
-                "select -rnd_double() d, d + 10 k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndFloat() throws SqlException {
+    public void testRndFloat() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                """
+        assertQuery("select rnd_float() d, d + 10 k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         d\tk
                         0.66077775\t10.660778
                         0.80432236\t10.804322
@@ -256,17 +247,16 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         0.08438319\t10.084383
                         0.20447439\t10.204474
                         0.93446046\t10.934461
-                        """,
-                "select rnd_float() d, d + 10 k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndInt() throws SqlException {
+    public void testRndInt() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                """
+        assertQuery("select rnd_int() i, i + 10 k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         i\tk
                         -1148479920\t-1148479910
                         315515118\t315515128
@@ -278,17 +268,16 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         592859671\t592859681
                         1868723706\t1868723716
                         -847531048\t-847531038
-                        """,
-                "select rnd_int() i, i + 10 k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndIntBinary() throws SqlException {
+    public void testRndIntBinary() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                """
+        assertQuery("select rnd_int() * 2 i, i + 10 k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         i\tk
                         1998007456\t1998007466
                         631030236\t631030246
@@ -300,17 +289,16 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         1185719342\t1185719352
                         -557519884\t-557519874
                         -1695062096\t-1695062086
-                        """,
-                "select rnd_int() * 2 i, i + 10 k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndIntUnary() throws SqlException {
+    public void testRndIntUnary() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                """
+        assertQuery("select -rnd_int() i, i + 10 k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         i\tk
                         1148479920\t1148479930
                         -315515118\t-315515108
@@ -322,17 +310,16 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         -592859671\t-592859661
                         -1868723706\t-1868723696
                         847531048\t847531058
-                        """,
-                "select -rnd_int() i, i + 10 k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndLong() throws SqlException {
+    public void testRndLong() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                """
+        assertQuery("select rnd_long() i, i + 10 k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         i\tk
                         4689592037643856\t4689592037643866
                         4729996258992366\t4729996258992376
@@ -344,31 +331,29 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         -5354193255228091881\t-5354193255228091871
                         -2653407051020864006\t-2653407051020863996
                         -1675638984090602536\t-1675638984090602526
-                        """,
-                "select rnd_long() i, i + 10 k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
     public void testRndLong256() throws Exception {
         allowFunctionMemoization();
-        assertSql(
-                """
+        assertQuery("select rnd_long256() l, l - l from long_sequence(3)")
+                .noLeakCheck()
+                .returnsOnce("""
                         l\tcolumn
                         0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\t0
                         0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\t0
                         0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\t0
-                        """,
-                "select rnd_long256() l, l - l from long_sequence(3)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndLongBinary() throws SqlException {
+    public void testRndLongBinary() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                """
+        assertQuery("select rnd_long() * 2 i, i + 10 k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         i\tk
                         9379184075287712\t9379184075287722
                         9459992517984732\t9459992517984742
@@ -380,17 +365,16 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         7738357563253367854\t7738357563253367864
                         -5306814102041728012\t-5306814102041728002
                         -3351277968181205072\t-3351277968181205062
-                        """,
-                "select rnd_long() * 2 i, i + 10 k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndLongUnary() throws SqlException {
+    public void testRndLongUnary() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                """
+        assertQuery("select -rnd_long() i, i + 10 k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         i\tk
                         -4689592037643856\t-4689592037643846
                         -4729996258992366\t-4729996258992356
@@ -402,17 +386,16 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         5354193255228091881\t5354193255228091891
                         2653407051020864006\t2653407051020864016
                         1675638984090602536\t1675638984090602546
-                        """,
-                "select -rnd_long() i, i + 10 k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndShort() throws SqlException {
+    public void testRndShort() throws Exception {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                """
+        assertQuery("select rnd_short() s, s + 10 k from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         s\tk
                         -27056\t-27046
                         24814\t24824
@@ -424,16 +407,15 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         21015\t21025
                         30202\t30212
                         -19496\t-19486
-                        """,
-                "select rnd_short() s, s + 10 k from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndStr() throws SqlException {
+    public void testRndStr() throws Exception {
         allowFunctionMemoization();
-        assertSql(
-                """
+        assertQuery("select rnd_str(5, 17, 0) s, upper(s) upper, upper || '_UPPER' concat from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         s	upper	concat
                         JWCPSWHYRXPEHN	JWCPSWHYRXPEHN	JWCPSWHYRXPEHN_UPPER
                         GZSXUXIBBTGP	GZSXUXIBBTGP	GZSXUXIBBTGP_UPPER
@@ -445,16 +427,15 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         MHGOOZZVDZJMY	MHGOOZZVDZJMY	MHGOOZZVDZJMY_UPPER
                         CXZOUIC	CXZOUIC	CXZOUIC_UPPER
                         KGHVUVSD	KGHVUVSD	KGHVUVSD_UPPER
-                        """,
-                "select rnd_str(5, 17, 0) s, upper(s) upper, upper || '_UPPER' concat from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndSymbol() throws SqlException {
+    public void testRndSymbol() throws Exception {
         allowFunctionMemoization();
-        assertSql(
-                """
+        assertQuery("select rnd_symbol('apple', 'banana', 'cherry') sym, upper(sym) upper, upper || '_FRUIT' concat from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         sym	upper	concat
                         apple	APPLE	APPLE_FRUIT
                         apple	APPLE	APPLE_FRUIT
@@ -466,30 +447,28 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         banana	BANANA	BANANA_FRUIT
                         apple	APPLE	APPLE_FRUIT
                         banana	BANANA	BANANA_FRUIT
-                        """,
-                "select rnd_symbol('apple', 'banana', 'cherry') sym, upper(sym) upper, upper || '_FRUIT' concat from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
     public void testRndUuid() throws Exception {
         allowFunctionMemoization();
-        assertSql(
-                """
+        assertQuery("select rnd_uuid4() u, u::string from long_sequence(3)")
+                .noLeakCheck()
+                .returnsOnce("""
                         u\tcast
                         0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650
                         9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341
                         7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15
-                        """,
-                "select rnd_uuid4() u, u::string from long_sequence(3)"
-        );
+                        """);
     }
 
     @Test
-    public void testRndVarchar() throws SqlException {
+    public void testRndVarchar() throws Exception {
         allowFunctionMemoization();
-        assertSql(
-                """
+        assertQuery("select rnd_varchar(2, 10, 0) v, upper(v) upper, upper || '_UPPER' concat from long_sequence(10)")
+                .noLeakCheck()
+                .returnsOnce("""
                         v	upper	concat
                         &򗺘|񙈄۲	&򗺘|񙈄۲	&򗺘|񙈄۲_UPPER
                         ǈ2Lg񦯙	Ǉ2LG񦯙	Ǉ2LG񦯙_UPPER
@@ -501,9 +480,7 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         Ɛ㙎ᯤ\\篸{򅿥	Ɛ㙎ᯤ\\篸{򅿥	Ɛ㙎ᯤ\\篸{򅿥_UPPER
                         (OFг󻤒ɜ|\\軦	(OFГ󻤒Ɜ|\\軦	(OFГ󻤒Ɜ|\\軦_UPPER
                         㒾񷚧K裷򃉳+	㒾񷚧K裷򃉳+	㒾񷚧K裷򃉳+_UPPER
-                        """,
-                "select rnd_varchar(2, 10, 0) v, upper(v) upper, upper || '_UPPER' concat from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test

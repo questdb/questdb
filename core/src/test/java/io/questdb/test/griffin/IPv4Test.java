@@ -584,8 +584,8 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectCastIPv4ToStr() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select rnd_ipv4()::string from long_sequence(10)")
+                .returnsOnce("""
                         cast
                         187.139.150.80
                         18.206.96.238
@@ -597,9 +597,7 @@ public class IPv4Test extends AbstractCairoTest {
                         35.86.82.23
                         111.98.117.250
                         205.123.179.216
-                        """,
-                "select rnd_ipv4()::string from long_sequence(10)"
-        ));
+                        """);
     }
 
     @Test
@@ -736,8 +734,8 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testExplicitCastIntToIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select rnd_int()::ipv4 from long_sequence(10)")
+                .returnsOnce("""
                         cast
                         18.206.96.238
                         212.159.205.29
@@ -749,15 +747,13 @@ public class IPv4Test extends AbstractCairoTest {
                         92.26.178.136
                         93.204.45.145
                         20.62.93.114
-                        """,
-                "select rnd_int()::ipv4 from long_sequence(10)"
-        ));
+                        """);
     }
 
     @Test
     public void testExplicitCastNullToIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select cast(case when x = 1 then null else rnd_ipv4() end as string) from long_sequence(10)")
+                .returnsOnce("""
                         cast
                         
                         187.139.150.80
@@ -769,9 +765,7 @@ public class IPv4Test extends AbstractCairoTest {
                         79.15.250.138
                         35.86.82.23
                         111.98.117.250
-                        """,
-                "select cast(case when x = 1 then null else rnd_ipv4() end as string) from long_sequence(10)"
-        ));
+                        """);
     }
 
     @Test
@@ -786,8 +780,8 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testExplicitCastStrToIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select rnd_ipv4()::string::ipv4 from long_sequence(10)")
+                .returnsOnce("""
                         cast
                         187.139.150.80
                         18.206.96.238
@@ -799,15 +793,13 @@ public class IPv4Test extends AbstractCairoTest {
                         35.86.82.23
                         111.98.117.250
                         205.123.179.216
-                        """,
-                "select rnd_ipv4()::string::ipv4 from long_sequence(10)"
-        ));
+                        """);
     }
 
     @Test
     public void testExplicitCastStrToIPv4Null() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select rnd_str()::ipv4 from long_sequence(10)")
+                .returnsOnce("""
                         cast
                         
                         
@@ -819,9 +811,7 @@ public class IPv4Test extends AbstractCairoTest {
                         
                         
                         
-                        """,
-                "select rnd_str()::ipv4 from long_sequence(10)"
-        ));
+                        """);
     }
 
     @Test
@@ -6012,8 +6002,8 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testRndIPv4() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select rnd_ipv4('12.6/16', 0) from long_sequence(10)")
+                .returnsOnce("""
                         rnd_ipv4
                         12.6.96.238
                         12.6.50.227
@@ -6025,15 +6015,13 @@ public class IPv4Test extends AbstractCairoTest {
                         12.6.178.136
                         12.6.45.145
                         12.6.93.114
-                        """,
-                "select rnd_ipv4('12.6/16', 0) from long_sequence(10)"
-        ));
+                        """);
     }
 
     @Test
     public void testRndIPv42() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select rnd_ipv4('12.6.8/16', 0) from long_sequence(10)")
+                .returnsOnce("""
                         rnd_ipv4
                         12.6.96.238
                         12.6.50.227
@@ -6045,9 +6033,7 @@ public class IPv4Test extends AbstractCairoTest {
                         12.6.178.136
                         12.6.45.145
                         12.6.93.114
-                        """,
-                "select rnd_ipv4('12.6.8/16', 0) from long_sequence(10)"
-        ));
+                        """);
     }
 
     @Test
