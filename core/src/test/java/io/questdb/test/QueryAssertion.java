@@ -81,6 +81,7 @@ public class QueryAssertion {
     private boolean leakCheck = true;
     private boolean overridden;
     private ObjList<CharSequence> planFragments;
+    private ObjList<CharSequence> planFragmentsAbsent;
     private boolean sizeCanBeVariable;
     private boolean supportsRandomAccess = true;
 
@@ -132,6 +133,30 @@ public class QueryAssertion {
         } else {
             runDdl();
             assertPlanContains(list);
+        }
+    }
+
+    /**
+     * Terminal: assert ONLY the query's execution plan (EXPLAIN output) contains NONE of
+     * {@code fragments}, without running the query for a result. The negative counterpart of
+     * {@link #assertsPlanContaining}. Supports only {@link #ddl}, {@link #noLeakCheck},
+     * {@link #withContext} and {@link #withEngine}.
+     */
+    public void assertsPlanNotContaining(CharSequence... fragments) throws Exception {
+        requirePlanOnlyCompatible();
+        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
+        for (CharSequence fragment : fragments) {
+            list.add(fragment);
+        }
+        prepareHook.run();
+        if (leakCheck) {
+            assertMemoryLeak(() -> {
+                runDdl();
+                assertPlanNotContains(list);
+            });
+        } else {
+            runDdl();
+            assertPlanNotContains(list);
         }
     }
 
@@ -394,8 +419,8 @@ public class QueryAssertion {
 
     /**
      * Also assert the query's execution plan (EXPLAIN output) matches {@code expectedPlan} exactly.
-     * Implies a leak check; cannot be combined with {@link #noLeakCheck()}, {@link #fullFatJoins()}
-     * or {@link #withCompiler}.
+     * Honors {@link #noLeakCheck()}; cannot be combined with {@link #fullFatJoins()} or
+     * {@link #withCompiler}.
      */
     public QueryAssertion withPlan(CharSequence expectedPlan) {
         this.expectedPlan = expectedPlan;
@@ -404,7 +429,7 @@ public class QueryAssertion {
 
     /**
      * Also assert the query's execution plan (EXPLAIN output) contains every one of {@code fragments}.
-     * Implies a leak check; cannot be combined with {@link #noLeakCheck()}, {@link #fullFatJoins()} or
+     * Honors {@link #noLeakCheck()}; cannot be combined with {@link #fullFatJoins()} or
      * {@link #withCompiler}.
      */
     public QueryAssertion withPlanContaining(CharSequence... fragments) {
@@ -416,11 +441,25 @@ public class QueryAssertion {
         return this;
     }
 
+    /**
+     * Also assert the query's execution plan (EXPLAIN output) contains NONE of {@code fragments}.
+     * The negative counterpart of {@link #withPlanContaining}. Honors {@link #noLeakCheck()}; cannot
+     * be combined with {@link #fullFatJoins()} or {@link #withCompiler}.
+     */
+    public QueryAssertion withPlanNotContaining(CharSequence... fragments) {
+        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
+        for (CharSequence fragment : fragments) {
+            list.add(fragment);
+        }
+        this.planFragmentsAbsent = list;
+        return this;
+    }
+
     private void assertExactPlan(CharSequence expectedPlan) throws SqlException {
         final StringSink explainSql = new StringSink();
         explainSql.put("EXPLAIN ").put(query);
         try (
-                RecordCursorFactory planFactory = engine.select(explainSql, context);
+                RecordCursorFactory planFactory = selectPlanFactory(explainSql);
                 RecordCursor cursor = planFactory.getCursor(context)
         ) {
             final CharSequence plan = JitUtil.isJitSupported() ? expectedPlan : Chars.toString(expectedPlan).replace("Async JIT", "Async");
@@ -444,7 +483,7 @@ public class QueryAssertion {
         explainSql.put("EXPLAIN ").put(query);
         final StringSink actualPlan = new StringSink();
         try (
-                RecordCursorFactory planFactory = engine.select(explainSql, context);
+                RecordCursorFactory planFactory = selectPlanFactory(explainSql);
                 RecordCursor cursor = planFactory.getCursor(context)
         ) {
             CursorPrinter.println(cursor, planFactory.getMetadata(), actualPlan, false, false);
@@ -455,6 +494,25 @@ public class QueryAssertion {
                 fragment = Chars.toString(fragment).replace("Async JIT", "Async");
             }
             TestUtils.assertContains(actualPlan, fragment);
+        }
+    }
+
+    private void assertPlanNotContains(ObjList<CharSequence> fragments) throws SqlException {
+        final StringSink explainSql = new StringSink();
+        explainSql.put("EXPLAIN ").put(query);
+        final StringSink actualPlan = new StringSink();
+        try (
+                RecordCursorFactory planFactory = selectPlanFactory(explainSql);
+                RecordCursor cursor = planFactory.getCursor(context)
+        ) {
+            CursorPrinter.println(cursor, planFactory.getMetadata(), actualPlan, false, false);
+        }
+        for (int i = 0, n = fragments.size(); i < n; i++) {
+            CharSequence fragment = fragments.getQuick(i);
+            if (!JitUtil.isJitSupported()) {
+                fragment = Chars.toString(fragment).replace("Async JIT", "Async");
+            }
+            TestUtils.assertNotContains(actualPlan, fragment);
         }
     }
 
@@ -602,15 +660,20 @@ public class QueryAssertion {
         return compiler != null ? CairoEngine.select(compiler, query, context) : engine.select(query, context);
     }
 
+    private RecordCursorFactory selectPlanFactory(CharSequence explainSql) throws SqlException {
+        return compiler != null ? CairoEngine.select(compiler, explainSql, context) : engine.select(explainSql, context);
+    }
+
     private void dispatch(CharSequence expected, CharSequence expected2) throws Exception {
         prepareHook.run();
-        if (expectedPlan != null || planFragments != null) {
-            if (!leakCheck || fullFatJoins || compiler != null) {
-                throw new IllegalStateException("withPlan(...)/withPlanContaining(...) cannot be combined with noLeakCheck()/fullFatJoins()/withCompiler()");
+        if (expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
+            if (fullFatJoins || compiler != null) {
+                throw new IllegalStateException("withPlan(...)/withPlanContaining(...)/withPlanNotContaining(...) cannot be combined with fullFatJoins()/withCompiler()");
             }
             final CharSequence exactPlan = expectedPlan;
             final ObjList<CharSequence> fragments = planFragments;
-            assertMemoryLeak(() -> {
+            final ObjList<CharSequence> absentFragments = planFragmentsAbsent;
+            final TestUtils.LeakProneCode body = () -> {
                 runDdl();
                 assertReturns(expected, expected2);
                 if (exactPlan != null) {
@@ -619,7 +682,15 @@ public class QueryAssertion {
                 if (fragments != null) {
                     assertPlanContains(fragments);
                 }
-            });
+                if (absentFragments != null) {
+                    assertPlanNotContains(absentFragments);
+                }
+            };
+            if (leakCheck) {
+                assertMemoryLeak(body);
+            } else {
+                body.run();
+            }
             return;
         }
         if (fullFatJoins || compiler != null) {
@@ -668,20 +739,20 @@ public class QueryAssertion {
     }
 
     private void requirePlanOnlyCompatible() {
-        if (expectSize || expectedTimestamp != null || ddl2 != null || fullFatJoins || compiler != null
-                || !supportsRandomAccess || sizeCanBeVariable || expectedPlan != null || planFragments != null) {
-            throw new IllegalStateException("assertsPlan(...)/assertsPlanContaining(...) supports only ddl()/noLeakCheck()/withContext()/withEngine()");
+        if (expectSize || expectedTimestamp != null || ddl2 != null || fullFatJoins
+                || !supportsRandomAccess || sizeCanBeVariable || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
+            throw new IllegalStateException("assertsPlan(...)/assertsPlanContaining(...)/assertsPlanNotContaining(...) supports only ddl()/noLeakCheck()/withCompiler()/withContext()/withEngine()");
         }
     }
 
     private void requireRecordPathCompatible() {
-        if (!leakCheck || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || sizeCanBeVariable || !supportsRandomAccess || overridden) {
+        if (!leakCheck || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || sizeCanBeVariable || !supportsRandomAccess || overridden) {
             throw new IllegalStateException("returnsRecords(...) supports only ddl()/timestamp()/mutateWith()/expectSize()");
         }
     }
 
     private void requireSingleShotCompatible() {
-        if (expectSize || expectedTimestamp != null || ddl2 != null || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || !supportsRandomAccess || sizeCanBeVariable) {
+        if (expectSize || expectedTimestamp != null || ddl2 != null || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || !supportsRandomAccess || sizeCanBeVariable) {
             throw new IllegalStateException("returnsOnce(...) supports only ddl()/noLeakCheck()/withContext()/withEngine()");
         }
     }

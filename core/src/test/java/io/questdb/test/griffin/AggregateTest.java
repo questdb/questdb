@@ -289,9 +289,10 @@ public class AggregateTest extends AbstractCairoTest {
                     "    and ts < '2023-02-02' " +
                     "order by 1 asc";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    "Encode sort light\n" +
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("Encode sort light\n" +
                             "  keys: [account_uuid]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [account_uuid]\n" +
@@ -302,13 +303,7 @@ public class AggregateTest extends AbstractCairoTest {
                             "            Interval forward scan on: records\n" +
                             (ColumnType.isTimestampMicro(timestampType) ?
                                     "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
-                                    : "              intervals: [(\"2023-02-01T00:00:00.000000001Z\",\"2023-02-01T23:59:59.999999999Z\")]\n")
-
-            );
-
-            assertQuery(query)
-                    .noLeakCheck()
-                    .expectSize()
+                                    : "              intervals: [(\"2023-02-01T00:00:00.000000001Z\",\"2023-02-01T23:59:59.999999999Z\")]\n"))
                     .returns("""
                             account_uuid\trequest_count
                             s0\t0
@@ -337,9 +332,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "order by 1 asc";
 
             if (enableParallelGroupBy) {
-                assertPlanNoLeakCheck(
-                        query,
-                        "Encode sort light\n" +
+                assertQuery(query)
+                        .noLeakCheck()
+                        .assertsPlan("Encode sort light\n" +
                                 "  keys: [account_uuid]\n" +
                                 "    GroupBy vectorized: true workers: 1\n" +
                                 "      keys: [account_uuid]\n" +
@@ -349,8 +344,7 @@ public class AggregateTest extends AbstractCairoTest {
                                 "            Interval forward scan on: records\n" +
                                 (ColumnType.isTimestampMicro(timestampType) ?
                                         "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
-                                        : "              intervals: [(\"2023-02-01T00:00:00.000000001Z\",\"2023-02-01T23:59:59.999999999Z\")]\n")
-                );
+                                        : "              intervals: [(\"2023-02-01T00:00:00.000000001Z\",\"2023-02-01T23:59:59.999999999Z\")]\n"));
             }
 
             assertQuery(query)
@@ -412,11 +406,10 @@ public class AggregateTest extends AbstractCairoTest {
                                 "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
                                 : "              intervals: [(\"2023-02-01T00:00:00.000000001Z\",\"2023-02-01T23:59:59.999999999Z\")]\n");
             }
-            assertPlanNoLeakCheck(query, plan);
-
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlan(plan)
                     .returns("""
                             org_uuid\taccount_uuid\ttotal_price
                             o0\ts0\t0.0
@@ -1365,9 +1358,11 @@ public class AggregateTest extends AbstractCairoTest {
             // the designated flag there and skip the per-frame column scan via Unsafe
             // loads of the first and last rows.
             final String query = "SELECT min(ts), max(ts), first(ashort) FROM tab";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
                             Async Group By workers: 1
                               vectorized: true
                               values: [min_designated(ts),max_designated(ts),first(ashort)]
@@ -1375,13 +1370,7 @@ public class AggregateTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """
-            );
-
-            assertQuery(query)
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
+                            """)
                     .returns("""
                             min\tmax\tfirst
                             1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000004Z\t5
@@ -1523,9 +1512,10 @@ public class AggregateTest extends AbstractCairoTest {
             // signatures route SHORT args directly to MinShortGroupByFunction /
             // MaxShortGroupByFunction without an implicit SHORT->INT cast.
             final String query = "SELECT skey, min(ashort), max(ashort) FROM tab ORDER BY skey";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
                             Sort light
                               keys: [skey]
                                 Async Group By workers: 1
@@ -1535,12 +1525,7 @@ public class AggregateTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tab
-                            """
-            );
-
-            assertQuery(query)
-                    .noLeakCheck()
-                    .expectSize()
+                            """)
                     .returns("""
                             skey\tmin\tmax
                             a\t-3\t5
@@ -1996,9 +1981,10 @@ public class AggregateTest extends AbstractCairoTest {
             // Multi-byte string key bypasses the vect path's INT/SYMBOL-only key check,
             // so dispatch lands on the keyed Async factory once sum(long256) is parallel.
             final String query = "SELECT skey, sum(along256) FROM tab ORDER BY skey";
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
                             Sort light
                               keys: [skey]
                                 Async Group By workers: 1
@@ -2008,12 +1994,7 @@ public class AggregateTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tab
-                            """
-            );
-
-            assertQuery(query)
-                    .noLeakCheck()
-                    .expectSize()
+                            """)
                     .returns("""
                             skey\tsum
                             a\t0x03

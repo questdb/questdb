@@ -1642,23 +1642,22 @@ public class UnionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
+                    .withPlan("""
+                            Union All
+                                Limit value: 1 skip-rows: 0 take-rows: 1
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                                Limit value: -1 skip-rows: 2 take-rows: 1
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """)
                     .returns("""
                             timestamp
                             2022-03-08T18:03:57.609765Z
                             2022-03-10T18:03:57.609765Z
                             """);
-
-            assertPlanNoLeakCheck(limitQuery, """
-                    Union All
-                        Limit value: 1 skip-rows: 0 take-rows: 1
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: trades
-                        Limit value: -1 skip-rows: 2 take-rows: 1
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: trades
-                    """);
 
             assertQuery("(SELECT min(timestamp) timestamp FROM trades) " +
                     "UNION ALL " +
@@ -1672,18 +1671,20 @@ public class UnionTest extends AbstractCairoTest {
                             2022-03-10T18:03:57.609765Z
                             """);
 
-            assertPlanNoLeakCheck(groupQuery, """
-                    Union All
-                        Limit value: 1 skip-rows: 0 take-rows: 1
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: trades
-                        Limit value: 1 skip-rows: 0 take-rows: 1
-                            SelectedRecord
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: trades
-                    """);
+            assertQuery(groupQuery)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Union All
+                                Limit value: 1 skip-rows: 0 take-rows: 1
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                                Limit value: 1 skip-rows: 0 take-rows: 1
+                                    SelectedRecord
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: trades
+                            """);
         });
     }
 

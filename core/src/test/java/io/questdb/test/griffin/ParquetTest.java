@@ -360,9 +360,12 @@ public class ParquetTest extends AbstractCairoTest {
             // CountRecordCursorFactory (whose plan is just "Count"), no frame would
             // decode and the test would pass trivially on broken code. The PageFrame
             // node below is what guarantees the parquet frame is actually visited.
-            assertPlanNoLeakCheck(
-                    "select count(*) from x group by 1+2",
-                    """
+            // assertQueryNoLeakCheck re-creates the cursor and re-reads the result,
+            // so it also exercises parquet decode re-entry (assertSql reads once).
+            assertQuery("select count(*) from x group by 1+2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
                             VirtualRecord
                               functions: [count]
                                 Async Group By workers: 1
@@ -373,14 +376,7 @@ public class ParquetTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                            """
-            );
-
-            // assertQueryNoLeakCheck re-creates the cursor and re-reads the result,
-            // so it also exercises parquet decode re-entry (assertSql reads once).
-            assertQuery("select count(*) from x group by 1+2")
-                    .noLeakCheck()
-                    .expectSize()
+                            """)
                     .returns("""
                             count
                             2
