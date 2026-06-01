@@ -2090,9 +2090,24 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          */
         @Nullable
         private PageFrame fillMergedFrame(int partitionIndex, int rowCap) {
+            final int n = multiKeys.size();
+            // nextImpl re-enters once more per partition to learn it is drained:
+            // the prior call emitted the last rows but left mergePartitionIndex
+            // set. Detect the all-heads-drained case here and return before
+            // allocFrameBuffers() allocates buffers the merge loop would only
+            // discard (it would otherwise break on best < 0, count == 0, null).
+            boolean anyHead = false;
+            for (int i = 0; i < n; i++) {
+                if (mergeHeads[i] != NO_ROW) {
+                    anyHead = true;
+                    break;
+                }
+            }
+            if (!anyHead) {
+                return null;
+            }
             int capacity = allocFrameBuffers();
             long symAddr = frameAddrs[queryColCount];
-            final int n = multiKeys.size();
             int count = 0;
             while (count < rowCap) {
                 // Two keys never share a row id, so the smallest head is unique.
