@@ -619,17 +619,14 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     execute("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2022-08-02'", sqlExecutionContext);
 
                     engine.clear();
-                    assertQuery(
-                            replaceTimestampSuffix(replaceTimestampSuffix("""
+                    assertQuery(dst.getName())
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(replaceTimestampSuffix(replaceTimestampSuffix("""
                                     ts\ti\tl\ts\tstr\tvch
                                     2022-08-02T11:59:59.625000Z\tnull\t3\t\t\t\uF2C1ӍKB
                                     2022-08-02T23:59:59.500000Z\tnull\t4\t\t\tK䰭
-                                    """), timestampType.getTypeName()),
-                            dst.getName(),
-                            "ts",
-                            true,
-                            true
-                    );
+                                    """), timestampType.getTypeName()));
                 }
         );
     }
@@ -683,8 +680,10 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("vch.i").$()));
 
                     engine.clear();
-                    assertQuery(
-                            ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                    assertQuery(dst.getName())
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
                                     """
                                             ts\ti\tl
                                             2022-08-01T08:43:38.090909Z\t1\t1
@@ -694,12 +693,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                                             ts\ti\tl
                                             2022-08-01T08:43:38.090909090Z\t1\t1
                                             2022-08-01T17:27:16.181818180Z\t2\t2
-                                            """,
-                            dst.getName(),
-                            "ts",
-                            true,
-                            true
-                    );
+                                            """);
                 }
         );
     }
@@ -815,7 +809,11 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             10);
 
                     // Make sure nulls are included in the partition to be attached
-                    assertSql("count\n302\n", "select count() from " + src.getName() + " where ts in '2022-08-09' and s = null");
+                    assertQuery("select count() from " + src.getName() + " where ts in '2022-08-09' and s = null")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n302\n");
 
                     createPopulateTable(
                             1,
@@ -859,7 +857,11 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                     // s2 column files from the attached partitions should be ignored
                     // and coltops for s column should be created instead.
-                    assertSql("count\n0\n", "select count() from " + dst.getName() + " where s is not null");
+                    assertQuery("select count() from " + dst.getName() + " where s is not null")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n0\n");
                 }
         );
     }
@@ -881,7 +883,11 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             10);
 
                     // Make sure nulls are included in the partition to be attached
-                    assertSql("count\n302\n", "select count() from " + src.getName() + " where ts in '2022-08-09' and s = null");
+                    assertQuery("select count() from " + src.getName() + " where ts in '2022-08-09' and s = null")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n302\n");
 
                     createPopulateTable(
                             1,

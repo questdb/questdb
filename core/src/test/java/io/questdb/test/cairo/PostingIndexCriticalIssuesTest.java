@@ -229,27 +229,27 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // posting-DISTINCT optimization. After rejection, the regular
             // DISTINCT codegen must observe the original WHERE clause.
             // ORDER BY locks ordering so this asserts row identity, not order.
-            assertSql(
-                    """
+            assertQuery("SELECT DISTINCT sym FROM t_distinct_reject WHERE sym IN ('A','B') AND extra > 5.0 ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym
                             A
                             B
-                            """,
-                    "SELECT DISTINCT sym FROM t_distinct_reject WHERE sym IN ('A','B') AND extra > 5.0 ORDER BY sym"
-            );
+                            """);
 
             // Run the same query a second time. If the rejected path leaked
             // mutated nodes back into the expression pool, a subsequent
             // compilation that pulls from the same pool can observe stale
             // tree state and produce different (or wrong) rows.
-            assertSql(
-                    """
+            assertQuery("SELECT DISTINCT sym FROM t_distinct_reject WHERE sym IN ('A','B') AND extra > 5.0 ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym
                             A
                             B
-                            """,
-                    "SELECT DISTINCT sym FROM t_distinct_reject WHERE sym IN ('A','B') AND extra > 5.0 ORDER BY sym"
-            );
+                            """);
         });
     }
 
@@ -455,40 +455,37 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     ('2024-01-01T02:30:00Z', 'C', 7.0)
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'A' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ts\tsym\tprice
                             2024-01-01T00:00:00.000000Z\tA\t1.0
                             2024-01-01T00:30:00.000000Z\tA\t5.0
                             2024-01-01T02:00:00.000000Z\tA\t3.0
-                            """,
-                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'A' ORDER BY ts",
-                    "ts",
-                    false,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'B' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ts\tsym\tprice
                             2024-01-01T01:00:00.000000Z\tB\t2.0
                             2024-01-01T01:30:00.000000Z\tB\t6.0
-                            """,
-                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'B' ORDER BY ts",
-                    "ts",
-                    false,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'C' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ts\tsym\tprice
                             2024-01-01T02:30:00.000000Z\tC\t7.0
                             2024-01-01T03:00:00.000000Z\tC\t4.0
-                            """,
-                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'C' ORDER BY ts",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1111,17 +1108,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     dstSealTxns.indexOf(liveSealTxn) >= 0
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, new_sym, price FROM t_rename_live")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tnew_sym\tprice
                             2024-01-01T00:00:00.000000Z\tA\t1.0
                             2024-01-01T01:00:00.000000Z\tB\t2.0
-                            """,
-                    "SELECT ts, new_sym, price FROM t_rename_live",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1617,14 +1612,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             }
 
             // Result correctness must match across paths.
-            assertSql(
-                    "sym\nA\nB\n",
-                    "SELECT DISTINCT sym FROM t_dist_hint ORDER BY sym"
-            );
-            assertSql(
-                    "sym\nA\nB\n",
-                    "SELECT /*+ no_covering */ DISTINCT sym FROM t_dist_hint ORDER BY sym"
-            );
+            assertQuery("SELECT DISTINCT sym FROM t_dist_hint ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("sym\nA\nB\n");
+            assertQuery("SELECT /*+ no_covering */ DISTINCT sym FROM t_dist_hint ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("sym\nA\nB\n");
         });
     }
 
@@ -3190,13 +3185,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // logical day before arming the fault; otherwise
             // squashPartitions() short-circuits and the reseal at
             // TableWriter:11920 is never reached.
-            assertSql(
-                    """
+            assertQuery("SELECT count() FROM table_partitions('t_squash_reseal_fail')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             2
-                            """,
-                    "SELECT count() FROM table_partitions('t_squash_reseal_fail')"
-            );
+                            """);
 
             engine.releaseAllWriters();
 

@@ -45,7 +45,6 @@ import io.questdb.griffin.engine.functions.cast.CastIntToShortFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
@@ -71,44 +70,39 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     private FunctionFactory factory;
 
     private int getArgType(Object arg) {
-        if (arg == null) {
-            return ColumnType.STRING;
-        }
-
-        if (arg instanceof CharSequence) {
-            return ColumnType.STRING;
-        }
-
-        if (arg instanceof Utf8Sequence) {
-            return ColumnType.VARCHAR;
-        }
-
-        if (arg instanceof Short) {
-            return ColumnType.SHORT;
-        }
-
-        if (arg instanceof Integer) {
-            return ColumnType.INT;
-        }
-
-        if (arg instanceof Double) {
-            return ColumnType.DOUBLE;
-        }
-
-        if (arg instanceof Long) {
-            return ColumnType.LONG;
-        }
-
-        if (arg instanceof Float) {
-            return ColumnType.FLOAT;
-        }
-
-        if (arg instanceof Character) {
-            return ColumnType.CHAR;
-        }
-
-        if (arg instanceof Boolean) {
-            return ColumnType.BOOLEAN;
+        switch (arg) {
+            case null -> {
+                return ColumnType.STRING;
+            }
+            case CharSequence _ -> {
+                return ColumnType.STRING;
+            }
+            case Utf8Sequence _ -> {
+                return ColumnType.VARCHAR;
+            }
+            case Short _ -> {
+                return ColumnType.SHORT;
+            }
+            case Integer _ -> {
+                return ColumnType.INT;
+            }
+            case Double _ -> {
+                return ColumnType.DOUBLE;
+            }
+            case Long _ -> {
+                return ColumnType.LONG;
+            }
+            case Float _ -> {
+                return ColumnType.FLOAT;
+            }
+            case Character _ -> {
+                return ColumnType.CHAR;
+            }
+            case Boolean _ -> {
+                return ColumnType.BOOLEAN;
+            }
+            default -> {
+            }
         }
 
         Assert.fail("Unsupported type: " + arg.getClass());
@@ -564,26 +558,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public void andAssertDate(long expected) {
             Assert.assertEquals(expected, function1.getDate(record));
             Assert.assertEquals(expected, function2.getDate(record));
-            cleanup();
-        }
-
-        // todo: check if used
-        public void andAssertDecimal256(long hh, long hl, long lh, long ll, int scale) {
-            Decimal256 decimal256 = new Decimal256();
-            function1.getDecimal256(record, decimal256);
-            Assert.assertEquals(hh, decimal256.getHh());
-            Assert.assertEquals(hl, decimal256.getHl());
-            Assert.assertEquals(lh, decimal256.getLh());
-            Assert.assertEquals(ll, decimal256.getLl());
-            Assert.assertEquals(scale, ColumnType.getDecimalScale(function1.getType()));
-            cleanup();
-        }
-
-        public void andAssertDecimal256Null() {
-            Decimal256 decimal256 = new Decimal256();
-            function1.getDecimal256(record, decimal256);
-            Assert.assertTrue(decimal256.isNull());
-            Assert.assertEquals(0, ColumnType.getDecimalScale(function1.getType()));
             cleanup();
         }
 

@@ -607,7 +607,8 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.releaseInactive();
             Assert.assertTrue(ff.removeQuiet(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
 
-            assertException("checkpoint create", 0, "could not open txn file");
+            assertQuery("checkpoint create")
+                    .fails(0, "could not open txn file");
         });
     }
 
@@ -637,7 +638,8 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("create table test (ts timestamp, name symbol, val int)");
 
             testFilesFacade.errorOnSync = true;
-            assertException("checkpoint create", 0, "Could not sync");
+            assertQuery("checkpoint create")
+                    .fails(0, "Could not sync");
 
             // Once the error is gone, subsequent PREPARE/COMPLETE statements should execute successfully.
             testFilesFacade.errorOnSync = false;
@@ -719,11 +721,8 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test (ts timestamp, name symbol, val int)");
             execute("checkpoint create");
-            assertException(
-                    "checkpoint create",
-                    0,
-                    "Waiting for CHECKPOINT RELEASE to be called"
-            );
+            assertQuery("checkpoint create")
+                    .fails(0, "Waiting for CHECKPOINT RELEASE to be called");
             execute("checkpoint release");
         });
     }
@@ -954,7 +953,11 @@ public class CheckpointTest extends AbstractCairoTest {
 
             Assert.assertTrue("_pm not regenerated", parquetMetaFile.exists());
             Assert.assertTrue("_pm is empty", parquetMetaFile.length() > 0);
-            assertSql(expectedCount, "SELECT count() FROM t WHERE sym = 'A'");
+            assertQuery("SELECT count() FROM t WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedCount);
         });
     }
 
@@ -1013,7 +1016,11 @@ public class CheckpointTest extends AbstractCairoTest {
             Assert.assertTrue("part1 _pm not regenerated", pm1.exists());
             Assert.assertTrue("part1 _pm is empty", pm1.length() > 0);
             Assert.assertEquals("part2 _pm was modified", pm2SizeBefore, pm2.length());
-            assertSql(expectedTotal, "SELECT count() FROM t");
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expectedTotal);
         });
     }
 
@@ -1060,16 +1067,32 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.checkpointRecover();
 
             // Verify index queries return correct results (pre-checkpoint data only)
-            assertSql(sym1ACountBefore, "select count() from " + tableName + " where sym1 = 'A'");
-            assertSql(sym2XCountBefore, "select count() from " + tableName + " where sym2 = 'X'");
+            assertQuery("select count() from " + tableName + " where sym1 = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(sym1ACountBefore);
+            assertQuery("select count() from " + tableName + " where sym2 = 'X'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(sym2XCountBefore);
 
             // Verify new inserts work correctly with rebuilt indexes
             execute("insert into " + tableName + " values('A', 'X', 9999)");
 
             final long expectedSym1A = Long.parseLong(sym1ACountBefore.split("\n")[1].trim()) + 1;
             final long expectedSym2X = Long.parseLong(sym2XCountBefore.split("\n")[1].trim()) + 1;
-            assertSql("count\n" + expectedSym1A + "\n", "select count() from " + tableName + " where sym1 = 'A'");
-            assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
+            assertQuery("select count() from " + tableName + " where sym1 = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + expectedSym1A + "\n");
+            assertQuery("select count() from " + tableName + " where sym2 = 'X'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + expectedSym2X + "\n");
 
             engine.checkpointRelease();
         });
@@ -1126,16 +1149,32 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.checkpointRecover();
 
             // Verify index queries return correct results
-            assertSql(sym1ACountBefore, "select count() from " + tableName + " where sym1 = 'A'");
-            assertSql(sym2XCountBefore, "select count() from " + tableName + " where sym2 = 'X'");
+            assertQuery("select count() from " + tableName + " where sym1 = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(sym1ACountBefore);
+            assertQuery("select count() from " + tableName + " where sym2 = 'X'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(sym2XCountBefore);
 
             // Verify new inserts work correctly with rebuilt indexes
             execute("insert into " + tableName + " values(9999, now(), 'A', 'X')");
 
             final long expectedSym1A = Long.parseLong(sym1ACountBefore.split("\n")[1].trim()) + 1;
             final long expectedSym2X = Long.parseLong(sym2XCountBefore.split("\n")[1].trim()) + 1;
-            assertSql("count\n" + expectedSym1A + "\n", "select count() from " + tableName + " where sym1 = 'A'");
-            assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
+            assertQuery("select count() from " + tableName + " where sym1 = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + expectedSym1A + "\n");
+            assertQuery("select count() from " + tableName + " where sym2 = 'X'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + expectedSym2X + "\n");
 
             engine.checkpointRelease();
         });
@@ -1237,8 +1276,16 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.checkpointRecover();
 
             // Verify index queries return correct results (pre-checkpoint data only)
-            assertSql(sym1ACountBefore, "select count() from " + tableName + " where sym1 = 'A'");
-            assertSql(sym2XCountBefore, "select count() from " + tableName + " where sym2 = 'X'");
+            assertQuery("select count() from " + tableName + " where sym1 = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(sym1ACountBefore);
+            assertQuery("select count() from " + tableName + " where sym2 = 'X'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(sym2XCountBefore);
 
             // Verify new inserts work correctly with rebuilt indexes
             execute("insert into " + tableName + " values('A', 'X', 9999, now())");
@@ -1246,8 +1293,16 @@ public class CheckpointTest extends AbstractCairoTest {
             // Count should increase by 1 for both
             final long expectedSym1A = Long.parseLong(sym1ACountBefore.split("\n")[1].trim()) + 1;
             final long expectedSym2X = Long.parseLong(sym2XCountBefore.split("\n")[1].trim()) + 1;
-            assertSql("count\n" + expectedSym1A + "\n", "select count() from " + tableName + " where sym1 = 'A'");
-            assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
+            assertQuery("select count() from " + tableName + " where sym1 = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + expectedSym1A + "\n");
+            assertQuery("select count() from " + tableName + " where sym2 = 'X'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + expectedSym2X + "\n");
             engine.checkpointRelease();
         });
     }
@@ -1328,9 +1383,11 @@ public class CheckpointTest extends AbstractCairoTest {
             Assert.assertNotNull("bitmap index .v file not created for sym column", valFiles);
             Assert.assertTrue("bitmap index .v file not created for sym column", valFiles.length > 0);
 
-            assertSql(
-                    "count\n3\n",
-                    "SELECT count() FROM t WHERE sym = 'A'");
+            assertQuery("SELECT count() FROM t WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
         });
     }
 
@@ -1377,10 +1434,11 @@ public class CheckpointTest extends AbstractCairoTest {
                 restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
             }
 
-            assertSql(
-                    "count\n3\n",
-                    "SELECT count() FROM t WHERE sym = null"
-            );
+            assertQuery("SELECT count() FROM t WHERE sym = null")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
         });
     }
 
@@ -1428,8 +1486,11 @@ public class CheckpointTest extends AbstractCairoTest {
                 restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
             }
 
-            assertSql(sym2DECountBefore,
-                    "SELECT count() FROM t WHERE sym2 = 'DE'");
+            assertQuery("SELECT count() FROM t WHERE sym2 = 'DE'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(sym2DECountBefore);
         });
     }
 
@@ -1488,12 +1549,16 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
             }
 
-            assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM t1 WHERE sym = 'A'");
-            assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM t2 WHERE tag = 'X'");
+            assertQuery("SELECT count() FROM t1 WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            assertQuery("SELECT count() FROM t2 WHERE tag = 'X'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
         });
     }
 
@@ -1541,7 +1606,11 @@ public class CheckpointTest extends AbstractCairoTest {
                     4.0
                     6.0
                     """;
-            assertSql(expected, "SELECT price FROM t_pi WHERE sym = 'A'");
+            assertQuery("SELECT price FROM t_pi WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
 
             execute("checkpoint create");
             engine.clear();
@@ -1549,7 +1618,11 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.checkpointRecover();
 
             // After restore the data must still be queryable.
-            assertSql(expected, "SELECT price FROM t_pi WHERE sym = 'A'");
+            assertQuery("SELECT price FROM t_pi WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(expected);
 
             // File-level invariant: every partition must have a sealed
             // value file (sym.pv.<sealTxn> with sealTxn > 0) and a covering
@@ -1717,7 +1790,9 @@ public class CheckpointTest extends AbstractCairoTest {
                     3.0
                     4.0
                     """;
-            assertSql(expected, "SELECT price FROM t_pi_parquet WHERE sym = 'A' ORDER BY ts");
+            assertQuery("SELECT price FROM t_pi_parquet WHERE sym = 'A' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns(expected);
 
             TableToken tableToken = engine.verifyTableName("t_pi_parquet");
             String dbRoot = engine.getConfiguration().getDbRoot();
@@ -1761,7 +1836,9 @@ public class CheckpointTest extends AbstractCairoTest {
                     pc0After.length > 0);
 
             // Covering query must keep returning the same rows.
-            assertSql(expected, "SELECT price FROM t_pi_parquet WHERE sym = 'A' ORDER BY ts");
+            assertQuery("SELECT price FROM t_pi_parquet WHERE sym = 'A' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -1904,7 +1981,11 @@ public class CheckpointTest extends AbstractCairoTest {
             // was built over the committed prefix. If the fix regressed and
             // _pm included the garbage tail, decode would fail or return
             // wrong rows.
-            assertSql("count\n5\n", "SELECT count() FROM t");
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n5\n");
         });
     }
 
@@ -1975,8 +2056,16 @@ public class CheckpointTest extends AbstractCairoTest {
             drainViewQueue();
 
             // sanity check: the view exists and works
-            assertSql("count\n1\n", "select count() from views() where view_name = 'v';");
-            assertSql("count\n1\n", "select count() from v;");
+            assertQuery("select count() from views() where view_name = 'v';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("select count() from v;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             execute("checkpoint create;");
 
@@ -1984,7 +2073,11 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("drop view v;");
             drainWalAndViewQueues();
 
-            assertSql("count\n0\n", "select count() from views() where view_name = 'v';");
+            assertQuery("select count() from views() where view_name = 'v';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             engine.clear();
             engine.closeNameRegistry();
@@ -1995,14 +2088,18 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.buildViewGraphs();
 
             // the dropped view should be restored
-            assertSql("count\n1\n", "select count() from views() where view_name = 'v';");
-            assertSql(
-                    """
+            assertQuery("select count() from views() where view_name = 'v';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("v;")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tname\tval
                             2023-09-20T12:39:01.933062Z\tfoobar\t42
-                            """,
-                    "v;"
-            );
+                            """);
             engine.checkpointRelease();
         });
     }
@@ -2023,7 +2120,11 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("drop table test;");
             drainWalQueue();
 
-            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
+            assertQuery("select count() from tables() where table_name = 'test';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // Release readers, writers and table name registry files, but keep the snapshot dir around.
             engine.clear();
@@ -2036,14 +2137,19 @@ public class CheckpointTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Dropped table should be there.
-            assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
-            assertSql(
-                    """
+            assertQuery("select count() from tables() where table_name = 'test';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("test;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tname\tval
                             2023-09-20T12:39:01.933062Z\tfoobar\t42
-                            """,
-                    "test;"
-            );
+                            """);
             engine.checkpointRelease();
         });
     }
@@ -2061,26 +2167,26 @@ public class CheckpointTest extends AbstractCairoTest {
 
             execute(sql);
 
-            assertSql(
-                    """
+            assertQuery("select view_name,refresh_type,base_table_name from materialized_views();")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             view_name\trefresh_type\tbase_table_name
                             price_1h\timmediate\tbase_price
-                            """,
-                    "select view_name,refresh_type,base_table_name from materialized_views();"
-            );
+                            """);
 
             execute("checkpoint create");
 
             execute("alter materialized view price_1h SET REFRESH MANUAL");
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("select view_name,refresh_type,base_table_name from materialized_views();")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             view_name\trefresh_type\tbase_table_name
                             price_1h\tmanual\tbase_price
-                            """,
-                    "select view_name,refresh_type,base_table_name from materialized_views();"
-            );
+                            """);
 
 
             // Release readers, writers and table name registry files, but keep the snapshot dir around.
@@ -2092,13 +2198,13 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.getMetadataCache().onStartupAsyncHydrator();
             engine.buildViewGraphs();
 
-            assertSql(
-                    """
+            assertQuery("select view_name,refresh_type,base_table_name from materialized_views();")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             view_name\trefresh_type\tbase_table_name
                             price_1h\timmediate\tbase_price
-                            """,
-                    "select view_name,refresh_type,base_table_name from materialized_views();"
-            );
+                            """);
 
 
             execute("checkpoint release");
@@ -2127,23 +2233,21 @@ public class CheckpointTest extends AbstractCairoTest {
             drainViewQueue();
 
             // 4. Verify both views work correctly
-            assertSql(
-                    """
+            assertQuery("view_a;")
+                    .noLeakCheck()
+                    .returns("""
                             name\tval
                             a\t10
                             b\t20
                             c\t30
-                            """,
-                    "view_a;"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("view_b;")
+                    .noLeakCheck()
+                    .returns("""
                             name\tval
                             b\t20
                             c\t30
-                            """,
-                    "view_b;"
-            );
+                            """);
 
             // 5. Checkpoint
             execute("checkpoint create;");
@@ -2154,8 +2258,16 @@ public class CheckpointTest extends AbstractCairoTest {
             drainViewQueue();
 
             // 7. Verify neither view exists
-            assertSql("count\n0\n", "select count() from views() where view_name = 'view_a';");
-            assertSql("count\n0\n", "select count() from views() where view_name = 'view_b';");
+            assertQuery("select count() from views() where view_name = 'view_a';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("select count() from views() where view_name = 'view_b';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // 8. Restore from checkpoint
             engine.clear();
@@ -2167,29 +2279,35 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.buildViewGraphs();
 
             // 9. Verify both views are restored
-            assertSql("count\n1\n", "select count() from views() where view_name = 'view_a';");
-            assertSql("count\n1\n", "select count() from views() where view_name = 'view_b';");
+            assertQuery("select count() from views() where view_name = 'view_a';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("select count() from views() where view_name = 'view_b';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             // 10. Verify view_a returns correct data (a, b, c)
-            assertSql(
-                    """
+            assertQuery("view_a;")
+                    .noLeakCheck()
+                    .returns("""
                             name\tval
                             a\t10
                             b\t20
                             c\t30
-                            """,
-                    "view_a;"
-            );
+                            """);
 
             // 11. Verify view_b returns correct data (b, c) - the nested view chain works
-            assertSql(
-                    """
+            assertQuery("view_b;")
+                    .noLeakCheck()
+                    .returns("""
                             name\tval
                             b\t20
                             c\t30
-                            """,
-                    "view_b;"
-            );
+                            """);
 
             engine.checkpointRelease();
         });
@@ -2275,8 +2393,16 @@ public class CheckpointTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
-            assertSql("count\n1\n", "select count() from tables() where table_name = 'test2';");
+            assertQuery("select count() from tables() where table_name = 'test';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+            assertQuery("select count() from tables() where table_name = 'test2';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             // Release readers, writers and table name registry files, but keep the snapshot dir around.
             engine.clear();
@@ -2289,8 +2415,16 @@ public class CheckpointTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Renamed table should be there under the original name.
-            assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
-            assertSql("count\n0\n", "select count() from tables() where table_name = 'test2';");
+            assertQuery("select count() from tables() where table_name = 'test';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("select count() from tables() where table_name = 'test2';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             engine.checkpointRelease();
         });
@@ -2312,7 +2446,11 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("truncate table test;");
             drainWalQueue();
 
-            assertSql("count\n0\n", "select count() from test;");
+            assertQuery("select count() from test;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
@@ -2322,7 +2460,11 @@ public class CheckpointTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Dropped rows should be there.
-            assertSql("count\n1\n", "select count() from test;");
+            assertQuery("select count() from test;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
             engine.checkpointRelease();
         });
     }
@@ -2345,14 +2487,13 @@ public class CheckpointTest extends AbstractCairoTest {
             drainViewQueue();
 
             // Validate the view returns expected data
-            assertSql(
-                    """
+            assertQuery("v;")
+                    .noLeakCheck()
+                    .returns("""
                             name\tval
                             b\t20
                             c\t30
-                            """,
-                    "v;"
-            );
+                            """);
 
             // 3. Checkpoint
             execute("checkpoint create;");
@@ -2365,13 +2506,12 @@ public class CheckpointTest extends AbstractCairoTest {
             drainViewQueue();
 
             // 5. Validate the new view returns different data (only 'c')
-            assertSql(
-                    """
+            assertQuery("v;")
+                    .noLeakCheck()
+                    .returns("""
                             name\tval
                             c\t30
-                            """,
-                    "v;"
-            );
+                            """);
 
             // 6. Restore from the checkpoint
             engine.clear();
@@ -2383,14 +2523,13 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.buildViewGraphs();
 
             // 7. Validate the view uses the predicate from before the checkpoint (val > 15)
-            assertSql(
-                    """
+            assertQuery("v;")
+                    .noLeakCheck()
+                    .returns("""
                             name\tval
                             b\t20
                             c\t30
-                            """,
-                    "v;"
-            );
+                            """);
             engine.checkpointRelease();
         });
     }
@@ -2409,13 +2548,12 @@ public class CheckpointTest extends AbstractCairoTest {
 
             execute("create view test_view as select name, val from test where val > 15;");
 
-            assertSql(
-                    """
+            assertQuery("test_view;")
+                    .noLeakCheck()
+                    .returns("""
                             name\tval
                             b\t20
-                            """,
-                    "test_view;"
-            );
+                            """);
 
             execute("checkpoint create;");
 
@@ -2424,7 +2562,11 @@ public class CheckpointTest extends AbstractCairoTest {
             drainWalQueue();
 
             // view should now show 2 rows
-            assertSql("count\n2\n", "select count() from test_view;");
+            assertQuery("select count() from test_view;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
 
             // Recover from checkpoint
             engine.clear();
@@ -2436,13 +2578,12 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.buildViewGraphs();
 
             // After recovery, view should only show data from checkpoint time (1 row)
-            assertSql(
-                    """
+            assertQuery("test_view;")
+                    .noLeakCheck()
+                    .returns("""
                             name\tval
                             b\t20
-                            """,
-                    "test_view;"
-            );
+                            """);
             engine.checkpointRelease();
         });
     }
@@ -2451,33 +2592,36 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointStatus() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
-            assertSql(
-                    """
+            assertQuery("select * from checkpoint_status();")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             in_progress\tstarted_at
                             false\t
-                            """,
-                    "select * from checkpoint_status();"
-            );
+                            """);
 
             execute("checkpoint create");
 
-            assertSql(
-                    """
+            assertQuery("select * from checkpoint_status();")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             in_progress\tstarted_at
                             true\t1970-01-01T00:00:00.000000Z
-                            """,
-                    "select * from checkpoint_status();"
-            );
+                            """);
 
             execute("checkpoint release");
 
-            assertSql(
-                    """
+            assertQuery("select * from checkpoint_status();")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             in_progress\tstarted_at
                             false\t
-                            """,
-                    "select * from checkpoint_status();"
-            );
+                            """);
         });
     }
 
@@ -2489,21 +2633,30 @@ public class CheckpointTest extends AbstractCairoTest {
                     in_progress\tstarted_at
                     false\t
                     """;
-            assertSql(notInProgress, "select * from checkpoint_status();");
+            assertQuery("select * from checkpoint_status();")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(notInProgress);
 
             // Validation compiles CHECKPOINT CREATE but must not start a checkpoint.
             validateOnly("checkpoint create");
-            assertSql(notInProgress, "select * from checkpoint_status();");
+            assertQuery("select * from checkpoint_status();")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(notInProgress);
 
             // Real execution starts the checkpoint.
             execute("checkpoint create");
-            assertSql(
-                    """
+            assertQuery("select * from checkpoint_status();")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             in_progress\tstarted_at
                             true\t1970-01-01T00:00:00.000000Z
-                            """,
-                    "select * from checkpoint_status();"
-            );
+                            """);
 
             execute("checkpoint release");
         });
@@ -2518,21 +2671,30 @@ public class CheckpointTest extends AbstractCairoTest {
                     in_progress\tstarted_at
                     true\t1970-01-01T00:00:00.000000Z
                     """;
-            assertSql(inProgress, "select * from checkpoint_status();");
+            assertQuery("select * from checkpoint_status();")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(inProgress);
 
             // Validation compiles CHECKPOINT RELEASE but must not end the checkpoint.
             validateOnly("checkpoint release");
-            assertSql(inProgress, "select * from checkpoint_status();");
+            assertQuery("select * from checkpoint_status();")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns(inProgress);
 
             // Real execution releases the checkpoint.
             execute("checkpoint release");
-            assertSql(
-                    """
+            assertQuery("select * from checkpoint_status();")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             in_progress\tstarted_at
                             false\t
-                            """,
-                    "select * from checkpoint_status();"
-            );
+                            """);
         });
     }
 
@@ -2540,11 +2702,8 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointUnknownSubOptionFails() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (ts timestamp, name symbol, val int)");
-            assertException(
-                    "checkpoint commit",
-                    11,
-                    "'create' or 'release' expected"
-            );
+            assertQuery("checkpoint commit")
+                    .fails(11, "'create' or 'release' expected");
         });
     }
 
@@ -2614,17 +2773,19 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("CHECKPOINT RELEASE;");
 
             // 5. Validate the restored table exists and new table does not
-            assertSql(
-                    """
+            assertQuery("test;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts	name	val
                             2023-09-20T12:00:00.000000Z	a	10
                             2023-09-20T13:00:00.000000Z	b	20
                             2023-09-20T14:00:00.000000Z	c	30
-                            """,
-                    "test;"
-            );
+                            """);
 
-            assertException("tiesto;", 0, "table does not exist [table=tiesto]");
+            assertQuery("tiesto;")
+                    .fails(0, "table does not exist [table=tiesto]");
         });
     }
 
@@ -2643,15 +2804,27 @@ public class CheckpointTest extends AbstractCairoTest {
             drainWalAndViewQueues();
 
             // sanity check: the view exists and works
-            assertSql("count\n1\n", "select count() from views() where view_name = 'v';");
-            assertSql("count\n1\n", "select count() from v;");
+            assertQuery("select count() from views() where view_name = 'v';")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("select count() from v;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             execute("checkpoint create;");
 
             execute("alter view v as select * from test where val > 100;");
             drainWalAndViewQueues();
 
-            assertSql("count\n0\n", "select count() from v;");
+            assertQuery("select count() from v;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
 
             engine.clear();
             engine.closeNameRegistry();
@@ -2662,7 +2835,11 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.buildViewGraphs();
 
             // the dropped view should be restored
-            assertSql("count\n1\n", "select count() from v;");
+            assertQuery("select count() from v;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             final TableToken viewToken = engine.getTableTokenIfExists("v");
             final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
@@ -2671,7 +2848,11 @@ public class CheckpointTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken));
 
             engine.checkpointRelease();
-            assertSql("count\n1\n", "select count() from v;");
+            assertQuery("select count() from v;")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
         });
     }
 
@@ -2963,11 +3144,12 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.checkpointRecover();
 
             // Data inserted after PREPARE SNAPSHOT should be discarded.
-            assertSql(
-                    "count\n" +
-                            partitionCount + "\n",
-                    "select count() from " + tableName
-            );
+            assertQuery("select count() from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" +
+                            partitionCount + "\n");
             engine.checkpointRelease();
         });
     }
@@ -2993,18 +3175,21 @@ public class CheckpointTest extends AbstractCairoTest {
                     WH\tB\t2
                     PE\tB\t3
                     """;
-            assertSql(expectedAllColumns, "select * from " + tableName);
+            assertQuery("select * from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedAllColumns);
 
             execute("alter table " + tableName + " drop column b");
-            assertSql(
-                    """
+            assertQuery("select * from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tc
                             JW\t1
                             WH\t2
                             PE\t3
-                            """,
-                    "select * from " + tableName
-            );
+                            """);
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
@@ -3012,7 +3197,10 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.checkpointRecover();
 
             // Dropped column should be there.
-            assertSql(expectedAllColumns, "select * from " + tableName);
+            assertQuery("select * from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedAllColumns);
             engine.checkpointRelease();
         });
     }
@@ -3061,11 +3249,12 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.checkpointRecover();
 
             // Data inserted after PREPARE SNAPSHOT should be discarded.
-            assertSql(
-                    "count\n" +
-                            partitionCount + "\n",
-                    "select count() from " + tableName
-            );
+            assertQuery("select count() from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" +
+                            partitionCount + "\n");
             engine.checkpointRelease();
         });
     }
@@ -3195,17 +3384,18 @@ public class CheckpointTest extends AbstractCairoTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql(
-                    """
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2022-02-24T00:00:00.000000Z
                             2\t2022-02-24T00:00:01.000000Z
                             3\t2022-02-24T00:00:02.000000Z
                             4\t2022-02-24T00:00:03.000000Z
                             5\t2022-02-24T00:00:04.000000Z
-                            """,
-                    tableName
-            );
+                            """);
 
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;
             final WalPurgeJob job = new WalPurgeJob(engine);
@@ -3283,10 +3473,10 @@ public class CheckpointTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName(tableName);
             assertSequencerReadColumnOrder(tableToken, 0, 1, 2, 3, 3);
             try (TableReader reader = engine.getReader(tableName)) {
-                assertPostingIncludeMetadata(reader.getMetadata(), "sym", "price");
+                assertPostingIncludeMetadata(reader.getMetadata());
             }
             try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
-                assertPostingIncludeMetadata(metadata, "sym", "price");
+                assertPostingIncludeMetadata(metadata);
             }
 
             execute("checkpoint create");
@@ -3298,10 +3488,10 @@ public class CheckpointTest extends AbstractCairoTest {
             tableToken = engine.verifyTableName(tableName);
             assertSequencerReadColumnOrder(tableToken, 0, 1, 2, 3, 3);
             try (TableReader reader = engine.getReader(tableName)) {
-                assertPostingIncludeMetadata(reader.getMetadata(), "sym", "price");
+                assertPostingIncludeMetadata(reader.getMetadata());
             }
             try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
-                assertPostingIncludeMetadata(metadata, "sym", "price");
+                assertPostingIncludeMetadata(metadata);
             }
 
             engine.checkpointRelease();
@@ -3335,8 +3525,11 @@ public class CheckpointTest extends AbstractCairoTest {
             drainWalQueue();
 
             // all updates above should be applied to table
-            assertSql(
-                    """
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tsym\tts\tsym2\tiii\tjjj
                             1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tnull
                             2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tnull
@@ -3345,9 +3538,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tnull
                             101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tnull
                             102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42
-                            """,
-                    tableName
-            );
+                            """);
 
 
             execute("alter table " + tableName + " add column kkk int");
@@ -3369,8 +3560,11 @@ public class CheckpointTest extends AbstractCairoTest {
             // apply updates from WAL
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tsym\tts\tsym2\tiii\tjjj\tkkk
                             1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tnull\tnull
                             2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tnull\tnull
@@ -3380,9 +3574,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tnull\tnull
                             102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tnull
                             103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43
-                            """,
-                    tableName
-            );
+                            """);
 
             // check for updates to the restored table
             execute("alter table " + tableName + " add column lll int");
@@ -3392,8 +3584,11 @@ public class CheckpointTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll
                             1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tnull\tnull
                             2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tnull\tnull
@@ -3405,9 +3600,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tnull
                             104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4
                             105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8
-                            """,
-                    tableName
-            );
+                            """);
 
             // WalWriter.applyMetadataChangeLog should be triggered
             try (WalWriter walWriter1 = getWalWriter(tableName)) {
@@ -3441,8 +3634,11 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
             }
             drainWalQueue();
-            assertSql(
-                    """
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\tC
                             1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tnull\tnull\tnull
                             2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tnull\tnull\tnull
@@ -3456,9 +3652,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\tnull
                             777\tXXX\t2022-02-24T06:00:00.000000Z\tYYY\t0\t1\t2\t3\t42
                             999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tnull
-                            """,
-                    tableName
-            );
+                            """);
 
 
             engine.checkpointRelease();
@@ -3562,22 +3756,22 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertPostingIncludeMetadata(TableRecordMetadata metadata, String indexedColumn, String coveringColumn) {
-        int indexedColumnIndex = metadata.getColumnIndexQuiet(indexedColumn);
-        int coveringColumnIndex = metadata.getColumnIndexQuiet(coveringColumn);
-        Assert.assertTrue("expected indexed column to exist: " + indexedColumn, indexedColumnIndex > -1);
-        Assert.assertTrue("expected covering column to exist: " + coveringColumn, coveringColumnIndex > -1);
+    private static void assertPostingIncludeMetadata(TableRecordMetadata metadata) {
+        int indexedColumnIndex = metadata.getColumnIndexQuiet("sym");
+        int coveringColumnIndex = metadata.getColumnIndexQuiet("price");
+        Assert.assertTrue("expected indexed column to exist: " + "sym", indexedColumnIndex > -1);
+        Assert.assertTrue("expected covering column to exist: " + "price", coveringColumnIndex > -1);
         Assert.assertEquals(
-                "expected POSTING index on " + indexedColumn,
+                "expected POSTING index on " + "sym",
                 IndexType.POSTING,
                 metadata.getColumnIndexType(indexedColumnIndex)
         );
 
         IntList coveringIndices = metadata.getColumnMetadata(indexedColumnIndex).getCoveringColumnIndices();
-        Assert.assertNotNull("expected INCLUDE list to exist for column: " + indexedColumn, coveringIndices);
-        Assert.assertEquals("expected exact INCLUDE list size for column: " + indexedColumn, 1, coveringIndices.size());
+        Assert.assertNotNull("expected INCLUDE list to exist for column: " + "sym", coveringIndices);
+        Assert.assertEquals("expected exact INCLUDE list size for column: " + "sym", 1, coveringIndices.size());
         Assert.assertTrue(
-                "expected INCLUDE list for " + indexedColumn + " to contain " + coveringColumn,
+                "expected INCLUDE list for " + "sym" + " to contain " + "price",
                 coveringIndices.contains(metadata.getWriterIndex(coveringColumnIndex))
         );
     }
@@ -4145,17 +4339,19 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // In case of recovery, data inserted after PREPARE SNAPSHOT should be discarded.
             int expectedCount = expectRecovery ? 20 : 40;
-            assertSql(
-                    "count\n" +
-                            expectedCount + "\n",
-                    "select count() from " + nonPartitionedTable
-            );
+            assertQuery("select count() from " + nonPartitionedTable)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" +
+                            expectedCount + "\n");
 
-            assertSql(
-                    "count\n" +
-                            expectedCount + "\n",
-                    "select count() from " + partitionedTable
-            );
+            assertQuery("select count() from " + partitionedTable)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" +
+                            expectedCount + "\n");
 
             // Recovery should delete the snapshot dir. Otherwise, the dir should be kept as is.
             path.trimTo(rootLen).slash$();

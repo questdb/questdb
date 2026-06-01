@@ -38,27 +38,27 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testArgMaxAllNull() throws Exception {
         execute("CREATE TABLE tab (value varchar, key long)");
         execute("INSERT INTO tab VALUES (null, null), (null, null)");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
     public void testArgMaxEmptyStringValue() throws Exception {
         execute("CREATE TABLE tab (value varchar, key long)");
         execute("INSERT INTO tab VALUES ('', 5), ('beta', 3)");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
     public void testArgMaxEmptyTable() throws Exception {
         execute("CREATE TABLE tab (value varchar, key long)");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
     public void testArgMaxMixedNullValueAndNullKey() throws Exception {
         execute("CREATE TABLE tab (value varchar, key long)");
         execute("INSERT INTO tab VALUES (null, 5), ('beta', null)");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
@@ -70,28 +70,27 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
                 "FROM long_sequence(10000))");
 
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
 
                 // Verify the query plan shows parallel execution
-                TestUtils.assertSql(
-                        engine,
-                        sqlExecutionContext,
-                        "EXPLAIN " + sql,
-                        sink,
-                        """
-                                QUERY PLAN
-                                Encode sort light
-                                  keys: [sym]
-                                    Async Group By workers: 4
-                                      keys: [sym]
-                                      values: [arg_max(value,key)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                assertQuery(sql)
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .assertsPlan(
                                 """
-                );
+                                        Encode sort light
+                                          keys: [sym]
+                                            Async Group By workers: 4
+                                              keys: [sym]
+                                              values: [arg_max(value,key)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                        """
+                        );
             }, configuration, LOG);
         }
     }
@@ -100,9 +99,13 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testArgMaxParallelAllNullKeys() throws Exception {
         execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, CAST(null AS long) key FROM long_sequence(100000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
-                TestUtils.assertSql(engine, sqlExecutionContext, sql, sink, "sym\targ_max\nA\t\nB\t\nC\t\nD\t\nE\t\n");
+                assertQuery(sql)
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .returnsOnce("sym\targ_max\nA\t\nB\t\nC\t\nD\t\nE\t\n");
             }, configuration, LOG);
         }
     }
@@ -111,7 +114,7 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testArgMaxParallelChunky() throws Exception {
         execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, rnd_long() key FROM long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -122,7 +125,7 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testArgMaxParallelMergeNullDestValidSrc() throws Exception {
         execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, CASE WHEN x <= 1000000 THEN CAST(null AS long) ELSE rnd_long() END key FROM long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -133,7 +136,7 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testArgMaxParallelWithNullKeys() throws Exception {
         execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, CASE WHEN x % 2 = 0 THEN CAST(null AS long) ELSE rnd_long() END key FROM long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -144,14 +147,14 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testArgMaxSimple() throws Exception {
         execute("CREATE TABLE tab (value varchar, key long)");
         execute("INSERT INTO tab VALUES ('alpha', 1), ('beta', 3), ('gamma', 2)");
-        assertQuery("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\nbeta\n");
     }
 
     @Test
     public void testArgMaxTieBreaking() throws Exception {
         execute("CREATE TABLE tab (value varchar, key long)");
         execute("INSERT INTO tab VALUES ('alpha', 3), ('beta', 3), ('gamma', 1)");
-        assertQuery("arg_max\nalpha\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\nalpha\n");
     }
 
     @Test
@@ -164,27 +167,27 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
                     ('B', 'gamma', 5),
                     ('B', 'delta', 4)
                 """);
-        assertQuery("sym\targ_max\nA\tbeta\nB\tgamma\n", "SELECT sym, arg_max(value, key) FROM tab ORDER BY sym", null, true, true);
+        assertQuery("SELECT sym, arg_max(value, key) FROM tab ORDER BY sym").expectSize().returns("sym\targ_max\nA\tbeta\nB\tgamma\n");
     }
 
     @Test
     public void testArgMaxWithNullKey() throws Exception {
         execute("CREATE TABLE tab (value varchar, key long)");
         execute("INSERT INTO tab VALUES ('alpha', null), ('beta', 3), ('gamma', 2)");
-        assertQuery("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\nbeta\n");
     }
 
     @Test
     public void testArgMaxWithNullValue() throws Exception {
         execute("CREATE TABLE tab (value varchar, key long)");
         execute("INSERT INTO tab VALUES (null, 5), ('beta', 3)");
-        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\n\n");
     }
 
     @Test
     public void testArgMaxWithNullValueNotAtMax() throws Exception {
         execute("CREATE TABLE tab (value varchar, key long)");
         execute("INSERT INTO tab VALUES (null, 1), ('beta', 3)");
-        assertQuery("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
+        assertQuery("SELECT arg_max(value, key) FROM tab").noRandomAccess().expectSize().returns("arg_max\nbeta\n");
     }
 }

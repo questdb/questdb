@@ -61,43 +61,49 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            String expected = replaceTimestampSuffix("a\tts\n" +
-                    "8.486964232560668\t1970-01-01T00:00:01.000000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts between '1970-01-01T00:00:01.000000Z' and '1970-01-01T00:00:02.000000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts between '1970-01-01T00:00:01.000000000Z' and '1970-01-01T00:00:02.000000000Z'"
-            );
+            String expected = replaceTimestampSuffix("""
+                    a\tts
+                    8.486964232560668\t1970-01-01T00:00:01.000000Z
+                    8.43832076262595\t1970-01-01T00:00:02.000000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts between '1970-01-01T00:00:01.000000Z' and '1970-01-01T00:00:02.000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts between '1970-01-01T00:00:01.000000000Z' and '1970-01-01T00:00:02.000000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts1", "1970-01-01T00:00:01.000000Z");
             bindVariableService.setStr("ts2", "1970-01-01T00:00:02.000000Z");
             bindVariableService.setStr("ts3", "1970-01-01T00:00:01.000000000Z");
             bindVariableService.setStr("ts4", "1970-01-01T00:00:02.000000000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts between :ts1 and :ts2"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts between :ts3 and :ts4"
-            );
+            assertQuery("select * from x where ts between :ts1 and :ts2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts between :ts3 and :ts4")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts between '1970-01-01T00:00:01.000000Z' and '1970-01-01T00:00:02.000000Z'",
-                    replaceTimestampSuffix("PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:02.000000Z\")]\n", timestampType.getTypeName())
+                    replaceTimestampSuffix("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:01.000000Z","1970-01-01T00:00:02.000000Z")]
+                            """, timestampType.getTypeName())
             );
             assertPlanNoLeakCheck(
                     "select * from x where ts between '1970-01-01T00:00:01.000000000Z' and '1970-01-01T00:00:02.000000000Z'",
-                    replaceTimestampSuffix("PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:02.000000Z\")]\n", timestampType.getTypeName())
+                    replaceTimestampSuffix("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:01.000000Z","1970-01-01T00:00:02.000000Z")]
+                            """, timestampType.getTypeName())
             );
         });
     }
@@ -115,64 +121,72 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            String expected = replaceTimestampSuffix1("a\tts\n" +
-                    "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts = '1970-01-01T00:00:00.010000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts = '1970-01-01T00:00:00.010000000Z'"
-            );
+            String expected = replaceTimestampSuffix1("""
+                    a\tts
+                    8.486964232560668\t1970-01-01T00:00:00.010000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts = '1970-01-01T00:00:00.010000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts = '1970-01-01T00:00:00.010000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
             bindVariableService.setStr("ts1", "1970-01-01T00:00:00.010000000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts = :ts"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts = :ts1"
-            );
+            assertQuery("select * from x where ts = :ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts = :ts1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts = '1970-01-01T00:00:00.010000Z'",
-                    replaceTimestampSuffix1("PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType.getTypeName())
+                    replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.010000Z","1970-01-01T00:00:00.010000Z")]
+                            """, timestampType.getTypeName())
             );
             assertPlanNoLeakCheck(
                     "select * from x where ts = '1970-01-01T00:00:00.010000000Z'",
-                    replaceTimestampSuffix1("PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType.getTypeName())
+                    replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.010000Z","1970-01-01T00:00:00.010000Z")]
+                            """, timestampType.getTypeName())
             );
 
-            expected = replaceTimestampSuffix1("a\tts\n" +
-                    "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts != '1970-01-01T00:00:00.010000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts != '1970-01-01T00:00:00.010000000Z'"
-            );
+            expected = replaceTimestampSuffix1("""
+                    a\tts
+                    80.43224099968394\t1970-01-01T00:00:00.000000Z
+                    8.43832076262595\t1970-01-01T00:00:00.020000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts != '1970-01-01T00:00:00.010000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts != '1970-01-01T00:00:00.010000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
             bindVariableService.setStr("ts1", "1970-01-01T00:00:00.010000000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts != :ts"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts != :ts1"
-            );
+            assertQuery("select * from x where ts != :ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts != :ts1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts != '1970-01-01T00:00:00.010000Z'",
                     "PageFrame\n" +
@@ -191,29 +205,31 @@ public class IntervalFilterTest extends AbstractCairoTest {
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999Z\"),(\"1970-01-01T00:00:00.010001Z\",\"MAX\")]\n" :
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\"),(\"1970-01-01T00:00:00.010000001Z\",\"MAX\")]\n")
             );
-            expected = replaceTimestampSuffix1("a\tts\n" +
-                    "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01' and ts != '1970-01-01T00:00:00.010000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01' and ts != '1970-01-01T00:00:00.010000000Z'"
-            );
+            expected = replaceTimestampSuffix1("""
+                    a\tts
+                    80.43224099968394\t1970-01-01T00:00:00.000000Z
+                    8.43832076262595\t1970-01-01T00:00:00.020000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts in '1970-01-01' and ts != '1970-01-01T00:00:00.010000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts in '1970-01-01' and ts != '1970-01-01T00:00:00.010000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("date", "1970-01-01");
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
             bindVariableService.setStr("ts1", "1970-01-01T00:00:00.010000000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts in :date and ts != :ts"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts in :date and ts != :ts1"
-            );
+            assertQuery("select * from x where ts in :date and ts != :ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts in :date and ts != :ts1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts in '1970-01-01' and ts != '1970-01-01T00:00:00.010000Z'",
                     "PageFrame\n" +
@@ -234,25 +250,25 @@ public class IntervalFilterTest extends AbstractCairoTest {
             );
 
             expected = "a\tts\n";
-            assertSql(
-                    expected,
-                    "select * from x where ts = '1970-01-01T00:00:00.010000Z' and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts = '1970-01-01T00:00:00.010000000Z' and ts = '1970-01-01T00:00:00.020000000Z' and ts = '1970-01-01T00:00:00.030000000Z'"
-            );
+            assertQuery("select * from x where ts = '1970-01-01T00:00:00.010000Z' and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts = '1970-01-01T00:00:00.010000000Z' and ts = '1970-01-01T00:00:00.020000000Z' and ts = '1970-01-01T00:00:00.030000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
             bindVariableService.setStr("ts1", "1970-01-01T00:00:00.010000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts = :ts and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts = :ts1 and ts = '1970-01-01T00:00:00.020000000Z' and ts = '1970-01-01T00:00:00.030000000Z'"
-            );
+            assertQuery("select * from x where ts = :ts and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts = :ts1 and ts = '1970-01-01T00:00:00.020000000Z' and ts = '1970-01-01T00:00:00.030000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts = '1970-01-01T00:00:00.010000Z' and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'",
                     "Empty table\n"
@@ -263,25 +279,25 @@ public class IntervalFilterTest extends AbstractCairoTest {
             );
 
             expected = "a\tts\n";
-            assertSql(
-                    expected,
-                    "select * from x where ts != '1970-01-01T00:00:00.010000Z' and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts != '1970-01-01T00:00:00.010000000Z' and ts = '1970-01-01T00:00:00.020000000Z' and ts = '1970-01-01T00:00:00.030000000Z'"
-            );
+            assertQuery("select * from x where ts != '1970-01-01T00:00:00.010000Z' and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts != '1970-01-01T00:00:00.010000000Z' and ts = '1970-01-01T00:00:00.020000000Z' and ts = '1970-01-01T00:00:00.030000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
             bindVariableService.setStr("ts1", "1970-01-01T00:00:00.010000000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts != :ts and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts != :ts1 and ts = '1970-01-01T00:00:00.020000000Z' and ts = '1970-01-01T00:00:00.030000000Z'"
-            );
+            assertQuery("select * from x where ts != :ts and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts != :ts1 and ts = '1970-01-01T00:00:00.020000000Z' and ts = '1970-01-01T00:00:00.030000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts != '1970-01-01T00:00:00.010000Z' and ts = '1970-01-01T00:00:00.020000Z' and ts = '1970-01-01T00:00:00.030000Z'",
                     "Empty table\n"
@@ -291,14 +307,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     "Empty table\n"
             );
 
-            assertSql(
-                    "a\tts\n",
-                    "select * from x where ts = (-9223372036854775808)::timestamp"
-            );
-            assertSql(
-                    "a\tts\n",
-                    "select * from x where ts = (-9223372036854775808)::timestamp_ns"
-            );
+            assertQuery("select * from x where ts = (-9223372036854775808)::timestamp")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("a\tts\n");
+            assertQuery("select * from x where ts = (-9223372036854775808)::timestamp_ns")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("a\tts\n");
         });
     }
 
@@ -314,17 +330,21 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            assertSql(
-                    replaceTimestampSuffix1("a\tts\n" +
-                            "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName()),
-                    "select * from x where ts = (select max(ts) from x)"
-            );
+            assertQuery("select * from x where ts = (select max(ts) from x)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1("""
+                            a\tts
+                            8.43832076262595\t1970-01-01T00:00:00.020000Z
+                            """, timestampType.getTypeName()));
             assertPlanNoLeakCheck(
                     "select * from x where ts = (select max(ts) from x)",
-                    replaceTimestampSuffix1("PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.020000Z\",\"1970-01-01T00:00:00.020000Z\")]\n", timestampType.getTypeName())
+                    replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.020000Z","1970-01-01T00:00:00.020000Z")]
+                            """, timestampType.getTypeName())
             );
         });
     }
@@ -342,27 +362,29 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            String expected = replaceTimestampSuffix1("a\tts\n" +
-                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts > '1970-01-01T00:00:00.010000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts > '1970-01-01T00:00:00.010000000Z'"
-            );
+            String expected = replaceTimestampSuffix1("""
+                    a\tts
+                    8.43832076262595\t1970-01-01T00:00:00.020000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts > '1970-01-01T00:00:00.010000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts > '1970-01-01T00:00:00.010000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
             bindVariableService.setStr("ts1", "1970-01-01T00:00:00.010000000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts > :ts"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts > :ts1"
-            );
+            assertQuery("select * from x where ts > :ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts > :ts1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts > '1970-01-01T00:00:00.010000Z'",
                     "PageFrame\n" +
@@ -384,101 +406,113 @@ public class IntervalFilterTest extends AbstractCairoTest {
 
             );
 
-            expected = replaceTimestampSuffix1("a\tts\n" +
-                    "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts <= '1970-01-01T00:00:00.010000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts <= '1970-01-01T00:00:00.010000000Z'"
-            );
+            expected = replaceTimestampSuffix1("""
+                    a\tts
+                    80.43224099968394\t1970-01-01T00:00:00.000000Z
+                    8.486964232560668\t1970-01-01T00:00:00.010000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts <= '1970-01-01T00:00:00.010000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts <= '1970-01-01T00:00:00.010000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
             bindVariableService.setStr("ts1", "1970-01-01T00:00:00.010000000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts <= :ts"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts <= :ts1"
-            );
+            assertQuery("select * from x where ts <= :ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts <= :ts1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts <= '1970-01-01T00:00:00.010000Z'",
-                    replaceTimestampSuffix1("PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType.getTypeName())
+                    replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("MIN","1970-01-01T00:00:00.010000Z")]
+                            """, timestampType.getTypeName())
             );
             assertPlanNoLeakCheck(
                     "select * from x where ts <= '1970-01-01T00:00:00.010000000Z'",
-                    replaceTimestampSuffix1("PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType.getTypeName())
+                    replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("MIN","1970-01-01T00:00:00.010000Z")]
+                            """, timestampType.getTypeName())
             );
 
-            expected = replaceTimestampSuffix1("a\tts\n" +
-                    "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01' and ts <= '1970-01-01T00:00:00.010000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01' and ts <= '1970-01-01T00:00:00.010000000Z'"
-            );
+            expected = replaceTimestampSuffix1("""
+                    a\tts
+                    80.43224099968394\t1970-01-01T00:00:00.000000Z
+                    8.486964232560668\t1970-01-01T00:00:00.010000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts in '1970-01-01' and ts <= '1970-01-01T00:00:00.010000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts in '1970-01-01' and ts <= '1970-01-01T00:00:00.010000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("date", "1970-01-01");
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
             bindVariableService.setStr("ts1", "1970-01-01T00:00:00.010000000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts in :date and ts <= :ts"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts in :date and ts <= :ts1"
-            );
+            assertQuery("select * from x where ts in :date and ts <= :ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts in :date and ts <= :ts1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts in '1970-01-01' and ts <= '1970-01-01T00:00:00.010000Z'",
-                    replaceTimestampSuffix1("PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType.getTypeName())
+                    replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.010000Z")]
+                            """, timestampType.getTypeName())
             );
             assertPlanNoLeakCheck(
                     "select * from x where ts in '1970-01-01' and ts <= '1970-01-01T00:00:00.010000000Z'",
-                    replaceTimestampSuffix1("PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:00:00.010000Z\")]\n", timestampType.getTypeName())
+                    replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.010000Z")]
+                            """, timestampType.getTypeName())
             );
 
             expected = "a\tts\n";
-            assertSql(
-                    expected,
-                    "select * from x where ts > '1970-01-01T00:00:00.010000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts > '1970-01-01T00:00:00.010000000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'"
-            );
+            assertQuery("select * from x where ts > '1970-01-01T00:00:00.010000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts > '1970-01-01T00:00:00.010000000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
             bindVariableService.setStr("ts1", "1970-01-01T00:00:00.010000000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts > :ts and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts > :ts1 and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'"
-            );
+            assertQuery("select * from x where ts > :ts and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts > :ts1 and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts > '1970-01-01T00:00:00.010000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'",
                     "Empty table\n"
@@ -502,12 +536,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            assertSql(
-                    replaceTimestampSuffix1("a\tts\n" +
-                            "8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName()),
-                    "select * from x where ts > (select min(ts) from x)"
-            );
+            assertQuery("select * from x where ts > (select min(ts) from x)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1("""
+                            a\tts
+                            8.486964232560668\t1970-01-01T00:00:00.010000Z
+                            8.43832076262595\t1970-01-01T00:00:00.020000Z
+                            """, timestampType.getTypeName()));
             assertPlanNoLeakCheck(
                     "select * from x where ts > (select min(ts) from x)",
                     "PageFrame\n" +
@@ -518,19 +554,23 @@ public class IntervalFilterTest extends AbstractCairoTest {
                                     "      intervals: [(\"1970-01-01T00:00:00.000000001Z\",\"MAX\")]\n")
             );
 
-            assertSql(
-                    replaceTimestampSuffix1("a\tts\n" +
-                            "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                            "8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName()),
-                    "select * from x where ts >= (select min(ts) from x)"
-            );
+            assertQuery("select * from x where ts >= (select min(ts) from x)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1("""
+                            a\tts
+                            80.43224099968394\t1970-01-01T00:00:00.000000Z
+                            8.486964232560668\t1970-01-01T00:00:00.010000Z
+                            8.43832076262595\t1970-01-01T00:00:00.020000Z
+                            """, timestampType.getTypeName()));
             assertPlanNoLeakCheck(
                     "select * from x where ts >= (select min(ts) from x)",
-                    replaceTimestampSuffix1("PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.000000Z\",\"MAX\")]\n", timestampType.getTypeName())
+                    replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.000000Z","MAX")]
+                            """, timestampType.getTypeName())
             );
         });
     }
@@ -546,13 +586,15 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             "  from long_sequence(4)" +
                             ") timestamp(ts) partition by day"
             );
-            assertSql(
-                    replaceTimestampSuffix("a\tts\n" +
-                            "8.486964232560668\t1970-01-01T00:00:01.000000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:02.000000Z\n" +
-                            "65.08594025855301\t1970-01-01T00:00:03.000000Z\n", timestampType.getTypeName()),
-                    "select * from x where ts in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')"
-            );
+            assertQuery("select * from x where ts in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
+                            a\tts
+                            8.486964232560668\t1970-01-01T00:00:01.000000Z
+                            8.43832076262595\t1970-01-01T00:00:02.000000Z
+                            65.08594025855301\t1970-01-01T00:00:03.000000Z
+                            """, timestampType.getTypeName()));
             assertPlanNoLeakCheck(
                     "select * from x where ts in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')",
                     "PageFrame\n" +
@@ -562,11 +604,13 @@ public class IntervalFilterTest extends AbstractCairoTest {
                                     "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:03.000000Z\")]\n" :
                                     "      intervals: [(\"1970-01-01T00:00:01.000000000Z\",\"1970-01-01T00:00:03.000000000Z\")]\n")
             );
-            assertSql(
-                    replaceTimestampSuffix("a\tts\n" +
-                            "80.43224099968394\t1970-01-01T00:00:00.000000Z\n", timestampType.getTypeName()),
-                    "select * from x where ts not in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')"
-            );
+            assertQuery("select * from x where ts not in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
+                            a\tts
+                            80.43224099968394\t1970-01-01T00:00:00.000000Z
+                            """, timestampType.getTypeName()));
             assertPlanNoLeakCheck(
                     "select * from x where ts not in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')",
                     "PageFrame\n" +
@@ -591,18 +635,20 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            String expected = replaceTimestampSuffix("a\tts\n" +
-                    "8.486964232560668\t1970-01-01T00:00:01.000000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01T00:00:01'"
-            );
+            String expected = replaceTimestampSuffix("""
+                    a\tts
+                    8.486964232560668\t1970-01-01T00:00:01.000000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts in '1970-01-01T00:00:01'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:01");
-            assertSql(
-                    expected,
-                    "select * from x where ts in :i"
-            );
+            assertQuery("select * from x where ts in :i")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts in '1970-01-01T00:00:01'",
                     "PageFrame\n" +
@@ -613,19 +659,21 @@ public class IntervalFilterTest extends AbstractCairoTest {
                                     "      intervals: [(\"1970-01-01T00:00:01.000000000Z\",\"1970-01-01T00:00:01.999999999Z\")]\n")
             );
 
-            expected = replaceTimestampSuffix1("a\tts\n" +
-                    "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts not in '1970-01-01T00:00:01'"
-            );
+            expected = replaceTimestampSuffix1("""
+                    a\tts
+                    80.43224099968394\t1970-01-01T00:00:00.000000Z
+                    8.43832076262595\t1970-01-01T00:00:02.000000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts not in '1970-01-01T00:00:01'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:01");
-            assertSql(
-                    expected,
-                    "select * from x where ts not in :i"
-            );
+            assertQuery("select * from x where ts not in :i")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts not in '1970-01-01T00:00:01'",
                     "PageFrame\n" +
@@ -636,20 +684,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.999999999Z\"),(\"1970-01-01T00:00:02.000000000Z\",\"MAX\")]\n")
             );
 
-            expected = replaceTimestampSuffix1("a\tts\n" +
-                    "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01' and ts not in '1970-01-01T00:00:01'"
-            );
+            expected = replaceTimestampSuffix1("""
+                    a\tts
+                    80.43224099968394\t1970-01-01T00:00:00.000000Z
+                    8.43832076262595\t1970-01-01T00:00:02.000000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts in '1970-01-01' and ts not in '1970-01-01T00:00:01'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("d", "1970-01-01");
             bindVariableService.setStr("i", "1970-01-01T00:00:01");
-            assertSql(
-                    expected,
-                    "select * from x where ts in :d and ts not in :i"
-            );
+            assertQuery("select * from x where ts in :d and ts not in :i")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts in '1970-01-01' and ts not in '1970-01-01T00:00:01'",
                     "PageFrame\n" +
@@ -661,50 +711,52 @@ public class IntervalFilterTest extends AbstractCairoTest {
             );
 
             expected = "a\tts\n";
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'"
-            );
+            assertQuery("select * from x where ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:01");
-            assertSql(
-                    expected,
-                    "select * from x where ts in :i and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'"
-            );
+            assertQuery("select * from x where ts in :i and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'",
                     "Empty table\n"
             );
 
             expected = "a\tts\n";
-            assertSql(
-                    expected,
-                    "select * from x where ts not in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'"
-            );
+            assertQuery("select * from x where ts not in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:01");
-            assertSql(
-                    expected,
-                    "select * from x where ts not in :i and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'"
-            );
+            assertQuery("select * from x where ts not in :i and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts not in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02' and ts in '1970-01-01T00:00:03'",
                     "Empty table\n"
             );
 
-            expected = replaceTimestampSuffix1("a\tts\n" +
-                    "8.486964232560668\t1970-01-01T00:00:01.000000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01T00:00' and ts in '1970-01-01T00:00:01'"
-            );
+            expected = replaceTimestampSuffix1("""
+                    a\tts
+                    8.486964232560668\t1970-01-01T00:00:01.000000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts in '1970-01-01T00:00' and ts in '1970-01-01T00:00:01'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i1", "1970-01-01T00:00");
             bindVariableService.setStr("i2", "1970-01-01T00:00:01");
-            assertSql(
-                    expected,
-                    "select * from x where ts in :i1 and ts in :i2"
-            );
+            assertQuery("select * from x where ts in :i1 and ts in :i2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts in '1970-01-01T00:00' and ts in '1970-01-01T00:00:01'",
                     "PageFrame\n" +
@@ -715,37 +767,43 @@ public class IntervalFilterTest extends AbstractCairoTest {
                                     "      intervals: [(\"1970-01-01T00:00:01.000000000Z\",\"1970-01-01T00:00:01.999999999Z\")]\n")
             );
 
-            assertSql(
-                    replaceTimestampSuffix1("a\tts\n" +
-                            "8.486964232560668\t1970-01-01T00:00:01.000000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType.getTypeName()),
-                    "select * from x where ts in ('1970-01-01T00:00:01', '1970-01-01T00:00:02')"
-            );
+            assertQuery("select * from x where ts in ('1970-01-01T00:00:01', '1970-01-01T00:00:02')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1("""
+                            a\tts
+                            8.486964232560668\t1970-01-01T00:00:01.000000Z
+                            8.43832076262595\t1970-01-01T00:00:02.000000Z
+                            """, timestampType.getTypeName()));
 
-            assertSql(
-                    replaceTimestampSuffix1("a\tts\n" +
-                            "8.486964232560668\t1970-01-01T00:00:01.000000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType.getTypeName()),
-                    "select * from x where ts in '1970-01-01T00:00:01' or ts in '1970-01-01T00:00:02'"
-            );
+            assertQuery("select * from x where ts in '1970-01-01T00:00:01' or ts in '1970-01-01T00:00:02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1("""
+                            a\tts
+                            8.486964232560668\t1970-01-01T00:00:01.000000Z
+                            8.43832076262595\t1970-01-01T00:00:02.000000Z
+                            """, timestampType.getTypeName()));
 
-            assertSql(
-                    "a\tts\n",
-                    "select * from x where ts in null"
-            );
+            assertQuery("select * from x where ts in null")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("a\tts\n");
 
-            assertSql(
-                    replaceTimestampSuffix1("a\tts\n" +
-                            "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                            "8.486964232560668\t1970-01-01T00:00:01.000000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:02.000000Z\n", timestampType.getTypeName()),
-                    "select * from x where ts not in null"
-            );
+            assertQuery("select * from x where ts not in null")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1("""
+                            a\tts
+                            80.43224099968394\t1970-01-01T00:00:00.000000Z
+                            8.486964232560668\t1970-01-01T00:00:01.000000Z
+                            8.43832076262595\t1970-01-01T00:00:02.000000Z
+                            """, timestampType.getTypeName()));
 
-            assertSql(
-                    "a\tts\n",
-                    "select * from x where ts not in null and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'"
-            );
+            assertQuery("select * from x where ts not in null and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("a\tts\n");
         });
     }
 
@@ -761,19 +819,21 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            String expected = replaceTimestampSuffix1("a\tts\n" +
-                    "8.486964232560668\t1970-01-01T00:00:00.110000Z\n", timestampType.getTypeName());
+            String expected = replaceTimestampSuffix1("""
+                    a\tts
+                    8.486964232560668\t1970-01-01T00:00:00.110000Z
+                    """, timestampType.getTypeName());
 
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01T00:00:00.1'"
-            );
+            assertQuery("select * from x where ts in '1970-01-01T00:00:00.1'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:00.1");
-            assertSql(
-                    expected,
-                    "select * from x where ts in :i"
-            );
+            assertQuery("select * from x where ts in :i")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts in '1970-01-01T00:00:00.1'",
                     "PageFrame\n" +
@@ -784,19 +844,21 @@ public class IntervalFilterTest extends AbstractCairoTest {
                                     "      intervals: [(\"1970-01-01T00:00:00.100000000Z\",\"1970-01-01T00:00:00.199999999Z\")]\n")
             );
 
-            expected = replaceTimestampSuffix1("a\tts\n" +
-                    "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:00.220000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts not in '1970-01-01T00:00:00.1'"
-            );
+            expected = replaceTimestampSuffix1("""
+                    a\tts
+                    80.43224099968394\t1970-01-01T00:00:00.000000Z
+                    8.43832076262595\t1970-01-01T00:00:00.220000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts not in '1970-01-01T00:00:00.1'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:00.1");
-            assertSql(
-                    expected,
-                    "select * from x where ts not in :i"
-            );
+            assertQuery("select * from x where ts not in :i")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts not in '1970-01-01T00:00:00.1'",
                     "PageFrame\n" +
@@ -807,20 +869,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.099999999Z\"),(\"1970-01-01T00:00:00.200000000Z\",\"MAX\")]\n")
             );
 
-            expected = replaceTimestampSuffix1("a\tts\n" +
-                    "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:00.220000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01' and ts not in '1970-01-01T00:00:00.1'"
-            );
+            expected = replaceTimestampSuffix1("""
+                    a\tts
+                    80.43224099968394\t1970-01-01T00:00:00.000000Z
+                    8.43832076262595\t1970-01-01T00:00:00.220000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts in '1970-01-01' and ts not in '1970-01-01T00:00:00.1'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("d", "1970-01-01");
             bindVariableService.setStr("i", "1970-01-01T00:00:00.1");
-            assertSql(
-                    expected,
-                    "select * from x where ts in :d and ts not in :i"
-            );
+            assertQuery("select * from x where ts in :d and ts not in :i")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts in '1970-01-01' and ts not in '1970-01-01T00:00:00.1'",
                     "PageFrame\n" +
@@ -832,50 +896,52 @@ public class IntervalFilterTest extends AbstractCairoTest {
             );
 
             expected = "a\tts\n";
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01T00:00:00.1' and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'"
-            );
+            assertQuery("select * from x where ts in '1970-01-01T00:00:00.1' and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:00.1");
-            assertSql(
-                    expected,
-                    "select * from x where ts in :i and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'"
-            );
+            assertQuery("select * from x where ts in :i and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts in '1970-01-01T00:00:00.1' and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'",
                     "Empty table\n"
             );
 
             expected = "a\tts\n";
-            assertSql(
-                    expected,
-                    "select * from x where ts not in '1970-01-01T00:00:00.1' and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'"
-            );
+            assertQuery("select * from x where ts not in '1970-01-01T00:00:00.1' and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i", "1970-01-01T00:00:00.1");
-            assertSql(
-                    expected,
-                    "select * from x where ts not in :i and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'"
-            );
+            assertQuery("select * from x where ts not in :i and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts not in '1970-01-01T00:00:00.1' and ts in '1970-01-01T00:00:00.2' and ts in '1970-01-01T00:00:00.3'",
                     "Empty table\n"
             );
 
-            expected = replaceTimestampSuffix1("a\tts\n" +
-                    "8.486964232560668\t1970-01-01T00:00:00.110000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01T00:00' and ts in '1970-01-01T00:00:00.1'"
-            );
+            expected = replaceTimestampSuffix1("""
+                    a\tts
+                    8.486964232560668\t1970-01-01T00:00:00.110000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts in '1970-01-01T00:00' and ts in '1970-01-01T00:00:00.1'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("i1", "1970-01-01T00:00");
             bindVariableService.setStr("i2", "1970-01-01T00:00:00.1");
-            assertSql(
-                    expected,
-                    "select * from x where ts in :i1 and ts in :i2"
-            );
+            assertQuery("select * from x where ts in :i1 and ts in :i2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts in '1970-01-01T00:00' and ts in '1970-01-01T00:00:00.1'",
                     "PageFrame\n" +
@@ -886,24 +952,28 @@ public class IntervalFilterTest extends AbstractCairoTest {
                                     "      intervals: [(\"1970-01-01T00:00:00.100000000Z\",\"1970-01-01T00:00:00.199999999Z\")]\n")
             );
 
-            assertSql(
-                    replaceTimestampSuffix1("a\tts\n" +
-                            "8.486964232560668\t1970-01-01T00:00:00.110000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:00.220000Z\n", timestampType.getTypeName()),
-                    "select * from x where ts in ('1970-01-01T00:00:00.11', '1970-01-01T00:00:00.22')"
-            );
+            assertQuery("select * from x where ts in ('1970-01-01T00:00:00.11', '1970-01-01T00:00:00.22')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1("""
+                            a\tts
+                            8.486964232560668\t1970-01-01T00:00:00.110000Z
+                            8.43832076262595\t1970-01-01T00:00:00.220000Z
+                            """, timestampType.getTypeName()));
 
-            assertSql(
-                    replaceTimestampSuffix1("a\tts\n" +
-                            "8.486964232560668\t1970-01-01T00:00:00.110000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:00.220000Z\n", timestampType.getTypeName()),
-                    "select * from x where ts in '1970-01-01T00:00:00.1' or ts in '1970-01-01T00:00:00.2'"
-            );
+            assertQuery("select * from x where ts in '1970-01-01T00:00:00.1' or ts in '1970-01-01T00:00:00.2'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1("""
+                            a\tts
+                            8.486964232560668\t1970-01-01T00:00:00.110000Z
+                            8.43832076262595\t1970-01-01T00:00:00.220000Z
+                            """, timestampType.getTypeName()));
 
-            assertSql(
-                    "a\tts\n",
-                    "select * from x where ts not in null and ts in '1970-01-01T00:00:00.1' and ts in '1970-01-01T00:00:00.2'"
-            );
+            assertQuery("select * from x where ts not in null and ts in '1970-01-01T00:00:00.1' and ts in '1970-01-01T00:00:00.2'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("a\tts\n");
         });
     }
 
@@ -959,27 +1029,29 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            String expected = replaceTimestampSuffix1("a\tts\n" +
-                    "80.43224099968394\t1970-01-01T00:00:00.000000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts < '1970-01-01T00:00:00.010000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts < '1970-01-01T00:00:00.010000000Z'"
-            );
+            String expected = replaceTimestampSuffix1("""
+                    a\tts
+                    80.43224099968394\t1970-01-01T00:00:00.000000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts < '1970-01-01T00:00:00.010000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts < '1970-01-01T00:00:00.010000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
             bindVariableService.setStr("ts1", "1970-01-01T00:00:00.010000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts < :ts"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts < :ts1"
-            );
+            assertQuery("select * from x where ts < :ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts < :ts1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts < '1970-01-01T00:00:00.010000Z'",
                     "PageFrame\n" +
@@ -999,66 +1071,74 @@ public class IntervalFilterTest extends AbstractCairoTest {
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.009999999Z\")]\n")
             );
 
-            expected = replaceTimestampSuffix1("a\tts\n" +
-                    "8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts >= '1970-01-01T00:00:00.010000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts >= '1970-01-01T00:00:00.010000000Z'"
-            );
+            expected = replaceTimestampSuffix1("""
+                    a\tts
+                    8.486964232560668\t1970-01-01T00:00:00.010000Z
+                    8.43832076262595\t1970-01-01T00:00:00.020000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts >= '1970-01-01T00:00:00.010000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts >= '1970-01-01T00:00:00.010000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
             bindVariableService.setStr("ts1", "1970-01-01T00:00:00.010000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts >= :ts"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts >= :ts1"
-            );
+            assertQuery("select * from x where ts >= :ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts >= :ts1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts >= '1970-01-01T00:00:00.010000Z'",
-                    replaceTimestampSuffix1("PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"MAX\")]\n", timestampType.getTypeName())
+                    replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.010000Z","MAX")]
+                            """, timestampType.getTypeName())
             );
             assertPlanNoLeakCheck(
                     "select * from x where ts >= '1970-01-01T00:00:00.010000000Z'",
-                    replaceTimestampSuffix1("PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"1970-01-01T00:00:00.010000Z\",\"MAX\")]\n", timestampType.getTypeName())
+                    replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("1970-01-01T00:00:00.010000Z","MAX")]
+                            """, timestampType.getTypeName())
             );
 
-            expected = replaceTimestampSuffix1("a\tts\n" +
-                    "8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
-                    "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName());
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01' and ts >= '1970-01-01T00:00:00.010000Z'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts in '1970-01-01' and ts >= '1970-01-01T00:00:00.010000000Z'"
-            );
+            expected = replaceTimestampSuffix1("""
+                    a\tts
+                    8.486964232560668\t1970-01-01T00:00:00.010000Z
+                    8.43832076262595\t1970-01-01T00:00:00.020000Z
+                    """, timestampType.getTypeName());
+            assertQuery("select * from x where ts in '1970-01-01' and ts >= '1970-01-01T00:00:00.010000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts in '1970-01-01' and ts >= '1970-01-01T00:00:00.010000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("date", "1970-01-01");
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
             bindVariableService.setStr("ts1", "1970-01-01T00:00:00.010000000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts in :date and ts >= :ts"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts in :date and ts >= :ts1"
-            );
+            assertQuery("select * from x where ts in :date and ts >= :ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts in :date and ts >= :ts1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts in '1970-01-01' and ts >= '1970-01-01T00:00:00.010000Z'",
                     "PageFrame\n" +
@@ -1080,25 +1160,25 @@ public class IntervalFilterTest extends AbstractCairoTest {
 
             );
             expected = "a\tts\n";
-            assertSql(
-                    expected,
-                    "select * from x where ts < '1970-01-01T00:00:00.010000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts < '1970-01-01T00:00:00.010000000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'"
-            );
+            assertQuery("select * from x where ts < '1970-01-01T00:00:00.010000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts < '1970-01-01T00:00:00.010000000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             bindVariableService.clear();
             bindVariableService.setStr("ts", "1970-01-01T00:00:00.010000Z");
             bindVariableService.setStr("ts1", "1970-01-01T00:00:00.010000000Z");
-            assertSql(
-                    expected,
-                    "select * from x where ts < :ts and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'"
-            );
-            assertSql(
-                    expected,
-                    "select * from x where ts < :ts1 and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'"
-            );
+            assertQuery("select * from x where ts < :ts and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("select * from x where ts < :ts1 and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertPlanNoLeakCheck(
                     "select * from x where ts < '1970-01-01T00:00:00.010000Z' and ts in '1970-01-01T00:00:01' and ts in '1970-01-01T00:00:02'",
                     "Empty table\n"
@@ -1122,12 +1202,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            assertSql(
-                    replaceTimestampSuffix1("a\tts\n" +
-                            "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                            "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType.getTypeName()),
-                    "select * from x where ts < (select max(ts) from x)"
-            );
+            assertQuery("select * from x where ts < (select max(ts) from x)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1("""
+                            a\tts
+                            80.43224099968394\t1970-01-01T00:00:00.000000Z
+                            8.486964232560668\t1970-01-01T00:00:00.010000Z
+                            """, timestampType.getTypeName()));
             assertPlanNoLeakCheck(
                     "select * from x where ts < (select max(ts) from x)",
                     "PageFrame\n" +
@@ -1138,19 +1220,23 @@ public class IntervalFilterTest extends AbstractCairoTest {
                                     "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.019999999Z\")]\n")
             );
 
-            assertSql(
-                    replaceTimestampSuffix1("a\tts\n" +
-                            "80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
-                            "8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
-                            "8.43832076262595\t1970-01-01T00:00:00.020000Z\n", timestampType.getTypeName()),
-                    "select * from x where ts <= (select max(ts) from x)"
-            );
+            assertQuery("select * from x where ts <= (select max(ts) from x)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1("""
+                            a\tts
+                            80.43224099968394\t1970-01-01T00:00:00.000000Z
+                            8.486964232560668\t1970-01-01T00:00:00.010000Z
+                            8.43832076262595\t1970-01-01T00:00:00.020000Z
+                            """, timestampType.getTypeName()));
             assertPlanNoLeakCheck(
                     "select * from x where ts <= (select max(ts) from x)",
-                    replaceTimestampSuffix1("PageFrame\n" +
-                            "    Row forward scan\n" +
-                            "    Interval forward scan on: x\n" +
-                            "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.020000Z\")]\n", timestampType.getTypeName())
+                    replaceTimestampSuffix1("""
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: x
+                                  intervals: [("MIN","1970-01-01T00:00:00.020000Z")]
+                            """, timestampType.getTypeName())
             );
         });
     }
@@ -1167,11 +1253,13 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            assertSql(
-                    replaceTimestampSuffix1("a\tts\n" +
-                            "8.486964232560668\t1970-01-01T00:00:00.010000Z\n", timestampType.getTypeName()),
-                    "select * from x where ts > (select min(ts) from x) and ts < (select max(ts) from x)"
-            );
+            assertQuery("select * from x where ts > (select min(ts) from x) and ts < (select max(ts) from x)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix1("""
+                            a\tts
+                            8.486964232560668\t1970-01-01T00:00:00.010000Z
+                            """, timestampType.getTypeName()));
             assertPlanNoLeakCheck(
                     "select * from x where ts > (select min(ts) from x) and ts < (select max(ts) from x)",
                     "PageFrame\n" +

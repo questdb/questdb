@@ -49,7 +49,7 @@ public abstract class AbstractDoubleArrayElemParallelGroupByTest extends Abstrac
 
     @Test
     public void testParallelBothNull() throws Exception {
-        assertParallelGroupBy("DOUBLE[][]", "null",
+        assertParallelGroupBy("null",
                 new String[][]{
                         {"2024-01-01T00:00:00", "null"},
                         {"2024-01-02T00:00:00", "null"},
@@ -59,17 +59,17 @@ public abstract class AbstractDoubleArrayElemParallelGroupByTest extends Abstrac
         );
     }
 
-    protected void assertParallelGroupBy(String columnType, String expected, String[][] timestampedRows) throws Exception {
+    protected void assertParallelGroupBy(String expected, String[][] timestampedRows) throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, arr " + columnType + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY");
             for (String[] row : timestampedRows) {
                 execute("INSERT INTO tab VALUES ('" + row[0] + "', " + row[1] + ")");
             }
-            assertQueryNoLeakCheck(
-                    "arr\n" + expected + "\n",
-                    "SELECT " + funcName() + "(arr) arr FROM tab",
-                    null, false, true
-            );
+            assertQuery("SELECT " + funcName() + "(arr) arr FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("arr\n" + expected + "\n");
         });
     }
 
@@ -82,7 +82,7 @@ public abstract class AbstractDoubleArrayElemParallelGroupByTest extends Abstrac
     protected void assertKeyedParallelGroupBy(String expected, String[][] rows) throws Exception {
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (_, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,
                             "CREATE TABLE tab (ts TIMESTAMP, grp INT, arr DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY",
@@ -95,15 +95,12 @@ public abstract class AbstractDoubleArrayElemParallelGroupByTest extends Abstrac
                                 sqlExecutionContext
                         );
                     }
-                    assertQueryNoLeakCheck(
-                            compiler,
-                            expected,
-                            "SELECT grp, " + funcName() + "(arr) arr FROM tab ORDER BY grp",
-                            null,
-                            sqlExecutionContext,
-                            true,
-                            true
-                    );
+                    assertQuery("SELECT grp, " + funcName() + "(arr) arr FROM tab ORDER BY grp")
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .expectSize()
+                            .returns(expected);
                 }, configuration, LOG);
             }
         });

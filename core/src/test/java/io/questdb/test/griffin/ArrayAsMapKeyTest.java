@@ -33,58 +33,55 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
     public void testArrayAsGroupByKey() throws Exception {
         execute("create table array_test(k symbol, ob_buy double[][], ob_sell double[][], ts timestamp) timestamp(ts) partition by day ;");
         execute(
-                "insert into array_test values \n" +
-                        "   ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),\n" +
-                        "   ('vod2', ARRAY[[4., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),   \n" +
-                        "   ('vod3', ARRAY[[3., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123)\n" +
-                        "   ;\n"
+                """
+                        insert into array_test values\s
+                           ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),
+                           ('vod2', ARRAY[[4., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),  \s
+                           ('vod3', ARRAY[[3., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123)
+                           ;
+                        """
         );
-        assertQuery("[]\tk\tcount\n" +
-                        "[[9.0,1000.0],[10.0,10000.0]]\tvod\t1\n" +
-                        "[[4.0,1000.0],[10.0,10000.0]]\tvod2\t1\n" +
-                        "[[3.0,1000.0],[10.0,10000.0]]\tvod3\t1\n",
-                "select ob_buy[1:], k, count() from array_test;",
-                true,
-                true
-        );
+        assertQuery("select ob_buy[1:], k, count() from array_test;")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        []\tk\tcount
+                        [[9.0,1000.0],[10.0,10000.0]]\tvod\t1
+                        [[4.0,1000.0],[10.0,10000.0]]\tvod2\t1
+                        [[3.0,1000.0],[10.0,10000.0]]\tvod3\t1
+                        """);
 
-        assertQuery("ob_buy\tk\tcount\n" +
-                        "[[9.0,1000.0],[10.0,10000.0]]\tvod\t1\n" +
-                        "[[4.0,1000.0],[10.0,10000.0]]\tvod2\t1\n" +
-                        "[[3.0,1000.0],[10.0,10000.0]]\tvod3\t1\n",
-                "select ob_buy, k, count() from array_test;",
-                true,
-                true
-        );
+        assertQuery("select ob_buy, k, count() from array_test;")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        ob_buy\tk\tcount
+                        [[9.0,1000.0],[10.0,10000.0]]\tvod\t1
+                        [[4.0,1000.0],[10.0,10000.0]]\tvod2\t1
+                        [[3.0,1000.0],[10.0,10000.0]]\tvod3\t1
+                        """);
     }
 
     @Test
     public void testArrayAsOrderByColumn() throws Exception {
         execute("create table array_test(k symbol, ob_buy double[][], ob_sell double[][], ts timestamp) timestamp(ts) partition by day ;");
         execute(
-                "insert into array_test values \n" +
-                        "   ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),\n" +
-                        "   ('vod2', ARRAY[[4., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),   \n" +
-                        "   ('vod3', ARRAY[[3., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123)\n" +
-                        "   ;\n"
+                """
+                        insert into array_test values\s
+                           ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),
+                           ('vod2', ARRAY[[4., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),  \s
+                           ('vod3', ARRAY[[3., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123)
+                           ;
+                        """
         );
 
-        assertException(
-                "select ob_buy[1:] c, k from array_test order by c;",
-                48,
-                "DOUBLE[][] is not a supported type in ORDER BY clause"
-        );
+        assertQuery("select ob_buy[1:] c, k from array_test order by c;")
+                .fails(48, "DOUBLE[][] is not a supported type in ORDER BY clause");
 
-        assertException(
-                "select ob_buy, k from array_test order by ob_buy;",
-                42,
-                "DOUBLE[][] is not a supported type in ORDER BY clause"
-        );
+        assertQuery("select ob_buy, k from array_test order by ob_buy;")
+                .fails(42, "DOUBLE[][] is not a supported type in ORDER BY clause");
 
-        assertException(
-                "select k, ob_buy from array_test order by 2;",
-                42,
-                "DOUBLE[][] is not a supported type in ORDER BY clause"
-        );
+        assertQuery("select k, ob_buy from array_test order by 2;")
+                .fails(42, "DOUBLE[][] is not a supported type in ORDER BY clause");
     }
 }
