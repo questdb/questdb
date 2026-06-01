@@ -5637,7 +5637,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("insert into device_data select x::timestamp, x, '12345678' from long_sequence(10)");
 
             // use column name in order by
-            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp DESC " + "LIMIT 1", """
+            assertQuery("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp DESC " + "LIMIT 1")
+                    .noLeakCheck()
+                    .timestampDesc("date")
+                    .sizeMayVary()
+                    .withPlan("""
                     VirtualRecord
                       functions: [date,val,val+1]
                         SelectedRecord
@@ -5647,12 +5651,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 PageFrame
                                     Row backward scan
                                     Frame backward scan on: device_data
-                    """, """
+                    """)
+                    .returns("""
                     date\tval\tcolumn
                     1970-01-01T00:00:00.000010Z\t10.0\t11.0
                     """);
 
-            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp  " + "LIMIT -1", """
+            assertQuery("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp  " + "LIMIT -1")
+                    .noLeakCheck()
+                    .timestamp("date")
+                    .sizeMayVary()
+                    .withPlan("""
                     VirtualRecord
                       functions: [date,val,val+1]
                         SelectedRecord
@@ -5662,12 +5671,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 PageFrame
                                     Row backward scan
                                     Frame backward scan on: device_data
-                    """, """
+                    """)
+                    .returns("""
                     date\tval\tcolumn
                     1970-01-01T00:00:00.000010Z\t10.0\t11.0
                     """);
 
-            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp DESC " + "LIMIT -2", """
+            assertQuery("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp DESC " + "LIMIT -2")
+                    .noLeakCheck()
+                    .timestampDesc("date")
+                    .sizeMayVary()
+                    .withPlan("""
                     VirtualRecord
                       functions: [date,val,val+1]
                         SelectedRecord
@@ -5677,13 +5691,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: device_data
-                    """, """
+                    """)
+                    .returns("""
                     date\tval\tcolumn
                     1970-01-01T00:00:00.000002Z\t2.0\t3.0
                     1970-01-01T00:00:00.000001Z\t1.0\t2.0
                     """);
 
-            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp DESC " + "LIMIT 1,3", """
+            assertQuery("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp DESC " + "LIMIT 1,3")
+                    .noLeakCheck()
+                    .timestampDesc("date")
+                    .sizeMayVary()
+                    .withPlan("""
                     Limit left: 1 right: 3 skip-rows-max: 1 take-rows-max: 2
                         VirtualRecord
                           functions: [date,val,val+1]
@@ -5693,14 +5712,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: device_data
-                    """, """
+                    """)
+                    .returns("""
                     date\tval\tcolumn
                     1970-01-01T00:00:00.000009Z\t9.0\t10.0
                     1970-01-01T00:00:00.000008Z\t8.0\t9.0
                     """);
 
             // with a virtual column
-            assertSqlAndPlanNoLeakCheck("SELECT timestamp, val, now() " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp DESC " + "LIMIT 1", """
+            assertQuery("SELECT timestamp, val, now() " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp DESC " + "LIMIT 1")
+                    .noLeakCheck()
+                    .timestampDesc("timestamp")
+                    .sizeMayVary()
+                    .withPlan("""
                     VirtualRecord
                       functions: [timestamp,val,now()]
                         Async JIT Filter workers: 1
@@ -5709,12 +5733,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             PageFrame
                                 Row backward scan
                                 Frame backward scan on: device_data
-                    """, """
+                    """)
+                    .returns("""
                     timestamp\tval\tnow
                     1970-01-01T00:00:00.000010Z\t10.0\t1970-01-01T00:00:00.000000Z
                     """);
 
-            assertSqlAndPlanNoLeakCheck("SELECT timestamp, val, now() " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp ASC " + "LIMIT -3", """
+            assertQuery("SELECT timestamp, val, now() " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY timestamp ASC " + "LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .sizeMayVary()
+                    .withPlan("""
                     VirtualRecord
                       functions: [timestamp,val,now()]
                         Async JIT Filter workers: 1
@@ -5723,7 +5752,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             PageFrame
                                 Row backward scan
                                 Frame backward scan on: device_data
-                    """, """
+                    """)
+                    .returns("""
                     timestamp\tval\tnow
                     1970-01-01T00:00:00.000008Z\t8.0\t1970-01-01T00:00:00.000000Z
                     1970-01-01T00:00:00.000009Z\t9.0\t1970-01-01T00:00:00.000000Z
@@ -5731,7 +5761,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             // use alias in order by
-            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY date DESC " + "LIMIT 1", """
+            assertQuery("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY date DESC " + "LIMIT 1")
+                    .noLeakCheck()
+                    .timestampDesc("date")
+                    .sizeMayVary()
+                    .withPlan("""
                     Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                         VirtualRecord
                           functions: [date,val,val+1]
@@ -5741,12 +5775,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: device_data
-                    """, """
+                    """)
+                    .returns("""
                     date\tval\tcolumn
                     1970-01-01T00:00:00.000010Z\t10.0\t11.0
                     """);
 
-            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY date  " + "LIMIT -1", """
+            assertQuery("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY date  " + "LIMIT -1")
+                    .noLeakCheck()
+                    .timestamp("date")
+                    .sizeMayVary()
+                    .withPlan("""
                     Limit value: -1 skip-rows: baseRows-1 take-rows-max: 1
                         VirtualRecord
                           functions: [date,val,val+1]
@@ -5756,12 +5795,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: device_data
-                    """, """
+                    """)
+                    .returns("""
                     date\tval\tcolumn
                     1970-01-01T00:00:00.000010Z\t10.0\t11.0
                     """);
 
-            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY date DESC " + "LIMIT -2", """
+            assertQuery("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY date DESC " + "LIMIT -2")
+                    .noLeakCheck()
+                    .timestampDesc("date")
+                    .sizeMayVary()
+                    .withPlan("""
                     Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
                         VirtualRecord
                           functions: [date,val,val+1]
@@ -5771,13 +5815,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: device_data
-                    """, """
+                    """)
+                    .returns("""
                     date\tval\tcolumn
                     1970-01-01T00:00:00.000002Z\t2.0\t3.0
                     1970-01-01T00:00:00.000001Z\t1.0\t2.0
                     """);
 
-            assertSqlAndPlanNoLeakCheck("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY date DESC " + "LIMIT 1,3", """
+            assertQuery("SELECT timestamp AS date, val, val + 1 " + "FROM device_data " + "WHERE device_data.id = '12345678' " + "ORDER BY date DESC " + "LIMIT 1,3")
+                    .noLeakCheck()
+                    .timestampDesc("date")
+                    .sizeMayVary()
+                    .withPlan("""
                     Limit left: 1 right: 3 skip-rows-max: 1 take-rows-max: 2
                         VirtualRecord
                           functions: [date,val,val+1]
@@ -5787,7 +5836,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: device_data
-                    """, """
+                    """)
+                    .returns("""
                     date\tval\tcolumn
                     1970-01-01T00:00:00.000009Z\t9.0\t10.0
                     1970-01-01T00:00:00.000008Z\t8.0\t9.0
@@ -12592,15 +12642,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
             assertFalse(factory.isProjection());
         }
-    }
-
-    private void assertSqlAndPlanNoLeakCheck(String sql, String expectedPlan, String expectedResult) throws Exception {
-        assertQuery(sql)
-                .noLeakCheck()
-                .assertsPlan(expectedPlan);
-        assertQuery(sql)
-                .noLeakCheck()
-                .returnsOnce(expectedResult);
     }
 
     private void assertWritePermissionDenied(String sql, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
