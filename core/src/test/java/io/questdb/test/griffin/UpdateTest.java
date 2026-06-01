@@ -4087,14 +4087,6 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Override
-    protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
-        if (walEnabled) {
-            drainWalQueue();
-        }
-        super.assertSql(expected, sql);
-    }
-
-    @Override
     protected void prepareForQueryAssertion() {
         if (walEnabled) {
             drainWalQueue();

@@ -606,10 +606,13 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // With stale bloom_filter_offset on copied RG0', bloom filter read
             // fails silently → RG0' NOT skipped → counter = 2.
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            // Keep assertSql: it runs a single query execution, so the row-group
-            // skip counter reflects exactly one scan. The assertQuery builder
-            // re-reads the cursor, which would inflate the counter.
-            assertSql("x\n", "SELECT x FROM x WHERE x = 50");
+            // Use returnsOnce(): it runs a single query execution (the builder's
+            // single-factory path, equivalent to assertSql), so the row-group skip
+            // counter reflects exactly one scan. The returns() path would re-read
+            // the cursor, which would inflate the counter.
+            assertQuery("SELECT x FROM x WHERE x = 50")
+                    .noLeakCheck()
+                    .returnsOnce("x\n");
             Assert.assertEquals(
                     "bloom filter should skip all 3 row groups (2 by bloom, 1 by min/max)",
                     3,

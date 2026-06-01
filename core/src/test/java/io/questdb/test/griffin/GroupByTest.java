@@ -2873,10 +2873,9 @@ public class GroupByTest extends AbstractCairoTest {
 
             // assertQueryNoLeakCheck's cursor memory verification is too strict, so we're using assertSql;
             // that's because non-keyed group by cursors only close their map value when the factory is closed
-            assertSql(
-                    expectedHeader + expectedValues.toString(),
-                    query.toString()
-            );
+            assertQuery(query.toString())
+                    .noLeakCheck()
+                    .returnsOnce(expectedHeader + expectedValues.toString());
         });
     }
 
@@ -2917,10 +2916,9 @@ public class GroupByTest extends AbstractCairoTest {
 
             // assertQueryNoLeakCheck's cursor memory verification is too strict, so we're using assertSql;
             // that's because non-keyed group by cursors only close their map value when the factory is closed
-            assertSql(
-                    expectedHeader + expectedValues.toString(),
-                    query.toString()
-            );
+            assertQuery(query.toString())
+                    .noLeakCheck()
+                    .returnsOnce(expectedHeader + expectedValues.toString());
         });
     }
 

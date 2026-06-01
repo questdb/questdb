@@ -1418,21 +1418,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainCreateTable() throws Exception {
-        assertSql("""
-                QUERY PLAN
+        assertQuery("create table a ( l long, d double)")
+                .noLeakCheck()
+                .assertsPlan("""
                 Create table: a
-                """, "explain create table a ( l long, d double)");
+                """);
     }
 
     @Test
     public void testExplainCreateTableAsSelect() throws Exception {
-        assertMemoryLeak(() -> assertSql("""
-                QUERY PLAN
+        assertMemoryLeak(() -> assertQuery("create table a as (select x, 1 from long_sequence(10))")
+        .noLeakCheck()
+        .assertsPlan("""
                 Create table: a
                     VirtualRecord
                       functions: [x,1]
                         long_sequence count: 10
-                """, "explain create table a as (select x, 1 from long_sequence(10))"));
+                """));
     }
 
     @Test
@@ -1532,10 +1534,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testExplainInsert() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
-            assertSql("""
-                    QUERY PLAN
+            assertQuery("insert into a values (1, 2.0)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Insert into table: a
-                    """, "explain insert into a values (1, 2.0)");
+                    """);
         });
     }
 
@@ -1543,13 +1546,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testExplainInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
-            assertSql("""
-                    QUERY PLAN
+            assertQuery("insert into a select x, 1 from long_sequence(10)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Insert into table: a
                         VirtualRecord
                           functions: [x,1]
                             long_sequence count: 10
-                    """, "explain insert into a select x, 1 from long_sequence(10)");
+                    """);
         });
     }
 
@@ -1587,12 +1591,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testExplainSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
-            assertSql("""
-                    QUERY PLAN
+            assertQuery("select * from a")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     PageFrame
                         Row forward scan
                         Frame forward scan on: a
-                    """, "explain select * from a;");
+                    """);
         });
     }
 
@@ -1634,13 +1639,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testExplainSelectWithCte3() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
-            assertSql("""
-                    QUERY PLAN
+            assertQuery("with b as (select * from a limit 10) select * from b")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: 10 skip-rows: 0 take-rows: 0
                         PageFrame
                             Row forward scan
                             Frame forward scan on: a
-                    """, "explain with b as (select * from a limit 10) select * from b;");
+                    """);
         });
     }
 
@@ -1648,15 +1654,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testExplainUpdate1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
-            assertSql("""
-                    QUERY PLAN
+            assertQuery("update a set l = 1, d=10.1")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Update table: a
                         VirtualRecord
                           functions: [1,10.1]
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: a
-                    """, "explain update a set l = 1, d=10.1;");
+                    """);
         });
     }
 
@@ -1665,8 +1672,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( l1 long, d1 double)");
             execute("create table b ( l2 long, d2 double)");
-            assertSql("""
-                    QUERY PLAN
+            assertQuery("update a set l1 = 1, d1=d2 from b where l1=l2")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Update table: a
                         VirtualRecord
                           functions: [1,d1]
@@ -1680,7 +1688,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: b
-                    """, "explain update a set l1 = 1, d1=d2 from b where l1=l2;");
+                    """);
         });
     }
 
