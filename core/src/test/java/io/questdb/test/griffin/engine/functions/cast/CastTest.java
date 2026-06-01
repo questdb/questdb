@@ -7099,7 +7099,7 @@ public class CastTest extends AbstractCairoTest {
                             2024-01-01T00:00:00.000000Z
                             2024-06-15T12:30:45.123456Z
                             1969-12-31T23:59:59.999999Z
-
+                            
                             """);
         });
     }
