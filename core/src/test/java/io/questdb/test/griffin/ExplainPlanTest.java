@@ -606,7 +606,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                assertPlanNoLeakCheck(compiler, "select * " + "from a " + "asof join b on a.i = b.i", """
+                assertQuery("select * " + "from a " + "asof join b on a.i = b.i")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .assertsPlan("""
                         SelectedRecord
                             AsOf Join
                               condition: b.i=a.i
@@ -616,7 +619,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: b
-                        """, sqlExecutionContext);
+                        """);
             }
         });
     }
@@ -2511,7 +2514,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
                 execute("create table a (l long)");
-                assertPlanNoLeakCheck(compiler, "select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ", """
+                assertQuery("select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .assertsPlan("""
                         SelectedRecord
                             Filter filter: 0<a.l+b.l
                                 Hash Join
@@ -2526,7 +2532,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: a
-                        """, sqlExecutionContext);
+                        """);
             }
         });
     }
@@ -2537,7 +2543,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
                 execute("create table a ( l long)");
-                assertPlanNoLeakCheck(compiler, "select * from a join (select l from a limit 40) on l", """
+                assertQuery("select * from a join (select l from a limit 40) on l")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .assertsPlan("""
                         SelectedRecord
                             Hash Join
                               condition: _xQdbA1.l=a.l
@@ -2549,7 +2558,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: a
-                        """, sqlExecutionContext);
+                        """);
             }
         });
     }
@@ -2566,7 +2575,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 for (int i = 0; i < joinTypes.length; i++) {
                     String joinType = joinTypes[i];
                     String factoryType = joinFactoryTypes[i];
-                    assertPlanNoLeakCheck(compiler, "select * from a " + joinType + " join a a1 on l", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: a1.l=a.l\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: a\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: a\n", sqlExecutionContext);
+                    assertQuery("select * from a " + joinType + " join a a1 on l")
+                            .withCompiler(compiler)
+                            .noLeakCheck()
+                            .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: a1.l=a.l\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: a\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: a\n");
                 }
             }
         });
@@ -4063,7 +4075,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                assertPlanNoLeakCheck(compiler, "select * " + "from taba " + "inner join tabb on a1=b1 " + "asof join tabc on b1=c1", """
+                assertQuery("select * " + "from taba " + "inner join tabb on a1=b1 " + "asof join tabc on b1=c1")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .assertsPlan("""
                         SelectedRecord
                             AsOf Join
                               condition: c1=b1
@@ -4079,7 +4094,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tabc
-                        """, sqlExecutionContext);
+                        """);
             }
         });
     }
@@ -5184,7 +5199,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                assertPlanNoLeakCheck(compiler, "select * " + "from a " + "Lt Join b on a.i = b.i", """
+                assertQuery("select * " + "from a " + "Lt Join b on a.i = b.i")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .assertsPlan("""
                         SelectedRecord
                             Lt Join
                               condition: b.i=a.i
@@ -5194,7 +5212,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: b
-                        """, sqlExecutionContext);
+                        """);
             }
         });
     }
@@ -12668,9 +12686,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
         execute("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
         String asofJoinType = isFastAsOfJoin ? " Fast" : (isLight ? "Light" : "");
-        assertPlanNoLeakCheck(compiler, "select * " + "from taba " + "left join tabb on a1=b1 " + "asof join tabc on b1=c1", "SelectedRecord\n" + "    AsOf Join" + asofJoinType + "\n" + "      condition: c1=b1\n" + "        Hash Left Outer Join" + (isLight ? " Light" : "") + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: tabc\n", sqlExecutionContext);
-        assertPlanNoLeakCheck(compiler, "select * " + "from taba " + "asof join tabb on a1=b1 " + "right join tabc on b1=c1", "SelectedRecord\n" + "    Hash Right Outer Join" + (isLight ? " Light" : "") + "\n" + "      condition: c1=b1\n" + "        AsOf Join" + asofJoinType + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n", sqlExecutionContext);
-        assertPlanNoLeakCheck(compiler, "select * " + "from taba " + "asof join tabb on a1=b1 " + "full join tabc on b1=c1", "SelectedRecord\n" + "    Hash Full Outer Join" + (isLight ? " Light" : "") + "\n" + "      condition: c1=b1\n" + "        AsOf Join" + asofJoinType + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n", sqlExecutionContext);
+        assertQuery("select * " + "from taba " + "left join tabb on a1=b1 " + "asof join tabc on b1=c1")
+                .withCompiler(compiler)
+                .noLeakCheck()
+                .assertsPlan("SelectedRecord\n" + "    AsOf Join" + asofJoinType + "\n" + "      condition: c1=b1\n" + "        Hash Left Outer Join" + (isLight ? " Light" : "") + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: tabc\n");
+        assertQuery("select * " + "from taba " + "asof join tabb on a1=b1 " + "right join tabc on b1=c1")
+                .withCompiler(compiler)
+                .noLeakCheck()
+                .assertsPlan("SelectedRecord\n" + "    Hash Right Outer Join" + (isLight ? " Light" : "") + "\n" + "      condition: c1=b1\n" + "        AsOf Join" + asofJoinType + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n");
+        assertQuery("select * " + "from taba " + "asof join tabb on a1=b1 " + "full join tabc on b1=c1")
+                .withCompiler(compiler)
+                .noLeakCheck()
+                .assertsPlan("SelectedRecord\n" + "    Hash Full Outer Join" + (isLight ? " Light" : "") + "\n" + "      condition: c1=b1\n" + "        AsOf Join" + asofJoinType + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n");
     }
 
     private void testSelectIndexedSymbol(String timestampAndPartitionByClause) throws Exception {
