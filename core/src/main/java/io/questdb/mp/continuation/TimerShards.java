@@ -73,8 +73,8 @@ import java.util.concurrent.TimeUnit;
 public final class TimerShards {
     private final Log log;
     private final DelayHeap<DelayedFireable>[] shards;
-    private final Thread[] threads;
     private final String threadNamePrefix;
+    private final Thread[] threads;
     private volatile boolean running;
 
     @SuppressWarnings("unchecked")

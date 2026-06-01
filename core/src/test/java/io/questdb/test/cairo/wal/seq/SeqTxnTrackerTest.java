@@ -342,6 +342,46 @@ public class SeqTxnTrackerTest {
         });
     }
 
+    @Test
+    public void testWaiterShutdownFromPendingCancelsAndResumes() throws Exception {
+        // PENDING -> CANCELLED path: shutdown() flags the cont and schedules exactly
+        // one resume so a worker remounts the body and observes the shutdown flag.
+        TestUtils.assertMemoryLeak(() -> {
+            int[] resumeCount = {0};
+            WorkerContinuation cont = new WorkerContinuation(() -> {
+            }, c -> resumeCount[0]++);
+            TxnWaiter w = new TxnWaiter(10, cont);
+            assertFalse(cont.isShutdown());
+
+            w.shutdown();
+
+            assertTrue(cont.isShutdown());
+            assertTrue(w.isCancelled());
+            assertEquals(1, resumeCount[0]);
+        });
+    }
+
+    @Test
+    public void testWaiterShutdownWhenAlreadyFiredOnlySetsFlag() throws Exception {
+        // Already-terminal path: a racer fired the waiter and issued the resume, so
+        // shutdown() must only set the cont flag without scheduling a second resume.
+        TestUtils.assertMemoryLeak(() -> {
+            int[] resumeCount = {0};
+            WorkerContinuation cont = new WorkerContinuation(() -> {
+            }, c -> resumeCount[0]++);
+            TxnWaiter w = new TxnWaiter(10, cont);
+            w.tryFire();
+            assertTrue(w.isFired());
+            assertEquals(1, resumeCount[0]);
+
+            w.shutdown();
+
+            assertTrue(cont.isShutdown());
+            assertTrue(w.isFired());
+            assertEquals(1, resumeCount[0]);
+        });
+    }
+
     private static WorkerContinuation dummyContinuation() {
         // A continuation whose body never runs in these tests; we only need a reference
         // that the waiter can stash. The sink is a no-op because tests verify state

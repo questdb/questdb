@@ -59,12 +59,12 @@ public final class TxnWaiter implements DelayedFireable {
     public static final int STATE_CANCELLED = 2;
     public static final int STATE_FIRED = 1;
     public static final int STATE_PENDING = 0;
-    static final long STATE_OFFSET = Unsafe.getFieldOffset(TxnWaiter.class, "state");
+    private static final long STATE_OFFSET = Unsafe.getFieldOffset(TxnWaiter.class, "state");
     private final long targetWriterTxn;
     private final TimerShards timerShards;
     private final long waitIntervalMillis;
-    volatile long registeredAtMillis;
     private WorkerContinuation cont;
+    private volatile long registeredAtMillis;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile int state = STATE_PENDING;
 
@@ -97,6 +97,29 @@ public final class TxnWaiter implements DelayedFireable {
         if (!Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED)) {
             cont.markParkRefused();
         }
+    }
+
+    /**
+     * Attempts to transition this waiter from PENDING to CANCELLED. Returns {@code true}
+     * if the CAS won, in which case the caller is responsible for calling
+     * {@code cont.scheduleResume()} so the parked body can observe the cancellation.
+     *
+     * <p>DO NOT call {@code cont.markParkRefused()} when the CAS loses. The losing path
+     * is the normal happy-path tail of io.questdb.griffin.engine.functions.table.WaitWalFunction#getBool:
+     * a racer fired the waiter, scheduleResume already woke the body via a peer worker,
+     * the body resumed and finished its loop, and is now running the finally block on
+     * a fully remounted, healthy cont. Setting parkRefused here poisons the cont for
+     * its NEXT yield -- io.questdb.mp.Worker#mountForeignCont consumes the flag
+     * and silently drops the dequeue, so the next legitimate resume is dropped and the
+     * cont is parked forever. This bricked binary_dedup.test (three back-to-back
+     * wait_wal_table calls on one PGWire connection: first works, second hangs).
+     * See DESIGN_NOTES.md "tryCancel() in WaitWalFunction.getBool's finally" for the
+     * full rationale: parkRefused is only valid as a defense against the phantom
+     * window where suspend() returned false after scheduleResume had already enqueued
+     * the cont -- it is NOT a generic "I lost a race" signal.
+     */
+    public void cancel() {
+        state = STATE_CANCELLED;
     }
 
     @Override
@@ -211,29 +234,6 @@ public final class TxnWaiter implements DelayedFireable {
         }
         this.cont = c;
         return true;
-    }
-
-    /**
-     * Attempts to transition this waiter from PENDING to CANCELLED. Returns {@code true}
-     * if the CAS won, in which case the caller is responsible for calling
-     * {@code cont.scheduleResume()} so the parked body can observe the cancellation.
-     *
-     * <p>DO NOT call {@code cont.markParkRefused()} when the CAS loses. The losing path
-     * is the normal happy-path tail of {@link io.questdb.griffin.engine.functions.table.WaitWalFunction#getBool}:
-     * a racer fired the waiter, scheduleResume already woke the body via a peer worker,
-     * the body resumed and finished its loop, and is now running the finally block on
-     * a fully remounted, healthy cont. Setting parkRefused here poisons the cont for
-     * its NEXT yield -- {@link io.questdb.mp.Worker#mountForeignCont} consumes the flag
-     * and silently drops the dequeue, so the next legitimate resume is dropped and the
-     * cont is parked forever. This bricked binary_dedup.test (three back-to-back
-     * wait_wal_table calls on one PGWire connection: first works, second hangs).
-     * See DESIGN_NOTES.md "tryCancel() in WaitWalFunction.getBool's finally" for the
-     * full rationale: parkRefused is only valid as a defense against the phantom
-     * window where suspend() returned false after scheduleResume had already enqueued
-     * the cont -- it is NOT a generic "I lost a race" signal.
-     */
-    public void cancel() {
-        state = STATE_CANCELLED;
     }
 
     public void tryFire() {

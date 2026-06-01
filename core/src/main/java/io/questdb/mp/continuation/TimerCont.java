@@ -55,10 +55,10 @@ import java.util.concurrent.TimeUnit;
  * close path can drive the body to completion.
  */
 public final class TimerCont implements DelayedFireable {
-    public static final int STATE_CANCELLED = 2;
-    public static final int STATE_FIRED = 1;
-    public static final int STATE_PENDING = 0;
+    private static final int STATE_CANCELLED = 2;
+    private static final int STATE_FIRED = 1;
     private static final long STATE_OFFSET = Unsafe.getFieldOffset(TimerCont.class, "state");
+    private static final int STATE_PENDING = 0;
     private final MillisecondClock clock;
     private final WorkerContinuation cont;
     private final long deadlineMillis;

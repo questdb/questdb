@@ -47,6 +47,22 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInfiniteSeconds() throws Exception {
+        assertMemoryLeak(() -> {
+            // 1e308 * 1e10 overflows the double range to +Infinity, so the isInfinite
+            // branch (not the 24 hour cap) rejects it.
+            try (RecordCursorFactory factory = select("sleep(1e308 * 1e10)")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    cursor.hasNext();
+                    Assert.fail("expected CairoException");
+                } catch (io.questdb.cairo.CairoException e) {
+                    Assert.assertTrue(e.getMessage(), e.getMessage().contains("sleep duration must be"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNonFiniteSeconds() throws Exception {
         assertMemoryLeak(() -> {
             try (RecordCursorFactory factory = select("sleep(cast('NaN' as double))")) {
@@ -57,6 +73,26 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
                     Assert.assertTrue(e.getMessage(), e.getMessage().contains("sleep duration must be"));
                 }
             }
+        });
+    }
+
+    @Test
+    public void testSubMillisecondSecondsRoundsToZeroAndSkipsSleep() throws Exception {
+        assertMemoryLeak(() -> {
+            // 0.0001s * 1000 = 0.1ms, truncated to 0 by the (long) cast, so the sleep is
+            // skipped entirely and the call returns the current server time near-instantly.
+            long start = System.nanoTime();
+            try (RecordCursorFactory factory = select("sleep(0.0001)")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    long ts = cursor.getRecord().getTimestamp(0);
+                    Assert.assertTrue(ts > 0);
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+            long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+            Assert.assertTrue("sub-millisecond sleep should be near-instant, elapsed=" + elapsedMs + "ms",
+                    elapsedMs < 200);
         });
     }
 
