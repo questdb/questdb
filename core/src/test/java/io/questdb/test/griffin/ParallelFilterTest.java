@@ -445,7 +445,8 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             TestUtils.await(barrier);
 
                             final RecordCursorFactory factory = factories[finalI];
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            try (SqlExecutionContext threadCtx = TestUtils.createSqlExecutionCtx(engine, workerCount);
+                                 RecordCursor cursor = factory.getCursor(threadCtx)) {
                                 Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
                                 cursor.toTop();
                                 final Record record = cursor.getRecord();
@@ -459,6 +460,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                 e.printStackTrace();
                                 errors.incrementAndGet();
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();

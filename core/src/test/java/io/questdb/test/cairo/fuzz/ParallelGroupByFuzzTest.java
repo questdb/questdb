@@ -48,6 +48,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -2571,14 +2572,15 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         new Thread(() -> {
                             final StringSink sink = new StringSink();
                             TestUtils.await(barrier);
-                            try {
+                            try (SqlExecutionContext threadCtx = TestUtils.createSqlExecutionCtx(engine, pool.getWorkerCount())) {
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertQueries(engine, sqlExecutionContext, sink, query, expected);
+                                    assertQueries(engine, threadCtx, sink, query, expected);
                                 }
                             } catch (Throwable th) {
                                 th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();
@@ -3747,14 +3749,15 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         new Thread(() -> {
                             final StringSink sink = new StringSink();
                             TestUtils.await(barrier);
-                            try {
+                            try (SqlExecutionContext threadCtx = TestUtils.createSqlExecutionCtx(engine, pool.getWorkerCount())) {
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertQueries(engine, sqlExecutionContext, sink, query, expected);
+                                    assertQueries(engine, threadCtx, sink, query, expected);
                                 }
                             } catch (Throwable th) {
                                 th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();
@@ -3811,9 +3814,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         new Thread(() -> {
                             TestUtils.await(barrier);
                             // We expect an NPE (work stealing) or a CairoException (NPE caught by a worker)
-                            try {
+                            try (SqlExecutionContext threadCtx = TestUtils.createSqlExecutionCtx(engine, pool.getWorkerCount())) {
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertCairoException(engine, sqlExecutionContext);
+                                    assertCairoException(engine, threadCtx);
                                 }
                             } catch (NullPointerException npe) {
                                 // NPE is expected
@@ -3821,6 +3824,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();
