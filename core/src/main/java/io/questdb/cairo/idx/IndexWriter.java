@@ -31,8 +31,10 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjectStackPool;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.PostingSealPurgeTask;
 
 import java.io.Closeable;
 
@@ -234,6 +236,28 @@ public interface IndexWriter extends Closeable, Mutable {
 
     default void publishPendingPurges(
             MessageBus messageBus,
+            TableToken tableToken,
+            int partitionBy,
+            int timestampType,
+            long currentTableTxn
+    ) {
+    }
+
+    /**
+     * Returns true when purge entries are still unsafe to publish because their
+     * upper txn bound is beyond the durable table txn.
+     */
+    default boolean hasPendingFuturePurges(long currentTableTxn) {
+        return false;
+    }
+
+    /**
+     * Moves unsafe finite-future purge entries into a TableWriter-owned queue
+     * before this index writer is closed or reopened.
+     */
+    default void drainPendingFuturePurges(
+            ObjList<PostingSealPurgeTask> sink,
+            ObjectStackPool<PostingSealPurgeTask> pool,
             TableToken tableToken,
             int partitionBy,
             int timestampType,

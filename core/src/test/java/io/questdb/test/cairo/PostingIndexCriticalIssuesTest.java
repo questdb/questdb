@@ -25,8 +25,10 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -72,6 +74,75 @@ import static io.questdb.cairo.TableUtils.setPathForNativePartition;
  * conditions are marked with comments describing what they need.
  */
 public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
+
+    @Test
+    public void testO3PostingIndexRecoveryAfterPurgedCommittedSeal() throws Exception {
+        FailAppendPositionLengthFacade ff = new FailAppendPositionLengthFacade();
+        assertMemoryLeak(ff, () -> {
+            final String tableName = "posting_o3_recovery";
+
+            // Set up the shape produced by the fuzz failure: a non-WAL table
+            // with a POSTING symbol index, a renamed indexed column, and a
+            // symbol-capacity change before the O3/replace-style insert.
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING, sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(tableName, -85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO new_col_11");
+            execute(insertPostingRowsSql(tableName, 0, 10));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            // This first committed seal contains the boundary XPHI row at
+            // rowid 34. It must remain readable if a later in-flight seal is
+            // rolled back during recovery.
+            execute(insertPostingRowsSql(tableName, 0, 35));
+
+            // The next O3 batch publishes a newer posting seal before the
+            // table _txn is durable. Fail later, in setAppendPosition(), so
+            // the table data is on disk but the commit is not completed.
+            final String retryBatch = insertPostingRowsSql(tableName, 35, 92);
+            ff.arm();
+            try {
+                execute(retryBatch);
+                Assert.fail("expected append-position failure");
+            } catch (CairoException | CairoError e) {
+                Assert.assertEquals(1, ff.getFailureCount());
+            }
+
+            // Exercise the race explicitly: the unfixed code already queued a
+            // purge for the previous committed seal, even though the replacing
+            // seal belongs to the failed future transaction.
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            // Reopen after the distressed writer. Recovery drops/trims the
+            // failed future posting chain entry and should fall back to the
+            // prior committed seal that still contains rowid 34.
+            engine.releaseAllWriters();
+            execute(retryBatch);
+            execute(insertPostingRowsSql(tableName, 92, 139));
+            engine.releaseAllWriters();
+
+            // Full scan is the source of truth: all XPHI rows are present in
+            // the column data after the failed batch is retried.
+            assertSql(
+                    """
+                            count
+                            105
+                            """,
+                    "SELECT /*+ no_index */ count() FROM " + tableName + " WHERE new_col_11 = 'XPHI'"
+            );
+            // Indexed scan must agree. The bug loses the boundary row from the
+            // recovered posting index when the committed seal file was purged.
+            assertSql(
+                    """
+                            count
+                            105
+                            """,
+                    "SELECT count() FROM " + tableName + " WHERE new_col_11 = 'XPHI'"
+            );
+        });
+    }
 
     /**
      * Review C2: the full-partition SELECT DISTINCT path calls
@@ -3432,5 +3503,86 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static String insertPostingRowsSql(String tableName, int lo, int hi) {
+        StringBuilder sql = new StringBuilder();
+        sql.append("INSERT INTO ").append(tableName).append(" VALUES ");
+        for (int row = hi - 1; row >= lo; row--) {
+            if (row < hi - 1) {
+                sql.append(',');
+            }
+            sql.append("('").append(timestampAtMinute(row)).append("', '")
+                    .append(row >= 34 ? "XPHI" : "A")
+                    .append("', 'S', ")
+                    .append(row)
+                    .append(')');
+        }
+        return sql.toString();
+    }
+
+    private static void runPostingSealPurgeJob(PostingSealPurgeJob purgeJob) {
+        for (int i = 0; i < 32; i++) {
+            if (!purgeJob.run(0)) {
+                break;
+            }
+        }
+    }
+
+    private static String timestampAtMinute(int minuteOfDay) {
+        StringBuilder timestamp = new StringBuilder("2022-02-25T");
+        if (minuteOfDay < 0) {
+            timestamp = new StringBuilder("2022-02-24T");
+            minuteOfDay += 24 * 60;
+        }
+        int hour = minuteOfDay / 60;
+        int minute = minuteOfDay % 60;
+        if (hour < 10) {
+            timestamp.append('0');
+        }
+        timestamp.append(hour).append(':');
+        if (minute < 10) {
+            timestamp.append('0');
+        }
+        timestamp.append(minute).append(":00.000000Z");
+        return timestamp.toString();
+    }
+
+    private static class FailAppendPositionLengthFacade extends TestFilesFacadeImpl {
+        private boolean armed;
+        private int failureCount;
+        private int setColumnLengthCalls;
+
+        void arm() {
+            armed = true;
+            setColumnLengthCalls = 0;
+        }
+
+        int getFailureCount() {
+            return failureCount;
+        }
+
+        @Override
+        public long length(long fd) {
+            if (armed && failureCount == 0 && isSetColumnAppendPositionCall()) {
+                setColumnLengthCalls++;
+                if (setColumnLengthCalls == 2) {
+                    armed = false;
+                    failureCount++;
+                    throw CairoException.critical(0).put("[test] checking file size failed");
+                }
+            }
+            return super.length(fd);
+        }
+
+        private static boolean isSetColumnAppendPositionCall() {
+            for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
+                if (TableWriter.class.getName().equals(frame.getClassName())
+                        && "setColumnAppendPosition".equals(frame.getMethodName())) {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 }
