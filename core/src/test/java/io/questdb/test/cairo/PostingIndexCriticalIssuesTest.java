@@ -125,21 +125,29 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             // Full scan is the source of truth: all XPHI rows are present in
             // the column data after the failed batch is retried.
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             count
                             105
                             """,
-                    "SELECT /*+ no_index */ count() FROM " + tableName + " WHERE new_col_11 = 'XPHI'"
+                    "SELECT /*+ no_index */ count() FROM " + tableName + " WHERE new_col_11 = 'XPHI'",
+                    null,
+                    false,
+                    false,
+                    true
             );
             // Indexed scan must agree. The bug loses the boundary row from the
             // recovered posting index when the committed seal file was purged.
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             count
                             105
                             """,
-                    "SELECT count() FROM " + tableName + " WHERE new_col_11 = 'XPHI'"
+                    "SELECT count() FROM " + tableName + " WHERE new_col_11 = 'XPHI'",
+                    null,
+                    false,
+                    false,
+                    true
             );
         });
     }
