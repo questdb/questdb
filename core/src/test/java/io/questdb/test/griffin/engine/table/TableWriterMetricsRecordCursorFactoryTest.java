@@ -29,11 +29,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriterMetrics;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.TableWriterMetricsRecordCursorFactory;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -46,19 +43,8 @@ import static org.junit.Assert.assertTrue;
 public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testCursor() {
-        try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory();
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            assertCursor(
-                    toExpectedTableContent(snapshotMetrics()),
-                    false,
-                    true,
-                    false,
-                    cursor,
-                    factory.getMetadata(),
-                    factory.fragmentedSymbolTables()
-            );
-        }
+    public void testCursor() throws Exception {
+        assertMetricsCursorEquals(snapshotMetrics());
     }
 
     @Test
@@ -71,7 +57,13 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest
                     SqlExecutionContext localSqlExecutionContext = TestUtils.createSqlExecutionCtx(localEngine)
             ) {
                 MetricsSnapshot metricsWhenDisabled = new MetricsSnapshot(-1, -1, -1, -1, -1);
-                TestUtils.assertSql(localCompiler, localSqlExecutionContext, "select * from table_writer_metrics()", new StringSink(), toExpectedTableContent(metricsWhenDisabled));
+                assertQuery("select * from table_writer_metrics()")
+                        .withCompiler(localCompiler)
+                        .withContext(localSqlExecutionContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(toExpectedTableContent(metricsWhenDisabled));
             }
         });
     }
@@ -92,27 +84,13 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest
 
     @Test
     public void testOneFactoryToMultipleCursors() throws Exception {
-        int cursorCount = 10;
-        assertMemoryLeak(() -> {
-            try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory()) {
-                for (int i = 0; i < cursorCount; i++) {
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        assertCursor(
-                                toExpectedTableContent(snapshotMetrics()),
-                                false,
-                                true,
-                                false,
-                                cursor, factory.getMetadata(),
-                                factory.fragmentedSymbolTables()
-                        );
-                    }
-                }
-            }
-        });
+        // assertQuery exercises a single factory across several cursor opens (two result reads
+        // plus a calculate-size pass), covering the one-factory-to-many-cursors path.
+        assertMetricsCursorEquals(snapshotMetrics());
     }
 
     @Test
-    public void testSanity() {
+    public void testSanity() throws Exception {
         // we want to make sure metrics in tests are enabled by default
         assertTrue(engine.getMetrics().isEnabled());
 
@@ -148,11 +126,14 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest
                 "physically_written_rows" + '\t' + metricsSnapshot.physicallyWrittenRows + '\n';
     }
 
-    private void assertMetricsCursorEquals(MetricsSnapshot metricsSnapshot) {
-        try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory();
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            assertCursor(toExpectedTableContent(metricsSnapshot), cursor, factory.getMetadata(), true);
-        }
+    private void assertMetricsCursorEquals(MetricsSnapshot metricsSnapshot) throws Exception {
+        // table_writer_metrics() compiles to TableWriterMetricsRecordCursorFactory; the builder
+        // re-opens the cursor several times from that single factory.
+        assertQuery("select * from table_writer_metrics()")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(toExpectedTableContent(metricsSnapshot));
     }
 
     private record MetricsSnapshot(long commitCount, long committedRows, long o3CommitCount, long rollbackCount,
