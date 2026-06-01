@@ -223,6 +223,18 @@ public class TableUpdateDetails implements Closeable {
 
     public void commit(boolean withLag) throws CommitFailedException {
         if (writerAPI.getUncommittedRowCount() > 0) {
+            // Read-only boundary gate (mirrors QwpIngressProcessorState and the pg-wire gate):
+            // refuse ILP-TCP and ILP-HTTP client writes the instant the node is read-only. The
+            // dynamic read-only-replica flag flips FIRST in the PRIMARY->REPLICA switch cascade,
+            // so a TableUpdateDetails whose writer was cached while the node was still PRIMARY would
+            // otherwise commit a batch onto a node that is already demoting and lose it on the
+            // replica. Both ILP protocols commit through here; the replica WAL-apply path uses
+            // getWriterUnsafe() (not a TableUpdateDetails) and is unaffected. Thrown before the
+            // try so it propagates as an authorization error (ILP-TCP disconnects the connection,
+            // ILP-HTTP returns SECURITY_ERROR), not as a wrapped CommitFailedException.
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.authorization().put("replica access is read-only");
+            }
             try {
                 authorizeCommit();
                 if (withLag) {
