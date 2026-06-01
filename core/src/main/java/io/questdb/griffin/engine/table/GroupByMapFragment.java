@@ -33,9 +33,11 @@ import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Manages a group-by map that can optionally be split into shards
@@ -52,6 +54,11 @@ public class GroupByMapFragment implements QuietCloseable {
     private final CairoConfiguration configuration;
     private final GroupByFunctionsUpdater groupByFunctionsUpdater;
     private final ColumnTypes keyTypes;
+    // Per-query native memory tracker bound by the owning atom before any map is
+    // (re)opened. Null when no per-query limit applies (e.g. the shared horizon-join
+    // path that never binds a tracker), in which case allocations stay global-only.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private final GroupByMapStats ownerStats;
     private final ObjList<GroupByMapStats> shardStats;
     private final ObjList<Map> shards; // this.map split into shards
@@ -79,15 +86,11 @@ public class GroupByMapFragment implements QuietCloseable {
         this.workerCount = workerCount;
         this.shards = new ObjList<>(NUM_SHARDS);
         this.slotId = slotId;
-        this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true);
-        try {
-            // Set up the empty value pattern used by the batched dispatch path.
-            // The map is created in an already-open state, so reopenMap() would skip this on first use.
-            map.setBatchEmptyValue(groupByFunctionsUpdater);
-        } catch (Throwable th) {
-            Misc.free(map);
-            throw th;
-        }
+        // Lazy variant: the map's native backing is allocated by the first reopenMap()
+        // call, after the owning atom binds a per-query MemoryTracker, so malloc and free
+        // are charged symmetrically on the per-query counter. reopenMap() runs
+        // setBatchEmptyValue() once the map is open.
+        this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true, false);
     }
 
     @Override
@@ -122,6 +125,7 @@ public class GroupByMapFragment implements QuietCloseable {
             final boolean owner = slotId == -1;
             int keyCapacity = targetKeyCapacity(configuration, workerCount, ownerStats, owner);
             long heapSize = targetHeapSize(configuration, workerCount, ownerStats, owner);
+            map.setMemoryTracker(memoryTracker);
             map.reopen(keyCapacity, heapSize);
             try {
                 // Set up the empty value pattern used by the batched dispatch path.
@@ -132,6 +136,10 @@ public class GroupByMapFragment implements QuietCloseable {
             }
         }
         return map;
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
     }
 
     public void shard() {
@@ -161,15 +169,22 @@ public class GroupByMapFragment implements QuietCloseable {
     private void reopenShards() {
         int size = shards.size();
         if (size == 0) {
+            // Lazy variant: shards start closed so their backing allocates under the
+            // bound tracker on the reopen() below, matching the free at fragment close().
             for (int i = 0; i < NUM_SHARDS; i++) {
-                shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true));
+                final Map shard = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true, false);
+                shard.setMemoryTracker(memoryTracker);
+                shard.reopen();
+                shards.add(shard);
             }
         } else {
             for (int i = 0; i < NUM_SHARDS; i++) {
                 GroupByMapStats stats = shardStats.getQuick(i);
                 int keyCapacity = targetKeyCapacity(configuration, workerCount, stats, false);
                 long heapSize = targetHeapSize(configuration, workerCount, stats, false);
-                shards.getQuick(i).reopen(keyCapacity, heapSize);
+                final Map shard = shards.getQuick(i);
+                shard.setMemoryTracker(memoryTracker);
+                shard.reopen(keyCapacity, heapSize);
             }
         }
     }

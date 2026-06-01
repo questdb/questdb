@@ -75,6 +75,11 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private final ColumnTypes keyTypes;
     private final GroupByMapStats lastOwnerStats;
     private final ObjList<GroupByMapStats> lastShardStats;
+    // Per-query native memory tracker propagated to every fragment and destination
+    // shard. Null when no per-query limit applies (the shared horizon-join path never
+    // binds one), leaving allocations on the global counter only.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private final GroupByMapFragment ownerFragment;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByMapFragment> perWorkerFragments;
@@ -254,12 +259,17 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private Map reopenDestShard(int shardIndex) {
         Map destMap = destShards.getQuick(shardIndex);
         if (destMap == null) {
-            destMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+            // Lazy variant: the destination shard starts closed so its backing allocates
+            // under the bound tracker on the reopen() below, matching the free at clear().
+            destMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, false, false);
             destShards.set(shardIndex, destMap);
+            destMap.setMemoryTracker(memoryTracker);
+            destMap.reopen();
         } else if (!destMap.isOpen()) {
             GroupByMapStats stats = lastShardStats.getQuick(shardIndex);
             int keyCapacity = GroupByMapFragment.targetKeyCapacity(configuration, perWorkerFragments.size(), stats, true);
             long heapSize = GroupByMapFragment.targetHeapSize(configuration, perWorkerFragments.size(), stats, true);
+            destMap.setMemoryTracker(memoryTracker);
             destMap.reopen(keyCapacity, heapSize);
         }
         return destMap;
@@ -449,6 +459,14 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         if (shardedHint) {
             // Looks like we had to shard during previous execution, so let's do it ahead of time.
             sharded = true;
+        }
+    }
+
+    void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        memoryTracker = tracker;
+        ownerFragment.setMemoryTracker(tracker);
+        for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
+            perWorkerFragments.getQuick(i).setMemoryTracker(tracker);
         }
     }
 
