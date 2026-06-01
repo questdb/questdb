@@ -45,8 +45,18 @@ public class RecordArray extends RecordChain {
     private long size = 0L;
 
     public RecordArray(@NotNull ColumnTypes columnTypes, @NotNull RecordSink recordSink, long pageSize, int maxPages) {
-        super(columnTypes, recordSink, pageSize, maxPages);
-        this.auxMem = Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
+        this(columnTypes, recordSink, pageSize, maxPages, null);
+    }
+
+    public RecordArray(
+            @NotNull ColumnTypes columnTypes,
+            @NotNull RecordSink recordSink,
+            long pageSize,
+            int maxPages,
+            String maxPagesConfigKey
+    ) {
+        super(columnTypes, recordSink, pageSize, maxPages, maxPagesConfigKey);
+        this.auxMem = Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, maxPagesConfigKey);
     }
 
     public long beginRecord() {
