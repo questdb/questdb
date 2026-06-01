@@ -972,9 +972,9 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
         // Pin the query plan output so a regression in toPlan() is caught.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (val DOUBLE)");
-            assertPlanNoLeakCheck(
-                    "SELECT array_agg(val) FROM tab",
-                    """
+            assertQuery("SELECT array_agg(val) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Group By workers: 1
                               vectorized: false
                               values: [array_agg(val)]
@@ -982,8 +982,7 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """
-            );
+                            """);
         });
     }
 

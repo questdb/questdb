@@ -69,9 +69,9 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
         // query plans and SHOW FUNCTIONS output.
         assertMemoryLeak(() -> {
             execute("create table tbl1 (x double, y double)");
-            assertPlanNoLeakCheck(
-                    "select regr_slope(y, x) from tbl1",
-                    """
+            assertQuery("select regr_slope(y, x) from tbl1")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Group By workers: 1
                               vectorized: false
                               values: [regr_slope(y,x)]
@@ -79,8 +79,7 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tbl1
-                            """
-            );
+                            """);
         });
     }
 

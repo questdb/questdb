@@ -2745,77 +2745,69 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCompareVarcharAndStrPlan() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    "select 'd' < rnd_varchar('d', 'cd', null) from long_sequence(5)",
-                    """
+            assertQuery("select 'd' < rnd_varchar('d', 'cd', null) from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: ['d'<rnd_varchar([d,cd,null])]
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select 'd' <= rnd_varchar('d', 'cd', null) from long_sequence(5)",
-                    """
+            assertQuery("select 'd' <= rnd_varchar('d', 'cd', null) from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_varchar([d,cd,null])>='d']
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select 'd' > rnd_varchar('d', 'cd', null) from long_sequence(5)",
-                    """
+            assertQuery("select 'd' > rnd_varchar('d', 'cd', null) from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_varchar([d,cd,null])<'d']
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select 'd' >= rnd_varchar('d', 'cd', null) from long_sequence(5)",
-                    """
+            assertQuery("select 'd' >= rnd_varchar('d', 'cd', null) from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: ['d'>=rnd_varchar([d,cd,null])]
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select rnd_varchar('d', 'cd', null) > 'd'::varchar from long_sequence(5)",
-                    """
+            assertQuery("select rnd_varchar('d', 'cd', null) > 'd'::varchar from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: ['d'<rnd_varchar([d,cd,null])]
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select rnd_varchar('d', 'cd', null) >= 'd'::varchar  from long_sequence(5)",
-                    """
+            assertQuery("select rnd_varchar('d', 'cd', null) >= 'd'::varchar  from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_varchar([d,cd,null])>='d']
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select rnd_varchar('d', 'cd', null) > rnd_varchar('d', 'cd', null) from long_sequence(5)",
-                    """
+            assertQuery("select rnd_varchar('d', 'cd', null) > rnd_varchar('d', 'cd', null) from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_varchar([d,cd,null])<rnd_varchar([d,cd,null])]
                                 long_sequence count: 5
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select rnd_varchar('d', 'cd', null) >= rnd_varchar('d', 'cd', null)  from long_sequence(5)",
-                    """
+            assertQuery("select rnd_varchar('d', 'cd', null) >= rnd_varchar('d', 'cd', null)  from long_sequence(5)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [rnd_varchar([d,cd,null])>=rnd_varchar([d,cd,null])]
                                 long_sequence count: 5
-                            """
-            );
+                            """);
         });
     }
 
@@ -4488,9 +4480,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "FULL OUTER JOIN tab as T3 ON T2.created=T3.created " +
                     "WHERE T2.created IN (NOW(),NOW()) ";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Count
                                 Hash Full Outer Join Light
                                   condition: T3.created=T2.created
@@ -4508,8 +4500,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .noRandomAccess()
@@ -6196,9 +6187,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "LEFT OUTER JOIN tab as T3 ON T2.created=T3.created " +
                     "WHERE T2.created IN (NOW(),NOW()) ";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Count
                                 Hash Left Outer Join Light
                                   condition: T3.created=T2.created
@@ -6216,8 +6207,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .noRandomAccess()
@@ -6243,9 +6233,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "LEFT OUTER JOIN tab as T2 ON T1.created<T2.created " +
                     "WHERE T2.created is null or T2.created::long > 0";
 
-            assertPlanNoLeakCheck(
-                    query1,
-                    """
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Filter filter: (null=T2.created or 0<T2.created::long)
                                     Nested Loop Left Join
@@ -6257,8 +6247,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query1)
                     .timestamp("created")
@@ -6390,9 +6379,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "LEFT JOIN (select * from tab limit 4) as T4 ON T3.created<T4.created " +
                     "WHERE T4.created is null";
 
-            assertPlanNoLeakCheck(
-                    query3,
-                    """
+            assertQuery(query3)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Filter filter: null=T4.created
                                     Nested Loop Left Join
@@ -6417,8 +6406,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query3)
                     .noRandomAccess()
@@ -6862,9 +6850,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "RIGHT OUTER JOIN tab as T3 ON T2.created=T3.created " +
                     "WHERE T2.created IN (NOW(),NOW()) ";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Count
                                 Hash Right Outer Join Light
                                   condition: T3.created=T2.created
@@ -6882,8 +6870,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .noRandomAccess()
@@ -6909,9 +6896,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "RIGHT OUTER JOIN tab as T2 ON T1.created<T2.created " +
                     "WHERE T2.created is null or T2.created::long > 0";
 
-            assertPlanNoLeakCheck(
-                    query1,
-                    """
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Filter filter: (null=T2.created or 0<T2.created::long)
                                     Nested Loop Right Join
@@ -6923,8 +6910,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query1)
                     .noRandomAccess()
@@ -7062,9 +7048,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "RIGHT JOIN (select * from tab limit 4) as T4 ON T3.created<T4.created " +
                     "WHERE T4.created is null";
 
-            assertPlanNoLeakCheck(
-                    query3,
-                    """
+            assertQuery(query3)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Filter filter: null=T4.created
                                     Nested Loop Right Join
@@ -7089,8 +7075,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery(query3)
                     .noRandomAccess()

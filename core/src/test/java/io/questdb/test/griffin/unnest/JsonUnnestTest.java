@@ -1391,19 +1391,18 @@ public class JsonUnnestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[1.5]')");
-            assertPlanNoLeakCheck(
-                    "SELECT u.val FROM t, UNNEST("
+            assertQuery("SELECT u.val FROM t, UNNEST("
                             + "t.payload COLUMNS(val DOUBLE)"
-                            + ") u",
-                    """
+                            + ") u")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Unnest
                                   columns: [val]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -1413,11 +1412,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[1.5]')");
-            assertPlanNoLeakCheck(
-                    "SELECT u.val, u.pos FROM t, UNNEST("
+            assertQuery("SELECT u.val, u.pos FROM t, UNNEST("
                             + "t.payload COLUMNS(val DOUBLE)"
-                            + ") WITH ORDINALITY u(val, pos)",
-                    """
+                            + ") WITH ORDINALITY u(val, pos)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Unnest
                                   columns: [val,pos]
@@ -1425,8 +1424,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 

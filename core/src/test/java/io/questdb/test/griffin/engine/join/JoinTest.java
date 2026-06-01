@@ -2904,7 +2904,9 @@ public class JoinTest extends AbstractCairoTest {
                             """);
             // Verify: no Empty table (1 < 10 folded as constant true), and
             // now()=now() merged from constWhereClause into a post-join filter.
-            assertPlanNoLeakCheck(query, """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Filter filter: (T1.ts<T2.ts and now()=now())
                             Cross Join
@@ -5400,9 +5402,9 @@ public class JoinTest extends AbstractCairoTest {
                             b\t1970-01-01T00:00:00.000000Z
                             c\t1970-01-01T00:00:00.000000Z
                             """);
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
@@ -5416,8 +5418,7 @@ public class JoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: dim_apTemperature
-                            """
-            );
+                            """);
 
             query = """
                     SELECT
@@ -5436,9 +5437,9 @@ public class JoinTest extends AbstractCairoTest {
                             b\t1970-01-01T00:00:00.000000Z
                             c\t1970-01-01T00:00:00.000000Z
                             """);
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
@@ -5452,8 +5453,7 @@ public class JoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: dim_apTemperature
-                            """
-            );
+                            """);
 
             query = """
                     SELECT
@@ -5472,9 +5472,9 @@ public class JoinTest extends AbstractCairoTest {
                             b\t1970-01-01T00:00:00.000000Z
                             c\t1970-01-01T00:00:00.000000Z
                             """);
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
@@ -5488,8 +5488,7 @@ public class JoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: dim_apTemperature
-                            """
-            );
+                            """);
         });
     }
 

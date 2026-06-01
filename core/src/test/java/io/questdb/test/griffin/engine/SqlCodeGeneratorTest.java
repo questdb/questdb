@@ -7197,7 +7197,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 .timestamp("")
                 .expectSize()
                 .returns("b\tc\td\te\tf\tg\th\ta\tj\n");
-        assertPlanNoLeakCheck(query, """
+        assertQuery(query)
+                .noLeakCheck()
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [b,c,d,e,f,g,h,a]
                   values: [max(i)]
@@ -7248,7 +7250,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 .timestamp("")
                 .expectSize()
                 .returns("b\tc\td\te\tf\tg\th\ta\tj\n");
-        assertPlanNoLeakCheck(query, """
+        assertQuery(query)
+                .noLeakCheck()
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [b,c,d,e,f,g,h,a]
                   values: [max(i)]
@@ -7490,9 +7494,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             18\tB
                             """);
 
-            assertPlanNoLeakCheck(
-                    "select min(x), sym timestamp from test1 sample by 15s align to first observation order by min",
-                    """
+            assertQuery("select min(x), sym timestamp from test1 sample by 15s align to first observation order by min")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort
                               keys: [min]
                                 Sample By
@@ -7502,12 +7506,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: test1
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select min(x), sym timestamp from test1 sample by 15s align to calendar order by min",
-                    """
+            assertQuery("select min(x), sym timestamp from test1 sample by 15s align to calendar order by min")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Encode sort light
                                   keys: [min]
@@ -7520,8 +7523,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: test1
-                            """
-            );
+                            """);
 
             assertQuery("select min(x), sym1 timestamp, sym2 timestamp0 from test2 sample by 15s align to first observation order by min")
                     .ddl("create table test2 as (" +

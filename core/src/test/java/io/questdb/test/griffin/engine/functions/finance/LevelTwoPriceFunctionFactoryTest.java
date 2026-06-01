@@ -260,11 +260,11 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                     "from long_sequence(10))");
             drainWalQueue();
 
-            assertPlanNoLeakCheck(
-                    "select avg(l2price(14, ask_size, ask_value)) " +
+            assertQuery("select avg(l2price(14, ask_size, ask_value)) " +
                             "- avg(l2price(14, bid_size, bid_value))" +
-                            " as spread from x",
-                    "VirtualRecord\n" +
+                            " as spread from x")
+                    .noLeakCheck()
+                    .assertsPlan("VirtualRecord\n" +
                             "  functions: [avg1-avg]\n" +
                             "    Async Group By workers: 1\n" +
                             "      vectorized: false\n" +
@@ -272,19 +272,17 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "      filter: null\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n"
-            );
+                            "            Frame forward scan on: x\n");
 
-            assertPlanNoLeakCheck(
-                    "select l2price(14, ask_size, ask_value) " +
+            assertQuery("select l2price(14, ask_size, ask_value) " +
                             "- l2price(14, bid_size, bid_value)" +
-                            " as spread from x",
-                    "VirtualRecord\n" +
+                            " as spread from x")
+                    .noLeakCheck()
+                    .assertsPlan("VirtualRecord\n" +
                             "  functions: [l2price([14,ask_size,ask_value])-l2price([14,bid_size,bid_value])]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n"
-            );
+                            "        Frame forward scan on: x\n");
 
             assertQuery("select l2price(14, ask_size, ask_value) " +
                     "- l2price(14, bid_size, bid_value)" +

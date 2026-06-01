@@ -208,16 +208,15 @@ public class LatestByTest extends AbstractCairoTest {
                     LATEST ON ts\s
                     PARTITION BY device_id""";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    "LatestByAllIndexed\n" +
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("LatestByAllIndexed\n" +
                             "    Async index backward scan on: device_id workers: 2\n" +
                             "      filter: g8c within(\"0010000110110001110001111100010000100000\")\n" +
                             "    Interval backward scan on: pos_test\n" +
                             (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"2021-09-02T00:00:00.000000Z\",\"2021-09-02T23:59:59.999999Z\")]\n" :
-                                    "      intervals: [(\"2021-09-02T00:00:00.000000000Z\",\"2021-09-02T23:59:59.999999999Z\")]\n")
-            );
+                                    "      intervals: [(\"2021-09-02T00:00:00.000000000Z\",\"2021-09-02T23:59:59.999999999Z\")]\n"));
 
             // prefix filter is applied AFTER latest on
             assertQuery(query)

@@ -79,7 +79,9 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                             """);
 
             if (engine.getConfiguration().getSqlJitMode() == SqlJitMode.JIT_MODE_ENABLED) {
-                assertPlanNoLeakCheck(sink, """
+                assertQuery(sink)
+                        .noLeakCheck()
+                        .assertsPlan("""
                         Long Top K lo: 5
                           keys: [l asc]
                             Async JIT Group By workers: 1
@@ -90,7 +92,9 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                                     Frame forward scan on: bench
                         """);
             } else {
-                assertPlanNoLeakCheck(sink, """
+                assertQuery(sink)
+                        .noLeakCheck()
+                        .assertsPlan("""
                         Long Top K lo: 5
                           keys: [l asc]
                             Async Group By workers: 1
@@ -138,7 +142,9 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                             """);
 
             // should be the same, JIT or no JIT
-            assertPlanNoLeakCheck(sink, """
+            assertQuery(sink)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Long Top K lo: 5
                       keys: [l asc]
                         Async Group By workers: 1
