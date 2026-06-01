@@ -31,18 +31,16 @@ public class AvgBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAll() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select avg(rnd_boolean()), max(rnd_boolean()), min(rnd_boolean()) from long_sequence(10)")
+                .returnsOnce("""
                         avg\tmax\tmin
                         0.7\t1.0\t0.0
-                        """, "select avg(rnd_boolean()), max(rnd_boolean()), min(rnd_boolean()) from long_sequence(10)"
-        ));
+                        """);
 
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("select avg(rnd_double() >= 0.5) from long_sequence(10)")
+                .returnsOnce("""
                         avg
                         0.4
-                        """, "select avg(rnd_double() >= 0.5) from long_sequence(10)"
-        ));
+                        """);
     }
 }

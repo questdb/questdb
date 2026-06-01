@@ -52,16 +52,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (null),
                     (null)
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT array_agg(arr) agg FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             agg
                             null
-                            """,
-                    "SELECT array_agg(arr) agg FROM tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -89,13 +87,11 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
             }
             execute(insert.toString());
             expected.append("]\n");
-            assertQueryNoLeakCheck(
-                    expected.toString(),
-                    "SELECT array_agg(arr) agg FROM tab",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("SELECT array_agg(arr) agg FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected.toString());
         });
     }
 
@@ -109,16 +105,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[3.0, 4.0]),
                     (ARRAY[5.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT array_agg(arr) agg FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             agg
                             [1.0,2.0,3.0,4.0,5.0]
-                            """,
-                    "SELECT array_agg(arr) agg FROM tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -132,16 +126,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[2.0, 3.0, 4.0]),
                     (ARRAY[5.0, 6.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT array_agg(arr) agg FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             agg
                             [1.0,2.0,3.0,4.0,5.0,6.0]
-                            """,
-                    "SELECT array_agg(arr) agg FROM tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -155,16 +147,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[]),
                     (ARRAY[3.0, 4.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT array_agg(arr) agg FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             agg
                             [1.0,2.0,3.0,4.0]
-                            """,
-                    "SELECT array_agg(arr) agg FROM tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -184,16 +174,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[1.0, 2.0]),
                     (ARRAY[3.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT array_agg(arr) agg FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             agg
                             [1.0,2.0,3.0]
-                            """,
-                    "SELECT array_agg(arr) agg FROM tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -201,16 +189,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     public void testEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT array_agg(arr) agg FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             agg
                             null
-                            """,
-                    "SELECT array_agg(arr) agg FROM tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -231,18 +217,15 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('na', 'us', ARRAY[100.0, 200.0]),
                     ('eu', 'de', ARRAY[20.0, 30.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT region, country, array_agg(arr) agg FROM tab GROUP BY region, country ORDER BY region, country")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             region\tcountry\tagg
                             eu\tde\t[10.0,20.0,30.0]
                             eu\tfr\t[1.0,2.0,3.0]
                             na\tus\t[100.0,200.0]
-                            """,
-                    "SELECT region, country, array_agg(arr) agg FROM tab GROUP BY region, country ORDER BY region, country",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -257,17 +240,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('b', ARRAY[10.0, 20.0]),
                     ('b', ARRAY[30.0, 40.0, 50.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT grp, array_agg(arr) agg FROM tab ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tagg
                             a\t[1.0,2.0,3.0]
                             b\t[10.0,20.0,30.0,40.0,50.0]
-                            """,
-                    "SELECT grp, array_agg(arr) agg FROM tab ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -284,17 +264,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('a', ARRAY[4.0]),
                     (null, ARRAY[5.0, 6.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT grp, array_agg(arr) agg FROM tab ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tagg
                             \t[3.0,5.0,6.0]
                             a\t[1.0,2.0,4.0]
-                            """,
-                    "SELECT grp, array_agg(arr) agg FROM tab ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -489,17 +466,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('a', ARRAY[3.0], 20.0),
                     ('b', ARRAY[4.0, 5.0], 30.0)
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT grp, array_agg(arr) agg, avg(val) avg FROM tab ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tagg\tavg
                             a\t[1.0,2.0,3.0]\t15.0
                             b\t[4.0,5.0]\t30.0
-                            """,
-                    "SELECT grp, array_agg(arr) agg, avg(val) avg FROM tab ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -516,16 +490,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[[10.0, 20.0], [30.0, 40.0]]),
                     (ARRAY[[50.0, 60.0], [70.0, 80.0]])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT array_agg(transpose(m)[1]) agg FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             agg
                             [10.0,30.0,50.0,70.0]
-                            """,
-                    "SELECT array_agg(transpose(m)[1]) agg FROM tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -539,16 +511,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (null),
                     (ARRAY[3.0, 4.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT array_agg(arr) agg FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             agg
                             [1.0,2.0,3.0,4.0]
-                            """,
-                    "SELECT array_agg(arr) agg FROM tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -561,16 +531,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[1.0, null]),
                     (ARRAY[null, 4.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT array_agg(arr) agg FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             agg
                             [1.0,null,null,4.0]
-                            """,
-                    "SELECT array_agg(arr) agg FROM tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -585,16 +553,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[1.0, 2.0]),
                     (ARRAY[3.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT array_agg(arr) agg FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             agg
                             [1.0,2.0,3.0]
-                            """,
-                    "SELECT array_agg(arr) agg FROM tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -883,18 +849,15 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('b', ARRAY[10.0]),
                     ('b', ARRAY[20.0, 30.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT grp, agg, array_count(agg) cnt, array_sum(agg) sum " +
+                    "FROM (SELECT grp, array_agg(arr) agg FROM tab) ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             grp\tagg\tcnt\tsum
                             a\t[1.0,2.0,3.0,4.0,5.0]\t5\t15.0
                             b\t[10.0,20.0,30.0]\t3\t60.0
-                            """,
-                    "SELECT grp, agg, array_count(agg) cnt, array_sum(agg) sum " +
-                            "FROM (SELECT grp, array_agg(arr) agg FROM tab) ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -909,17 +872,15 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T01:00:00', ARRAY[4.0, 5.0]),
                     ('2024-01-01T01:30:00', ARRAY[6.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tagg
                             2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]
                             2024-01-01T01:00:00.000000Z\t[4.0,5.0,6.0]
-                            """,
-                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h ALIGN TO CALENDAR",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -971,18 +932,16 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     """);
             // Two gaps (01:00-03:00 and 04:00-06:00) must be omitted.
             // Null array at 00:45 is skipped by array_agg, not by FILL(NONE).
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(NONE)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tagg
                             2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]
                             2024-01-01T03:00:00.000000Z\t[4.0,5.0]
                             2024-01-01T06:00:00.000000Z\t[6.0]
-                            """,
-                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(NONE)",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -995,18 +954,16 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T00:00:00', ARRAY[1.0, 2.0]),
                     ('2024-01-01T02:00:00', ARRAY[3.0, 4.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tagg
                             2024-01-01T00:00:00.000000Z\t[1.0,2.0]
                             2024-01-01T01:00:00.000000Z\tnull
                             2024-01-01T02:00:00.000000Z\t[3.0,4.0]
-                            """,
-                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(NULL)",
-                    "ts",
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1020,16 +977,16 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T01:00:00', ARRAY[3.0]),
                     ('2024-01-01T04:00:00', ARRAY[4.0, 5.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 2h FILL(PREV)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tagg
                             2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]
                             2024-01-01T02:00:00.000000Z\t[1.0,2.0,3.0]
                             2024-01-01T04:00:00.000000Z\t[4.0,5.0]
-                            """,
-                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 2h FILL(PREV)",
-                    "ts"
-            );
+                            """);
         });
     }
 
@@ -1082,16 +1039,16 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T05:30:00', ARRAY[7.0, 8.0]),
                     ('2024-01-01T09:00:00', ARRAY[9.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 3h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tagg
                             2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0,4.0,5.0]
                             2024-01-01T03:00:00.000000Z\t[6.0,7.0,8.0]
                             2024-01-01T09:00:00.000000Z\t[9.0]
-                            """,
-                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 3h ALIGN TO FIRST OBSERVATION",
-                    "ts"
-            );
+                            """);
         });
     }
 
@@ -1104,19 +1061,19 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T02:00:00', ARRAY[1.0, 2.0]),
                     ('2024-01-01T03:00:00', ARRAY[3.0])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, array_agg(arr) agg FROM tab "
+                    + "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tagg
                             2024-01-01T00:00:00.000000Z\tnull
                             2024-01-01T01:00:00.000000Z\tnull
                             2024-01-01T02:00:00.000000Z\t[1.0,2.0]
                             2024-01-01T03:00:00.000000Z\t[3.0]
                             2024-01-01T04:00:00.000000Z\tnull
-                            """,
-                    "SELECT ts, array_agg(arr) agg FROM tab "
-                            + "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1125,16 +1082,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0, 3.0])");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT array_agg(arr) agg FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             agg
                             [1.0,2.0,3.0]
-                            """,
-                    "SELECT array_agg(arr) agg FROM tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1152,16 +1107,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[2.2250738585072014E-308, 4.9E-324]),
                     (ARRAY[0.0, -0.0, 3.141592653589793])
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT array_agg(arr) agg FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             agg
                             [1.7976931348623157E308,-1.7976931348623157E308,2.2250738585072014E-308,5.0E-324,0.0,-0.0,3.141592653589793]
-                            """,
-                    "SELECT array_agg(arr) agg FROM tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 

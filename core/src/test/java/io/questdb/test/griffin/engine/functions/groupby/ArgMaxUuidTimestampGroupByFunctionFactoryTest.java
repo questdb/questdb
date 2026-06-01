@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -36,20 +35,28 @@ import org.junit.Test;
 public class ArgMaxUuidTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testArgMaxAllNull() throws SqlException {
+    public void testArgMaxAllNull() throws Exception {
         execute("create table tab (value uuid, key timestamp)");
         execute("insert into tab values (null, null)");
         execute("insert into tab values (null, null)");
-        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\n\n");
     }
 
     @Test
     public void testArgMaxParallelAllNullKeys() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_uuid4() value, cast(null as timestamp) key from long_sequence(100000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
-                TestUtils.assertSql(engine, sqlExecutionContext, sql, sink, "sym\targ_max\nA\t\nB\t\nC\t\nD\t\nE\t\n");
+                assertQuery(sql)
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .returnsOnce("sym\targ_max\nA\t\nB\t\nC\t\nD\t\nE\t\n");
             }, configuration, LOG);
         }
     }
@@ -58,7 +65,7 @@ public class ArgMaxUuidTimestampGroupByFunctionFactoryTest extends AbstractCairo
     public void testArgMaxParallelChunky() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_uuid4() value, timestamp_sequence(0, 1000) key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -69,7 +76,7 @@ public class ArgMaxUuidTimestampGroupByFunctionFactoryTest extends AbstractCairo
     public void testArgMaxParallelMergeNullDestValidSrc() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_uuid4() value, case when x <= 1000000 then cast(null as timestamp) else timestamp_sequence(0, 1000) end key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -80,7 +87,7 @@ public class ArgMaxUuidTimestampGroupByFunctionFactoryTest extends AbstractCairo
     public void testArgMaxParallelWithNullKeys() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_uuid4() value, case when x % 2 = 0 then cast(null as timestamp) else timestamp_sequence(0, 1000) end key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -88,38 +95,53 @@ public class ArgMaxUuidTimestampGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
-    public void testArgMaxSimple() throws SqlException {
+    public void testArgMaxSimple() throws Exception {
         execute("create table tab (value uuid, key timestamp)");
         execute("insert into tab values ('11111111-1111-1111-1111-111111111111', '2023-01-01T00:00:00.000000Z')");
         execute("insert into tab values ('22222222-2222-2222-2222-222222222222', '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('33333333-3333-3333-3333-333333333333', '2023-01-02T00:00:00.000000Z')");
-        assertSql("arg_max\n22222222-2222-2222-2222-222222222222\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\n22222222-2222-2222-2222-222222222222\n");
     }
 
     @Test
-    public void testArgMaxWithGroupBy() throws SqlException {
+    public void testArgMaxWithGroupBy() throws Exception {
         execute("create table tab (sym symbol, value uuid, key timestamp)");
         execute("insert into tab values ('A', '11111111-1111-1111-1111-111111111111', '2023-01-01T00:00:00.000000Z')");
         execute("insert into tab values ('A', '22222222-2222-2222-2222-222222222222', '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('B', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '2023-01-05T00:00:00.000000Z')");
         execute("insert into tab values ('B', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '2023-01-04T00:00:00.000000Z')");
-        assertSql("sym\targ_max\nA\t22222222-2222-2222-2222-222222222222\nB\taaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n", "select sym, arg_max(value, key) from tab order by sym");
+        assertQuery("select sym, arg_max(value, key) from tab order by sym")
+                .noLeakCheck()
+                .expectSize()
+                .returns("sym\targ_max\nA\t22222222-2222-2222-2222-222222222222\nB\taaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n");
     }
 
     @Test
-    public void testArgMaxWithNullKey() throws SqlException {
+    public void testArgMaxWithNullKey() throws Exception {
         execute("create table tab (value uuid, key timestamp)");
         execute("insert into tab values ('11111111-1111-1111-1111-111111111111', null)");
         execute("insert into tab values ('22222222-2222-2222-2222-222222222222', '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('33333333-3333-3333-3333-333333333333', '2023-01-02T00:00:00.000000Z')");
-        assertSql("arg_max\n22222222-2222-2222-2222-222222222222\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\n22222222-2222-2222-2222-222222222222\n");
     }
 
     @Test
-    public void testArgMaxWithNullValue() throws SqlException {
+    public void testArgMaxWithNullValue() throws Exception {
         execute("create table tab (value uuid, key timestamp)");
         execute("insert into tab values (null, '2023-01-05T00:00:00.000000Z')");
         execute("insert into tab values ('22222222-2222-2222-2222-222222222222', '2023-01-03T00:00:00.000000Z')");
-        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+        assertQuery("select arg_max(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_max\n\n");
     }
 }

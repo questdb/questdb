@@ -564,11 +564,12 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 // into the table. This pins the per-batch drop semantic --
                 // even good rows in a bad chunk must be absent.
                 if (!poisonedIdInList.isEmpty()) {
-                    TestUtils.assertSql(engine, sqlExecutionContext,
-                            "SELECT count() FROM " + TABLE_NAME
-                                    + " WHERE id IN (" + poisonedIdInList + ")",
-                            sink,
-                            "count\n0\n");
+                    assertQuery("SELECT count() FROM " + TABLE_NAME
+                            + " WHERE id IN (" + poisonedIdInList + ")")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce("count\n0\n");
                 }
 
                 // (c) Async error notifications: at least one per poisoned

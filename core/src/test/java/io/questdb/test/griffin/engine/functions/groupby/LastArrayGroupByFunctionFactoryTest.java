@@ -35,16 +35,13 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             execute("insert into tab values (ARRAY[3.0, 4.0])");
-            assertQuery(
-                    """
+            assertQuery("select last(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             arr
                             [3.0,4.0]
-                            """,
-                    "select last(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -57,17 +54,13 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (1, ARRAY[30.0, 31.0])");
             execute("insert into tab values (2, ARRAY[40.0, 41.0])");
             execute("insert into tab values (2, ARRAY[50.0, 51.0])");
-            assertQuery(
-                    """
+            assertQuery("select grp, last(arr) arr from tab order by grp")
+                    .expectSize()
+                    .returns("""
                             grp\tarr
                             1\t[30.0,31.0]
                             2\t[50.0,51.0]
-                            """,
-                    "select grp, last(arr) arr from tab order by grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -81,14 +74,15 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ('1970-01-01T00:00:05.000000Z', 'a', ARRAY[3.0, 4.0]),
                     ('1970-01-01T00:00:10.000000Z', 'b', ARRAY[5.0, 6.0])
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT ts, sym, last(arr) arr FROM tab SAMPLE BY 10s FILL(NONE)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tsym\tarr
                             1970-01-01T00:00:00.000000Z\ta\t[3.0,4.0]
                             1970-01-01T00:00:10.000000Z\tb\t[5.0,6.0]
-                            """,
-                    "SELECT ts, sym, last(arr) arr FROM tab SAMPLE BY 10s FILL(NONE)"
-            );
+                            """);
         });
     }
 
@@ -101,14 +95,15 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
                     ('1970-01-01T00:00:20.000000Z', ARRAY[3.0, 4.0])
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(NONE)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tarr
                             1970-01-01T00:00:00.000000Z\t[1.0,2.0]
                             1970-01-01T00:00:20.000000Z\t[3.0,4.0]
-                            """,
-                    "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(NONE)"
-            );
+                            """);
         });
     }
 
@@ -121,15 +116,16 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ('1970-01-01T00:00:00.000000Z', 'a', ARRAY[1.0, 2.0]),
                     ('1970-01-01T00:00:20.000000Z', 'a', ARRAY[3.0, 4.0])
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tgrp\tarr
                             1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]
                             1970-01-01T00:00:10.000000Z\ta\tnull
                             1970-01-01T00:00:20.000000Z\ta\t[3.0,4.0]
-                            """,
-                    "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(NULL)"
-            );
+                            """);
         });
     }
 
@@ -142,15 +138,16 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
                     ('1970-01-01T00:00:20.000000Z', ARRAY[3.0, 4.0])
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(NULL) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tarr
                             1970-01-01T00:00:00.000000Z\t[1.0,2.0]
                             1970-01-01T00:00:10.000000Z\tnull
                             1970-01-01T00:00:20.000000Z\t[3.0,4.0]
-                            """,
-                    "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(NULL) ALIGN TO CALENDAR"
-            );
+                            """);
         });
     }
 
@@ -163,16 +160,17 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
                     ('1970-01-01T00:00:20.000000Z', ARRAY[3.0, 4.0])
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FROM '1970-01-01T00:00:00.000000Z' TO '1970-01-01T00:00:40.000000Z' FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tarr
                             1970-01-01T00:00:00.000000Z\t[1.0,2.0]
                             1970-01-01T00:00:10.000000Z\tnull
                             1970-01-01T00:00:20.000000Z\t[3.0,4.0]
                             1970-01-01T00:00:30.000000Z\tnull
-                            """,
-                    "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FROM '1970-01-01T00:00:00.000000Z' TO '1970-01-01T00:00:40.000000Z' FILL(NULL)"
-            );
+                            """);
         });
     }
 
@@ -185,15 +183,16 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
                     ('1970-01-01T00:00:20.000000Z', ARRAY[3.0, 4.0])
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tarr
                             1970-01-01T00:00:00.000000Z\t[1.0,2.0]
                             1970-01-01T00:00:10.000000Z\tnull
                             1970-01-01T00:00:20.000000Z\t[3.0,4.0]
-                            """,
-                    "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(NULL)"
-            );
+                            """);
         });
     }
 
@@ -206,15 +205,16 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ('1970-01-01T00:00:00.000000Z', 'a', ARRAY[1.0, 2.0]),
                     ('1970-01-01T00:00:20.000000Z', 'a', ARRAY[3.0, 4.0])
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(PREV)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tgrp\tarr
                             1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]
                             1970-01-01T00:00:10.000000Z\ta\t[1.0,2.0]
                             1970-01-01T00:00:20.000000Z\ta\t[3.0,4.0]
-                            """,
-                    "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(PREV)"
-            );
+                            """);
         });
     }
 
@@ -228,16 +228,17 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ('1970-01-01T00:00:10.000000Z', 'b', ARRAY[5.0, 6.0]),
                     ('1970-01-01T00:00:10.000000Z', 'a', ARRAY[3.0, 4.0])
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(PREV) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tgrp\tarr
                             1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]
                             1970-01-01T00:00:00.000000Z\tb\tnull
                             1970-01-01T00:00:10.000000Z\tb\t[5.0,6.0]
                             1970-01-01T00:00:10.000000Z\ta\t[3.0,4.0]
-                            """,
-                    "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(PREV) ALIGN TO CALENDAR"
-            );
+                            """);
         });
     }
 
@@ -250,27 +251,25 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0], ARRAY[10.0]),
                     ('1970-01-01T00:00:20.000000Z', ARRAY[3.0, 4.0], ARRAY[30.0, 40.0])
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT ts, last(arr1) arr1, last(arr2) arr2 FROM tab SAMPLE BY 10s FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tarr1\tarr2
                             1970-01-01T00:00:00.000000Z\t[1.0,2.0]\t[10.0]
                             1970-01-01T00:00:10.000000Z\tnull\tnull
                             1970-01-01T00:00:20.000000Z\t[3.0,4.0]\t[30.0,40.0]
-                            """,
-                    "SELECT ts, last(arr1) arr1, last(arr2) arr2 FROM tab SAMPLE BY 10s FILL(NULL)"
-            );
+                            """);
         });
     }
 
     @Test
     public void testSampleByFillLinearRejectsArrayColumns() throws Exception {
         final String sql = "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(LINEAR)";
-        assertException(
-                sql,
-                "CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
-                sql.indexOf("LINEAR"),
-                "support for LINEAR fill is not yet implemented"
-        );
+        assertQuery(sql)
+                .ddl("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY")
+                .fails(sql.indexOf("LINEAR"), "support for LINEAR fill is not yet implemented");
     }
 
     @Test
@@ -283,11 +282,9 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             final String sql = "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)";
-            assertExceptionNoLeakCheck(
-                    sql,
-                    sql.indexOf("42"),
-                    "support for VALUE fill is not yet implemented"
-            );
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("42"), "support for VALUE fill is not yet implemented");
         });
     }
 
@@ -296,11 +293,9 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             final String sql = "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)";
-            assertExceptionNoLeakCheck(
-                    sql,
-                    sql.indexOf("42"),
-                    "support for VALUE fill is not yet implemented"
-            );
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("42"), "support for VALUE fill is not yet implemented");
         });
     }
 
@@ -310,16 +305,13 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             execute("insert into tab values (null)");
-            assertQuery(
-                    """
+            assertQuery("select last(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             arr
                             null
-                            """,
-                    "select last(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -329,16 +321,13 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             execute("insert into tab values (ARRAY[])");
-            assertQuery(
-                    """
+            assertQuery("select last(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             arr
                             []
-                            """,
-                    "select last(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -348,16 +337,13 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             execute("insert into tab values (ARRAY[3.0, null, 5.0])");
-            assertQuery(
-                    """
+            assertQuery("select last(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             arr
                             [3.0,null,5.0]
-                            """,
-                    "select last(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -366,16 +352,13 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
-            assertQuery(
-                    """
+            assertQuery("select last(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             arr
                             [1.0,2.0]
-                            """,
-                    "select last(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -385,16 +368,13 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (null)");
             execute("insert into tab values (null)");
-            assertQuery(
-                    """
+            assertQuery("select last(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             arr
                             null
-                            """,
-                    "select last(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -406,17 +386,13 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (1, null)");
             execute("insert into tab values (2, null)");
             execute("insert into tab values (2, ARRAY[20.0, 21.0])");
-            assertQuery(
-                    """
+            assertQuery("select grp, last(arr) arr from tab order by grp")
+                    .expectSize()
+                    .returns("""
                             grp\tarr
                             1\tnull
                             2\t[20.0,21.0]
-                            """,
-                    "select grp, last(arr) arr from tab order by grp",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -426,16 +402,13 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[1.0])");
             execute("insert into tab values (ARRAY[2.0, 3.0, 4.0])");
-            assertQuery(
-                    """
+            assertQuery("select last(arr) arr from tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             arr
                             [2.0,3.0,4.0]
-                            """,
-                    "select last(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
