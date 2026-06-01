@@ -1312,7 +1312,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             throw e;
                         } else {
                             // dump the difference in data
-                            assertSql("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n", "select converted, casted, original from y");
+                            assertQuery("select converted, casted, original from y")
+                                    .noLeakCheck()
+                                    .returnsOnce("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n");
                         }
                     }
                     assertQuery("select \"column\", type from table_columns('y')")
@@ -1832,7 +1834,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             throw e;
                         } else {
                             // dump the difference in data
-                            assertSql("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n", "select converted, casted, original from y");
+                            assertQuery("select converted, casted, original from y")
+                                    .noLeakCheck()
+                                    .returnsOnce("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n");
                         }
                     }
                     assertQuery("select \"column\", type from table_columns('y')")

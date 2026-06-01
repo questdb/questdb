@@ -12087,27 +12087,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
         execute("INSERT INTO t2(ts, x) VALUES (1, 2)");
         engine.releaseInactive();
 
-        assertSql(
-                """
+        assertQuery("select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;")
+                .noLeakCheck()
+                .returnsOnce("""
                         TS\tts1\tx\tts11
                         1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
-                        """,
-                "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;"
-        );
-        assertSql(
-                """
+                        """);
+        assertQuery("select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;")
+                .noLeakCheck()
+                .returnsOnce("""
                         ts\tx\tts1\tx1\tTS11
                         1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000001Z
-                        """,
-                "select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;"
-        );
-        assertSql(
-                """
+                        """);
+        assertQuery("select t1.*, t2.ts from t1 asof join (select * from t2) t2;")
+                .noLeakCheck()
+                .returnsOnce("""
                         ts\tx\tts1
                         1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
-                        """,
-                "select t1.*, t2.ts from t1 asof join (select * from t2) t2;"
-        );
+                        """);
 
         assertSyntaxError(
                 "SELECT " +

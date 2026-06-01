@@ -309,19 +309,17 @@ public class CopyImportTest extends AbstractCairoTest {
                     // selects nothing because ID is invalid
                     // copy ... cancel returns a cursor that does not implement the full
                     // Record API (getStrLen), so it cannot go through the query builder.
-                    assertSql(
-                            """
+                    assertQuery("copy 'ffffffffffffffff' cancel")
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     id\tstatus
                                     ffffffffffffffff\tunknown
-                                    """,
-                            "copy 'ffffffffffffffff' cancel"
-                    );
+                                    """);
 
                     // this one should succeed
-                    assertSql(
-                            "id\tstatus\n" + importId + "\tcancelled\n",
-                            "copy '" + importId + "' cancel"
-                    );
+                    assertQuery("copy '" + importId + "' cancel")
+                            .noLeakCheck()
+                            .returnsOnce("id\tstatus\n" + importId + "\tcancelled\n");
                 } finally {
                     copyRequestJob.drain(0);
                 }
@@ -354,10 +352,9 @@ public class CopyImportTest extends AbstractCairoTest {
 
                     // cancel request should succeed (copy ... cancel cursor lacks getStrLen,
                     // so it stays on assertSql rather than the query builder)
-                    assertSql(
-                            "id\tstatus\n" + copyID + "\tcancelled\n",
-                            "copy '" + copyID + "' cancel"
-                    );
+                    assertQuery("copy '" + copyID + "' cancel")
+                            .noLeakCheck()
+                            .returnsOnce("id\tstatus\n" + copyID + "\tcancelled\n");
                 } finally {
                     copyRequestJob.drain(0);
                 }
@@ -770,19 +767,17 @@ public class CopyImportTest extends AbstractCairoTest {
                 try {
                     // copy ... cancel returns a cursor that does not implement the full
                     // Record API (getStrLen), so it cannot go through the query builder.
-                    assertSql(
-                            """
+                    assertQuery("copy 'ffffffffffffffff' cancel")
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     id\tstatus
                                     ffffffffffffffff\tunknown
-                                    """,
-                            "copy 'ffffffffffffffff' cancel"
-                    );
+                                    """);
 
                     // this one should succeed
-                    assertSql(
-                            "id\tstatus\n" + copyID + "\tcancelled\n",
-                            "copy '" + copyID + "' cancel"
-                    );
+                    assertQuery("copy '" + copyID + "' cancel")
+                            .noLeakCheck()
+                            .returnsOnce("id\tstatus\n" + copyID + "\tcancelled\n");
                 } finally {
                     copyRequestJob.drain(0);
                 }
