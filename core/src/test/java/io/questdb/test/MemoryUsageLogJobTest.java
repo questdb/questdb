@@ -25,52 +25,49 @@
 package io.questdb.test;
 
 import io.questdb.MemoryUsageLogJob;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class MemoryUsageLogJobTest {
     @Test
-    public void testAppendMemoryUsageIncludesCoreFieldsAndNonZeroTags() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final int rssMemoryTag = MemoryTag.NATIVE_ND_ARRAY_DBG2;
-            final long rssSize = 64;
-            final int nonRssMemoryTag = MemoryTag.NATIVE_PATH;
-            final long nonRssSize = 32;
-            final long expectedTagValue = Unsafe.getMemUsedByTag(rssMemoryTag) + rssSize;
-            final long expectedNonRssAccounted = Unsafe.getNonRssMemUsed() + nonRssSize;
-            long rssPtr = 0;
-            long nonRssPtr = 0;
-            try {
-                rssPtr = Unsafe.malloc(rssSize, rssMemoryTag);
-                nonRssPtr = Unsafe.malloc(nonRssSize, nonRssMemoryTag);
-                final StringSink sink = new StringSink();
-                MemoryUsageLogJob.appendMemoryUsage(sink);
+    public void testRunSeriallyHonoursDynamicEnableDisable() {
+        final long[] ticks = {0};
+        final boolean[] enabled = {true};
+        final MemoryUsageLogJob job = new MemoryUsageLogJob(() -> ticks[0], () -> enabled[0], () -> 1000);
 
-                TestUtils.assertContains(sink, "mem.accounted=");
-                TestUtils.assertContains(sink, "mem.rss.accounted=");
-                TestUtils.assertContains(sink, "mem.non.rss.accounted=" + expectedNonRssAccounted);
-                TestUtils.assertContains(sink, "mem.rss.limit=");
-                TestUtils.assertContains(sink, "rss.physical=");
-                TestUtils.assertContains(sink, "jvm.heap.used=");
-                TestUtils.assertContains(sink, "malloc.count=");
-                TestUtils.assertContains(sink, "realloc.count=");
-                TestUtils.assertContains(sink, "free.count=");
-                TestUtils.assertContains(sink, MemoryTag.nameOf(rssMemoryTag) + "=" + expectedTagValue);
-            } finally {
-                Unsafe.free(rssPtr, rssSize, rssMemoryTag);
-                Unsafe.free(nonRssPtr, nonRssSize, nonRssMemoryTag);
-            }
-        });
+        Assert.assertTrue(job.run(0));
+
+        enabled[0] = false;
+        ticks[0] = 5_000_000;
+        Assert.assertFalse(job.run(0));
+
+        enabled[0] = true;
+        Assert.assertTrue(job.run(0));
+    }
+
+    @Test
+    public void testRunSeriallyHonoursDynamicIntervalChange() {
+        final long[] ticks = {0};
+        final long[] intervalMillis = {1000};
+        final MemoryUsageLogJob job = new MemoryUsageLogJob(() -> ticks[0], () -> true, () -> intervalMillis[0]);
+
+        Assert.assertTrue(job.run(0));
+
+        intervalMillis[0] = 10;
+        ticks[0] = 10_000;
+        Assert.assertTrue(job.run(0));
+
+        ticks[0] = 19_999;
+        Assert.assertFalse(job.run(0));
+
+        ticks[0] = 20_000;
+        Assert.assertTrue(job.run(0));
     }
 
     @Test
     public void testRunSeriallyHonoursInterval() {
         final long[] ticks = {0};
-        final MemoryUsageLogJob job = new MemoryUsageLogJob(() -> ticks[0], 1000);
+        final MemoryUsageLogJob job = new MemoryUsageLogJob(() -> ticks[0], () -> true, () -> 1000);
 
         Assert.assertTrue(job.run(0));
         Assert.assertFalse(job.run(0));

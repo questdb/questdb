@@ -1517,9 +1517,9 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testMemoryUsageLogIntervalRejectsMicrosOverflow() throws Exception {
+    public void testMemoryUsageLogIntervalRejectsAboveMax() throws Exception {
         Properties properties = new Properties();
-        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), Long.toString(Long.MAX_VALUE / 1000 + 1));
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "86_400_001");
         assertInvalidConfiguration(properties, PropertyKey.MEMORY_USAGE_LOG_INTERVAL);
     }
 
