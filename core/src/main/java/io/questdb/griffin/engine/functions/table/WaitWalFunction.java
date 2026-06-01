@@ -113,8 +113,8 @@ class WaitWalFunction extends BooleanFunction implements Function {
                     executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
                     throwIfTerminated();
 
-                    boolean resumed = waiter.reset();
-                    if (firstRegister || resumed) {
+                    waiter.reset();
+                    if (firstRegister) {
                         seqTxnTracker.registerWaiter(waiter);
                         firstRegister = false;
                     }
