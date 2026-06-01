@@ -5036,9 +5036,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // latest by designated timestamp, no order by, select all columns
             assertQuery("(tab where name in ('c1')) latest on ts partition by id")
                     .noLeakCheck()
-                    .timestamp("ts")
-                    .expectSize()
-                    .returns("""
+                    .returnsOnce("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
@@ -5047,9 +5045,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // latest by designated timestamp, ordered by another timestamp, select all columns
             assertQuery("(tab where name in ('c1') order by other_ts) latest on ts partition by id")
                     .noLeakCheck()
-                    .timestamp("other_ts")
-                    .expectSize()
-                    .returns("""
+                    .returnsOnce("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
@@ -5058,9 +5054,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // latest by designated timestamp, select subset of columns
             assertQuery("select value, ts from (tab where name in ('c1')) latest on ts partition by id")
                     .noLeakCheck()
-                    .timestamp("ts")
-                    .expectSize()
-                    .returns("""
+                    .returnsOnce("""
                             value\tts
                             113\t1970-01-01T00:00:00.000003Z
                             212\t1970-01-01T00:00:00.000004Z
@@ -5069,9 +5063,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // latest by designated timestamp, partition by multiple columns
             assertQuery("(tab where name in ('c1','c2')) latest on ts partition by id, name")
                     .noLeakCheck()
-                    .timestamp("ts")
-                    .expectSize()
-                    .returns("""
+                    .returnsOnce("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z
                             d1\tc2\t123\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
@@ -5082,9 +5074,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // latest by non-designated timestamp, ordered
             assertQuery("(tab where name in ('c1') order by other_ts) latest on other_ts partition by id")
                     .noLeakCheck()
-                    .timestamp("other_ts")
-                    .expectSize()
-                    .returns("""
+                    .returnsOnce("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t111\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
@@ -5095,9 +5085,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // the second returned row is different from the ordered by query
             assertQuery("(tab where name in ('c1')) latest on other_ts partition by id")
                     .noLeakCheck()
-                    .timestamp("ts")
-                    .expectSize()
-                    .returns("""
+                    .returnsOnce("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t111\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
@@ -5106,9 +5094,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // empty sub-query
             assertQuery("(tab where name in ('c3')) latest on ts partition by id")
                     .noLeakCheck()
-                    .timestamp("ts")
-                    .expectSize()
-                    .returns("id\tname\tvalue\tts\tother_ts\n");
+                    .returnsOnce("id\tname\tvalue\tts\tother_ts\n");
         });
     }
 
