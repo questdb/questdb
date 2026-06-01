@@ -44,6 +44,8 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     protected static final byte RED = 1;
     // P + L + R + C + REF + LAST_REF
     private static final long BLOCK_SIZE = 4 + 4 + 4 + 4 + 4 + 4; // 24, must be divisible by 8
+    // Upper bound enforced by the compressed-offset encoding (offsets are 8-byte-aligned and
+    // stored as 32-bit ints), independent of any user-supplied byte cap.
     private static final long MAX_KEY_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final long OFFSET_COLOUR = 12;
     // offset to last reference in value chain (kept to avoid having to traverse whole chain on each addition)
@@ -51,6 +53,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     private static final long OFFSET_REF = 16;
     private static final long OFFSET_RIGHT = 8;
     private final long initialKeyHeapSize;
+    private final String keyHeapConfigKey;
     private final long maxKeyHeapSize;
     protected int root = -1;
     private long keyHeapLimit;
@@ -58,12 +61,13 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     private long keyHeapSize;
     private long keyHeapStart;
 
-    public AbstractRedBlackTree(long keyPageSize, int keyMaxPages) {
+    public AbstractRedBlackTree(long keyPageSize, long maxKeyHeapBytes, String keyHeapConfigKey) {
         assert keyPageSize >= BLOCK_SIZE;
         keyHeapSize = initialKeyHeapSize = keyPageSize;
         keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
         keyHeapLimit = keyHeapStart + keyHeapSize;
-        maxKeyHeapSize = Math.min(keyPageSize * keyMaxPages, MAX_KEY_HEAP_SIZE_LIMIT);
+        maxKeyHeapSize = Math.min(Math.max(maxKeyHeapBytes, keyPageSize), MAX_KEY_HEAP_SIZE_LIMIT);
+        this.keyHeapConfigKey = keyHeapConfigKey;
     }
 
     @Override
@@ -107,7 +111,12 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         if (keyHeapPos + BLOCK_SIZE > keyHeapLimit) {
             final long newHeapSize = keyHeapSize << 1;
             if (newHeapSize > maxKeyHeapSize) {
-                throw LimitOverflowException.instance().put("limit of ").put(maxKeyHeapSize).put(" memory exceeded in RedBlackTree");
+                LimitOverflowException ex = LimitOverflowException.instance();
+                ex.put("limit of ").put(maxKeyHeapSize).put(" memory exceeded in RedBlackTree");
+                if (keyHeapConfigKey != null) {
+                    ex.put(" (raise ").put(keyHeapConfigKey).put(')');
+                }
+                throw ex;
             }
             long newHeapPos = Unsafe.realloc(keyHeapStart, keyHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
 

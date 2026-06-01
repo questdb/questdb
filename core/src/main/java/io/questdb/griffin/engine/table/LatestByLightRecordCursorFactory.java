@@ -29,6 +29,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
@@ -68,7 +69,16 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
             int timestampIndex,
             boolean orderedByTimestampAsc
     ) {
-        super(base.getMetadata());
+        // The cursor emits one row per partition key in map (key-insertion) order, NOT in
+        // designated-timestamp order, so this factory must not advertise a designated timestamp:
+        // advertising one would imply the output is ordered by it (ascending or descending), which
+        // it is not. Strip the timestamp from the base metadata. The sibling LatestByRecordCursorFactory
+        // (the non-random-access path) sorts its row indexes before replaying the base cursor, so it
+        // emits in base-scan order and legitimately keeps the timestamp; this light path trades that
+        // sort for random access and loses the ordering. With no designated timestamp the scan
+        // direction is vacuous, so -- like keyed GROUP BY and DISTINCT -- this factory does not
+        // override getScanDirection() and inherits the default.
+        super(GenericRecordMetadata.copyOfSansTimestamp(base.getMetadata()));
         assert base.recordCursorSupportsRandomAccess();
         this.base = base;
         this.recordSink = recordSink;
