@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
@@ -110,8 +111,8 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
         return nextMethod.next();
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        super.of(cursorA, cursorB, circuitBreaker);
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionContext executionContext) throws SqlException {
+        super.of(cursorA, cursorB, executionContext);
         record.of(cursorA.getRecord(), cursorB.getRecord());
         toTop();
     }
