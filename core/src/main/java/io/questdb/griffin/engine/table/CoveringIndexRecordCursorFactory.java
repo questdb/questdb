@@ -1221,12 +1221,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * that very large keys now produce multiple frames instead of one
          * GiB-sized frame.
          */
-        /**
-         * Allocate the per-frame column and symbol buffers at INITIAL_CAPACITY and
-         * reset var-data positions. Returns the starting row capacity;
-         * {@link #growFrameBuffers} grows it as rows are written. Buffers are
-         * tracked in {@link #allocatedBuffers} and released by {@link #freeBuffers}.
-         */
         protected int allocFrameBuffers() {
             int capacity = INITIAL_CAPACITY;
             Arrays.fill(frameVarDataAddrs, 0);
@@ -1991,13 +1985,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 boolean any = false;
                 for (int i = 0; i < n; i++) {
                     CoveringRowCursor c = openForwardCoveringCursor(tableReader, indexColumnIndex, requiredIncludeIndices, partitionIndex, multiKeys.getQuick(i), rowLo, rowHi);
+                    // Park the cursor before probing it: the cursor owns native
+                    // memory and its index reader stops tracking it once checked
+                    // out, so a throw from hasNext()/next() before the store
+                    // would orphan it. closeKeyCursors() frees keyCursors[i] on
+                    // the error path.
+                    keyCursors[i] = c;
                     if (c != null && c.hasNext()) {
-                        keyCursors[i] = c;
                         keyHeads[i] = c.next();
                         any = true;
                     } else {
-                        Misc.free(c);
-                        keyCursors[i] = null;
+                        keyCursors[i] = Misc.free(c);
                         keyHeads[i] = NO_ROW;
                     }
                 }
@@ -2148,13 +2146,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 CoveringRowCursor c = openForwardCoveringCursor(
                         tableReader, indexColumnIndex, requiredIncludeIndices,
                         partitionIndex, multiKeys.getQuick(i), rowLo, rowHi);
+                // Park the cursor before probing it: the cursor owns native
+                // memory and its index reader stops tracking it once checked
+                // out, so a throw from hasNext()/next() before the store would
+                // orphan it. closeMergeCursors() frees mergeCursors[i] on the
+                // error path.
+                mergeCursors[i] = c;
                 if (c != null && c.hasNext()) {
-                    mergeCursors[i] = c;
                     mergeHeads[i] = c.next();
                     any = true;
                 } else {
-                    Misc.free(c);
-                    mergeCursors[i] = null;
+                    mergeCursors[i] = Misc.free(c);
                     mergeHeads[i] = NO_ROW;
                 }
             }
