@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -51,10 +52,13 @@ import org.junit.Test;
  * allocates it under the bound tracker. A runaway {@code PARTITION BY} over a
  * high-cardinality key therefore crosses the per-query limit at the map's growth.
  * <p>
- * Only the per-partition map is wired; the RANGE/ROWS ring buffers
- * ({@code MemoryARW}) that scale with input rows are left for a follow-up, so
- * these tests deliberately use plain (frameless) partitioned functions whose only
- * unbounded native structure is the map.
+ * The per-partition map and the RANGE-frame value ring buffer ({@code MemoryARW})
+ * are wired. The {@code PARTITION BY}-only tests exercise the map (their only
+ * unbounded native structure); the {@code RANGE BETWEEN ... PRECEDING} tests exercise
+ * the ring buffer. The non-partition range test is the cleanest buffer proof: with no
+ * {@code PARTITION BY} there is no map on the path, so a breach is charged solely to
+ * the buffer. ROWS-frame buffers are sized by the frame literal (bounded) and stay on
+ * global-only accounting.
  * <p>
  * The per-query limit is set in {@link #beforeClass()} because
  * {@code CairoEngine#getMemoryTrackerProvider} caches the
@@ -68,6 +72,18 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
         // 256 KiB: a high-cardinality PARTITION BY map (tens of thousands of keys)
         // crosses it, while a handful of partitions fit comfortably.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        // Shrink the window-store page so a range-frame ring buffer starts small (one
+        // 4 KiB page) and a runaway frame breaches the 256 KiB limit after a few
+        // doublings, while a small input stays comfortably under it. The default is
+        // 1 MiB, which would breach on the first allocation. The page size is re-read
+        // per query compile, so @Before (cleared by tearDown) is the right place; the
+        // limit itself is cached by the provider and must stay in @BeforeClass.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4 * 1024L);
     }
 
     @Test
@@ -85,6 +101,162 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile("SELECT k, rank() OVER (PARTITION BY k ORDER BY v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
                 assertInTree(factory, CachedWindowRecordCursorFactory.class);
+                for (int i = 0; i < 10; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals("iteration " + i, 2_000, rows);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionRangeFrameBufferFailsOnHighDensity() throws Exception {
+        // avg(v) over (partition by k order by ts range between ... preceding and current
+        // row) with only a handful of partitions keeps the per-partition map tiny, so the
+        // breach is charged to the shared range ring buffer (MemoryARW) sliced per
+        // partition. Exercises the partition variant's setMemoryTracker: super binds the
+        // map, the override binds the buffer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT (x % 4) AS k, x::double AS v, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(50_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile(
+                        "SELECT k, avg(v) OVER (PARTITION BY k ORDER BY ts RANGE BETWEEN 100_000_000 PRECEDING AND CURRENT ROW) FROM tab",
+                        sqlExecutionContext);
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                    assertInTree(factory, WindowRecordCursorFactory.class);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected per-query memory breach");
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRangeFrameBufferReleasesAllocations() throws Exception {
+        // Repeated getCursor/close cycles on a range-frame buffer must release every byte
+        // the lazy ring allocates. assertMemoryLeak around the loop is the load-bearing
+        // check: the per-cursor reopen (first alloc under the bound tracker) and reset
+        // (free under the same tracker) must net to zero on the per-query counter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x::double AS v, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(2_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT ts, avg(v) OVER (ORDER BY ts RANGE BETWEEN 100_000_000 PRECEDING AND CURRENT ROW) FROM tab",
+                         sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, WindowRecordCursorFactory.class);
+                for (int i = 0; i < 10; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals("iteration " + i, 2_000, rows);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamingFirstValueRangeBufferFailsOnHighDensity() throws Exception {
+        // first_value(v) over (order by ts range ...) buffers the frame in its value ring
+        // (no partition by -> no map on the path), representing the First/Last/Nth value-ring
+        // family. A wide finite frame over dense timestamps grows the ring past the limit.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x::double AS v, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(50_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile(
+                        "SELECT ts, first_value(v) OVER (ORDER BY ts RANGE BETWEEN 100_000_000 PRECEDING AND CURRENT ROW) FROM tab",
+                        sqlExecutionContext);
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                    assertInTree(factory, WindowRecordCursorFactory.class);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected per-query memory breach");
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamingMaxRangeBufferFailsOnHighDensity() throws Exception {
+        // max(v) over (order by ts range ...) keeps TWO growable buffers: the [ts,value] value
+        // ring and a monotonic deque for the frame maximum. A wide finite frame over dense
+        // timestamps grows them past the limit; both are now tracker-bound, so the breach is
+        // a clean isOutOfMemory(). max() also backs min() (shared MaxMin classes).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x::double AS v, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(50_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile(
+                        "SELECT ts, max(v) OVER (ORDER BY ts RANGE BETWEEN 100_000_000 PRECEDING AND CURRENT ROW) FROM tab",
+                        sqlExecutionContext);
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                    assertInTree(factory, WindowRecordCursorFactory.class);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected per-query memory breach");
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamingMaxRangeBufferReleasesAllocations() throws Exception {
+        // Repeated getCursor/close cycles on max() over range must release BOTH the value ring
+        // and the deque buffer. assertMemoryLeak around the loop is the load-bearing check that
+        // the deque's lazy alloc/free stays symmetric on the per-query counter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x::double AS v, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(2_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT ts, max(v) OVER (ORDER BY ts RANGE BETWEEN 100_000_000 PRECEDING AND CURRENT ROW) FROM tab",
+                         sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, WindowRecordCursorFactory.class);
                 for (int i = 0; i < 10; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         long rows = 0;
@@ -143,6 +315,66 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
                         rows++;
                     }
                     Assert.assertEquals(10_000, rows);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamingRangeFrameBufferFailsOnHighDensity() throws Exception {
+        // avg(v) over (order by ts range between ... preceding and current row) has no
+        // partition by, so there is no map on the path - the only unbounded native
+        // structure is the value ring buffer (MemoryARW) inside AvgOverRangeFrameFunction.
+        // A wide finite frame over densely packed timestamps accumulates every row into
+        // the ring, so its growth past the per-query limit is charged solely to the
+        // buffer. This is the cleanest proof of the buffer wiring.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x::double AS v, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(50_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile(
+                        "SELECT ts, avg(v) OVER (ORDER BY ts RANGE BETWEEN 100_000_000 PRECEDING AND CURRENT ROW) FROM tab",
+                        sqlExecutionContext);
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                    assertInTree(factory, WindowRecordCursorFactory.class);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected per-query memory breach");
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamingRangeFrameBufferSucceedsUnderLimit() throws Exception {
+        // A small input keeps the ring buffer well under the limit; the query returns one
+        // row per input row and the tracker accounting stays balanced.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x::double AS v, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(2_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT ts, avg(v) OVER (ORDER BY ts RANGE BETWEEN 100_000_000 PRECEDING AND CURRENT ROW) FROM tab",
+                         sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, WindowRecordCursorFactory.class);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    long rows = 0;
+                    while (cursor.hasNext()) {
+                        rows++;
+                    }
+                    Assert.assertEquals(2_000, rows);
                 }
             }
         });

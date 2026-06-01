@@ -59,9 +59,11 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * cume_dist() window function.
@@ -589,6 +591,11 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            deferredOffsets.setMemoryTracker(tracker);
         }
 
         @Override
