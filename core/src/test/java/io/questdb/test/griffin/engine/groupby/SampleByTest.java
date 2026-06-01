@@ -429,7 +429,7 @@ public class SampleByTest extends AbstractCairoTest {
                     ('2024-01-01T02:00:00', 'a', 3.0)
                     """);
             assertQuery("SELECT ts, grp, array_agg(val) arr, sum(val) s FROM tab "
-                            + "SAMPLE BY 1h FILL(NULL, 0) ALIGN TO CALENDAR")
+                    + "SAMPLE BY 1h FILL(NULL, 0) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -482,7 +482,7 @@ public class SampleByTest extends AbstractCairoTest {
                     ('2024-01-01T02:00:00', 30)
                     """);
             assertQuery("WITH sampled AS (SELECT ts, sum(val) sumval FROM tabA SAMPLE BY 1h FILL(0)) "
-                            + "SELECT array_agg(sumval::double) agg FROM sampled")
+                    + "SELECT array_agg(sumval::double) agg FROM sampled")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -514,8 +514,8 @@ public class SampleByTest extends AbstractCairoTest {
                     ('a', ARRAY[1.0, 2.0])
                     """);
             assertQuery("SELECT a.grp, last(b.arr) " +
-                            "FROM (SELECT ts, grp, sum(val) sumval FROM tabA SAMPLE BY 1h FILL(0)) a " +
-                            "JOIN tabB b ON a.grp = b.grp")
+                    "FROM (SELECT ts, grp, sum(val) sumval FROM tabA SAMPLE BY 1h FILL(0)) a " +
+                    "JOIN tabB b ON a.grp = b.grp")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -544,7 +544,7 @@ public class SampleByTest extends AbstractCairoTest {
                     ('2024-01-01T02:00:00', 30)
                     """);
             assertQuery("SELECT array_agg(sumval::double) agg "
-                            + "FROM (SELECT ts, sum(val) sumval FROM tabA SAMPLE BY 1h FILL(0)) sub")
+                    + "FROM (SELECT ts, sum(val) sumval FROM tabA SAMPLE BY 1h FILL(0)) sub")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()

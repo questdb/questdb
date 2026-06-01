@@ -441,8 +441,8 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     ('a', 4.5)
                     """);
             assertQuery("SELECT array_agg(arr) concat, array_sum(array_agg(arr)) sum FROM (" +
-                            "  SELECT array_agg(val) arr FROM tab" +
-                            ")")
+                    "  SELECT array_agg(val) arr FROM tab" +
+                    ")")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -621,7 +621,7 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     ('b', 20.0)
                     """);
             assertQuery("SELECT grp, array_count(arr) cnt FROM " +
-                            "(SELECT grp, array_agg(val) arr FROM tab) ORDER BY grp")
+                    "(SELECT grp, array_agg(val) arr FROM tab) ORDER BY grp")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -695,7 +695,7 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     ('b', 20.0)
                     """);
             assertQuery("SELECT grp, arr, array_count(arr) cnt, array_sum(arr) sum " +
-                            "FROM (SELECT grp, array_agg(val) arr FROM tab) ORDER BY grp")
+                    "FROM (SELECT grp, array_agg(val) arr FROM tab) ORDER BY grp")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -907,7 +907,7 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     ('2024-01-01T03:00:00', 2.0)
                     """);
             assertQuery("SELECT ts, array_agg(val) arr FROM tab "
-                            + "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
+                    + "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()

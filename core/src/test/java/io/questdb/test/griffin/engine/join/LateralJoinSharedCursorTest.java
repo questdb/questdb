@@ -684,13 +684,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
             // so the shared GroupByFunction flyweight must serve both reads
             // from the same MapValue without corrupting the rendered array.
             assertQuery("""
-                            SELECT o.arr, sub.rate
-                            FROM (SELECT array_agg(val) AS arr FROM items) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_count <= array_count(o.arr)
-                            ) sub
-                            ORDER BY sub.rate
-                            """)
+                    SELECT o.arr, sub.rate
+                    FROM (SELECT array_agg(val) AS arr FROM items) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_count <= array_count(o.arr)
+                    ) sub
+                    ORDER BY sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -726,17 +726,17 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
             // verifies that each render is computed correctly from a clean
             // build buffer.
             assertQuery("""
-                            SELECT o.category, o.arr, sub.rate
-                            FROM (
-                                SELECT category, array_agg(val) AS arr
-                                FROM items
-                                GROUP BY category
-                            ) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_count <= array_count(o.arr)
-                            ) sub
-                            ORDER BY o.category, sub.rate
-                            """)
+                    SELECT o.category, o.arr, sub.rate
+                    FROM (
+                        SELECT category, array_agg(val) AS arr
+                        FROM items
+                        GROUP BY category
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_count <= array_count(o.arr)
+                    ) sub
+                    ORDER BY o.category, sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""

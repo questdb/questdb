@@ -850,7 +850,7 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('b', ARRAY[20.0, 30.0])
                     """);
             assertQuery("SELECT grp, agg, array_count(agg) cnt, array_sum(agg) sum " +
-                            "FROM (SELECT grp, array_agg(arr) agg FROM tab) ORDER BY grp")
+                    "FROM (SELECT grp, array_agg(arr) agg FROM tab) ORDER BY grp")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1062,7 +1062,7 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T03:00:00', ARRAY[3.0])
                     """);
             assertQuery("SELECT ts, array_agg(arr) agg FROM tab "
-                            + "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
+                    + "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
