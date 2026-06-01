@@ -150,14 +150,17 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             // TRUNCATE has special optimization to stop scanning early.
             for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
                 int futureWalId = walTxnDetails.getWalId(futureSeqTxn);
-                if (futureWalId > 0 && walTxnDetails.getWalTxnType(futureSeqTxn) == TRUNCATE) {
+                // NONE for structural (walId < 1) transactions, which carry no data txn type; the barrier
+                // check below treats them by walId, so the exact value is irrelevant there.
+                byte futureType = futureWalId > 0 ? walTxnDetails.getWalTxnType(futureSeqTxn) : NONE;
+                if (futureType == TRUNCATE) {
                     // Truncate fully removes any prior data, no point doing any data apply.
                     // Everything between seqTxn and the truncate is data (otherwise we would have stopped at
                     // the barrier below), so we can skip straight to the truncate.
                     return futureSeqTxn - initialSeqTxn;
                 }
 
-                if (futureWalId < 1 || !isDataType(walTxnDetails.getWalTxnType(futureSeqTxn))) {
+                if (futureWalId < 1 || !isDataType(futureType)) {
                     // Not a data transaction: either an SQL statement (e.g. an UPDATE that uses existing data)
                     // or a structural change (e.g. a column type conversion). Such transactions can read the
                     // rows present when they apply, so the transactions before them must be materialised
