@@ -42,15 +42,16 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
 
         // Weights: AAPL=50, MSFT=30, GOOGL=15, TSLA=5 (total=100)
         // Expected distribution: AAPL=50%, MSFT=30%, GOOGL=15%, TSLA=5%
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol\tcnt
                         AAPL\t46
                         GOOGL\t19
                         MSFT\t29
                         TSLA\t6
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
@@ -63,14 +64,15 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
                 """);
 
         // Weights sum to 5.0: A=50%, B=30%, C=20%
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol	cnt
                         A	46
                         B	29
                         C	25
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
@@ -83,14 +85,15 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
                 """);
 
         // Equal weights should produce roughly equal distribution
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol	cnt
                         A	27
                         B	35
                         C	37
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
@@ -103,14 +106,15 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
                 """);
 
         // A should dominate with 95% probability
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol	cnt
                         A	94
                         B	5
                         C	1
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
@@ -129,12 +133,13 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
                 """);
 
         // Only A should appear (weight=100, others=0)
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol\tcnt
                         A\t50
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
@@ -158,23 +163,21 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
                 )
                 """);
 
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol\tcnt
                         A\t68
                         B\t32
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
     public void testZeroWeights() throws Exception {
         // All zero weights should fail at runtime when constructing the function
-        assertException(
-                "select rnd_symbol_weighted('A', 0, 'B', 0) as testCol from long_sequence(10)",
-                7,
-                "total weight must be positive"
-        );
+        assertQuery("select rnd_symbol_weighted('A', 0, 'B', 0) as testCol from long_sequence(10)")
+                .fails(7, "total weight must be positive");
     }
 
     @Test
@@ -214,41 +217,35 @@ public class RndSymbolWeightedFunctionFactoryTest extends AbstractFunctionFactor
 
     @Test
     public void testExplainPlan() throws Exception {
-        assertSql(
-                """
+        assertQuery("explain select rnd_symbol_weighted('AAPL', 50, 'MSFT', 30, 'GOOGL', 20) from long_sequence(10)")
+                .returnsOnce("""
                         QUERY PLAN
                         VirtualRecord
                           functions: [rnd_symbol_weighted(AAPL,50.0,MSFT,30.0,GOOGL,20.0)]
                             long_sequence count: 10
-                        """,
-                "explain select rnd_symbol_weighted('AAPL', 50, 'MSFT', 30, 'GOOGL', 20) from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
     public void testExplainPlanTwoSymbols() throws Exception {
-        assertSql(
-                """
+        assertQuery("explain select rnd_symbol_weighted('A', 70, 'B', 30) from long_sequence(5)")
+                .returnsOnce("""
                         QUERY PLAN
                         VirtualRecord
                           functions: [rnd_symbol_weighted(A,70.0,B,30.0)]
                             long_sequence count: 5
-                        """,
-                "explain select rnd_symbol_weighted('A', 70, 'B', 30) from long_sequence(5)"
-        );
+                        """);
     }
 
     @Test
     public void testExplainPlanWithDecimalWeights() throws Exception {
-        assertSql(
-                """
+        assertQuery("explain select rnd_symbol_weighted('X', 2.5, 'Y', 1.5) from long_sequence(3)")
+                .returnsOnce("""
                         QUERY PLAN
                         VirtualRecord
                           functions: [rnd_symbol_weighted(X,2.5,Y,1.5)]
                             long_sequence count: 3
-                        """,
-                "explain select rnd_symbol_weighted('X', 2.5, 'Y', 1.5) from long_sequence(3)"
-        );
+                        """);
     }
 
     @Override

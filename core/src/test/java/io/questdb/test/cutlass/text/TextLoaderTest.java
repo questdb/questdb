@@ -42,7 +42,6 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoadWarning;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -4249,9 +4248,11 @@ public class TextLoaderTest extends AbstractCairoTest {
         );
     }
 
-    protected void assertTable(String expected) throws SqlException {
+    protected void assertTable(String expected) throws Exception {
         refreshTablesInBaseEngine();
-        assertSql(expected, "test");
+        assertQuery("test")
+                .noLeakCheck()
+                .returnsOnce(expected);
     }
 
     @FunctionalInterface

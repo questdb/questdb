@@ -103,13 +103,10 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
                     expected.append("\n");
                 }
 
-                assertQueryNoLeakCheck(
-                        expected.toString(),
-                        "SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) sum FROM t ORDER BY grp",
-                        null,
-                        true,
-                        true
-                );
+                assertQuery("SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) sum FROM t ORDER BY grp")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expected.toString());
             }
         });
     }
@@ -168,13 +165,10 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
                     expected.append(g).append("\t").append(expectedPerGroup[g]).append("\n");
                 }
 
-                assertQueryNoLeakCheck(
-                        expected.toString(),
-                        "SELECT grp, array_agg(val) arr FROM t ORDER BY grp",
-                        null,
-                        true,
-                        true
-                );
+                assertQuery("SELECT grp, array_agg(val) arr FROM t ORDER BY grp")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expected.toString());
             }
         });
     }
@@ -210,13 +204,11 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
                 execute(insert.toString());
                 expectedArray.append("]");
 
-                assertQueryNoLeakCheck(
-                        "arr\n" + expectedArray + "\n",
-                        "SELECT array_agg(val) arr FROM t",
-                        null,
-                        false,
-                        true
-                );
+                assertQuery("SELECT array_agg(val) arr FROM t")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("arr\n" + expectedArray + "\n");
             }
         });
     }
