@@ -217,7 +217,12 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
-     * Returns the sample by flags supported by this function.
+     * Returns the sample by fill modes supported by this function as a bitmask of
+     * {@code SAMPLE_BY_FILL_*} constants.
+     * <p>
+     * {@link #SAMPLE_BY_FILL_NONE} MUST always be set. The SQL optimizer and the fill-mode
+     * validation in GroupByUtils rely on this invariant. If you relax this requirement,
+     * audit the optimizer and downstream validation for assumptions that depend on it.
      *
      * @return the sample by flags
      */

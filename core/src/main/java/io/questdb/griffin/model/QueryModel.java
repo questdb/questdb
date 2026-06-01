@@ -1817,6 +1817,14 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void setSampleByFill(ObjList<ExpressionNode> fill) {
+        sampleByFill.clear();
+        if (fill != null) {
+            sampleByFill.addAll(fill);
+        }
+    }
+
+    @Override
     public void setSampleByFromTo(ExpressionNode from, ExpressionNode to) {
         this.sampleByFrom = from;
         this.sampleByTo = to;
