@@ -8549,21 +8549,6 @@ public class JoinTest extends AbstractCairoTest {
         });
     }
 
-    protected void assertQueryNoLeakCheck(String expected, String query) throws SqlException {
-        snapshotMemoryUsage();
-        try (RecordCursorFactory factory = select(query)) {
-            assertFactoryCursor(
-                    expected,
-                    null,
-                    factory,
-                    false,
-                    sqlExecutionContext,
-                    false,
-                    false
-            );
-        }
-    }
-
     @FunctionalInterface
     private interface TestMethod {
         void run(boolean fullFatJoin) throws Exception;
