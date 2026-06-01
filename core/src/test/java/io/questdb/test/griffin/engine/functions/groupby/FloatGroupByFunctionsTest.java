@@ -39,13 +39,14 @@ public class FloatGroupByFunctionsTest extends AbstractCairoTest {
             sqlExecutionContext.setRandom(new Rnd());
             execute("create table tab as ( select rnd_float() ch from long_sequence(100) )");
 
-            assertSql(
-                    """
+            assertQuery("select min(ch), max(ch), first(ch), last(ch), count() from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             min\tmax\tfirst\tlast\tcount
                             0.0011075139\t0.9856291\t0.66077775\t0.7997733\t100
-                            """,
-                    "select min(ch), max(ch), first(ch), last(ch), count() from tab"
-            );
+                            """);
         });
     }
 
@@ -57,23 +58,25 @@ public class FloatGroupByFunctionsTest extends AbstractCairoTest {
             tm.timestamp("ts").col("ch", ColumnType.FLOAT);
             createPopulateTable(tm, 100, "2020-01-01", 2);
 
-            assertSql(
-                    """
+            assertQuery("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to first observation")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tmin\tmax\tfirst\tlast\tcount
                             2020-01-01T00:28:47.990000Z\t0.001\t0.051\t0.001\t0.051\t51
                             2020-01-02T00:28:47.990000Z\t0.052\t0.1\t0.052\t0.1\t49
-                            """,
-                    "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to first observation"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to calendar")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tmin\tmax\tfirst\tlast\tcount
                             2020-01-01T00:00:00.000000Z\t0.001\t0.05\t0.001\t0.05\t50
                             2020-01-02T00:00:00.000000Z\t0.051\t0.1\t0.051\t0.1\t50
-                            """,
-                    "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to calendar"
-            );
+                            """);
         });
     }
 }

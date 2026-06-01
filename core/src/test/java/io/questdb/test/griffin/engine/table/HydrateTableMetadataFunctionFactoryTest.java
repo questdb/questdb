@@ -34,14 +34,15 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
             execute("CREATE TABLE 'b' ( ts timestamp) timestamp(ts) partition by day wal");
-            assertSql("hydrate_table_metadata\ntrue\n", "select hydrate_table_metadata('a', 'b')");
-            assertSql(
-                    """
+            assertQuery("select hydrate_table_metadata('a', 'b')")
+                    .noLeakCheck()
+                    .returnsOnce("hydrate_table_metadata\ntrue\n");
+            assertQuery("table_columns('a')")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            """,
-                    "table_columns('a')"
-            );
+                            """);
         });
     }
 
@@ -62,7 +63,9 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
     public void testNotAllTablesAreValid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
-            assertSql("hydrate_table_metadata\ntrue\n", "select hydrate_table_metadata('a', 'b')");
+            assertQuery("select hydrate_table_metadata('a', 'b')")
+                    .noLeakCheck()
+                    .returnsOnce("hydrate_table_metadata\ntrue\n");
         });
     }
 

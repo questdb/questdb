@@ -37,7 +37,10 @@ public class PgGetKeywordsFunctionFactoryTest extends AbstractCairoTest {
         for (CharSequence keyword : Constants.KEYWORDS) {
             sink.put(keyword).put('\t').put('\t').put("false").put('\t').put('\t').put('\n');
         }
-        assertQuery(sink.toString(), "pg_get_keywords;", null, false, true);
+        assertQuery("pg_get_keywords;")
+                .noRandomAccess()
+                .expectSize()
+                .returns(sink.toString());
     }
 
     @Test
@@ -47,6 +50,9 @@ public class PgGetKeywordsFunctionFactoryTest extends AbstractCairoTest {
         for (CharSequence keyword : Constants.KEYWORDS) {
             sink.put(keyword).put('\t').put('\t').put("false").put('\t').put('\t').put('\n');
         }
-        assertQuery(sink.toString(), "pg_catalog.pg_get_keywords;", null, false, true);
+        assertQuery("pg_catalog.pg_get_keywords;")
+                .noRandomAccess()
+                .expectSize()
+                .returns(sink.toString());
     }
 }

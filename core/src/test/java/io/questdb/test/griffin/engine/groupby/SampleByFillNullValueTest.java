@@ -104,8 +104,11 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     INSERT INTO t VALUES
                         (1, 10.0, '2024-01-01T00:00:00.000000Z'),
                         (2, 20.0, '2024-01-01T02:00:00.000000Z')""");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, x::STRING k, first(v) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tk\tfirst
                             2024-01-01T00:00:00.000000Z\t1\t10.0
                             2024-01-01T00:00:00.000000Z\t2\tnull
@@ -113,10 +116,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\t2\tnull
                             2024-01-01T02:00:00.000000Z\t2\t20.0
                             2024-01-01T02:00:00.000000Z\t1\tnull
-                            """,
-                    "SELECT ts, x::STRING k, first(v) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -131,8 +131,11 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "SELECT x::DOUBLE AS val, " +
                     "timestamp_sequence('2021-10-31T00:00:00.000000Z'::TIMESTAMP, 600_000_000) k " +
                     "FROM long_sequence(100)) TIMESTAMP(k) PARTITION BY NONE");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count() s, k FROM y SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Riga'")
+                    .timestamp("k")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tk
                             6\t2021-10-31T00:00:00.000000Z
                             6\t2021-10-31T01:00:00.000000Z
@@ -151,10 +154,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             6\t2021-10-31T14:00:00.000000Z
                             6\t2021-10-31T15:00:00.000000Z
                             4\t2021-10-31T16:00:00.000000Z
-                            """,
-                    "SELECT count() s, k FROM y SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Riga'",
-                    "k", false, false
-            );
+                            """);
         });
     }
 
@@ -169,18 +169,18 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO z VALUES " +
                     "(1.0, '2021-10-31T00:00:00.000000Z')," +
                     "(5.0, '2021-10-31T04:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM z SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Riga'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2021-10-31T00:00:00.000000Z
                             null\t2021-10-31T01:00:00.000000Z
                             null\t2021-10-31T02:00:00.000000Z
                             null\t2021-10-31T03:00:00.000000Z
                             5.0\t2021-10-31T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM z SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Riga'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -203,17 +203,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-10-25T22:00:00.000000Z')," +
                     "(3.0, '2024-10-27T23:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x " +
+                    "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-10-25T22:00:00.000000Z
                             null\t2024-10-26T22:00:00.000000Z
                             3.0\t2024-10-27T23:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x " +
-                            "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -230,17 +230,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(10.0, '2024-03-29T23:00:00.000000Z')," +
                     "(30.0, '2024-03-31T22:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x " +
+                    "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             10.0\t2024-03-29T23:00:00.000000Z
                             null\t2024-03-30T23:00:00.000000Z
                             30.0\t2024-03-31T22:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x " +
-                            "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -257,17 +257,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-10-20T22:00:00.000000Z')," +
                     "(3.0, '2024-11-03T23:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x " +
+                    "SAMPLE BY 1w FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-10-20T22:00:00.000000Z
                             null\t2024-10-27T23:00:00.000000Z
                             3.0\t2024-11-03T23:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x " +
-                            "SAMPLE BY 1w FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -287,17 +287,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-10-26T05:00:00.000000Z'),"
                     + "(3.0, '2024-10-28T06:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x "
+                    + "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-10-26T04:00:00.000000Z
                             null\t2024-10-27T05:00:00.000000Z
                             3.0\t2024-10-28T05:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x "
-                            + "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -314,17 +314,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(10.0, '2024-03-30T06:00:00.000000Z'),"
                     + "(30.0, '2024-04-01T05:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x "
+                    + "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             10.0\t2024-03-30T05:00:00.000000Z
                             null\t2024-03-31T04:00:00.000000Z
                             30.0\t2024-04-01T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x "
-                            + "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -343,17 +343,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-10-21T05:00:00.000000Z'),"
                     + "(3.0, '2024-11-04T06:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x "
+                    + "SAMPLE BY 1w FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-10-17T04:00:00.000000Z
                             null\t2024-10-24T04:00:00.000000Z
                             3.0\t2024-10-31T05:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x "
-                            + "SAMPLE BY 1w FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -373,17 +373,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-03-31T15:00:00.000000Z'),"
                     + "(3.0, '2024-04-02T12:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-03-31' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-03-30T23:00:00.000000Z
                             null\t2024-03-31T22:00:00.000000Z
                             3.0\t2024-04-01T22:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-03-31' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -401,17 +401,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-01-14T23:00:00.000000Z'),"
                     + "(3.0, '2024-01-16T23:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-15' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-01-14T23:00:00.000000Z
                             null\t2024-01-15T23:00:00.000000Z
                             3.0\t2024-01-16T23:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-15' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -426,17 +426,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-01-15T08:00:00.000000Z'),"
                     + "(3.0, '2024-01-17T08:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-15' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/Los_Angeles'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-01-15T08:00:00.000000Z
                             null\t2024-01-16T08:00:00.000000Z
                             3.0\t2024-01-17T08:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-15' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/Los_Angeles'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -450,17 +450,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // local and produced 2024-01-15T00:00Z labels in UTC.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-15' TO '2024-01-18' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             null\t2024-01-15T05:00:00.000000Z
                             null\t2024-01-16T05:00:00.000000Z
                             null\t2024-01-17T05:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-15' TO '2024-01-18' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -479,17 +479,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-01-15T05:00:00.000000Z'),"
                     + "(3.0, '2024-01-17T05:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-15' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-01-15T05:00:00.000000Z
                             null\t2024-01-16T05:00:00.000000Z
                             3.0\t2024-01-17T05:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-15' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -505,18 +505,18 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "(1.0, '2024-11-01T04:00:00.000000Z'),"
                     + "(2.0, '2024-11-02T04:00:00.000000Z'),"
                     + "(3.0, '2024-11-04T05:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-11-01' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-11-01T04:00:00.000000Z
                             2.0\t2024-11-02T04:00:00.000000Z
                             null\t2024-11-03T04:00:00.000000Z
                             3.0\t2024-11-04T05:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-11-01' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -534,17 +534,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-03-01T05:00:00.000000Z'),"
                     + "(3.0, '2024-05-01T04:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1M FROM '2024-03-01' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-03-01T05:00:00.000000Z
                             null\t2024-04-01T04:00:00.000000Z
                             3.0\t2024-05-01T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1M FROM '2024-03-01' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -559,17 +559,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-01-15T05:00:00.000000Z'),"
                     + "(3.0, '2024-03-15T04:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1M FROM '2024-01-15' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-01-15T05:00:00.000000Z
                             null\t2024-02-15T05:00:00.000000Z
                             3.0\t2024-03-15T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1M FROM '2024-01-15' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -586,18 +586,18 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "(1.0, '2024-03-09T05:00:00.000000Z'),"
                     + "(2.0, '2024-03-10T05:00:00.000000Z'),"
                     + "(3.0, '2024-03-12T04:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-03-09' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-03-09T05:00:00.000000Z
                             2.0\t2024-03-10T05:00:00.000000Z
                             null\t2024-03-11T04:00:00.000000Z
                             3.0\t2024-03-12T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-03-09' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -614,17 +614,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-03-04T05:00:00.000000Z'),"
                     + "(3.0, '2024-03-18T04:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1w FROM '2024-03-04' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-03-04T05:00:00.000000Z
                             null\t2024-03-11T04:00:00.000000Z
                             3.0\t2024-03-18T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1w FROM '2024-03-04' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -637,17 +637,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-01-15T05:00:00.000000Z'),"
                     + "(3.0, '2024-01-29T05:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1w FROM '2024-01-15' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-01-15T05:00:00.000000Z
                             null\t2024-01-22T05:00:00.000000Z
                             3.0\t2024-01-29T05:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1w FROM '2024-01-15' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -661,17 +661,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-01-15T05:00:00.000000Z'),"
                     + "(3.0, '2026-01-15T05:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1y FROM '2024-01-15' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-01-15T05:00:00.000000Z
                             null\t2025-01-15T05:00:00.000000Z
                             3.0\t2026-01-15T05:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1y FROM '2024-01-15' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -695,17 +695,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // buckets emit.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-04' "
+                    + "FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '05:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             null\t2024-01-01T05:00:00.000000Z
                             null\t2024-01-02T05:00:00.000000Z
                             null\t2024-01-03T05:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-04' "
-                            + "FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '05:00'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -720,18 +720,18 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // timestamp_floor_utc.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-04' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+02:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             null\t2023-12-31T22:00:00.000000Z
                             null\t2024-01-01T22:00:00.000000Z
                             null\t2024-01-02T22:00:00.000000Z
                             null\t2024-01-03T22:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-04' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+02:00'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -748,17 +748,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-01-01T23:00:00.000000Z'),"
                     + "(3.0, '2024-01-03T23:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-02' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+02:00' WITH OFFSET '01:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-01-01T23:00:00.000000Z
                             null\t2024-01-02T23:00:00.000000Z
                             3.0\t2024-01-03T23:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-02' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+02:00' WITH OFFSET '01:00'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -776,17 +776,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-01-01T22:00:00.000000Z'),"
                     + "(3.0, '2024-01-03T22:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-02' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+02:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-01-01T22:00:00.000000Z
                             null\t2024-01-02T22:00:00.000000Z
                             3.0\t2024-01-03T22:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-02' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+02:00'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -799,17 +799,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-01-02T05:00:00.000000Z'),"
                     + "(3.0, '2024-01-04T05:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-02' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE '-05:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-01-02T05:00:00.000000Z
                             null\t2024-01-03T05:00:00.000000Z
                             3.0\t2024-01-04T05:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-02' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE '-05:00'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -828,19 +828,19 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-10-21T22:00:00.000000Z'),"
                     + "(3.0, '2024-10-23T22:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-10-21' TO '2024-10-25' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '-00:30'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             null\t2024-10-20T21:30:00.000000Z
                             1.0\t2024-10-21T21:30:00.000000Z
                             null\t2024-10-22T21:30:00.000000Z
                             3.0\t2024-10-23T21:30:00.000000Z
                             null\t2024-10-24T21:30:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-10-21' TO '2024-10-25' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '-00:30'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -852,17 +852,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // through TimezoneFloorTimestampSampler.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-10-26' TO '2024-10-29' "
+                    + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             null\t2024-10-26T04:00:00.000000Z
                             null\t2024-10-27T05:00:00.000000Z
                             null\t2024-10-28T05:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-10-26' TO '2024-10-29' "
-                            + "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -878,17 +878,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-02-01T06:00:00.000000Z'),"
                     + "(3.0, '2024-04-01T05:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x "
+                    + "SAMPLE BY 1M FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-02-01T05:00:00.000000Z
                             null\t2024-03-01T05:00:00.000000Z
                             3.0\t2024-04-01T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x "
-                            + "SAMPLE BY 1M FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -899,17 +899,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-01-15T09:35:00.000000Z')," +
                     "(3.0, '2024-01-15T11:35:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x "
+                    + "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '00:30'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-01-15T09:30:00.000000Z
                             null\t2024-01-15T10:30:00.000000Z
                             3.0\t2024-01-15T11:30:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x "
-                            + "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '00:30'",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -917,16 +917,16 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     public void testFillNullEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val), ts FROM x SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T03:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tts
                             null\t2024-01-01T00:00:00.000000Z
                             null\t2024-01-01T01:00:00.000000Z
                             null\t2024-01-01T02:00:00.000000Z
-                            """,
-                    "SELECT sum(val), ts FROM x SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T03:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -944,8 +944,11 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "('Paris', 20.0, '2024-01-01T00:00:00.000000Z')," +
                     "('Paris', 21.0, '2024-01-01T01:00:00.000000Z')," +
                     "('London', 11.0, '2024-01-01T02:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, city, avg(temp) FROM weather SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\tavg
                             2024-01-01T00:00:00.000000Z\tLondon\t10.0
                             2024-01-01T00:00:00.000000Z\tParis\t20.0
@@ -953,10 +956,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\tLondon\tnull
                             2024-01-01T02:00:00.000000Z\tLondon\t11.0
                             2024-01-01T02:00:00.000000Z\tParis\tnull
-                            """,
-                    "SELECT ts, city, avg(temp) FROM weather SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -975,8 +975,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "('Paris', 20.0, '2024-01-01T00:00:00.000000Z')," +
                     "('Paris', 21.0, '2024-01-01T01:00:00.000000Z')," +
                     "('London', 12.0, '2024-01-01T02:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("WITH sq AS (SELECT ts, city, avg(temp) AS a FROM weather SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR) " +
+                    "SELECT * FROM sq")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\ta
                             2024-01-01T00:00:00.000000Z\tLondon\t10.0
                             2024-01-01T00:00:00.000000Z\tParis\t20.0
@@ -984,12 +988,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\tLondon\tnull
                             2024-01-01T02:00:00.000000Z\tLondon\t12.0
                             2024-01-01T02:00:00.000000Z\tParis\tnull
-                            """,
-                    "WITH sq AS (SELECT ts, city, avg(temp) AS a FROM weather SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR) " +
-                            "SELECT * FROM sq",
-                    "ts",
-                    false
-            );
+                            """);
         });
     }
 
@@ -1005,8 +1004,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "('Paris', 20.0, '2024-01-01T00:00:00.000000Z')," +
                     "('Paris', 21.0, '2024-01-01T01:00:00.000000Z')," +
                     "('London', 12.0, '2024-01-01T02:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("WITH sq AS (SELECT ts, city, avg(temp) AS a FROM weather SAMPLE BY 1h FILL(-1.0) ALIGN TO CALENDAR) " +
+                    "SELECT * FROM sq")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\ta
                             2024-01-01T00:00:00.000000Z\tLondon\t10.0
                             2024-01-01T00:00:00.000000Z\tParis\t20.0
@@ -1014,12 +1017,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\tLondon\t-1.0
                             2024-01-01T02:00:00.000000Z\tLondon\t12.0
                             2024-01-01T02:00:00.000000Z\tParis\t-1.0
-                            """,
-                    "WITH sq AS (SELECT ts, city, avg(temp) AS a FROM weather SAMPLE BY 1h FILL(-1.0) ALIGN TO CALENDAR) " +
-                            "SELECT * FROM sq",
-                    "ts",
-                    false
-            );
+                            """);
         });
     }
 
@@ -1038,8 +1036,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "('Paris', 20.0, '2024-01-01T02:00:00.000000Z')," +
                     "('Paris', 21.0, '2024-01-01T03:00:00.000000Z')," +
                     "('London', 11.0, '2024-01-01T04:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, city, avg(temp) FROM weather " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T06:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\tavg
                             2024-01-01T00:00:00.000000Z\tLondon\tnull
                             2024-01-01T00:00:00.000000Z\tParis\tnull
@@ -1053,11 +1055,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             2024-01-01T04:00:00.000000Z\tParis\tnull
                             2024-01-01T05:00:00.000000Z\tLondon\tnull
                             2024-01-01T05:00:00.000000Z\tParis\tnull
-                            """,
-                    "SELECT ts, city, avg(temp) FROM weather " +
-                            "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T06:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1070,14 +1068,14 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO weather VALUES " +
                     "('London', 10.0, '2024-01-01T01:00:00.000000Z')," +
                     "('Paris', 20.0, '2024-01-01T01:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, city, avg(temp) FROM weather " +
+                    "SAMPLE BY 1h FROM '2024-01-05' TO '2024-01-06' FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\tavg
-                            """,
-                    "SELECT ts, city, avg(temp) FROM weather " +
-                            "SAMPLE BY 1h FROM '2024-01-05' TO '2024-01-06' FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1095,8 +1093,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "('London', 10.0, '2024-01-01T03:00:00.000000Z')," +
                     "('Paris', 20.0, '2024-01-01T03:00:00.000000Z')," +
                     "('London', 11.0, '2024-01-01T04:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, city, avg(temp) FROM weather " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\tavg
                             2024-01-01T00:00:00.000000Z\tLondon\tnull
                             2024-01-01T00:00:00.000000Z\tParis\tnull
@@ -1106,11 +1108,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\tParis\tnull
                             2024-01-01T03:00:00.000000Z\tLondon\t10.0
                             2024-01-01T03:00:00.000000Z\tParis\t20.0
-                            """,
-                    "SELECT ts, city, avg(temp) FROM weather " +
-                            "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1122,14 +1120,14 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO weather VALUES " +
                     "('London', 10.0, '2024-01-01T01:00:00.000000Z')," +
                     "('Paris', 20.0, '2024-01-01T01:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, city, avg(temp) FROM weather " +
+                    "SAMPLE BY 1h FROM '2024-01-01T05:00:00.000000Z' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\tavg
-                            """,
-                    "SELECT ts, city, avg(temp) FROM weather " +
-                            "SAMPLE BY 1h FROM '2024-01-01T05:00:00.000000Z' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1147,8 +1145,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "('Paris', 20.0, '2024-01-01T01:00:00.000000Z')," +
                     "('Berlin', 5.0, '2024-01-01T03:00:00.000000Z')," +
                     "('London', 12.0, '2024-01-01T03:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, city, avg(temp) FROM weather " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\tavg
                             2024-01-01T00:00:00.000000Z\tLondon\tnull
                             2024-01-01T00:00:00.000000Z\tParis\tnull
@@ -1165,11 +1167,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             2024-01-01T04:00:00.000000Z\tLondon\tnull
                             2024-01-01T04:00:00.000000Z\tParis\tnull
                             2024-01-01T04:00:00.000000Z\tBerlin\tnull
-                            """,
-                    "SELECT ts, city, avg(temp) FROM weather " +
-                            "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1185,8 +1183,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "('A', 1.0, 10, '2024-01-01T01:00:00.000000Z')," +
                     "('B', 2.0, 20, '2024-01-01T01:00:00.000000Z')," +
                     "('A', 3.0, 30, '2024-01-01T03:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, key, sum(val), sum(ival) FROM x " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tkey\tsum\tsum1
                             2024-01-01T00:00:00.000000Z\tA\tnull\tnull
                             2024-01-01T00:00:00.000000Z\tB\tnull\tnull
@@ -1196,11 +1198,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\tB\tnull\tnull
                             2024-01-01T03:00:00.000000Z\tA\t3.0\t30
                             2024-01-01T03:00:00.000000Z\tB\tnull\tnull
-                            """,
-                    "SELECT ts, key, sum(val), sum(ival) FROM x " +
-                            "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1215,17 +1213,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "('Paris', 20.0, '2024-01-01T00:00:00.000000Z')," +
                     "('London', 11.0, '2024-01-01T01:00:00.000000Z')");
             // 2 buckets x 2 keys = 4 rows. Paris missing at 01:00.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, city, avg(temp) FROM weather SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\tavg
                             2024-01-01T00:00:00.000000Z\tLondon\t10.0
                             2024-01-01T00:00:00.000000Z\tParis\t20.0
                             2024-01-01T01:00:00.000000Z\tLondon\t11.0
                             2024-01-01T01:00:00.000000Z\tParis\tnull
-                            """,
-                    "SELECT ts, city, avg(temp) FROM weather SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1243,8 +1241,11 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "('London', 11.0, '2024-01-01T01:00:00.000000Z')");
             // 2 buckets x 3 keys = 6 rows.
             // Paris and Berlin missing at 01:00.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, city, avg(temp) FROM weather SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\tavg
                             2024-01-01T00:00:00.000000Z\tLondon\t10.0
                             2024-01-01T00:00:00.000000Z\tParis\t20.0
@@ -1252,10 +1253,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\tLondon\t11.0
                             2024-01-01T01:00:00.000000Z\tParis\tnull
                             2024-01-01T01:00:00.000000Z\tBerlin\tnull
-                            """,
-                    "SELECT ts, city, avg(temp) FROM weather SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1272,17 +1270,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Buckets at 10:00. LON missing from second bucket.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, city, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '10:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\tavg
                             2024-01-01T10:00:00.000000Z\tNYC\t10.0
                             2024-01-01T10:00:00.000000Z\tLON\t20.0
                             2024-01-02T10:00:00.000000Z\tNYC\t30.0
                             2024-01-02T10:00:00.000000Z\tLON\tnull
-                            """,
-                    "SELECT ts, city, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '10:00'",
-                    "ts"
-            );
+                            """);
         });
     }
 
@@ -1320,17 +1318,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "(null, 10.0, '2024-01-01T01:00:00.000000Z')," +
                     "('London', 20.0, '2024-01-01T01:00:00.000000Z')," +
                     "(null, 30.0, '2024-01-01T02:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, city, avg(temp) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\tavg
                             2024-01-01T01:00:00.000000Z\t\t10.0
                             2024-01-01T01:00:00.000000Z\tLondon\t20.0
                             2024-01-01T02:00:00.000000Z\t\t30.0
                             2024-01-01T02:00:00.000000Z\tLondon\tnull
-                            """,
-                    "SELECT ts, city, avg(temp) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1342,18 +1340,18 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "x::INT AS ival, " +
                     "timestamp_sequence('2024-01-01', 7_200_000_000) AS ts " +
                     "FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val), avg(val), sum(ival), ts FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tavg\tsum1\tts
                             1.0\t1.0\t1\t2024-01-01T00:00:00.000000Z
                             null\tnull\tnull\t2024-01-01T01:00:00.000000Z
                             2.0\t2.0\t2\t2024-01-01T02:00:00.000000Z
                             null\tnull\tnull\t2024-01-01T03:00:00.000000Z
                             3.0\t3.0\t3\t2024-01-01T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val), avg(val), sum(ival), ts FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1364,18 +1362,18 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "SELECT x::DOUBLE AS val, timestamp_sequence('2024-01-01', 7_200_000_000) AS ts " +
                     "FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
             // Data at 00:00, 02:00, 04:00 -- gaps at 01:00, 03:00
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tts
                             1.0\t2024-01-01T00:00:00.000000Z
                             null\t2024-01-01T01:00:00.000000Z
                             2.0\t2024-01-01T02:00:00.000000Z
                             null\t2024-01-01T03:00:00.000000Z
                             3.0\t2024-01-01T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1388,19 +1386,19 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "SELECT x::DOUBLE AS val, " +
                     "timestamp_sequence('2024-01-01T02:00:00.000000Z', 3_600_000_000) AS ts " +
                     "FROM long_sequence(2)) TIMESTAMP(ts) PARTITION BY DAY");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val), ts FROM x " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tts
                             null\t2024-01-01T00:00:00.000000Z
                             null\t2024-01-01T01:00:00.000000Z
                             1.0\t2024-01-01T02:00:00.000000Z
                             2.0\t2024-01-01T03:00:00.000000Z
                             null\t2024-01-01T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val), ts FROM x " +
-                            "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1414,18 +1412,18 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("CREATE TABLE x AS (" +
                     "SELECT x::DOUBLE AS val, timestamp_sequence('2024-01-01', 7_200_000_000) AS ts " +
                     "FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tts
                             1.0\t2024-01-01T00:00:00.000000Z
                             null\t2024-01-01T01:00:00.000000Z
                             2.0\t2024-01-01T02:00:00.000000Z
                             null\t2024-01-01T03:00:00.000000Z
                             3.0\t2024-01-01T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -1493,16 +1491,14 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             // s2 only has real data in the 00:01 bucket. No leading NULL-fill at 00:00
             // and no trailing NULL-fill at 00:02 for s2 -- both would be present on the
             // cursor path because s1 populates those buckets in the base cartesian.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\ts\tv
                             2024-01-01T00:01:00.000000Z\ts2\t10.0
-                            """,
-                    sql,
-                    "ts",
-                    false,
-                    false
-            );
+                            """);
 
             // The key invariant: filter: s='s2' appears inside the inner Async Group By,
             // nested below the outer Sample By Fill. This is the mechanism -- the inner
@@ -1543,15 +1539,13 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             // Verify completion without StackOverflowError and correct row count.
             // 2024 is a leap year (366 days). From Jan 1 00:00 to Dec 31 00:00
             // = 365 days = 8760 hours + the final bucket = 8761 hourly buckets.
-            assertQueryNoLeakCheck(
-                    "count\n8761\n",
-                    "SELECT count() FROM (" +
-                            "SELECT ts, key, avg(val) FROM sparse " +
-                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR)",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("SELECT count() FROM (" +
+                    "SELECT ts, key, avg(val) FROM sparse " +
+                    "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("count\n8761\n");
         });
     }
 
@@ -1568,16 +1562,16 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             // Data at Jan 1 12:00 falls in bucket [Jan 1 10:00, Jan 2 10:00)
             // Data at Jan 3 12:00 falls in bucket [Jan 3 10:00, Jan 4 10:00)
             // Gap bucket: [Jan 2 10:00, Jan 3 10:00) filled with NULL
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '10:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tavg
                             2024-01-01T10:00:00.000000Z\t1.0
                             2024-01-02T10:00:00.000000Z\tnull
                             2024-01-03T10:00:00.000000Z\t3.0
-                            """,
-                    "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '10:00'",
-                    "ts"
-            );
+                            """);
         });
     }
 
@@ -1592,18 +1586,18 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             // timestamp_floor_utc computes effectiveOffset = from + offset,
             // so buckets start at 02:00 each day.
             // Data at Jan 2 12:00 falls in [Jan 2 02:00, Jan 3 02:00)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, avg(value) FROM test " +
+                    "SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-04' " +
+                    "FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tavg
                             2024-01-01T02:00:00.000000Z\tnull
                             2024-01-02T02:00:00.000000Z\t5.0
                             2024-01-03T02:00:00.000000Z\tnull
-                            """,
-                    "SELECT ts, avg(value) FROM test " +
-                            "SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-04' " +
-                            "FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00'",
-                    "ts"
-            );
+                            """);
         });
     }
 
@@ -1617,16 +1611,16 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Zero offset should behave identically to no offset
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '00:00'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tavg
                             2024-01-01T00:00:00.000000Z\t1.0
                             2024-01-02T00:00:00.000000Z\tnull
                             2024-01-03T00:00:00.000000Z\t3.0
-                            """,
-                    "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '00:00'",
-                    "ts"
-            );
+                            """);
         });
     }
 
@@ -1662,12 +1656,11 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             "('2024-01-01T01:00:00.000000Z', 'B', 2.0, 20.0), " +
                             "('2024-01-01T02:00:00.000000Z', 'A', 3.0, 30.0), " +
                             "('2024-01-01T03:00:00.000000Z', 'B', 4.0, 40.0)");
-                    assertQueryNoLeakCheck(
-                            expected,
-                            "SELECT ts, k, sum(a) AS a, sum(b) AS b FROM t " +
-                                    "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR ORDER BY ts, k",
-                            "ts", true, false
-                    );
+                    assertQuery("SELECT ts, k, sum(a) AS a, sum(b) AS b FROM t " +
+                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR ORDER BY ts, k")
+                            .timestamp("ts")
+                            .noLeakCheck()
+                            .returns(expected);
                 });
             }
         } finally {
@@ -1706,12 +1699,11 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             "('2024-01-01T01:00:00.000000Z', 'B', 2.0, 20.0), " +
                             "('2024-01-01T02:00:00.000000Z', 'A', 3.0, 30.0), " +
                             "('2024-01-01T03:00:00.000000Z', 'B', 4.0, 40.0)");
-                    assertQueryNoLeakCheck(
-                            expected,
-                            "SELECT ts, k, sum(a) AS a, sum(b) AS b FROM t " +
-                                    "SAMPLE BY 1h FILL(0.0, 0.0) ALIGN TO CALENDAR ORDER BY ts, k",
-                            "ts", true, false
-                    );
+                    assertQuery("SELECT ts, k, sum(a) AS a, sum(b) AS b FROM t " +
+                            "SAMPLE BY 1h FILL(0.0, 0.0) ALIGN TO CALENDAR ORDER BY ts, k")
+                            .timestamp("ts")
+                            .noLeakCheck()
+                            .returns(expected);
                 });
             }
         } finally {
@@ -1733,16 +1725,16 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             drainWalQueue();
             bindVariableService.clear();
             bindVariableService.setStr(0, "10:00");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tavg
                             2024-01-01T10:00:00.000000Z\t1.0
                             2024-01-02T10:00:00.000000Z\tnull
                             2024-01-03T10:00:00.000000Z\t3.0
-                            """,
-                    "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1",
-                    "ts"
-            );
+                            """);
         });
     }
 
@@ -1757,16 +1749,16 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "('2024-01-01T12:00:00.000000Z', 1.0), " +
                     "('2024-01-03T12:00:00.000000Z', 3.0)");
             drainWalQueue();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET cast('10:00' AS STRING)")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tavg
                             2024-01-01T10:00:00.000000Z\t1.0
                             2024-01-02T10:00:00.000000Z\tnull
                             2024-01-03T10:00:00.000000Z\t3.0
-                            """,
-                    "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET cast('10:00' AS STRING)",
-                    "ts"
-            );
+                            """);
         });
     }
 
@@ -1947,19 +1939,17 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             // no source row and FILL(NULL) emits the explicit null, proving
             // the wrap's grid stride is correct (24h spans in EDT, no DST
             // boundary in this window).
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val) s, ts FROM x " +
+                    "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             s\tts
                             1.0\t2024-06-15T04:00:00.000000Z
                             null\t2024-06-16T04:00:00.000000Z
                             2.0\t2024-06-17T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val) s, ts FROM x " +
-                            "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
-                    "ts",
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1991,34 +1981,26 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     2024-01-01T03:00:00.000000Z\ta\t70
                     """;
 
-            assertQueryNoLeakCheck(
-                    expectedNonKeyed,
-                    "SELECT ts, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO CALENDAR",
-                    "ts",
-                    false,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    expectedKeyed,
-                    "SELECT ts, k, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO CALENDAR",
-                    "ts",
-                    false,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    expectedNonKeyed,
-                    "SELECT ts, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO FIRST OBSERVATION",
-                    "ts",
-                    false,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    expectedKeyed,
-                    "SELECT ts, k, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO FIRST OBSERVATION",
-                    "ts",
-                    false,
-                    false
-            );
+            assertQuery("SELECT ts, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedNonKeyed);
+            assertQuery("SELECT ts, k, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedKeyed);
+            assertQuery("SELECT ts, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedNonKeyed);
+            assertQuery("SELECT ts, k, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedKeyed);
         });
     }
 
@@ -2031,8 +2013,11 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "('Paris', 20.0, '2024-01-01T00:00:00.000000Z')," +
                     "('Paris', 21.0, '2024-01-01T01:00:00.000000Z')," +
                     "('London', 11.0, '2024-01-01T02:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, city, avg(temp) FROM weather SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\tavg
                             2024-01-01T00:00:00.000000Z\tLondon\t10.0
                             2024-01-01T00:00:00.000000Z\tParis\t20.0
@@ -2040,10 +2025,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\tLondon\t0.0
                             2024-01-01T02:00:00.000000Z\tLondon\t11.0
                             2024-01-01T02:00:00.000000Z\tParis\t0.0
-                            """,
-                    "SELECT ts, city, avg(temp) FROM weather SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -2059,8 +2041,12 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "('Paris', 20.0, '2024-01-01T02:00:00.000000Z')," +
                     "('Paris', 21.0, '2024-01-01T03:00:00.000000Z')," +
                     "('London', 11.0, '2024-01-01T04:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, city, avg(temp) FROM weather " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T06:00:00.000000Z' FILL(0) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tcity\tavg
                             2024-01-01T00:00:00.000000Z\tLondon\t0.0
                             2024-01-01T00:00:00.000000Z\tParis\t0.0
@@ -2074,11 +2060,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             2024-01-01T04:00:00.000000Z\tParis\t0.0
                             2024-01-01T05:00:00.000000Z\tLondon\t0.0
                             2024-01-01T05:00:00.000000Z\tParis\t0.0
-                            """,
-                    "SELECT ts, city, avg(temp) FROM weather " +
-                            "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T06:00:00.000000Z' FILL(0) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -2088,18 +2070,18 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("CREATE TABLE x AS (" +
                     "SELECT x::DOUBLE AS val, timestamp_sequence('2024-01-01', 7_200_000_000) AS ts " +
                     "FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tts
                             1.0\t2024-01-01T00:00:00.000000Z
                             0.0\t2024-01-01T01:00:00.000000Z
                             2.0\t2024-01-01T02:00:00.000000Z
                             0.0\t2024-01-01T03:00:00.000000Z
                             3.0\t2024-01-01T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -2112,19 +2094,19 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     "SELECT x::DOUBLE AS val, " +
                     "timestamp_sequence('2024-01-01T02:00:00.000000Z', 3_600_000_000) AS ts " +
                     "FROM long_sequence(2)) TIMESTAMP(ts) PARTITION BY DAY");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sum(val), ts FROM x " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(0) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             sum\tts
                             0.0\t2024-01-01T00:00:00.000000Z
                             0.0\t2024-01-01T01:00:00.000000Z
                             1.0\t2024-01-01T02:00:00.000000Z
                             2.0\t2024-01-01T03:00:00.000000Z
                             0.0\t2024-01-01T04:00:00.000000Z
-                            """,
-                    "SELECT sum(val), ts FROM x " +
-                            "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(0) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 
@@ -2157,34 +2139,26 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     2024-01-01T02:00:00.000000Z\ta\t7\t7
                     """;
 
-            assertQueryNoLeakCheck(
-                    expectedNonKeyed,
-                    "SELECT ts, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO CALENDAR",
-                    "ts",
-                    false,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    expectedKeyed,
-                    "SELECT ts, k, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO CALENDAR",
-                    "ts",
-                    false,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    expectedNonKeyed,
-                    "SELECT ts, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO FIRST OBSERVATION",
-                    "ts",
-                    false,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    expectedKeyed,
-                    "SELECT ts, k, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO FIRST OBSERVATION",
-                    "ts",
-                    false,
-                    false
-            );
+            assertQuery("SELECT ts, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedNonKeyed);
+            assertQuery("SELECT ts, k, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedKeyed);
+            assertQuery("SELECT ts, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedNonKeyed);
+            assertQuery("SELECT ts, k, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedKeyed);
         });
     }
 
@@ -2230,8 +2204,13 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "(10.0, '1970-01-02T00:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, first(v) FROM t " +
+                    "SAMPLE BY 1h FROM '1969-12-31T22:00:00.000000Z' TO '1970-01-02T01:00:00.000000Z' " +
+                    "FILL(NULL) ALIGN TO CALENDAR")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             ts\tfirst
                             1969-12-31T22:00:00.000000Z\tnull
                             1969-12-31T23:00:00.000000Z\tnull
@@ -2260,12 +2239,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             1970-01-01T22:00:00.000000Z\tnull
                             1970-01-01T23:00:00.000000Z\tnull
                             1970-01-02T00:00:00.000000Z\t10.0
-                            """,
-                    "SELECT ts, first(v) FROM t " +
-                            "SAMPLE BY 1h FROM '1969-12-31T22:00:00.000000Z' TO '1970-01-02T01:00:00.000000Z' " +
-                            "FILL(NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+                            """);
         });
     }
 }

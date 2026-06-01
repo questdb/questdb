@@ -251,12 +251,14 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 // count matches. If any row was lost, count would be
                 // smaller; if dedup didn't collapse a replay, count would
                 // exceed count_distinct(id).
-                assertSql(
+                assertQuery(
                         "SELECT count() c, count_distinct(id) d, min(id) lo, max(id) hi"
-                                + " FROM " + TABLE_NAME,
-                        "c\td\tlo\thi\n"
-                                + expected + "\t" + expected + "\t0\t" + (expected - 1) + "\n"
-                );
+                                + " FROM " + TABLE_NAME)
+                        .noLeakCheck()
+                        .returnsOnce(
+                                "c\td\tlo\thi\n"
+                                        + expected + "\t" + expected + "\t0\t" + (expected - 1) + "\n"
+                        );
             }
         });
     }
@@ -459,19 +461,13 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         });
     }
 
-    private void assertRowCount(long expected) {
-        assertSql(
-                "SELECT count() FROM " + TABLE_NAME,
-                "count\n" + expected + "\n"
-        );
-    }
-
-    private void assertSql(String sql, String expected) {
-        try {
-            TestUtils.assertSql(engine, sqlExecutionContext, sql, sink, expected);
-        } catch (Exception e) {
-            throw new AssertionError(e);
-        }
+    private void assertRowCount(long expected) throws Exception {
+        assertQuery(
+                "SELECT count() FROM " + TABLE_NAME)
+                .noLeakCheck()
+                .returnsOnce(
+                        "count\n" + expected + "\n"
+                );
     }
 
     private void createTargetTable() {
