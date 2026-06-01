@@ -167,6 +167,7 @@ public class QueryAssertion {
      * check (or use {@link #failsWith}).
      */
     public void fails(int errorPos, CharSequence contains) throws Exception {
+        requireFailsCompatible();
         if (ddl != null && fullFatJoins) {
             throw new IllegalStateException("fullFatJoins() is not supported together with ddl() on the fails() path");
         }
@@ -497,10 +498,9 @@ public class QueryAssertion {
     }
 
     private void assertReturnsRecords(Record[] expected, Record[] expected2) throws Exception {
+        prepareHook.run();
         assertMemoryLeak(() -> {
-            if (ddl != null) {
-                engine.execute(ddl, context);
-            }
+            runDdl();
             snapshotMemoryUsage();
             RecordCursorFactory factory = compileSelect();
             try {
@@ -512,6 +512,9 @@ public class QueryAssertion {
 
                 if (ddl2 != null) {
                     runMutations();
+                    if (engine.getConfiguration().getWalEnabledDefault()) {
+                        drainWalQueue(engine);
+                    }
                     int count = 3;
                     while (count > 0) {
                         try {
@@ -655,6 +658,13 @@ public class QueryAssertion {
             return;
         }
         assertThrows(errorPos, contains, fullFatJoins);
+    }
+
+    private void requireFailsCompatible() {
+        if (expectSize || expectedTimestamp != null || ddl2 != null || !supportsRandomAccess
+                || sizeCanBeVariable || expectedPlan != null || planFragments != null) {
+            throw new IllegalStateException("fails(...)/failsWith(...) supports only ddl()/fullFatJoins()/withCompiler()/noLeakCheck()/withContext()/withEngine()");
+        }
     }
 
     private void requirePlanOnlyCompatible() {
