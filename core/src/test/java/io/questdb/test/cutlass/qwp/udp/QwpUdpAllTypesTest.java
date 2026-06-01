@@ -183,7 +183,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertQuery("SELECT b_bool, b_byte, b_short, b_char, b_int, b_ipv4, b_float, b_long, b_date, b_double, " +
-                            "b_sym, b_str, b_uuid, b_l256, b_geo, b_dec64, b_dec128, b_dec256, b_darr, b_ts, b_tsns FROM t_all")
+                    "b_sym, b_str, b_uuid, b_l256, b_geo, b_dec64, b_dec128, b_dec256, b_darr, b_ts, b_tsns FROM t_all")
                     .noLeakCheck()
                     .returnsOnce(
                             """

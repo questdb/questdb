@@ -3526,9 +3526,9 @@ if __name__ == "__main__":
             assertQuery("select count(*) from t")
                     .noLeakCheck()
                     .returnsOnce("""
-                    count
-                    100
-                    """);
+                            count
+                            100
+                            """);
         });
     }
 
@@ -3882,9 +3882,9 @@ if __name__ == "__main__":
             assertQuery("select count(*) from t")
                     .noLeakCheck()
                     .returnsOnce("""
-                    count
-                    101
-                    """);
+                            count
+                            101
+                            """);
         });
     }
 

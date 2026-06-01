@@ -11032,8 +11032,8 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 // ZERO_PASS sibling (OverPartitionRangeFrame avg) + TWO_PASS sibling (OverPartition sum).
                 // The query becomes cached, pass1 of the ZERO_PASS function is called.
                 assertQuery("SELECT ts FROM (SELECT ts, " +
-                                "avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) a, " +
-                                "sum(" + col + ") OVER (PARTITION BY grp) s " +
+                        "avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) a, " +
+                        "sum(" + col + ") OVER (PARTITION BY grp) s " +
                         "FROM t) ORDER BY ts")
                         .noLeakCheck()
                         .returnsOnce("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n2024-01-01T00:02:00.000000Z\n2024-01-01T00:03:00.000000Z\n2024-01-01T00:04:00.000000Z\n2024-01-01T00:05:00.000000Z\n");

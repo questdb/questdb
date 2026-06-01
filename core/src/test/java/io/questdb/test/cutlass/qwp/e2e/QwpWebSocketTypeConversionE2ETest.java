@@ -1684,9 +1684,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
                     .returnsOnce("""
                             col
                             0x4444444444444444333333333333333322222222222222221111111111111111
-
+                            
                             0xdeadbeef00000000cafebabe0000000012345678000000009abcdef000000000
-
+                            
                             0x01
                             """);
         });

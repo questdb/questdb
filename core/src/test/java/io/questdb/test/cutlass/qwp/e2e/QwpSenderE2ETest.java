@@ -2071,7 +2071,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             assertQuery("SELECT coalesce(addr_str, 'null') s, coalesce(addr_vc, 'null') v"
-                            + " FROM " + table + " ORDER BY ts")
+                    + " FROM " + table + " ORDER BY ts")
                     .noLeakCheck()
                     .returnsOnce("""
                             s\tv
@@ -2122,7 +2122,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     .noLeakCheck()
                     .returnsOnce("count\n1\n");
             assertQuery("SELECT uuid_str IS NULL AS u_s, uuid_vc IS NULL AS u_v,"
-                            + " l256_str IS NULL AS l_s, l256_vc IS NULL AS l_v FROM " + table)
+                    + " l256_str IS NULL AS l_s, l256_vc IS NULL AS l_v FROM " + table)
                     .noLeakCheck()
                     .returnsOnce("""
                             u_s\tu_v\tl_s\tl_v

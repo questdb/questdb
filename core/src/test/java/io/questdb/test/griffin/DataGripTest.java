@@ -100,8 +100,8 @@ public class DataGripTest extends AbstractCairoTest {
                           else
                             pg_catalog.txid_current()::varchar::bigint
                           end as current_txid""")
-        .noLeakCheck()
-        .returnsOnce("current_txid\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n"));
+                        .noLeakCheck()
+                        .returnsOnce("current_txid\n" + (TxIDCurrentFunctionFactory.getTxID() + 1) + "\n"));
     }
 
     @Test

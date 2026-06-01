@@ -3421,9 +3421,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .returnsOnce("""
-                    column
-                    null
-                    """);
+                            column
+                            null
+                            """);
 
             sink.clear();
             sink.put("select ");
@@ -4573,8 +4573,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("insert into test select (x*3600000)::timestamp from long_sequence(2999)");
 
             assertQuery("select hour(ts) " +
-                            "from test " +
-                            "group by 1 " +
+                    "from test " +
+                    "group by 1 " +
                     "order by 1 ")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -4629,8 +4629,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("insert into test(id) select rnd_symbol('A', 'B', 'C') from long_sequence(10)");
 
             assertQuery("select id " +
-                            "from test " +
-                            "group by id " +
+                    "from test " +
+                    "group by id " +
                     "order by id ")
                     .noLeakCheck()
                     .returnsOnce("""
@@ -4704,32 +4704,32 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             for (String join : new String[]{"", "LEFT", "LT", "ASOF",}) {
                 assertQuery("SELECT count(T2.created) " +
-                                "FROM tab as T1 " +
-                                "JOIN (SELECT * FROM tab) as T2 ON T1.created < T2.created " +
+                        "FROM tab as T1 " +
+                        "JOIN (SELECT * FROM tab) as T2 ON T1.created < T2.created " +
                         join + " JOIN tab as T3 ON T2.value=T3.value")
                         .noLeakCheck()
                         .returnsOnce("count\n3\n");
             }
             assertQuery("SELECT count(T2.created) " +
-                            "FROM tab as T1 " +
-                            "JOIN tab T2 ON T1.created < T2.created " +
-                            "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
+                    "FROM tab as T1 " +
+                    "JOIN tab T2 ON T1.created < T2.created " +
+                    "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
                     "JOIN tab T4 on T3.created < T4.created")
                     .noLeakCheck()
                     .returnsOnce("count\n1\n");
 
             assertQuery("SELECT count(T2.created) " +
-                            "FROM tab as T1 " +
-                            "JOIN tab T2 ON T1.created < T2.created " +
-                            "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
+                    "FROM tab as T1 " +
+                    "JOIN tab T2 ON T1.created < T2.created " +
+                    "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
                     "LEFT JOIN tab T4 on T3.created < T4.created")
                     .noLeakCheck()
                     .returnsOnce("count\n3\n");
 
             assertQuery("SELECT count(T2.created) " +
-                            "FROM tab as T1 " +
-                            "JOIN tab T2 ON T1.created < T2.created " +
-                            "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
+                    "FROM tab as T1 " +
+                    "JOIN tab T2 ON T1.created < T2.created " +
+                    "JOIN (SELECT * FROM tab) as T3 ON T2.value=T3.value " +
                     "LEFT JOIN tab T4 on T3.created-T4.created = 0 ")
                     .noLeakCheck()
                     .returnsOnce("count\n3\n");
@@ -6133,8 +6133,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("create table trades (symbol symbol, timestamp timestamp) timestamp(timestamp)");
 
             assertQuery("WITH Y AS (SELECT * FROM trades WHERE symbol='BTC-USD')," +
-                            "X AS (SELECT * FROM ((Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol))  " +
-                            "WHERE date_trunc('day', timestamp) = date_trunc('day', timestamp111111111111111111111111111111111111111111))\n" +
+                    "X AS (SELECT * FROM ((Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y LT JOIN (Y) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol) ON symbol))  " +
+                    "WHERE date_trunc('day', timestamp) = date_trunc('day', timestamp111111111111111111111111111111111111111111))\n" +
                     "SELECT * FROM X")
                     .noLeakCheck()
                     .returnsOnce("symbol\ttimestamp\tsymbol1\ttimestamp1\tsymbol11\ttimestamp11\tsymbol111\ttimestamp111\tsymbol1111\ttimestamp1111\tsymbol11111\ttimestamp11111\tsymbol111111\ttimestamp111111\tsymbol1111111\ttimestamp1111111\tsymbol11111111\ttimestamp11111111\tsymbol111111111\ttimestamp111111111\tsymbol1111111111\ttimestamp1111111111\tsymbol11111111111\ttimestamp11111111111\tsymbol111111111111\ttimestamp111111111111\tsymbol1111111111111\ttimestamp1111111111111\tsymbol11111111111111\ttimestamp11111111111111\tsymbol111111111111111\ttimestamp111111111111111\tsymbol1111111111111111\ttimestamp1111111111111111\tsymbol11111111111111111\ttimestamp11111111111111111\tsymbol111111111111111111\ttimestamp111111111111111111\tsymbol1111111111111111111\ttimestamp1111111111111111111\tsymbol11111111111111111111\ttimestamp11111111111111111111\tsymbol111111111111111111111\ttimestamp111111111111111111111\tsymbol1111111111111111111111\ttimestamp1111111111111111111111\tsymbol11111111111111111111111\ttimestamp11111111111111111111111\tsymbol111111111111111111111111\ttimestamp111111111111111111111111\tsymbol1111111111111111111111111\ttimestamp1111111111111111111111111\tsymbol11111111111111111111111111\ttimestamp11111111111111111111111111\tsymbol111111111111111111111111111\ttimestamp111111111111111111111111111\tsymbol1111111111111111111111111111\ttimestamp1111111111111111111111111111\tsymbol11111111111111111111111111111\ttimestamp11111111111111111111111111111\tsymbol111111111111111111111111111111\ttimestamp111111111111111111111111111111\tsymbol1111111111111111111111111111111\ttimestamp1111111111111111111111111111111\tsymbol11111111111111111111111111111111\ttimestamp11111111111111111111111111111111\tsymbol111111111111111111111111111111111\ttimestamp111111111111111111111111111111111\tsymbol1111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111\tsymbol11111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111\tsymbol111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111111\n");

@@ -969,8 +969,8 @@ public class LimitTest extends AbstractCairoTest {
                                     """);
 
                     assertQuery("(select * from x order by ts, a desc limit -4)" +
-                                    " union all " +
-                                    "(select * from y order by ts, a limit -10)")
+                            " union all " +
+                            "(select * from y order by ts, a limit -10)")
                             .noLeakCheck()
                             .assertsPlan("""
                                     Union All

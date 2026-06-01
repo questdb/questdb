@@ -334,16 +334,16 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testEqConstStringToUuid() throws Exception {
         assertMemoryLeak(() -> assertQuery("select " +
-                        "cast (null as string) = cast (null as uuid), " +
-                        "cast (null as string) = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
-                        "'11111111-1111-1111-1111-111111111111' = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
-                        "'not a uuid' = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
-                        "'11111111-1111-1111-1111-111111111111' = rnd_uuid4()" +
-                        "from long_sequence(1)")
-        .noRandomAccess()
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                "cast (null as string) = cast (null as uuid), " +
+                "cast (null as string) = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                "'11111111-1111-1111-1111-111111111111' = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                "'not a uuid' = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                "'11111111-1111-1111-1111-111111111111' = rnd_uuid4()" +
+                "from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         column\tcolumn1\tcolumn2\tcolumn3\tcolumn4
                         true\tfalse\ttrue\tfalse\tfalse
                         """));
@@ -371,12 +371,12 @@ public class UuidTest extends AbstractCairoTest {
             execute("insert into x values (null, null, '11111111-1111-1111-1111-111111111111', 'not a uuid', '11111111-1111-1111-1111-111111111111')");
 
             assertQuery("select " +
-                            "s1 = cast (null as uuid), " +
-                            "s2 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
-                            "s3 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
-                            "s4 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
-                            "s5 = rnd_uuid4() " +
-                            "from x")
+                    "s1 = cast (null as uuid), " +
+                    "s2 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                    "s3 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                    "s4 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                    "s5 = rnd_uuid4() " +
+                    "from x")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()

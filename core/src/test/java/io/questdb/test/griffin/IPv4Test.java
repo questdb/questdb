@@ -585,8 +585,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectCastIPv4ToStr() throws Exception {
         assertMemoryLeak(() -> assertQuery("select rnd_ipv4()::string from long_sequence(10)")
-        .noLeakCheck()
-        .returnsOnce("""
+                .noLeakCheck()
+                .returnsOnce("""
                         cast
                         187.139.150.80
                         18.206.96.238
@@ -736,8 +736,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testExplicitCastIntToIPv4() throws Exception {
         assertMemoryLeak(() -> assertQuery("select rnd_int()::ipv4 from long_sequence(10)")
-        .noLeakCheck()
-        .returnsOnce("""
+                .noLeakCheck()
+                .returnsOnce("""
                         cast
                         18.206.96.238
                         212.159.205.29
@@ -755,8 +755,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testExplicitCastNullToIPv4() throws Exception {
         assertMemoryLeak(() -> assertQuery("select cast(case when x = 1 then null else rnd_ipv4() end as string) from long_sequence(10)")
-        .noLeakCheck()
-        .returnsOnce("""
+                .noLeakCheck()
+                .returnsOnce("""
                         cast
                         
                         187.139.150.80
@@ -784,8 +784,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testExplicitCastStrToIPv4() throws Exception {
         assertMemoryLeak(() -> assertQuery("select rnd_ipv4()::string::ipv4 from long_sequence(10)")
-        .noLeakCheck()
-        .returnsOnce("""
+                .noLeakCheck()
+                .returnsOnce("""
                         cast
                         187.139.150.80
                         18.206.96.238
@@ -803,10 +803,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testExplicitCastStrToIPv4Null() throws Exception {
         assertMemoryLeak(() -> assertQuery("select rnd_str()::ipv4 from long_sequence(10)")
-        .noRandomAccess()
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                .noRandomAccess()
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         cast
                         
                         
@@ -6010,8 +6010,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testRndIPv4() throws Exception {
         assertMemoryLeak(() -> assertQuery("select rnd_ipv4('12.6/16', 0) from long_sequence(10)")
-        .noLeakCheck()
-        .returnsOnce("""
+                .noLeakCheck()
+                .returnsOnce("""
                         rnd_ipv4
                         12.6.96.238
                         12.6.50.227

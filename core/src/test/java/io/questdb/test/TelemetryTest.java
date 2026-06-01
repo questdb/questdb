@@ -436,9 +436,9 @@ public class TelemetryTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .noLeakCheck()
                         .returns(header.replace("\tlatency FLOAT\n", "\tlatency FLOAT,\n") +
-                        "\tminTimestamp TIMESTAMP,\n" +
-                        "\tmaxTimestamp TIMESTAMP\n" +
-                        ") timestamp(created) PARTITION BY DAY TTL 1 WEEK" + end);
+                                "\tminTimestamp TIMESTAMP,\n" +
+                                "\tmaxTimestamp TIMESTAMP\n" +
+                                ") timestamp(created) PARTITION BY DAY TTL 1 WEEK" + end);
             }
         });
     }

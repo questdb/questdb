@@ -1421,20 +1421,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("create table a ( l long, d double)")
                 .noLeakCheck()
                 .assertsPlan("""
-                Create table: a
-                """);
+                        Create table: a
+                        """);
     }
 
     @Test
     public void testExplainCreateTableAsSelect() throws Exception {
         assertMemoryLeak(() -> assertQuery("create table a as (select x, 1 from long_sequence(10))")
-        .noLeakCheck()
-        .assertsPlan("""
-                Create table: a
-                    VirtualRecord
-                      functions: [x,1]
-                        long_sequence count: 10
-                """));
+                .noLeakCheck()
+                .assertsPlan("""
+                        Create table: a
+                            VirtualRecord
+                              functions: [x,1]
+                                long_sequence count: 10
+                        """));
     }
 
     @Test
@@ -1537,8 +1537,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("insert into a values (1, 2.0)")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Insert into table: a
-                    """);
+                            Insert into table: a
+                            """);
         });
     }
 
@@ -1549,11 +1549,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("insert into a select x, 1 from long_sequence(10)")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Insert into table: a
-                        VirtualRecord
-                          functions: [x,1]
-                            long_sequence count: 10
-                    """);
+                            Insert into table: a
+                                VirtualRecord
+                                  functions: [x,1]
+                                    long_sequence count: 10
+                            """);
         });
     }
 
@@ -1594,10 +1594,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select * from a")
                     .noLeakCheck()
                     .assertsPlan("""
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                    """);
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                            """);
         });
     }
 
@@ -1642,11 +1642,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("with b as (select * from a limit 10) select * from b")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Limit value: 10 skip-rows: 0 take-rows: 0
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
+                            Limit value: 10 skip-rows: 0 take-rows: 0
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            """);
         });
     }
 
@@ -1657,13 +1657,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("update a set l = 1, d=10.1")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Update table: a
-                        VirtualRecord
-                          functions: [1,10.1]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                    """);
+                            Update table: a
+                                VirtualRecord
+                                  functions: [1,10.1]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                            """);
         });
     }
 
@@ -1675,20 +1675,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("update a set l1 = 1, d1=d2 from b where l1=l2")
                     .noLeakCheck()
                     .assertsPlan("""
-                    Update table: a
-                        VirtualRecord
-                          functions: [1,d1]
-                            SelectedRecord
-                                Hash Join Light
-                                  condition: l2=l1
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                    """);
+                            Update table: a
+                                VirtualRecord
+                                  functions: [1,d1]
+                                    SelectedRecord
+                                        Hash Join Light
+                                          condition: l2=l1
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                            """);
         });
     }
 

@@ -1650,13 +1650,13 @@ public class ArrayTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            select\s
-                              case\s
-                                when ts in '2021' then array[1.0]\s
-                                when ts in '2024' then 1\s
-                                else a\s
-                              end, *
-                            from tango;""")
+                    select\s
+                      case\s
+                        when ts in '2021' then array[1.0]\s
+                        when ts in '2024' then 1\s
+                        else a\s
+                      end, *
+                    from tango;""")
                     .noLeakCheck()
                     .fails(82, "inconvertible types: INT -> DOUBLE[]");
         });
@@ -2015,8 +2015,8 @@ public class ArrayTest extends AbstractCairoTest {
         // when an array is part of the dedup key
         // it fails gracefully and with an informative error message
         assertQuery("CREATE TABLE tango (ts TIMESTAMP, arr DOUBLE[])" +
-                        " TIMESTAMP(ts) PARTITION BY HOUR WAL" +
-                        " DEDUP UPSERT KEYS (ts, arr)")
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL" +
+                " DEDUP UPSERT KEYS (ts, arr)")
                 .fails(107, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]");
     }
 
@@ -3403,9 +3403,9 @@ public class ArrayTest extends AbstractCairoTest {
             assertQuery("select rnd_double_array(2, 2, 0, 2, 2)")
                     .noLeakCheck()
                     .returnsOnce("""
-                    rnd_double_array
-                    [[null,0.9856290845874263],[null,0.5093827001617407]]
-                    """);
+                            rnd_double_array
+                            [[null,0.9856290845874263],[null,0.5093827001617407]]
+                            """);
 
             assertQuery("explain select rnd_double_array(2, 1, 0, 2, 2)")
                     .noLeakCheck()

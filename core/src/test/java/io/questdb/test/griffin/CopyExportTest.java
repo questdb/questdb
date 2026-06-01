@@ -3885,11 +3885,11 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output1" + ".parquet')")
                                 .noLeakCheck()
                                 .returnsOnce("""
-                                x
-                                1970-01-01T00:00:00.000005Z
-                                1970-01-01T00:00:00.000002Z
-                                1970-01-01T00:00:00.000000Z
-                                """);
+                                        x
+                                        1970-01-01T00:00:00.000005Z
+                                        1970-01-01T00:00:00.000002Z
+                                        1970-01-01T00:00:00.000000Z
+                                        """);
                     });
 
             testCopyExport(stmt, test);
