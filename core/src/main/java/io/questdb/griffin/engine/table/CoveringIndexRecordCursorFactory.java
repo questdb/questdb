@@ -210,8 +210,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // Always wire up the frame cursor and table reader, even when no
                 // keys resolve. Callers wrap us in operators (e.g. ORDER BY on a
                 // SYMBOL column) that probe baseCursor.getSymbolTable() during
-                // init, before any iteration. An empty multiKeys list naturally
-                // makes advanceKey() report no rows.
+                // init, before any iteration. With an empty multiKeys list,
+                // hasNext()'s merge finds no per-key heads and
+                // openNextPartitionCursors() opens nothing, so it reports no rows.
                 multiKeyCursor.of(frameCursor);
                 multiKeyCursor.latestByFilter = latestByFilter;
                 if (latestByFilter != null) {
@@ -262,7 +263,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // The multi-key page-frame cursor merges keys forward only; it has no
             // backward scan. Codegen therefore routes multi-key negative-limit
             // queries to the serial path, so a backward scan must never reach here.
-            throw CairoException.critical(0).put("backward covering scan is not supported for multi-key index queries");
+            throw CairoException.nonCritical().put("backward covering scan is not supported for multi-key index queries");
         }
         int configMaxRows = executionContext.getPageFrameMaxRows();
         PartitionFrameCursor frameCursor = dfcFactory.getCursor(
@@ -1205,21 +1206,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         /**
-         * Produce up to {@code rowCap} rows for {@code rawSymbolKey}
-         * in the given partition's row range. If the key has more rows than the
-         * cap, the open {@link RowCursor} is parked in {@link #pendingRowCursor};
-         * the caller is expected to call {@code fillFrameForKey} again with the
-         * SAME key/partition until it returns {@code null} (or
-         * {@link #pendingRowCursor} clears) before advancing to the next
-         * partition. {@link SingleKeyCoveringPageFrameCursor#nextImpl} /
-         * {@link MultiKeyCoveringPageFrameCursor#nextImpl} drive that loop.
-         * <p>
-         * Each call allocates a fresh set of frame buffers (the previous frame's
-         * buffers stay reachable via {@code allocatedBuffers} until the
-         * AsyncFilter dispatch frees them). This mirrors the pre-cap behaviour
-         * for the "one frame per key+partition" case -- the only difference is
-         * that very large keys now produce multiple frames instead of one
-         * GiB-sized frame.
+         * Allocate the per-frame column and symbol buffers at
+         * {@link #INITIAL_CAPACITY} and reset var-data positions. Returns the
+         * starting row capacity; {@link #growFrameBuffers} grows it as rows are
+         * written. Buffers stay reachable via {@code allocatedBuffers} until the
+         * AsyncFilter dispatch frees them.
          */
         protected int allocFrameBuffers() {
             int capacity = INITIAL_CAPACITY;
@@ -1254,6 +1245,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return capacity;
         }
 
+        /**
+         * Produce up to {@code rowCap} rows for {@code rawSymbolKey} in the given
+         * partition's row range. If the key has more rows than the cap, the open
+         * {@link RowCursor} is parked in {@link #pendingRowCursor}; the caller is
+         * expected to call {@code fillFrameForKey} again with the SAME
+         * key/partition until it returns {@code null} (or {@link #pendingRowCursor}
+         * clears) before advancing to the next partition.
+         * {@link SingleKeyCoveringPageFrameCursor#nextImpl} /
+         * {@link MultiKeyCoveringPageFrameCursor#nextImpl} drive that loop.
+         * <p>
+         * Each call allocates a fresh set of frame buffers via
+         * {@link #allocFrameBuffers()}; very large keys produce multiple frames
+         * instead of one GiB-sized frame.
+         */
         protected @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap) {
             final CoveringRowCursor coveringCursor = openOrContinueCoveringCursor(rawSymbolKey, partitionIndex, rowLo, rowHi);
             if (coveringCursor == null) {
@@ -1850,8 +1855,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // Per-key open cursors for the current partition and their peeked head
         // row ids. The cursors are merged by row id so the record cursor emits
         // rows in global (ascending designated-timestamp) order within each
-        // partition -- mirroring HeapRowCursorFactory on the non-covering path --
-        // instead of draining one key's posting list before the next.
+        // partition -- the same result order HeapRowCursorFactory produces on the
+        // non-covering path -- instead of draining one key's posting list before
+        // the next. The merge is a linear min-scan over the open heads (O(R*N) for
+        // R rows and N keys), not HeapRowCursorFactory's O(log N) heap poll; fine
+        // for the small IN-lists this serves.
         private CoveringRowCursor[] keyCursors;
         private long[] keyHeads;
         // The key whose head was emitted last; advanced on the next hasNext().
@@ -2359,7 +2367,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             while (true) {
                 if (descPartitionIndex >= 0) {
                     while (descSubHi > descPartitionLo) {
-                        long subLo = Math.max(descPartitionLo, descSubHi - maxRowsPerFrame);
+                        // Math.max(1, ...) keeps each sub-frame at least one row wide
+                        // so a (test-only) cap of 0 cannot stall the loop.
+                        long subLo = Math.max(descPartitionLo, descSubHi - Math.max(1, maxRowsPerFrame));
                         PageFrame result = fillFrameForKey(
                                 resolvedKey,
                                 descPartitionIndex,

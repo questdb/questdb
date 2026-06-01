@@ -11104,6 +11104,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Whether the limit lo function might evaluate to a negative value. A
+     * non-constant (e.g. bind-variable) limit has an unknown sign at compile
+     * time, so we conservatively treat it as possibly negative.
+     */
+    private boolean mayBeNegativeLimit(Function limitLoFunction, SqlExecutionContext executionContext) throws SqlException {
+        if (!limitLoFunction.isConstant()) {
+            return true;
+        }
+        limitLoFunction.init(null, executionContext);
+        return limitLoFunction.getLong(null) < 0;
+    }
+
     private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, RecordMetadata myMeta) throws SqlException {
         keyTypes.clear();
         listColumnFilterA.clear();
@@ -11335,19 +11348,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         .put(": ")
                         .put(ColumnType.nameOf(columnType));
         }
-    }
-
-    /**
-     * Whether the limit lo function might evaluate to a negative value. A
-     * non-constant (e.g. bind-variable) limit has an unknown sign at compile
-     * time, so we conservatively treat it as possibly negative.
-     */
-    private boolean mayBeNegativeLimit(Function limitLoFunction, SqlExecutionContext executionContext) throws SqlException {
-        if (!limitLoFunction.isConstant()) {
-            return true;
-        }
-        limitLoFunction.init(null, executionContext);
-        return limitLoFunction.getLong(null) < 0;
     }
 
     private void validateTimestampNotInJoinKeys(IQueryModel slaveModel, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) throws SqlException {
