@@ -117,32 +117,29 @@ public class CastDecimalToDecimalFunctionFactoryTest extends BaseFunctionFactory
 
     @Test
     public void testExplainPlans() throws Exception {
-        assertSql("""
-                        QUERY PLAN
+        assertQuery("WITH data AS (SELECT 99m AS value) SELECT cast(value as DECIMAL(4)) FROM data")
+                .assertsPlan("""
                         VirtualRecord
                           functions: [value::DECIMAL(4,0)]
                             VirtualRecord
                               functions: [99]
                                 long_sequence count: 1
-                        """,
-                "EXPLAIN WITH data AS (SELECT 99m AS value) SELECT cast(value as DECIMAL(4)) FROM data");
-        assertSql("""
-                        QUERY PLAN
+                        """);
+        assertQuery("WITH data AS (SELECT 99m AS value) SELECT cast(value as DECIMAL(4,2)) FROM data")
+                .assertsPlan("""
                         VirtualRecord
                           functions: [value::DECIMAL(4,2)]
                             VirtualRecord
                               functions: [99]
                                 long_sequence count: 1
-                        """,
-                "EXPLAIN WITH data AS (SELECT 99m AS value) SELECT cast(value as DECIMAL(4,2)) FROM data");
+                        """);
         // Constant folding
-        assertSql("""
-                        QUERY PLAN
+        assertQuery("SELECT cast(99m as DECIMAL(4,2))")
+                .assertsPlan("""
                         VirtualRecord
                           functions: [99.00]
                             long_sequence count: 1
-                        """,
-                "EXPLAIN SELECT cast(99m as DECIMAL(4,2))");
+                        """);
     }
 
     @Test

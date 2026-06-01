@@ -34,23 +34,24 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     // Runtime cast
-                    assertSql("""
-                            QUERY PLAN
-                            VirtualRecord
-                              functions: [value::DECIMAL(5,2)]
-                                VirtualRecord
-                                  functions: [123.44999694824219f]
-                                    long_sequence count: 1
-                            """, "EXPLAIN WITH data AS (SELECT 123.45f AS value) SELECT cast(value as DECIMAL(5, 2)) FROM data");
+                    assertQuery("WITH data AS (SELECT 123.45f AS value) SELECT cast(value as DECIMAL(5, 2)) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
+                                    VirtualRecord
+                                      functions: [value::DECIMAL(5,2)]
+                                        VirtualRecord
+                                          functions: [123.44999694824219f]
+                                            long_sequence count: 1
+                                    """);
 
                     // Constant folding
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("SELECT cast(123.45f as DECIMAL(5, 2))")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [123.45]
                                         long_sequence count: 1
-                                    """,
-                            "EXPLAIN SELECT cast(123.45f as DECIMAL(5, 2))");
+                                    """);
                 }
         );
     }

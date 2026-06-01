@@ -34,35 +34,35 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     // Runtime value needs parsing
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT '123.45' AS value) SELECT cast(value as DECIMAL(5, 2)) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::DECIMAL(5,2)]
                                         VirtualRecord
                                           functions: ['123.45']
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT '123.45' AS value) SELECT cast(value as DECIMAL(5, 2)) FROM data");
+                                    """);
 
                     // Runtime value without scale
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT '123' AS value) SELECT cast(value as DECIMAL(5, 0)) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::DECIMAL(5,0)]
                                         VirtualRecord
                                           functions: ['123']
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT '123' AS value) SELECT cast(value as DECIMAL(5, 0)) FROM data");
+                                    """);
 
                     // Expression should be constant folded
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("SELECT cast('1' as DECIMAL(5, 2))")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [1.00]
                                         long_sequence count: 1
-                                    """,
-                            "EXPLAIN SELECT cast('1' as DECIMAL(5, 2))");
+                                    """);
                 }
         );
     }
@@ -72,115 +72,115 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     // DECIMAL8 (uses CastStrToDecimalFunctionFactory)
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT '99' AS value) SELECT cast(value as DECIMAL(2)) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::DECIMAL(2,0)]
                                         VirtualRecord
                                           functions: ['99']
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT '99' AS value) SELECT cast(value as DECIMAL(2)) FROM data");
+                                    """);
 
                     // DECIMAL16
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT '9999' AS value) SELECT cast(value as DECIMAL(4)) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::DECIMAL(4,0)]
                                         VirtualRecord
                                           functions: ['9999']
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT '9999' AS value) SELECT cast(value as DECIMAL(4)) FROM data");
+                                    """);
 
                     // DECIMAL32
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT '999999999' AS value) SELECT cast(value as DECIMAL(9)) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::DECIMAL(9,0)]
                                         VirtualRecord
                                           functions: ['999999999']
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT '999999999' AS value) SELECT cast(value as DECIMAL(9)) FROM data");
+                                    """);
 
                     // DECIMAL64
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT '999999999999999999' AS value) SELECT cast(value as DECIMAL(18)) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::DECIMAL(18,0)]
                                         VirtualRecord
                                           functions: ['999999999999999999']
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT '999999999999999999' AS value) SELECT cast(value as DECIMAL(18)) FROM data");
+                                    """);
 
                     // DECIMAL128
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT '9223372036854775807' AS value) SELECT cast(value as DECIMAL(19)) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::DECIMAL(19,0)]
                                         VirtualRecord
                                           functions: ['9223372036854775807']
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT '9223372036854775807' AS value) SELECT cast(value as DECIMAL(19)) FROM data");
+                                    """);
 
                     // DECIMAL256
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT '9223372036854775807' AS value) SELECT cast(value as DECIMAL(40)) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::DECIMAL(40,0)]
                                         VirtualRecord
                                           functions: ['9223372036854775807']
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT '9223372036854775807' AS value) SELECT cast(value as DECIMAL(40)) FROM data");
+                                    """);
 
                     // DECIMAL8 with scale
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT '9' AS value) SELECT cast(value as DECIMAL(2,1)) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::DECIMAL(2,1)]
                                         VirtualRecord
                                           functions: ['9']
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT '9' AS value) SELECT cast(value as DECIMAL(2,1)) FROM data");
+                                    """);
 
                     // Constant folding for all decimal types
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("SELECT cast('99' as DECIMAL(2))")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [99]
                                         long_sequence count: 1
-                                    """,
-                            "EXPLAIN SELECT cast('99' as DECIMAL(2))");
+                                    """);
 
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("SELECT cast('9999' as DECIMAL(4))")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [9999]
                                         long_sequence count: 1
-                                    """,
-                            "EXPLAIN SELECT cast('9999' as DECIMAL(4))");
+                                    """);
 
                     // Constant folding with scale
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("SELECT cast('9' as DECIMAL(2,1))")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [9.0]
                                         long_sequence count: 1
-                                    """,
-                            "EXPLAIN SELECT cast('9' as DECIMAL(2,1))");
+                                    """);
 
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("SELECT cast('99' as DECIMAL(4,2))")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [99.00]
                                         long_sequence count: 1
-                                    """,
-                            "EXPLAIN SELECT cast('99' as DECIMAL(4,2))");
+                                    """);
                 }
         );
     }
