@@ -119,7 +119,17 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
                 return Double.NaN;
             }
 
-            return sumXY / denom;
+            // Pearson correlation is mathematically bounded to [-1, 1]; clamp to
+            // absorb at most 1-2 ULP of rounding error from the fallback split-sqrt
+            // path above (which uses two sqrt roundings instead of one).
+            double r = sumXY / denom;
+            if (r > 1.0) {
+                return 1.0;
+            }
+            if (r < -1.0) {
+                return -1.0;
+            }
+            return r;
         }
 
         @Override

@@ -83,7 +83,19 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         // magnitude, e.g. near +/-1e153). Both cXX and cYY are clamped to >= 0 above.
         double prod = cXX * cYY;
         double denom = Double.isFinite(prod) ? Math.sqrt(prod) : Math.sqrt(cXX) * Math.sqrt(cYY);
-        return denom == 0.0 ? Double.NaN : cXY / denom;
+        if (denom == 0.0) {
+            return Double.NaN;
+        }
+        // Pearson correlation is mathematically bounded to [-1, 1]; clamp to absorb
+        // up to 1-2 ULP of rounding error from the fallback split-sqrt path.
+        double r = cXY / denom;
+        if (r > 1.0) {
+            return 1.0;
+        }
+        if (r < -1.0) {
+            return -1.0;
+        }
+        return r;
     }
 
     // Welford's online algorithm result for correlation.
@@ -100,7 +112,18 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         // See computeCorr() for the rationale behind the conditional split-sqrt fallback.
         double prod = sumXX * sumYY;
         double denom = Double.isFinite(prod) ? Math.sqrt(prod) : Math.sqrt(sumXX) * Math.sqrt(sumYY);
-        return denom == 0.0 ? Double.NaN : sumXY / denom;
+        if (denom == 0.0) {
+            return Double.NaN;
+        }
+        // See computeCorr() for the rationale behind clamping to [-1, 1].
+        double r = sumXY / denom;
+        if (r > 1.0) {
+            return 1.0;
+        }
+        if (r < -1.0) {
+            return -1.0;
+        }
+        return r;
     }
 
     // Naive sum-of-products formula for covariance, used by sliding-window (removable) frames.
