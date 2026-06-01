@@ -111,8 +111,7 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                             1972-01-01T00:00:00.920000Z\t\t1972-01-01T00:00:00.920000000Z\t1970-01-01T00:00:00.920000Z\ty\t2\t08:00
                             """);
 
-            assertPlanNoLeakCheck(
-                    "select dateadd(period, stride, ts, tz) val," +
+            assertQuery("select dateadd(period, stride, ts, tz) val," +
                             " dateadd(period, stride, null, tz) val2," +
                             " dateadd(period, stride, ts_ns, tz) val3," +
                             " ts," +
@@ -124,8 +123,9 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                             " and tz <> 'unknown/unknown'" +
                             " and period is not null" +
                             " and tz is not null" +
-                            " and period <> 'x'",
-                    """
+                            " and period <> 'x'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [dateadd('period',stride,ts,tz),dateadd('period',stride,null,tz),dateadd('period',stride,ts_ns,tz),ts,period,stride,tz]
                                 Async JIT Filter workers: 1
@@ -133,8 +133,7 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: test_tab
-                            """
-            );
+                            """);
         });
     }
 
@@ -230,24 +229,22 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
     @Test
     public void testDateAddWithTimezonePlan() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(
-                    // Input query testing DATEADD behavior
-                    "select dateadd('w', 1, '2024-10-21', 'Europe/Bratislava')",
+            // Input query testing DATEADD behavior
+            assertQuery("select dateadd('w', 1, '2024-10-21', 'Europe/Bratislava')")
+                    .noLeakCheck()
                     // Updated expected plan
-                    """
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [2024-10-28T01:00:00.000000Z]
                                 long_sequence count: 1
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "select dateadd('w', 1, '2024-10-21T00:00:11.123456789', 'Europe/Bratislava')",
-                    """
+                            """);
+            assertQuery("select dateadd('w', 1, '2024-10-21T00:00:11.123456789', 'Europe/Bratislava')")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [2024-10-28T01:00:11.123456789Z]
                                 long_sequence count: 1
-                            """
-            );
+                            """);
         });
     }
 
