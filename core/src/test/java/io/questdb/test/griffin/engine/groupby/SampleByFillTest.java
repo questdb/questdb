@@ -15,8 +15,6 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1714,29 +1712,22 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSortedRecordCursorFactoryConstructorThrow() throws Exception {
-        // Pin the SortedRecordCursorFactory constructor-throw ownership
-        // contract. sqlSortKeyMaxPages = -1 makes MemoryPages fire a
-        // LimitOverflowException inside `new RecordTreeChain(...)`, which
-        // propagates out of the constructor.
-        //
-        // The constructor must assign this.base only after RecordTreeChain
-        // succeeds, and the catch block must null this.base before cascading
-        // close(). That way Misc.free(base) becomes a no-op on a
-        // constructor-throw path and the caller retains ownership of base.
-        //
-        // Most QuestDB factory classes make close() idempotent at the
-        // native-memory level, so a latent double-free rarely produces
-        // observable imbalance. This test locks in the clean
-        // exception-propagation path; assertMemoryLeak guards against any
-        // future factory whose close() is not idempotent.
+    public void testSortedRecordCursorFactoryHandlesKeyHeapOverflow() throws Exception {
+        // Pin the SortedRecordCursorFactory cleanup contract for the keyed
+        // SAMPLE BY FILL(PREV) full_recordchain path. With a tiny page size
+        // and a 1-page sort.key budget, MemoryPages fires a
+        // LimitOverflowException once the RecordTreeChain accumulates more
+        // than one page of tree nodes. The factory's catch block must free
+        // chain + rankMaps before the exception propagates; assertMemoryLeak
+        // would surface any unbalanced native allocations.
         //
         // AbstractCairoTest.tearDown() restores property overrides via
         // Overrides.reset(), so no try/finally restore is needed here.
         // Force the codegen to pick SortedRecordCursorFactory; the default
-        // light_encoded path does not exercise this construct-throw contract.
+        // light_encoded path does not exercise this cleanup contract.
         setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "full_recordchain");
-        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, -1);
+        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 64);
+        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64);
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (" +
@@ -1744,27 +1735,80 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "k SYMBOL, " +
                     "x DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "('2024-01-01T00:00:00.000000Z', 'A', 1.0), " +
-                    "('2024-01-01T02:00:00.000000Z', 'B', 2.0)");
+            // Generate enough distinct (bucket, key) groups to overflow the
+            // 64-byte sort.key budget. Each RecordTreeChain node is roughly
+            // 41 bytes, so a few hundred rows guarantees the cap fires.
+            execute("INSERT INTO t SELECT " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts, " +
+                    "rnd_symbol(64, 4, 4, 0) k, " +
+                    "rnd_double() x " +
+                    "FROM long_sequence(512)");
 
             try {
                 // A keyed SAMPLE BY FILL(PREV) routes through the keyed fast
-                // path whose codegen constructs SortedRecordCursorFactory. The
-                // sqlSortKeyMaxPages = -1 override causes RecordTreeChain to
-                // throw during SortedRecordCursorFactory construction.
-                assertQueryNoLeakCheck("", "SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR");
-                fail("expected LimitOverflowException from pathological sqlSortKeyMaxPages");
+                // path whose codegen wraps the group-by factory in
+                // SortedRecordCursorFactory. As the cursor populates the
+                // RecordTreeChain, MemoryPages exhausts its 1-page budget
+                // and throws LimitOverflowException. The outer
+                // SampleByFillRecordCursorFactory cursor is not random-access,
+                // so use the supportsRandomAccess=false overload here.
+                assertQueryNoLeakCheck(
+                        "",
+                        "SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                        "ts",
+                        false
+                );
+                fail("expected LimitOverflowException from constrained sort.key budget");
             } catch (CairoException ex) {
                 // Catching the LimitOverflowException superclass (CairoException)
                 // directly lets JVM-level Error subclasses propagate instead of
                 // being swallowed, and the assertion locks on a single canonical
-                // substring. Both MemoryPARWImpl and MemoryCARWImpl produce the
-                // same page-limit text for sqlSortKeyMaxPages=-1. If the
-                // exception is ever re-wrapped to SqlException on the construct
-                // path, the typed catch fails loudly instead of hiding the
-                // signal under a substring disjunction.
+                // substring shared by MemoryPages overflow paths. If the
+                // exception is ever re-wrapped to SqlException, the typed catch
+                // fails loudly instead of hiding the signal under a substring
+                // disjunction.
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Maximum number of pages");
+                // The (raise X) hint must name the actual config key that drove the cap,
+                // so renaming cairo.sql.sort.key.max.bytes would fail this assertion
+                // instead of silently breaking the user-facing remediation guidance.
+                TestUtils.assertContains(ex.getFlyweightMessage(), "(raise cairo.sql.sort.key.max.bytes)");
+            }
+        });
+    }
+
+    @Test
+    public void testSortedRecordCursorFactoryHandlesValueHeapOverflow() throws Exception {
+        // Sibling of testSortedRecordCursorFactoryHandlesKeyHeapOverflow targeting the value chain:
+        // sort.key is left uncapped while a 1-page sort.value budget makes the RecordTreeChain's
+        // value RecordChain overflow in MemoryCARWImpl. Pins the (raise cairo.sql.sort.value.max.bytes)
+        // hint so a property rename fails here instead of silently breaking remediation guidance.
+        setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "full_recordchain");
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 64);
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 64);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (" +
+                    "ts TIMESTAMP, " +
+                    "k SYMBOL, " +
+                    "x DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts, " +
+                    "rnd_symbol(64, 4, 4, 0) k, " +
+                    "rnd_double() x " +
+                    "FROM long_sequence(512)");
+
+            try {
+                assertQueryNoLeakCheck(
+                        "",
+                        "SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                        "ts",
+                        false
+                );
+                fail("expected LimitOverflowException from constrained sort.value budget");
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "breached in VirtualMemory");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "(raise cairo.sql.sort.value.max.bytes)");
             }
         });
     }
@@ -1922,12 +1966,20 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueRejectedForArrayAggregate() throws Exception {
-        // first(array) returns DOUBLE[]; no INT -> ARRAY implicit cast exists.
+        // first(array) returns DOUBLE[]. FirstArrayGroupByFunction omits
+        // SAMPLE_BY_FILL_VALUE from getSampleByFlags(), so the GroupByUtils
+        // flag-validation in assembleGroupByFunctions rejects FILL(VALUE) up
+        // front - before SqlCodeGenerator's INT->ARRAY type-coercion path
+        // would have produced "fill value of type INT cannot fill column of
+        // type DOUBLE[]". Both messages reject the same query; the flag-based
+        // one is the active rejection point on the array_agg branch because
+        // rewriteSelectClause0 now re-exposes the rewritten FILL list onto
+        // groupByModel.sampleByFill for validation.
         assertException(
                 "SELECT ts, first(a) FROM t_fv_arr SAMPLE BY 1m FILL(0)",
                 "CREATE TABLE t_fv_arr (a DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
                 52,
-                "fill value of type INT cannot fill column of type DOUBLE[]"
+                "support for VALUE fill is not yet implemented [function=first(a), class=io.questdb.griffin.engine.functions.groupby.FirstArrayGroupByFunction]"
         );
     }
 
@@ -1999,31 +2051,36 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueWithSumMinusConstantOverFill() throws Exception {
-        // SqlOptimiser.rewriteAggregate splits sum(c - K) into sum(c) - count(*) * K when K is
-        // an integer constant. Verify that SAMPLE BY FILL drives the resulting two-aggregate
-        // plan correctly through SampleByFillRecordCursorFactory and that the fill rows still
-        // evaluate to the expected constant.
+        // SqlOptimiser.rewriteAggregate would normally split sum(c - K) into sum(c) -
+        // count(*) * K when K is an integer constant. Under SAMPLE BY FILL the rewrite
+        // is unsafe: the per-aggregate FILL value would land on both inner aggregates
+        // and the outer arithmetic would yield v - v * K instead of the user-visible
+        // v. The optimiser therefore suppresses the rewrite when any FILL is set (see
+        // testFillValueAppliesAfterAggregateArithmetic for the multiplicative form).
+        // This test pins the no-rewrite plan and verifies the data path still produces
+        // the expected fill rows when the inner aggregate computes sum(c - 1000)
+        // directly. FILL(0) hides the bug because 0 propagates correctly through any
+        // arithmetic; the multiplicative companion in the FillNullValue test class
+        // catches the case where FILL(42) does not.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_fv_sum_minus (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t_fv_sum_minus VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
             assertPlanNoLeakCheck(
                     "SELECT sum(c - 1000) AS s, ts FROM t_fv_sum_minus SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
                     """
-                            VirtualRecord
-                              functions: [sum-COUNT*1000,ts]
-                                Sample By Fill
-                                  stride: '1h'
-                                  fill: value
-                                    Encode sort light
+                            Sample By Fill
+                              stride: '1h'
+                              fill: value
+                                Encode sort light
+                                  keys: [ts]
+                                    Async Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [sum(c),count(*)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t_fv_sum_minus
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(c-1000)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t_fv_sum_minus
                             """
             );
             assertQueryNoLeakCheck(
@@ -2045,28 +2102,28 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillValueWithSumPlusConstantOverFill() throws Exception {
         // Companion to testFillValueWithSumMinusConstantOverFill for the '+' branch:
-        // sum(c + K) splits to sum(c) + count(*) * K.
+        // sum(c + K) would split to sum(c) + count(*) * K but the rewrite is suppressed
+        // under SAMPLE BY FILL for the same reason. See testFillValueAppliesAfter-
+        // AggregateArithmetic for the value-propagation case.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_fv_sum_plus (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t_fv_sum_plus VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
             assertPlanNoLeakCheck(
                     "SELECT sum(c + 1000) AS s, ts FROM t_fv_sum_plus SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
                     """
-                            VirtualRecord
-                              functions: [sum+COUNT*1000,ts]
-                                Sample By Fill
-                                  stride: '1h'
-                                  fill: value
-                                    Encode sort light
+                            Sample By Fill
+                              stride: '1h'
+                              fill: value
+                                Encode sort light
+                                  keys: [ts]
+                                    Async Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [sum(c),count(*)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t_fv_sum_plus
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(c+1000)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t_fv_sum_plus
                             """
             );
             assertQueryNoLeakCheck(
@@ -2087,29 +2144,31 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueWithSumTimesConstantOverFill() throws Exception {
-        // Companion for the '*' branch: sum(c * K) lifts the multiplier outside as sum(c) * K
-        // without adding count(*). Verify SAMPLE BY FILL still produces correct fill rows.
+        // Companion for the '*' branch: sum(c * K) would lift the multiplier outside
+        // as sum(c) * K, but the rewrite is suppressed under SAMPLE BY FILL because
+        // the FILL value would multiply through K in empty buckets. The matching
+        // value-propagation test in SampleByFillNullValueTest
+        // (testFillValueAppliesAfterAggregateArithmetic) pins FILL(42) -> 42 in
+        // empty buckets, not 42 * K.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_fv_sum_mul (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t_fv_sum_mul VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
             assertPlanNoLeakCheck(
                     "SELECT sum(c * 1000) AS s, ts FROM t_fv_sum_mul SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
                     """
-                            VirtualRecord
-                              functions: [sum*1000,ts]
-                                Sample By Fill
-                                  stride: '1h'
-                                  fill: value
-                                    Encode sort light
+                            Sample By Fill
+                              stride: '1h'
+                              fill: value
+                                Encode sort light
+                                  keys: [ts]
+                                    Async Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [sum(c)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t_fv_sum_mul
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(c*1000)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t_fv_sum_mul
                             """
             );
             assertQueryNoLeakCheck(

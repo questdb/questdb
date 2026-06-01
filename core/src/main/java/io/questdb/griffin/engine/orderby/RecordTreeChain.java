@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.MemoryPages;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -62,19 +63,36 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
             @NotNull RecordSink recordSink,
             @NotNull RecordComparator comparator,
             long keyPageSize,
-            int keyMaxPages,
+            long maxKeyHeapBytes,
             long valuePageSize,
-            int valueMaxPages
+            long maxValueHeapBytes,
+            String keyHeapConfigKey,
+            String valueHeapConfigKey
     ) {
         try {
             this.comparator = comparator;
-            this.mem = new MemoryPages(keyPageSize, keyMaxPages);
-            this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize, valueMaxPages);
+            // MemoryPages can't hold a block straddling its ceilPow2 page (config rejects sub-block key pages).
+            assert Numbers.ceilPow2(keyPageSize) >= BLOCK_SIZE;
+            this.mem = new MemoryPages(keyPageSize, derivePageBudget(keyPageSize, maxKeyHeapBytes), keyHeapConfigKey);
+            this.recordChain = new RecordChain(
+                    columnTypes,
+                    recordSink,
+                    valuePageSize,
+                    derivePageBudget(valuePageSize, maxValueHeapBytes),
+                    valueHeapConfigKey
+            );
             this.recordChainRecord = this.recordChain.getRecordB();
         } catch (Throwable th) {
             close();
             throw th;
         }
+    }
+
+    private static int derivePageBudget(long pageSize, long maxBytes) {
+        // Divide by the rounded page: MemoryPages/MemoryCARWImpl ceilPow2 the page before allocating,
+        // so dividing by the raw value would let the heap overshoot maxBytes (up to ~2x for non-pow2).
+        long pages = Math.max(1L, maxBytes / Numbers.ceilPow2(pageSize));
+        return (int) Math.min(pages, Integer.MAX_VALUE);
     }
 
     @Override

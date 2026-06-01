@@ -22,61 +22,46 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
-public class CastTimestampToTimestampFunctionFactory implements FunctionFactory {
+public class ArrayAggDoubleArrayGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "cast(Nn)";
+        return "array_agg(D[])";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
         final Function arg = args.getQuick(0);
-        final int leftTimestampType = arg.getType();
-        final int rightTimestampType = args.getQuick(1).getType();
-        if (ColumnType.isTimestamp(leftTimestampType)) {
-            if (leftTimestampType == rightTimestampType) {
-                // Identity cast: arg is already a timestamp of the target type.
-                // Return it unwrapped so that callers inspecting the argument
-                // (e.g. ColumnFunction.unwrap for twap(price, ts::timestamp))
-                // can still recognize a plain designated-timestamp column.
-                return arg;
-            }
-            return new Func(arg, leftTimestampType, rightTimestampType);
+        final int dims = ColumnType.decodeWeakArrayDimensionality(arg.getType());
+        if (dims == -1) {
+            throw SqlException.position(argPositions.getQuick(0)).put("array bind variable argument is not supported");
         }
-        // Non-timestamp source (e.g. long): reinterpret its raw value as the
-        // target timestamp type.
-        return new CastLongToTimestampFunctionFactory.Func(arg, rightTimestampType);
-    }
-
-    public static class Func extends AbstractCastToTimestampFunction {
-        private final int leftTimestampType;
-
-        public Func(Function arg, int leftTimestampType, int rightTimestampType) {
-            super(arg, rightTimestampType);
-            this.leftTimestampType = leftTimestampType;
+        if (dims != 1) {
+            throw SqlException.position(argPositions.getQuick(0)).put("array is not one-dimensional");
         }
-
-        @Override
-        public long getTimestamp(Record rec) {
-            return timestampDriver.from(arg.getLong(rec), leftTimestampType);
-        }
+        return new ArrayAggDoubleArrayGroupByFunction(arg, configuration);
     }
 }

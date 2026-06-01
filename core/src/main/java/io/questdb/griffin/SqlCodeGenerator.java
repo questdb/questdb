@@ -1253,6 +1253,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return viewExpr != null ? viewExpr.position : 0;
     }
 
+    /**
+     * Returns true when the base factory delivers rows in ascending designated-timestamp order, which the
+     * TWAP and sparkline aggregates require: their single-batch step-function integration trusts each page
+     * frame to already be sorted by the designated timestamp. A forward scan alone is not enough. A sort by
+     * a non-timestamp column also reports SCAN_DIRECTION_FORWARD, yet it drops the designated timestamp from
+     * its metadata (so getTimestampIndex() no longer matches the timestampIndex that an outer timestamp(col)
+     * clause re-attaches by name). Requiring the metadata timestamp to equal timestampIndex rejects such
+     * reordered bases, which would otherwise feed the aggregates rows out of timestamp order.
+     */
+    private static boolean isBaseTimestampAscending(RecordCursorFactory factory, int timestampIndex) {
+        return factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD
+                && factory.getMetadata().getTimestampIndex() == timestampIndex;
+    }
+
     // Fixed-size scalars and wide types that MapValue can put/get directly.
     // SYMBOL is cached as the int symbol id. UUID, INTERVAL, and variable-width
     // types fall back to the recordAt path -- MapValue lacks symmetric put APIs
@@ -4427,6 +4441,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext,
                     innerMetadata,
                     timestampIndex,
+                    false,
                     true,
                     groupByFunctions,
                     groupByFunctionPositions,
@@ -5677,6 +5692,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         executionContext,
                                         joinMetadata,
                                         masterMetadata.getTimestampIndex(),
+                                        false,
                                         true,
                                         groupByFunctions,
                                         groupByFunctionPositions,
@@ -6850,6 +6866,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext,
                     innerMetadata,
                     timestampIndex,
+                    false,
                     true,
                     groupByFunctions,
                     groupByFunctionPositions,
@@ -7846,6 +7863,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         executionContext,
                         baseMetadata,
                         timestampIndex,
+                        isBaseTimestampAscending(factory, timestampIndex),
                         false,
                         groupByFunctions,
                         groupByFunctionPositions,
@@ -7904,6 +7922,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext,
                     baseMetadata,
                     timestampIndex,
+                    isBaseTimestampAscending(factory, timestampIndex),
                     false,
                     groupByFunctions,
                     groupByFunctionPositions,
@@ -8759,6 +8778,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
+            // After rewriteSampleBy clears sampleBy, SqlOptimiser.rewriteSelectClause0
+            // re-exposes the fill list here via setSampleByFill so each aggregate's
+            // getSampleByFlags() can be validated against the fill mode.
+            final ObjList<ExpressionNode> rewrittenSampleByFill = model.getSampleByFill();
+
             GroupByUtils.assembleGroupByFunctions(
                     functionParser,
                     sqlNodeStack,
@@ -8766,6 +8790,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext,
                     baseMetadata,
                     timestampIndex,
+                    isBaseTimestampAscending(factory, timestampIndex),
                     true,
                     groupByFunctions,
                     groupByFunctionPositions,
@@ -8777,7 +8802,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     valueTypes,
                     keyTypes,
                     listColumnFilterA,
-                    null,
+                    rewrittenSampleByFill,
                     validateSampleByFillType,
                     model.getColumns(),
                     sharedOuterProjectionFunctions

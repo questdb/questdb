@@ -19943,8 +19943,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 );
             });
         } finally {
-            // disable
-            node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 0);
+            // restore defaults (page size must stay >= the operator minimum, so reset to the default
+            // rather than 0; max.pages has no minimum)
+            node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 1024 * 1024);
             node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 0);
         }
     }
