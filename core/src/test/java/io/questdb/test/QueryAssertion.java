@@ -215,18 +215,16 @@ public class QueryAssertion {
     }
 
     /**
-     * Variant of {@link #mutateWith(CharSequence)} that runs several statements in order between the
-     * before and after assertions. Use when the mutation needs more than one statement (e.g. a
-     * DROP followed by a CREATE), since each statement is executed separately.
+     * Multi-statement variant of {@link #mutateWith(CharSequence)}. The statements run in order,
+     * each as a separate {@code engine.execute()} call, before the second assertion re-checks the
+     * same factory. Use when the mutation needs more than one statement (e.g. drop then recreate a
+     * table), which {@code engine.execute()} cannot run as a single {@code ;}-separated batch.
      */
-    public QueryAssertion mutateWith(CharSequence... ddls) {
-        this.ddl2 = ddls[0];
-        this.ddl2More = null;
-        if (ddls.length > 1) {
-            this.ddl2More = new ObjList<>(ddls.length - 1);
-            for (int i = 1; i < ddls.length; i++) {
-                this.ddl2More.add(ddls[i]);
-            }
+    public QueryAssertion mutateWith(CharSequence ddl2, CharSequence... more) {
+        this.ddl2 = ddl2;
+        this.ddl2More = new ObjList<>(more.length);
+        for (int i = 0, n = more.length; i < n; i++) {
+            this.ddl2More.add(more[i]);
         }
         return this;
     }
@@ -471,7 +469,7 @@ public class QueryAssertion {
             assertVariableColumns(factory, context);
 
             if (ddl2 != null) {
-                runMutation();
+                runMutations();
                 if (engine.getConfiguration().getWalEnabledDefault()) {
                     drainWalQueue(engine);
                 }
@@ -513,7 +511,7 @@ public class QueryAssertion {
                 assertVariableColumns(factory, context);
 
                 if (ddl2 != null) {
-                    runMutation();
+                    runMutations();
                     int count = 3;
                     while (count > 0) {
                         try {
@@ -687,7 +685,7 @@ public class QueryAssertion {
         }
     }
 
-    private void runMutation() throws SqlException {
+    private void runMutations() throws SqlException {
         engine.execute(ddl2, context);
         if (ddl2More != null) {
             for (int i = 0, n = ddl2More.size(); i < n; i++) {
