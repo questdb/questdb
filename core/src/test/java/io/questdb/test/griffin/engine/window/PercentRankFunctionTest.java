@@ -193,22 +193,16 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testPercentRankFramingNotSupported() throws Exception {
-        assertException(
-                "select ts, percent_rank() over (order by ts rows between unbounded preceding and current row) from tab",
-                "create table tab (ts timestamp, i long) timestamp(ts)",
-                11,
-                "percent_rank() does not support framing; remove ROWS/RANGE clause"
-        );
+        assertQuery("select ts, percent_rank() over (order by ts rows between unbounded preceding and current row) from tab")
+                .ddl("create table tab (ts timestamp, i long) timestamp(ts)")
+                .fails(11, "percent_rank() does not support framing; remove ROWS/RANGE clause");
     }
 
     @Test
     public void testPercentRankIgnoreNullsNotSupported() throws Exception {
-        assertException(
-                "select ts, percent_rank() ignore nulls over (order by ts) from tab",
-                "create table tab (ts timestamp, i long) timestamp(ts)",
-                26,
-                "RESPECT/IGNORE NULLS is not supported for current window function"
-        );
+        assertQuery("select ts, percent_rank() ignore nulls over (order by ts) from tab")
+                .ddl("create table tab (ts timestamp, i long) timestamp(ts)")
+                .fails(26, "RESPECT/IGNORE NULLS is not supported for current window function");
     }
 
     @Test
@@ -348,12 +342,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testPercentRankNoOverClause() throws Exception {
-        assertException(
-                "select ts, percent_rank() from tab",
-                "create table tab (ts timestamp, i long) timestamp(ts)",
-                11,
-                "window function called in non-window context, make sure to add OVER clause"
-        );
+        assertQuery("select ts, percent_rank() from tab")
+                .ddl("create table tab (ts timestamp, i long) timestamp(ts)")
+                .fails(11, "window function called in non-window context, make sure to add OVER clause");
     }
 
     @Test
@@ -461,12 +452,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testPercentRankRespectNullsNotSupported() throws Exception {
-        assertException(
-                "select ts, percent_rank() respect nulls over (order by ts) from tab",
-                "create table tab (ts timestamp, i long) timestamp(ts)",
-                26,
-                "RESPECT/IGNORE NULLS is not supported for current window function"
-        );
+        assertQuery("select ts, percent_rank() respect nulls over (order by ts) from tab")
+                .ddl("create table tab (ts timestamp, i long) timestamp(ts)")
+                .fails(26, "RESPECT/IGNORE NULLS is not supported for current window function");
     }
 
     @Test

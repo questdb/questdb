@@ -636,11 +636,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute("INSERT INTO t2 VALUES " +
                     "('2024-01-01T00:00:00', 5000000000000000000000000000000000000000000000000000000000000000000000000000m), " +
                     "('2024-01-01T00:01:00', 5000000000000000000000000000000000000000000000000000000000000000000000000000m)");
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(v) OVER () c FROM t2",
-                    "SELECT avg(".length(),
-                    "avg aggregation failed"
-            );
+            assertQuery("SELECT avg(v) OVER () c FROM t2")
+                    .noLeakCheck()
+                    .fails("SELECT avg(".length(), "avg aggregation failed");
         });
     }
 
@@ -1862,7 +1860,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 String sql = "SELECT avg(" + col + ", -1) OVER () FROM t";
                 int nPos = "SELECT avg(".length() + col.length() + 2;
-                assertExceptionNoLeakCheck(sql, nPos, "non-negative scale required: -1");
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(nPos, "non-negative scale required: -1");
             }
         });
     }
@@ -1874,7 +1874,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(CREATE_T);
             String sql = "SELECT avg(v256, 17) OVER () FROM t";
             int nPos = "SELECT avg(v256, ".length();
-            assertExceptionNoLeakCheck(sql, nPos, "rescaled decimal has precision that exceeds maximum of");
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(nPos, "rescaled decimal has precision that exceeds maximum of");
         });
     }
 
@@ -1897,7 +1899,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 String sql = "SELECT avg(" + col + ", 77) OVER () FROM t";
                 int nPos = "SELECT avg(".length() + col.length() + 2;
-                assertExceptionNoLeakCheck(sql, nPos, "scale exceeds maximum of");
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(nPos, "scale exceeds maximum of");
             }
         });
     }
@@ -7209,7 +7213,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                     String sql = "SELECT nth_value(" + col + ", " + n + ") OVER (ORDER BY ts) FROM t";
                     // n position is after "SELECT nth_value(<col>, ", i.e. 17 + col.length() + 2
                     int nPos = "SELECT nth_value(".length() + col.length() + 2;
-                    assertExceptionNoLeakCheck(sql, nPos, "n must be a positive integer");
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .fails(nPos, "n must be a positive integer");
                 }
             }
         });
@@ -8643,11 +8649,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute("INSERT INTO t2 VALUES " +
                     "('2024-01-01T00:00:00', 5000000000000000000000000000000000000000000000000000000000000000000000000000m), " +
                     "('2024-01-01T00:01:00', 5000000000000000000000000000000000000000000000000000000000000000000000000000m)");
-            assertExceptionNoLeakCheck(
-                    "SELECT sum(v) OVER () c FROM t2",
-                    "SELECT sum(".length(),
-                    "sum aggregation failed"
-            );
+            assertQuery("SELECT sum(v) OVER () c FROM t2")
+                    .noLeakCheck()
+                    .fails("SELECT sum(".length(), "sum aggregation failed");
         });
     }
 
@@ -10527,15 +10531,21 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 // Non-designated ts ORDER BY with RANGE -> rejected.
                 String sql = "SELECT first_value(" + col + ") OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                 int pos = sql.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                assertExceptionNoLeakCheck(sql, pos, "RANGE is supported only for queries ordered by designated timestamp");
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(pos, "RANGE is supported only for queries ordered by designated timestamp");
                 // IGNORE NULLS variant
                 String sql2 = "SELECT first_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                 int pos2 = sql2.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                assertExceptionNoLeakCheck(sql2, pos2, "RANGE is supported only for queries ordered by designated timestamp");
+                assertQuery(sql2)
+                        .noLeakCheck()
+                        .fails(pos2, "RANGE is supported only for queries ordered by designated timestamp");
                 // With PARTITION BY too
                 String sql3 = "SELECT first_value(" + col + ") OVER (PARTITION BY ts ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                 int pos3 = sql3.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                assertExceptionNoLeakCheck(sql3, pos3, "RANGE is supported only for queries ordered by designated timestamp");
+                assertQuery(sql3)
+                        .noLeakCheck()
+                        .fails(pos3, "RANGE is supported only for queries ordered by designated timestamp");
             }
         });
     }
@@ -10550,10 +10560,14 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 String sql = "SELECT last_value(" + col + ") OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                 int pos = sql.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                assertExceptionNoLeakCheck(sql, pos, "RANGE is supported only for queries ordered by designated timestamp");
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(pos, "RANGE is supported only for queries ordered by designated timestamp");
                 String sql2 = "SELECT last_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                 int pos2 = sql2.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                assertExceptionNoLeakCheck(sql2, pos2, "RANGE is supported only for queries ordered by designated timestamp");
+                assertQuery(sql2)
+                        .noLeakCheck()
+                        .fails(pos2, "RANGE is supported only for queries ordered by designated timestamp");
             }
         });
     }
@@ -10568,7 +10582,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 String sql = "SELECT nth_value(" + col + ", 1) OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                 int pos = sql.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                assertExceptionNoLeakCheck(sql, pos, "RANGE is supported only for queries ordered by designated timestamp");
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(pos, "RANGE is supported only for queries ordered by designated timestamp");
             }
         });
     }
@@ -10584,7 +10600,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 for (String fn : new String[]{"sum", "avg", "max", "min"}) {
                     String sql = "SELECT " + fn + "(" + col + ") OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
                     int pos = sql.indexOf("ORDER BY ts2") + "ORDER BY ".length();
-                    assertExceptionNoLeakCheck(sql, pos, "RANGE is supported only for queries ordered by designated timestamp");
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .fails(pos, "RANGE is supported only for queries ordered by designated timestamp");
                 }
             }
         });
@@ -10671,12 +10689,20 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 String prefix = "SELECT nth_value(" + col + ", ";
                 int posN = prefix.length();
                 // n must be positive (constants)
-                assertExceptionNoLeakCheck(prefix + "0) OVER (ORDER BY ts) FROM tn", posN, "n must be a positive integer");
-                assertExceptionNoLeakCheck(prefix + "-1) OVER (ORDER BY ts) FROM tn", posN, "n must be a positive integer");
+                assertQuery(prefix + "0) OVER (ORDER BY ts) FROM tn")
+                        .noLeakCheck()
+                        .fails(posN, "n must be a positive integer");
+                assertQuery(prefix + "-1) OVER (ORDER BY ts) FROM tn")
+                        .noLeakCheck()
+                        .fails(posN, "n must be a positive integer");
                 // n must be a constant — non-constant column reference
-                assertExceptionNoLeakCheck(prefix + "x) OVER (ORDER BY ts) FROM tn", posN, "n must be a constant");
+                assertQuery(prefix + "x) OVER (ORDER BY ts) FROM tn")
+                        .noLeakCheck()
+                        .fails(posN, "n must be a constant");
                 // n cannot be NULL — null::int literal
-                assertExceptionNoLeakCheck(prefix + "null) OVER (ORDER BY ts) FROM tn", posN, "n cannot be NULL");
+                assertQuery(prefix + "null) OVER (ORDER BY ts) FROM tn")
+                        .noLeakCheck()
+                        .fails(posN, "n cannot be NULL");
             }
         });
     }

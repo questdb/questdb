@@ -20934,7 +20934,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     private void assertWindowException(String query, int position, CharSequence errorMessage) throws Exception {
         for (String frameType : FRAME_TYPES) {
-            assertExceptionNoLeakCheck(query.replace("#FRAME", frameType), position, errorMessage);
+            assertQuery(query.replace("#FRAME", frameType))
+                    .noLeakCheck()
+                    .fails(position, errorMessage);
         }
     }
 
