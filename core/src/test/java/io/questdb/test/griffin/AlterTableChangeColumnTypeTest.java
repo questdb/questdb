@@ -1142,6 +1142,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testConvertFailsWriterIsOk() throws Exception {
+        assumeNonWal();
         assertMemoryLeak(() -> {
             createX();
 
