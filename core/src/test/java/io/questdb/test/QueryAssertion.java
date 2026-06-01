@@ -72,6 +72,7 @@ public class QueryAssertion {
     private SqlExecutionContext context;
     private CharSequence ddl;
     private CharSequence ddl2;
+    private ObjList<CharSequence> ddl2More;
     private CairoEngine engine;
     private boolean expectSize;
     private CharSequence expectedPlan;
@@ -209,6 +210,21 @@ public class QueryAssertion {
      */
     public QueryAssertion mutateWith(CharSequence ddl2) {
         this.ddl2 = ddl2;
+        return this;
+    }
+
+    /**
+     * Multi-statement variant of {@link #mutateWith(CharSequence)}. The statements run in order,
+     * each as a separate {@code engine.execute()} call, before the second assertion re-checks the
+     * same factory. Use when the mutation needs more than one statement (e.g. drop then recreate a
+     * table), which {@code engine.execute()} cannot run as a single {@code ;}-separated batch.
+     */
+    public QueryAssertion mutateWith(CharSequence ddl2, CharSequence... more) {
+        this.ddl2 = ddl2;
+        this.ddl2More = new ObjList<>(more.length);
+        for (int i = 0, n = more.length; i < n; i++) {
+            this.ddl2More.add(more[i]);
+        }
         return this;
     }
 
@@ -452,7 +468,7 @@ public class QueryAssertion {
             assertVariableColumns(factory, context);
 
             if (ddl2 != null) {
-                engine.execute(ddl2, context);
+                runMutations();
                 if (engine.getConfiguration().getWalEnabledDefault()) {
                     drainWalQueue(engine);
                 }
@@ -494,7 +510,7 @@ public class QueryAssertion {
                 assertVariableColumns(factory, context);
 
                 if (ddl2 != null) {
-                    engine.execute(ddl2, context);
+                    runMutations();
                     int count = 3;
                     while (count > 0) {
                         try {
@@ -664,6 +680,15 @@ public class QueryAssertion {
             engine.execute(ddl, context);
             if (engine.getConfiguration().getWalEnabledDefault()) {
                 drainWalQueue(engine);
+            }
+        }
+    }
+
+    private void runMutations() throws SqlException {
+        engine.execute(ddl2, context);
+        if (ddl2More != null) {
+            for (int i = 0, n = ddl2More.size(); i < n; i++) {
+                engine.execute(ddl2More.getQuick(i), context);
             }
         }
     }
