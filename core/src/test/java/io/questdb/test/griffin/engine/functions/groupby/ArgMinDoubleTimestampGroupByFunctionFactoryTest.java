@@ -52,7 +52,11 @@ public class ArgMinDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_min(value, key) from tab group by sym order by sym";
-                TestUtils.assertSql(engine, sqlExecutionContext, sql, sink, "sym\targ_min\nA\tnull\nB\tnull\nC\tnull\nD\tnull\nE\tnull\n");
+                assertQuery(sql)
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .returnsOnce("sym\targ_min\nA\tnull\nB\tnull\nC\tnull\nD\tnull\nE\tnull\n");
             }, configuration, LOG);
         }
     }

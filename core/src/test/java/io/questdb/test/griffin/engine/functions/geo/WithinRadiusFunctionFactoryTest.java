@@ -240,21 +240,18 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
                         String sql = "select count(*) from points where within_radius(x, y, 0.0, 0.0, 50.0)";
 
                         // Verify the query plan shows parallel execution
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "explain " + sql,
-                                sink,
-                                """
-                                        QUERY PLAN
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .assertsPlan("""
                                         Count
                                             Async Filter workers: 4
                                               filter: within_radius(x,y,0.0,0.0,50.0)
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: points
-                                        """
-                        );
+                                        """);
 
                         // Run query and verify results are consistent
                         TestUtils.assertSqlCursors(

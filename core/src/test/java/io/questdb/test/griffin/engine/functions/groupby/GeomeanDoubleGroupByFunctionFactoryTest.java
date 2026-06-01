@@ -233,13 +233,11 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // Verify the query plan shows parallel execution
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "explain " + sql,
-                                sink,
-                                """
-                                        QUERY PLAN
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .assertsPlan("""
                                         Encode sort light
                                           keys: [sym]
                                             Async Group By workers: 4
@@ -249,8 +247,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
-                                        """
-                        );
+                                        """);
                     },
                     configuration,
                     LOG
@@ -274,20 +271,18 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // All results should be null since all values are null
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                sql,
-                                sink,
-                                """
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce("""
                                         sym\tgeomean
                                         A\tnull
                                         B\tnull
                                         C\tnull
                                         D\tnull
                                         E\tnull
-                                        """
-                        );
+                                        """);
                     },
                     configuration,
                     LOG
@@ -311,13 +306,11 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // Verify the query plan shows parallel execution
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "explain " + sql,
-                                sink,
-                                """
-                                        QUERY PLAN
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .assertsPlan("""
                                         Encode sort light
                                           keys: [sym]
                                             Async Group By workers: 4
@@ -327,8 +320,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
-                                        """
-                        );
+                                        """);
 
                         // Run query and verify results are consistent
                         TestUtils.assertSqlCursors(
@@ -361,20 +353,18 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // All results should be null (NaN displayed as null) since each group has negative values
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                sql,
-                                sink,
-                                """
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce("""
                                         sym\tgeomean
                                         A\tnull
                                         B\tnull
                                         C\tnull
                                         D\tnull
                                         E\tnull
-                                        """
-                        );
+                                        """);
                     },
                     configuration,
                     LOG

@@ -268,21 +268,18 @@ public class GeoDistanceMetersFunctionFactoryTest extends AbstractCairoTest {
                         String sql = "select count(*) from points where geo_distance_meters(40.0, -73.0, lat, lon) < 5000.0";
 
                         // Verify the query plan shows parallel execution
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "explain " + sql,
-                                sink,
-                                """
-                                        QUERY PLAN
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .assertsPlan("""
                                         Count
                                             Async Filter workers: 4
                                               filter: geo_distance_meters(40.0,-73.0,lat,lon)<5000.0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: points
-                                        """
-                        );
+                                        """);
 
                         // Run query and verify results are consistent
                         TestUtils.assertSqlCursors(

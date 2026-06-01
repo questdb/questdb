@@ -1067,13 +1067,11 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, sparkline(val, 0.0, 1.0, 8) FROM tab GROUP BY sym ORDER BY sym";
 
-                TestUtils.assertSql(
-                        engine,
-                        sqlExecutionContext,
-                        "EXPLAIN " + sql,
-                        sink,
-                        """
-                                QUERY PLAN
+                assertQuery(sql)
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .assertsPlan("""
                                 Encode sort light
                                   keys: [sym]
                                     Async Group By workers: 4
@@ -1083,8 +1081,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
-                                """
-                );
+                                """);
             }, configuration, LOG);
         }
     }
@@ -1141,13 +1138,11 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, sparkline(val) FROM tab GROUP BY sym ORDER BY sym";
-                TestUtils.assertSql(
-                        engine,
-                        sqlExecutionContext,
-                        sql,
-                        sink,
-                        "sym\tsparkline\nA\t\nB\t\nC\t\nD\t\nE\t\n"
-                );
+                assertQuery(sql)
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .returnsOnce("sym\tsparkline\nA\t\nB\t\nC\t\nD\t\nE\t\n");
             }, configuration, LOG);
         }
     }
