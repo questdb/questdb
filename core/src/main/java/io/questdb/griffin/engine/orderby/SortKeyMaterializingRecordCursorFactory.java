@@ -54,7 +54,7 @@ public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCurso
                 metadata.getColumnCount(),
                 materializedColIndices,
                 materializedColTypes,
-                configuration.getSqlSortKeyMaxPages()
+                configuration.getSqlSortKeyMaxBytes()
         );
     }
 
