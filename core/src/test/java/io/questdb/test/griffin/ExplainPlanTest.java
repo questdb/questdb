@@ -207,11 +207,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void test2686LeftJoinDoesNotMoveOtherInnerJoinPredicate() throws Exception {
         test2686Prepare();
-        assertPlan("""
+        assertQuery("""
                 select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
                 from table_1 as a\s
                 left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) \
-                join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and b.age = 10\s""", """
+                join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and b.age = 10\s""")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
                     SelectedRecord
@@ -235,11 +236,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void test2686LeftJoinDoesNotMoveOtherLeftJoinPredicate() throws Exception {
         test2686Prepare();
-        assertPlan("""
+        assertQuery("""
                 select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
                 from table_1 as a\s
                 left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) \
-                left join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and b.age = 10\s""", """
+                left join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and b.age = 10\s""")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
                     SelectedRecord
@@ -262,11 +264,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void test2686LeftJoinDoesNotMoveOtherTwoTableEqJoinPredicate() throws Exception {
         test2686Prepare();
-        assertPlan("""
+        assertQuery("""
                 select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
                 from table_1 as a\s
                 left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) \
-                join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and a.age = b.age\s""", """
+                join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and a.age = b.age\s""")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
                     SelectedRecord
@@ -290,10 +293,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void test2686LeftJoinDoesNotPushJoinPredicateToLeftTable() throws Exception {
         test2686Prepare();
-        assertPlan("""
+        assertQuery("""
                 select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
                 from table_1 as a\s
-                left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and a.age = 10\s""", """
+                left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and a.age = 10\s""")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
                     SelectedRecord
@@ -311,10 +315,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void test2686LeftJoinDoesNotPushJoinPredicateToRightTable() throws Exception {
         test2686Prepare();
-        assertPlan("""
+        assertQuery("""
                 select a.name, a.age, b.address, a.ts\s
                 from table_1 as a\s
-                left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and b.age = 10\s""", """
+                left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and b.age = 10\s""")
+                .assertsPlan("""
                 SelectedRecord
                     Nested Loop Left Join
                       filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts and b.age=10)
@@ -330,11 +335,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void test2686LeftJoinDoesNotPushWherePredicateToRightTable() throws Exception {
         test2686Prepare();
-        assertPlan("""
+        assertQuery("""
                 select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
                 from table_1 as a\s
                 left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)\
-                where b.age = 10\s""", """
+                where b.age = 10\s""")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
                     SelectedRecord
@@ -353,11 +359,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void test2686LeftJoinPushesWherePredicateToLeftJoinCondition() throws Exception {
         test2686Prepare();
-        assertPlan("""
+        assertQuery("""
                 select a.name, a.age, b.address, a.ts
                 from table_1 as a\s
                 left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) \
-                where a.age * b.age = 10""", """
+                where a.age * b.age = 10""")
+                .assertsPlan("""
                 SelectedRecord
                     Filter filter: a.age*b.age=10
                         Nested Loop Left Join
@@ -374,11 +381,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void test2686LeftJoinPushesWherePredicateToLeftTable() throws Exception {
         test2686Prepare();
-        assertPlan("""
+        assertQuery("""
                 select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
                 from table_1 as a\s
                 left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)\
-                where a.age = 10\s""", """
+                where a.age = 10\s""")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]
                     SelectedRecord
@@ -401,16 +409,36 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][], arr3 DOUBLE[][][], a DOUBLE)");
             String commonPart1 = "VirtualRecord\n  functions: [";
             String commonPart2 = "]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: tango\n";
-            assertPlanNoLeakCheck("SELECT arr1[1] FROM tango", commonPart1 + "arr1[1]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT arr1[1:1] FROM tango", commonPart1 + "arr1[1:1]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT arr3[1:1, 2:3, 4:] FROM tango", commonPart1 + "arr3[1:1,2:3,4:]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[1.0, 2] FROM tango", commonPart1 + "ARRAY[1.0,2.0]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3.0, 4]] FROM tango", commonPart1 + "ARRAY[ARRAY[1.0,2.0],ARRAY[3.0,4.0]]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[a, a] FROM tango", commonPart1 + "ARRAY[a,a]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[arr1, arr1] FROM tango", commonPart1 + "ARRAY[arr1,arr1]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[arr1[1:2], arr2[1]] FROM tango", commonPart1 + "ARRAY[arr1[1:2],arr2[1]]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT transpose(arr2) FROM tango", commonPart1 + "transpose(arr2)" + commonPart2);
-            assertPlanNoLeakCheck("SELECT arr2 * transpose(arr2) FROM tango", commonPart1 + "arr2*transpose(arr2)" + commonPart2);
+            assertQuery("SELECT arr1[1] FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan(commonPart1 + "arr1[1]" + commonPart2);
+            assertQuery("SELECT arr1[1:1] FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan(commonPart1 + "arr1[1:1]" + commonPart2);
+            assertQuery("SELECT arr3[1:1, 2:3, 4:] FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan(commonPart1 + "arr3[1:1,2:3,4:]" + commonPart2);
+            assertQuery("SELECT ARRAY[1.0, 2] FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan(commonPart1 + "ARRAY[1.0,2.0]" + commonPart2);
+            assertQuery("SELECT ARRAY[[1.0, 2], [3.0, 4]] FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan(commonPart1 + "ARRAY[ARRAY[1.0,2.0],ARRAY[3.0,4.0]]" + commonPart2);
+            assertQuery("SELECT ARRAY[a, a] FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan(commonPart1 + "ARRAY[a,a]" + commonPart2);
+            assertQuery("SELECT ARRAY[arr1, arr1] FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan(commonPart1 + "ARRAY[arr1,arr1]" + commonPart2);
+            assertQuery("SELECT ARRAY[arr1[1:2], arr2[1]] FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan(commonPart1 + "ARRAY[arr1[1:2],arr2[1]]" + commonPart2);
+            assertQuery("SELECT transpose(arr2) FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan(commonPart1 + "transpose(arr2)" + commonPart2);
+            assertQuery("SELECT arr2 * transpose(arr2) FROM tango")
+                    .noLeakCheck()
+                    .assertsPlan(commonPart1 + "arr2*transpose(arr2)" + commonPart2);
         });
     }
 
@@ -420,7 +448,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a asof join b on ts where a.i = b.ts::int", """
+            assertQuery("select * from a asof join b on ts where a.i = b.ts::int")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Filter filter: a.i=b.ts::int
                             AsOf Join Fast
@@ -440,7 +470,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select ts, ts1, i, i1 from (select * from a asof join b on ts ) where i/10 = i1", """
+            assertQuery("select ts, ts1, i, i1 from (select * from a asof join b on ts ) where i/10 = i1")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Filter filter: a.i/10=b.i
                             AsOf Join Fast
@@ -460,7 +492,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a asof join b on ts", """
+            assertQuery("select * from a asof join b on ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         AsOf Join Fast
                             PageFrame
@@ -479,7 +513,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a asof join (select * from b limit 10) on ts", """
+            assertQuery("select * from a asof join (select * from b limit 10) on ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         AsOf Join
                             PageFrame
@@ -499,7 +535,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a asof join ((select * from b order by ts, i ) timestamp(ts))  on ts", """
+            assertQuery("select * from a asof join ((select * from b order by ts, i ) timestamp(ts))  on ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         AsOf Join
                             PageFrame
@@ -520,7 +558,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * " + "from a " + "asof join b on ts " + "asof join a c on ts", """
+            assertQuery("select * " + "from a " + "asof join b on ts " + "asof join a c on ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         AsOf Join Fast
                             AsOf Join Fast
@@ -543,7 +583,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * " + "from a " + "asof join b " + "where a.i = b.i", """
+            assertQuery("select * " + "from a " + "asof join b " + "where a.i = b.i")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Filter filter: a.i=b.i
                             AsOf Join Fast
@@ -585,7 +627,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (i int, ts timestamp) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a asof join b where a.i > 0", """
+            assertQuery("select * from a asof join b where a.i > 0")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         AsOf Join Fast
                             Async JIT Filter workers: 1
@@ -597,7 +641,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: b
                     """);
-            assertPlanNoLeakCheck("select /*+ ENABLE_PRE_TOUCH(a) */ * from a asof join b where a.i > 0", """
+            assertQuery("select /*+ ENABLE_PRE_TOUCH(a) */ * from a asof join b where a.i > 0")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         AsOf Join Fast
                             Async JIT Filter workers: 1
@@ -618,7 +664,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (i int, ts timestamp) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a asof join b", """
+            assertQuery("select * from a asof join b")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         AsOf Join Fast
                             PageFrame
@@ -637,7 +685,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (i int, ts timestamp) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a asof join b on(ts)", """
+            assertQuery("select * from a asof join b on(ts)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         AsOf Join Fast
                             PageFrame
@@ -656,7 +706,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (ts timestamp, i int) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a asof join b on(ts)", """
+            assertQuery("select * from a asof join b on(ts)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         AsOf Join Fast
                             PageFrame
@@ -675,7 +727,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table x as ( " + "  select " + "    cast(x as int) i, " + "    rnd_symbol('a','b','c') sym, " + "    timestamp_sequence(0, 100000000) ts " + "   from long_sequence(100)" + ") timestamp(ts) partition by hour");
 
             String sql = "select i, " + "row_number() over (partition by sym), " + "avg(i) over (), " + "sum(i) over (), " + "first_value(i) over (), " + "from x limit 3";
-            assertPlanNoLeakCheck(sql, """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                         CachedWindow
                           unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over (),sum(i) over (),first_value(i) over ()]
@@ -698,7 +752,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCastFloatToDouble() throws Exception {
         allowFunctionMemoization();
-        assertMemoryLeak(() -> assertPlanNoLeakCheck("select rnd_float()::double ", """
+        assertMemoryLeak(() -> assertQuery("select rnd_float()::double ")
+                .noLeakCheck()
+                .assertsPlan("""
                 VirtualRecord
                   functions: [memoize(rnd_float()::double)]
                     long_sequence count: 1
@@ -707,67 +763,61 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testConstantReassociationBindVariable() throws Exception {
-        assertPlan(
-                "create table tab (d double, ts timestamp);",
-                "select * from tab where d + $1 + 4 > 10",
-                """
+        assertQuery("select * from tab where d + $1 + 4 > 10")
+                .ddl("create table tab (d double, ts timestamp);")
+                .assertsPlan("""
                         Async JIT Filter workers: 1
                           filter: 10<d+$0::double+4
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testConstantReassociationFoldsAddition() throws Exception {
-        assertPlan(
-                "create table tab (d double, ts timestamp);",
-                "select * from tab where d + 1 + 4 > 10",
-                """
+        assertQuery("select * from tab where d + 1 + 4 > 10")
+                .ddl("create table tab (d double, ts timestamp);")
+                .assertsPlan("""
                         Async JIT Filter workers: 1
                           filter: 10<d+5
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testConstantReassociationFoldsBitwiseAnd() throws Exception {
-        assertPlan(
-                "create table tab (l long, ts timestamp);",
-                "select * from tab where l & 3 & 5 > 0",
-                """
+        assertQuery("select * from tab where l & 3 & 5 > 0")
+                .ddl("create table tab (l long, ts timestamp);")
+                .assertsPlan("""
                         Async Filter workers: 1
                           filter: 0<l&1
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testConstantReassociationFoldsCommutativePattern() throws Exception {
-        assertPlan(
-                "create table tab (d double, ts timestamp);",
-                "select * from tab where 4 + (d + 1) > 10",
-                """
+        assertQuery("select * from tab where 4 + (d + 1) > 10")
+                .ddl("create table tab (d double, ts timestamp);")
+                .assertsPlan("""
                         Async JIT Filter workers: 1
                           filter: 10<d+5
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testCountOfColumnsVectorized() throws Exception {
-        assertPlan("create table x " + "(" + " k int, " + " i int, " + " l long, " + " f float, " + " d double, " + " dat date, " + " ts timestamp " + ")", "select k, count(1) c1, " + "count(*) cstar, " + "count(i) ci, " + "count(l) cl, " + "count(d) cd, " + "count(dat) cdat, " + "count(ts) cts " + "from x", """
+        assertQuery("select k, count(1) c1, " + "count(*) cstar, " + "count(i) ci, " + "count(l) cl, " + "count(d) cd, " + "count(dat) cdat, " + "count(ts) cts " + "from x")
+                .ddl("create table x " + "(" + " k int, " + " i int, " + " l long, " + " f float, " + " d double, " + " dat date, " + " ts timestamp " + ")")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [k,c1,c1,ci,cl,cd,cdat,cts]
                     GroupBy vectorized: true workers: 1
@@ -781,7 +831,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoin0() throws Exception {
-        assertPlan("create table a ( i int, s1 string, s2 string)", "select * from a cross join a b where length(a.s1) = length(b.s2)", """
+        assertQuery("select * from a cross join a b where length(a.s1) = length(b.s2)")
+                .ddl("create table a ( i int, s1 string, s2 string)")
+                .assertsPlan("""
                 SelectedRecord
                     Filter filter: length(a.s1)=length(b.s2)
                         Cross Join
@@ -805,7 +857,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoin1() throws Exception {
-        assertPlan("create table a ( i int)", "select * from a cross join a b", """
+        assertQuery("select * from a cross join a b")
+                .ddl("create table a ( i int)")
+                .assertsPlan("""
                 SelectedRecord
                     Cross Join
                         PageFrame
@@ -819,7 +873,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoin2() throws Exception {
-        assertPlan("create table a ( i int)", "select * from a cross join a b cross join a c", """
+        assertQuery("select * from a cross join a b cross join a c")
+                .ddl("create table a ( i int)")
+                .assertsPlan("""
                 SelectedRecord
                     Cross Join
                         Cross Join
@@ -842,7 +898,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("insert into t select x, x::timestamp from long_sequence(2)");
             String[] queries = {"select * from t t1 cross join t t2 order by t1.ts", "select * from (select * from t order by ts desc) t1 cross join t t2 order by t1.ts"};
             for (String query : queries) {
-                assertPlanNoLeakCheck(query, """
+                assertQuery(query)
+                        .noLeakCheck()
+                        .assertsPlan("""
                         SelectedRecord
                             Cross Join
                                 PageFrame
@@ -877,7 +935,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             String query = "select * from " + "((select * from t order by ts desc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts desc";
 
-            assertPlanNoLeakCheck(query, """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Cross Join
                             Limit value: 10 skip-rows: 0 take-rows: 2
@@ -896,7 +956,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts asc", """
+            assertQuery("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Cross Join
                             Limit value: 10 skip-rows: 0 take-rows: 0
@@ -915,7 +977,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts desc", """
+            assertQuery("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [ts desc]
                         SelectedRecord
@@ -936,7 +1000,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts asc", """
+            assertQuery("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Cross Join
                             Limit value: 10 skip-rows: 0 take-rows: 0
@@ -955,71 +1021,65 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (id long, ts timestamp, ts2 timestamp) timestamp(ts) partition by hour;");
 
-            assertPlanNoLeakCheck(
-                    "select * from x where id = 42 and dateadd('h', -1, ts) = '2020-01-01T00:01'",
-                    """
+            assertQuery("select * from x where id = 42 and dateadd('h', -1, ts) = '2020-01-01T00:01'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async JIT Filter workers: 1
                               filter: id=42
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: x
                                       intervals: [("2020-01-01T01:01:00.000000Z","2020-01-01T01:01:00.000000Z")]
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where id = 42 and dateadd('h', -1, ts2) = '2020-01-01T00:01'",
-                    """
+                            """);
+            assertQuery("select * from x where id = 42 and dateadd('h', -1, ts2) = '2020-01-01T00:01'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: (id=42 and 2020-01-01T00:01:00.000000Z=dateadd('h',-1,ts2))
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select * from x where dateadd('d', 1, ts) >= '2020-01-01T00:01' and id < 42",
-                    """
+            assertQuery("select * from x where dateadd('d', 1, ts) >= '2020-01-01T00:01' and id < 42")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async JIT Filter workers: 1
                               filter: id<42
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: x
                                       intervals: [("2019-12-31T00:01:00.000000Z","MAX")]
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where dateadd('d', 1, ts2) >= '2020-01-01T00:01' and id < 42",
-                    """
+                            """);
+            assertQuery("select * from x where dateadd('d', 1, ts2) >= '2020-01-01T00:01' and id < 42")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: (dateadd('d',1,ts2)>=2020-01-01T00:01:00.000000Z and id<42)
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select * from x where id in (1,2,3) and dateadd('m', -1, ts) between '2020-01-01T00:01' and '2020-01-01T00:02'",
-                    """
+            assertQuery("select * from x where id in (1,2,3) and dateadd('m', -1, ts) between '2020-01-01T00:01' and '2020-01-01T00:02'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async JIT Filter workers: 1
                               filter: id in [1,2,3]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: x
                                       intervals: [("2020-01-01T00:02:00.000000Z","2020-01-01T00:03:00.000000Z")]
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "select * from x where id in (1,2,3) and dateadd('m', -1, ts2) between '2020-01-01T00:01' and '2020-01-01T00:02'",
-                    """
+                            """);
+            assertQuery("select * from x where id in (1,2,3) and dateadd('m', -1, ts2) between '2020-01-01T00:01' and '2020-01-01T00:02'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: (id in [1,2,3] and dateadd('m',-1,ts2) between 1577836860000000 and 1577836920000000)
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -1030,7 +1090,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("insert into test select x from long_sequence(3)");
 
             String query = "select * from ( SELECT DISTINCT avg(event) OVER (PARTITION BY 1) FROM test )";
-            assertPlanNoLeakCheck(query, """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Distinct
                       keys: avg
                         CachedWindow
@@ -1055,7 +1117,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit1() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di order by 1 limit 10", """
+        assertQuery("select distinct ts from di order by 1 limit 10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Long Top K lo: 10
                   keys: [ts asc]
                     Async Group By workers: 1
@@ -1069,7 +1133,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit2() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di order by 1 desc limit 10", """
+        assertQuery("select distinct ts from di order by 1 desc limit 10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Long Top K lo: 10
                   keys: [ts desc]
                     Async Group By workers: 1
@@ -1083,7 +1149,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit3() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di limit 10", """
+        assertQuery("select distinct ts from di limit 10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [ts]
@@ -1096,7 +1164,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit4() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di limit -10", """
+        assertQuery("select distinct ts from di limit -10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [ts]
@@ -1109,7 +1179,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit5a() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where y = 5 limit 10", """
+        assertQuery("select distinct ts from di where y = 5 limit 10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                     Async JIT Group By workers: 1
                       keys: [ts]
@@ -1122,7 +1194,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit5b() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where y = 5 limit -10", """
+        assertQuery("select distinct ts from di where y = 5 limit -10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
                     Async JIT Group By workers: 1
                       keys: [ts]
@@ -1135,7 +1209,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit6a() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit 10", """
+        assertQuery("select distinct ts from di where abs(y) = 5 limit 10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [ts]
@@ -1148,7 +1224,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit6b() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit -10", """
+        assertQuery("select distinct ts from di where abs(y) = 5 limit -10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [ts]
@@ -1161,7 +1239,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit7() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit 10, 20", """
+        assertQuery("select distinct ts from di where abs(y) = 5 limit 10, 20")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Limit left: 10 right: 20 skip-rows-max: 10 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [ts]
@@ -1174,7 +1254,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctWithLimit1() throws Exception {
-        assertPlan("create table di (x int, y long)", "select distinct x from di order by 1 limit 10", """
+        assertQuery("select distinct x from di order by 1 limit 10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Sort light lo: 10
                   keys: [x]
                     GroupBy vectorized: true workers: 1
@@ -1188,7 +1270,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctWithLimit2() throws Exception {
-        assertPlan("create table di (x int, y long)", "select distinct x from di order by 1 desc limit 10", """
+        assertQuery("select distinct x from di order by 1 desc limit 10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Sort light lo: 10
                   keys: [x desc]
                     GroupBy vectorized: true workers: 1
@@ -1202,7 +1286,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctWithLimit3() throws Exception {
-        assertPlan("create table di (x int, y long)", "select distinct x from di limit 10", """
+        assertQuery("select distinct x from di limit 10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                     GroupBy vectorized: true workers: 1
                       keys: [x]
@@ -1215,7 +1301,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctWithLimit4() throws Exception {
-        assertPlan("create table di (x int, y long)", "select distinct x from di limit -10", """
+        assertQuery("select distinct x from di limit -10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
                     GroupBy vectorized: true workers: 1
                       keys: [x]
@@ -1228,7 +1316,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctWithLimit5a() throws Exception {
-        assertPlan("create table di (x int, y long)", "select distinct x from di where y = 5 limit 10", """
+        assertQuery("select distinct x from di where y = 5 limit 10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                     Async JIT Group By workers: 1
                       keys: [x]
@@ -1241,7 +1331,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctWithLimit5b() throws Exception {
-        assertPlan("create table di (x int, y long)", "select distinct x from di where y = 5 limit -10", """
+        assertQuery("select distinct x from di where y = 5 limit -10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
                     Async JIT Group By workers: 1
                       keys: [x]
@@ -1254,7 +1346,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctWithLimit6a() throws Exception {
-        assertPlan("create table di (x int, y long)", "select distinct x from di where abs(y) = 5 limit 10", """
+        assertQuery("select distinct x from di where abs(y) = 5 limit 10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [x]
@@ -1267,7 +1361,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctWithLimit6b() throws Exception {
-        assertPlan("create table di (x int, y long)", "select distinct x from di where abs(y) = 5 limit -10", """
+        assertQuery("select distinct x from di where abs(y) = 5 limit -10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [x]
@@ -1280,7 +1376,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctWithLimit7() throws Exception {
-        assertPlan("create table di (x int, y long)", "select distinct x from di where abs(y) = 5 limit 10, 20", """
+        assertQuery("select distinct x from di where abs(y) = 5 limit 10, 20")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit left: 10 right: 20 skip-rows-max: 10 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [x]
@@ -1293,7 +1391,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExcept() throws Exception {
-        assertPlan("create table a ( i int, s string);", "select * from a except select * from a", """
+        assertQuery("select * from a except select * from a")
+                .ddl("create table a ( i int, s string);")
+                .assertsPlan("""
                 Except
                     PageFrame
                         Row forward scan
@@ -1307,7 +1407,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExceptAll() throws Exception {
-        assertPlan("create table a ( i int, s string);", "select * from a except all select * from a", """
+        assertQuery("select * from a except all select * from a")
+                .ddl("create table a ( i int, s string);")
+                .assertsPlan("""
                 Except All
                     PageFrame
                         Row forward scan
@@ -1324,7 +1426,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts desc", """
+            assertQuery("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Except
                         Limit value: 10 skip-rows: 0 take-rows: 0
                             PageFrame
@@ -1343,7 +1447,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts asc", """
+            assertQuery("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Except
                         Limit value: 10 skip-rows: 0 take-rows: 0
                             PageFrame
@@ -1362,7 +1468,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts asc", """
+            assertQuery("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [ts]
                         Except
@@ -1383,7 +1491,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts desc", """
+            assertQuery("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [ts desc]
                         Except
@@ -1401,7 +1511,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainCreateMatView() throws Exception {
-        assertPlan("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal", "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day", """
+        assertQuery("create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day")
+                .ddl("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal")
+                .assertsPlan("""
                 Create materialized view: test
                     Encode sort light
                       keys: [ts]
@@ -1449,7 +1561,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     ) timestamp(ts);""");
             execute("insert into tab values ( 'XXX', 0::timestamp, 1 );");
 
-            assertPlanNoLeakCheck("""
+            assertQuery("""
                       select
                        ts,
                         id,\s
@@ -1457,7 +1569,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       from tab
                       where id = 'XXX'\s
                       sample by 15m ALIGN to CALENDAR
-                    """, """
+                    """)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [ts]
                         GroupBy vectorized: false
@@ -1578,7 +1692,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainPlanWithEOLs1() throws Exception {
-        assertPlan("create table a (s string)", "select * from a where s = '\b\f\n\r\t\\u0013'", """
+        assertQuery("select * from a where s = '\b\f\n\r\t\\u0013'")
+                .ddl("create table a (s string)")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: s='\\b\\f\\n\\r\\t\\u0013'
                     PageFrame
@@ -1603,7 +1719,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainSelectWithCte1() throws Exception {
-        assertPlan("create table a ( i int, s string);", "with b as (select * from a where i = 0)" + "select * from a union all select * from b", """
+        assertQuery("with b as (select * from a where i = 0)" + "select * from a union all select * from b")
+                .ddl("create table a ( i int, s string);")
+                .assertsPlan("""
                 Union All
                     PageFrame
                         Row forward scan
@@ -1618,7 +1736,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainSelectWithCte2() throws Exception {
-        assertPlan("create table a ( i int, s string);", "with b as (select i from a order by s)" + "select * from a join b on a.i = b.i", """
+        assertQuery("with b as (select i from a order by s)" + "select * from a join b on a.i = b.i")
+                .ddl("create table a ( i int, s string);")
+                .assertsPlan("""
                 SelectedRecord
                     Hash Join Light
                       condition: b.i=a.i
@@ -1695,28 +1815,28 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainUpdateWalTable() throws Exception {
         // Reproducer for https://github.com/questdb/questdb/issues/6194
-        assertPlan(
-                "create table trades (" +
+        assertQuery("update trades set amount = 0 where ts in '2022-11-11'")
+                .ddl("create table trades (" +
                         "symbol symbol, " +
                         "price double, " +
                         "amount int, " +
                         "ts timestamp" +
-                        ") timestamp(ts) partition by day WAL",
-                "update trades set amount = 0 where ts in '2022-11-11'",
-                """
+                        ") timestamp(ts) partition by day WAL")
+                .assertsPlan("""
                         Update table: trades
                             VirtualRecord
                               functions: [0]
                                 Filter filter: ts in [1668124800000000,1668211199999999]
                                     on: trades
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testExplainUpdateWithFilter() throws Exception {
         allowFunctionMemoization();
-        assertPlan("create table a ( l long, d double, ts timestamp) timestamp(ts)", "update a set l = 20, d = d+rnd_double() " + "where d < 100.0d and ts > dateadd('d', 1, now()  );", """
+        assertQuery("update a set l = 20, d = d+rnd_double() " + "where d < 100.0d and ts > dateadd('d', 1, now()  );")
+                .ddl("create table a ( l long, d double, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Update table: a
                     VirtualRecord
                       functions: [20,memoize(d+rnd_double())]
@@ -1734,7 +1854,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab ( key int, value double, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '1' MINUTES PRECEDING AND CURRENT ROW) from tab", """
+            assertQuery("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '1' MINUTES PRECEDING AND CURRENT ROW) from tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Window
                       functions: [avg(value) over (partition by [key] range between 60000000 preceding and current row)]
                         PageFrame
@@ -1742,7 +1864,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '4' MINUTES PRECEDING AND '3' MINUTES PRECEDING) from tab", """
+            assertQuery("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '4' MINUTES PRECEDING AND '3' MINUTES PRECEDING) from tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Window
                       functions: [avg(value) over (partition by [key] range between 240000000 preceding and 180000000 preceding)]
                         PageFrame
@@ -1750,7 +1874,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '10' MINUTES PRECEDING) from tab", """
+            assertQuery("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '10' MINUTES PRECEDING) from tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Window
                       functions: [avg(value) over (partition by [key] range between unbounded preceding and 600000000 preceding)]
                         PageFrame
@@ -1960,7 +2086,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainWithQueryInParentheses1() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck("(select 1)", """
+        assertMemoryLeak(() -> assertQuery("(select 1)")
+                .noLeakCheck()
+                .assertsPlan("""
                 VirtualRecord
                   functions: [1]
                     long_sequence count: 1
@@ -1969,7 +2097,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainWithQueryInParentheses2() throws Exception {
-        assertPlan("create table x ( i int)", "(select * from x)", """
+        assertQuery("(select * from x)")
+                .ddl("create table x ( i int)")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Frame forward scan on: x
@@ -1978,7 +2108,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainWithQueryInParentheses3() throws Exception {
-        assertPlan("create table x ( i int)", "((select * from x))", """
+        assertQuery("((select * from x))")
+                .ddl("create table x ( i int)")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Frame forward scan on: x
@@ -1987,7 +2119,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainWithQueryInParentheses4() throws Exception {
-        assertPlan("create table x ( i int)", "((x))", """
+        assertQuery("((x))")
+                .ddl("create table x ( i int)")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Frame forward scan on: x
@@ -1996,14 +2130,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainWithQueryInParentheses5() throws Exception {
-        assertPlan("""
+        assertQuery("((select last(timestamp) as x, last(price) as btcusd " + "from trades " + "where symbol = 'BTC-USD' " + "and timestamp > dateadd('m', -30, now())) " + "timestamp(x))")
+                .ddl("""
                 CREATE TABLE trades (
                   symbol SYMBOL,
                   side SYMBOL,
                   price DOUBLE,
                   amount DOUBLE,
                   timestamp TIMESTAMP
-                ) timestamp (timestamp) PARTITION BY DAY""", "((select last(timestamp) as x, last(price) as btcusd " + "from trades " + "where symbol = 'BTC-USD' " + "and timestamp > dateadd('m', -30, now())) " + "timestamp(x))", """
+                ) timestamp (timestamp) PARTITION BY DAY""")
+                .assertsPlan("""
                 SelectedRecord
                     Async JIT Group By workers: 1
                       vectorized: false
@@ -2022,7 +2158,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("drop table if exists trips");
             execute("CREATE TABLE trips (l long, s symbol index capacity 5, ts TIMESTAMP) " + "timestamp(ts) partition by month");
 
-            assertPlanNoLeakCheck("select s, count() from trips where s is not null order by count desc", """
+            assertQuery("select s, count() from trips where s is not null order by count desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [count desc]
                         GroupBy vectorized: false
@@ -2037,7 +2175,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("insert into trips " + "  select x, 'A' || ( x%3000 )," + "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " + "  from long_sequence(10000);");
             execute("insert into trips " + "  select x, null," + "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " + "  from long_sequence(4000);");
 
-            assertPlanNoLeakCheck("select s, count() from trips where s is not null", """
+            assertQuery("select s, count() from trips where s is not null")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2047,7 +2187,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: trips
                     """);
 
-            assertPlanNoLeakCheck("select s, count() from trips where s is not null and s != 'A1000'", """
+            assertQuery("select s, count() from trips where s is not null and s != 'A1000'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2059,7 +2201,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A100");
-            assertPlanNoLeakCheck("select s, count() from trips where s is not null and s != :s1", """
+            assertQuery("select s, count() from trips where s is not null and s != :s1")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2069,7 +2213,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: trips
                     """);
 
-            assertPlanNoLeakCheck("select s, count() from trips where s is not null and l != 0", """
+            assertQuery("select s, count() from trips where s is not null and l != 0")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2079,7 +2225,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: trips
                     """);
 
-            assertPlanNoLeakCheck("select s, count() from trips where s is not null or l != 0", """
+            assertQuery("select s, count() from trips where s is not null or l != 0")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2089,7 +2237,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: trips
                     """);
 
-            assertPlanNoLeakCheck("select s, count() from trips where l != 0 and s is not null", """
+            assertQuery("select s, count() from trips where l != 0 and s is not null")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2099,7 +2249,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: trips
                     """);
 
-            assertPlanNoLeakCheck("select s, count() from trips where l != 0 or s is not null", """
+            assertQuery("select s, count() from trips where l != 0 or s is not null")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2109,7 +2261,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: trips
                     """);
 
-            assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s is not null", """
+            assertQuery("select s, count() from trips where l > 100 or l != 0 and s is not null")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2119,7 +2273,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: trips
                     """);
 
-            assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', 'A2000')", """
+            assertQuery("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', 'A2000')")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2132,7 +2288,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A500");
 
-            assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)", """
+            assertQuery("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2150,7 +2308,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("drop table if exists trips");
             execute("CREATE TABLE trips(l long, s symbol capacity 5, ts TIMESTAMP) " + "timestamp(ts) partition by month");
 
-            assertPlanNoLeakCheck("select s, count() from trips where s is not null", """
+            assertQuery("select s, count() from trips where s is not null")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2163,7 +2323,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("insert into trips " + "  select x, 'A' || ( x%3000 )," + "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " + "  from long_sequence(10000);");
             execute("insert into trips " + "  select x, null," + "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " + "  from long_sequence(4000);");
 
-            assertPlanNoLeakCheck("select s, count() from trips where s is not null", """
+            assertQuery("select s, count() from trips where s is not null")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2173,7 +2335,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: trips
                     """);
 
-            assertPlanNoLeakCheck("select s, count() from trips where s is not null and s != 'A1000'", """
+            assertQuery("select s, count() from trips where s is not null and s != 'A1000'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2185,7 +2349,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A100");
-            assertPlanNoLeakCheck("select s, count() from trips where s is not null and s != :s1", """
+            assertQuery("select s, count() from trips where s is not null and s != :s1")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2195,7 +2361,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: trips
                     """);
 
-            assertPlanNoLeakCheck("select s, count() from trips where s is not null and l != 0", """
+            assertQuery("select s, count() from trips where s is not null and l != 0")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2205,7 +2373,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: trips
                     """);
 
-            assertPlanNoLeakCheck("select s, count() from trips where s is not null or l != 0", """
+            assertQuery("select s, count() from trips where s is not null or l != 0")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2215,7 +2385,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: trips
                     """);
 
-            assertPlanNoLeakCheck("select s, count() from trips where l != 0 and s is not null", """
+            assertQuery("select s, count() from trips where l != 0 and s is not null")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2225,7 +2397,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: trips
                     """);
 
-            assertPlanNoLeakCheck("select s, count() from trips where l != 0 or s is not null", """
+            assertQuery("select s, count() from trips where l != 0 or s is not null")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2235,7 +2409,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: trips
                     """);
 
-            assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s is not null", """
+            assertQuery("select s, count() from trips where l > 100 or l != 0 and s is not null")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2248,7 +2424,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A500");
 
-            assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)", """
+            assertQuery("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Group By workers: 1
                       keys: [s]
                       values: [count(*)]
@@ -2303,7 +2481,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: reference_prices
                     """;
 
-            assertPlanNoLeakCheck(query1, expectedPlan);
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .assertsPlan(expectedPlan);
             assertQuery(query1)
                     .noLeakCheck()
                     .expectSize()
@@ -2315,7 +2495,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     where venue in ('VENUE1', 'VENUE2')\s
                     and referencePriceType not in ('TYPE1')""";
 
-            assertPlanNoLeakCheck(query2, expectedPlan);
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .assertsPlan(expectedPlan);
             assertQuery(query2)
                     .noLeakCheck()
                     .expectSize()
@@ -2401,7 +2583,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) " + "where a1+10 < b1 - 10", "SelectedRecord\n" + "    Filter filter: taba.a1+10<tabb.b1-10\n" + "        " + factoryType + "\n" + "          condition: b2=a2 and b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
+                assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) " + "where a1+10 < b1 - 10")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    Filter filter: taba.a1+10<tabb.b1-10\n" + "        " + factoryType + "\n" + "          condition: b2=a2 and b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
             }
         });
     }
@@ -2417,7 +2601,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1 and abs(a2+1) = abs(b2) where a2=b2", "SelectedRecord\n" + "    Filter filter: taba.a2=tabb.b2\n" + "        " + factoryType + "\n" + "          condition: b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
+                assertQuery("select * from taba " + joinType + " join tabb on a1=b1 and abs(a2+1) = abs(b2) where a2=b2")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    Filter filter: taba.a2=tabb.b2\n" + "        " + factoryType + "\n" + "          condition: b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
             }
         });
     }
@@ -2793,7 +2979,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByBoolean() throws Exception {
-        assertPlan("create table a (l long, b boolean)", "select b, min(l)  from a group by b", """
+        assertQuery("select b, min(l)  from a group by b")
+                .ddl("create table a (l long, b boolean)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [b]
                   values: [min(l)]
@@ -2806,7 +2994,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByBooleanFunction() throws Exception {
-        assertPlan("create table a (l long, b1 boolean, b2 boolean)", "select b1||b2, min(l) from a group by b1||b2", """
+        assertQuery("select b1||b2, min(l) from a group by b1||b2")
+                .ddl("create table a (l long, b1 boolean, b2 boolean)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [concat]
                   keyFunctions: [concat([b1,b2])]
@@ -2820,7 +3010,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByBooleanWithFilter() throws Exception {
-        assertPlan("create table a (l long, b boolean)", "select b, min(l)  from a where b = true group by b", """
+        assertQuery("select b, min(l)  from a where b = true group by b")
+                .ddl("create table a (l long, b boolean)")
+                .assertsPlan("""
                 Async JIT Group By workers: 1
                   keys: [b]
                   values: [min(l)]
@@ -2833,7 +3025,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByDouble() throws Exception {
-        assertPlan("create table a (l long, d double)", "select d, min(l) from a group by d", """
+        assertQuery("select d, min(l) from a group by d")
+                .ddl("create table a (l long, d double)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [d]
                   values: [min(l)]
@@ -2846,7 +3040,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByFloat() throws Exception {
-        assertPlan("create table a (l long, f float)", "select f, min(l) from a group by f", """
+        assertQuery("select f, min(l) from a group by f")
+                .ddl("create table a (l long, f float)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [f]
                   values: [min(l)]
@@ -2859,7 +3055,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // special case
     public void testGroupByHour() throws Exception {
-        assertPlan("create table a (ts timestamp, d double)", "select hour(ts), min(d) from a group by hour(ts)", """
+        assertQuery("select hour(ts), min(d) from a group by hour(ts)")
+                .ddl("create table a (ts timestamp, d double)")
+                .assertsPlan("""
                 GroupBy vectorized: true workers: 1
                   keys: [ts]
                   values: [min(d)]
@@ -2871,7 +3069,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByHourAndFilterIsParallel() throws Exception {
-        assertPlan("create table a (ts timestamp, d double)", "select hour(ts), min(d) from a where d > 0 group by hour(ts)", """
+        assertQuery("select hour(ts), min(d) from a where d > 0 group by hour(ts)")
+                .ddl("create table a (ts timestamp, d double)")
+                .assertsPlan("""
                 Async JIT Group By workers: 1
                   keys: [hour]
                   keyFunctions: [hour(ts)]
@@ -2894,7 +3094,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByHourUnorderedColumns() throws Exception {
-        assertPlan("create table a (ts timestamp, d double)", "select min(d), hour(ts) from a group by hour(ts)", """
+        assertQuery("select min(d), hour(ts) from a group by hour(ts)")
+                .ddl("create table a (ts timestamp, d double)")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [min,hour]
                     GroupBy vectorized: true workers: 1
@@ -2908,7 +3110,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByInt1() throws Exception {
-        assertPlan("create table a (i int, d double)", "select min(d), i from a group by i", """
+        assertQuery("select min(d), i from a group by i")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [min,i]
                     GroupBy vectorized: true workers: 1
@@ -2922,7 +3126,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // repeated group by keys get merged at group by level
     public void testGroupByInt2() throws Exception {
-        assertPlan("create table a (i int, d double)", "select i, i, min(d) from a group by i, i", """
+        assertQuery("select i, i, min(d) from a group by i, i")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [i,i,min]
                     GroupBy vectorized: true workers: 1
@@ -2936,7 +3142,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByInt3() throws Exception {
-        assertPlan("create table a (i int, l long)", "select i, max(l) - min(l) delta from a group by i", """
+        assertQuery("select i, max(l) - min(l) delta from a group by i")
+                .ddl("create table a (i int, l long)")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [i,max-min]
                     GroupBy vectorized: true workers: 1
@@ -2950,7 +3158,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByIntOperation() throws Exception {
-        assertPlan("create table a (i int, d double)", "select min(d), i * 42 from a group by i", """
+        assertQuery("select min(d), i * 42 from a group by i")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [min,i*42]
                     GroupBy vectorized: true workers: 1
@@ -2964,7 +3174,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByKeyedAliased() throws Exception {
-        assertPlan("create table a (s symbol, ts timestamp) timestamp(ts) partition by year;", "select s as symbol, count() from a", """
+        assertQuery("select s as symbol, count() from a")
+                .ddl("create table a (s symbol, ts timestamp) timestamp(ts) partition by year;")
+                .assertsPlan("""
                 GroupBy vectorized: true workers: 1
                   keys: [s]
                   values: [count(*)]
@@ -2976,7 +3188,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByKeyedNoAlias() throws Exception {
-        assertPlan("create table a (s symbol, ts timestamp) timestamp(ts) partition by year;", "select s, count() from a", """
+        assertQuery("select s, count() from a")
+                .ddl("create table a (s symbol, ts timestamp) timestamp(ts) partition by year;")
+                .assertsPlan("""
                 GroupBy vectorized: true workers: 1
                   keys: [s]
                   values: [count(*)]
@@ -2991,7 +3205,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, d double)");
 
-            assertPlanNoLeakCheck("create table b ( j int, e double)", "select d, max(i) from (select * from a except select * from b)", """
+            assertQuery("select d, max(i) from (select * from a except select * from b)")
+                    .ddl("create table b ( j int, e double)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     GroupBy vectorized: false
                       keys: [d]
                       values: [max(i)]
@@ -3012,7 +3229,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, d double)");
 
-            assertPlanNoLeakCheck("create table b ( j int, e double)", "select d, max(i) from (select * from a intersect select * from b)", """
+            assertQuery("select d, max(i) from (select * from a intersect select * from b)")
+                    .ddl("create table b ( j int, e double)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     GroupBy vectorized: false
                       keys: [d]
                       values: [max(i)]
@@ -3030,7 +3250,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByKeyedOnUnion() throws Exception {
-        assertPlan("create table a ( i int, d double)", "select d, max(i) from (select * from a union select * from a)", """
+        assertQuery("select d, max(i) from (select * from a union select * from a)")
+                .ddl("create table a ( i int, d double)")
+                .assertsPlan("""
                 GroupBy vectorized: false
                   keys: [d]
                   values: [max(i)]
@@ -3046,7 +3268,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByKeyedOnUnionAll() throws Exception {
-        assertPlan("create table a ( i int, d double)", "select d, max(i) from (select * from a union all select * from a)", """
+        assertQuery("select d, max(i) from (select * from a union all select * from a)")
+                .ddl("create table a ( i int, d double)")
+                .assertsPlan("""
                 GroupBy vectorized: false
                   keys: [d]
                   values: [max(i)]
@@ -3062,7 +3286,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByLong() throws Exception {
-        assertPlan("create table a ( l long, d double)", "select l, min(d) from a group by l", """
+        assertQuery("select l, min(d) from a group by l")
+                .ddl("create table a ( l long, d double)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [l]
                   values: [min(d)]
@@ -3075,7 +3301,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNoFunctions1() throws Exception {
-        assertPlan("create table a (i int, d double)", "select i from a group by i", """
+        assertQuery("select i from a group by i")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 GroupBy vectorized: true workers: 1
                   keys: [i]
                   values: [count(*)]
@@ -3087,7 +3315,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNoFunctions2() throws Exception {
-        assertPlan("create table a (i int, d double)", "select i from a where d < 42 group by i", """
+        assertQuery("select i from a where d < 42 group by i")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 Async JIT Group By workers: 1
                   keys: [i]
                   filter: d<42
@@ -3099,7 +3329,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNoFunctions3() throws Exception {
-        assertPlan("create table a (i short, d double)", "select i from a group by i", """
+        assertQuery("select i from a group by i")
+                .ddl("create table a (i short, d double)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [i]
                   filter: null
@@ -3111,7 +3343,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNoFunctions4() throws Exception {
-        assertPlan("create table a (i long, j long)", "select i, j from a group by i, j", """
+        assertQuery("select i, j from a group by i, j")
+                .ddl("create table a (i long, j long)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [i,j]
                   filter: null
@@ -3123,7 +3357,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNoFunctions5() throws Exception {
-        assertPlan("create table a (i long, j long, d double)", "select i, j from a where d > 42 group by i, j", """
+        assertQuery("select i, j from a where d > 42 group by i, j")
+                .ddl("create table a (i long, j long, d double)")
+                .assertsPlan("""
                 Async JIT Group By workers: 1
                   keys: [i,j]
                   filter: 42<d
@@ -3135,7 +3371,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNoFunctions6() throws Exception {
-        assertPlan("create table a (s symbol)", "select s from a group by s", """
+        assertQuery("select s from a group by s")
+                .ddl("create table a (s symbol)")
+                .assertsPlan("""
                 GroupBy vectorized: true workers: 1
                   keys: [s]
                   values: [count(*)]
@@ -3147,7 +3385,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNoFunctions7() throws Exception {
-        assertPlan("create table a (s symbol, d double)", "select s from a where d = 42 group by s", """
+        assertQuery("select s from a where d = 42 group by s")
+                .ddl("create table a (s symbol, d double)")
+                .assertsPlan("""
                 Async JIT Group By workers: 1
                   keys: [s]
                   filter: d=42
@@ -3159,7 +3399,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNoFunctions8() throws Exception {
-        assertPlan("create table a (s string)", "select s from a group by s", """
+        assertQuery("select s from a group by s")
+                .ddl("create table a (s string)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [s]
                   filter: null
@@ -3171,7 +3413,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNoFunctions9() throws Exception {
-        assertPlan("create table a (s string)", "select s from a where s like '%foobar%' group by s", """
+        assertQuery("select s from a where s like '%foobar%' group by s")
+                .ddl("create table a (s string)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [s]
                   filter: s like %foobar%
@@ -3183,7 +3427,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNotKeyed1() throws Exception {
-        assertPlan("create table a (i int, d double)", "select min(d) from a", """
+        assertQuery("select min(d) from a")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   vectorized: true
                   values: [min(d)]
@@ -3196,7 +3442,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNotKeyed10() throws Exception {
-        assertPlan("create table a (i int, d double)", "select max(i) from (select * from a join a b on i )", """
+        assertQuery("select max(i) from (select * from a join a b on i )")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 GroupBy vectorized: false
                   values: [max(i)]
                     SelectedRecord
@@ -3214,7 +3462,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNotKeyed11() throws Exception {
-        assertPlan("create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))", "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a", """
+        assertQuery("select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a")
+                .ddl("create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))")
+                .assertsPlan("""
                 Async Group By workers: 1
                   vectorized: true
                   values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]
@@ -3227,7 +3477,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNotKeyed12() throws Exception {
-        assertPlan("create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)", "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a where i > 42", """
+        assertQuery("select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a where i > 42")
+                .ddl("create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)")
+                .assertsPlan("""
                 Async JIT Group By workers: 1
                   vectorized: false
                   values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]
@@ -3240,7 +3492,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNotKeyed13() throws Exception {
-        assertPlan("create table a (i int)", "select max(i) - min(i) from a", """
+        assertQuery("select max(i) - min(i) from a")
+                .ddl("create table a (i int)")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [max-min]
                     Async Group By workers: 1
@@ -3255,7 +3509,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // expressions in aggregates disable vectorized impl
     public void testGroupByNotKeyed2() throws Exception {
-        assertPlan("create table a (i int, d double)", "select min(d), max(d*d) from a", """
+        assertQuery("select min(d), max(d*d) from a")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   vectorized: true
                   values: [min(d),max(d*d)]
@@ -3268,7 +3524,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // expressions in aggregates disable vectorized impl
     public void testGroupByNotKeyed3() throws Exception {
-        assertPlan("create table a (i int, d double)", "select max(d+1) from a", """
+        assertQuery("select max(d+1) from a")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   vectorized: false
                   values: [max(d+1)]
@@ -3281,7 +3539,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNotKeyed4() throws Exception {
-        assertPlan("create table a (i int, d double)", "select count(*), max(i), min(d) from a", """
+        assertQuery("select count(*), max(i), min(d) from a")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   vectorized: true
                   values: [count(*),max(i),min(d)]
@@ -3294,7 +3554,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNotKeyed5() throws Exception {
-        assertPlan("create table a (i int, d double)", "select first(10), last(d), avg(10), min(10), max(10) from a", """
+        assertQuery("select first(10), last(d), avg(10), min(10), max(10) from a")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   vectorized: true
                   values: [first(10),last(d),avg(10),min(10),max(10)]
@@ -3307,7 +3569,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // group by on filtered data is not vectorized
     public void testGroupByNotKeyed6() throws Exception {
-        assertPlan("create table a (i int, d double)", "select max(i) from a where i < 10", """
+        assertQuery("select max(i) from a where i < 10")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 Async JIT Group By workers: 1
                   vectorized: false
                   values: [max(i)]
@@ -3320,7 +3584,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // order by is ignored and grouped by - vectorized
     public void testGroupByNotKeyed7() throws Exception {
-        assertPlan("create table a (i int, d double)", "select max(i) from (select * from a order by d)", """
+        assertQuery("select max(i) from (select * from a order by d)")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   vectorized: true
                   values: [max(i)]
@@ -3333,7 +3599,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // order by can't be ignored; group by is not vectorized
     public void testGroupByNotKeyed8() throws Exception {
-        assertPlan("create table a (i int, d double)", "select max(i) from (select * from a order by d limit 10)", """
+        assertQuery("select max(i) from (select * from a order by d limit 10)")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 GroupBy vectorized: false
                   values: [max(i)]
                     Async Top K lo: 10 workers: 1
@@ -3347,7 +3615,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: group by could be vectorized for union tables and result merged
     public void testGroupByNotKeyed9() throws Exception {
-        assertPlan("create table a (i int, d double)", "select max(i) from (select * from a union all select * from a)", """
+        assertQuery("select max(i) from (select * from a union all select * from a)")
+                .ddl("create table a (i int, d double)")
+                .assertsPlan("""
                 GroupBy vectorized: false
                   values: [max(i)]
                     Union All
@@ -3362,7 +3632,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByStringFunction() throws Exception {
-        assertPlan("create table a (l long, s1 string, s2 string)", "select s1||s2 s, avg(l) a from a", """
+        assertQuery("select s1||s2 s, avg(l) a from a")
+                .ddl("create table a (l long, s1 string, s2 string)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [s]
                   keyFunctions: [concat([s1,s2])]
@@ -3376,7 +3648,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByStringFunctionWithFilter() throws Exception {
-        assertPlan("create table a (l long, s1 string, s2 string)", "select s1||s2 s, avg(l) a from a where l > 42", """
+        assertQuery("select s1||s2 s, avg(l) a from a where l > 42")
+                .ddl("create table a (l long, s1 string, s2 string)")
+                .assertsPlan("""
                 Async JIT Group By workers: 1
                   keys: [s]
                   keyFunctions: [concat([s1,s2])]
@@ -3390,7 +3664,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupBySymbol() throws Exception {
-        assertPlan("create table a (l long, s symbol)", "select s, avg(l) a from a", """
+        assertQuery("select s, avg(l) a from a")
+                .ddl("create table a (l long, s symbol)")
+                .assertsPlan("""
                 GroupBy vectorized: true workers: 1
                   keys: [s]
                   values: [avg(l)]
@@ -3402,7 +3678,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupBySymbol2() throws Exception {
-        assertPlan("create table a (l long, s symbol)", "select s, max(l) - min(l) a from a", """
+        assertQuery("select s, max(l) - min(l) a from a")
+                .ddl("create table a (l long, s symbol)")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [s,max-min]
                     GroupBy vectorized: true workers: 1
@@ -3416,7 +3694,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupBySymbolFunction() throws Exception {
-        assertPlan("create table a (l long, s string)", "select s::symbol, avg(l) a from a", """
+        assertQuery("select s::symbol, avg(l) a from a")
+                .ddl("create table a (l long, s string)")
+                .assertsPlan("""
                 GroupBy vectorized: false
                   keys: [cast]
                   values: [avg(l)]
@@ -3428,7 +3708,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupBySymbolWithSubQueryFilter() throws Exception {
-        assertPlan("create table a (l long, s symbol)", "select s, avg(l) a from a where s in (select s from a where s = 'key')", """
+        assertQuery("select s, avg(l) a from a where s in (select s from a where s = 'key')")
+                .ddl("create table a (l long, s symbol)")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [s]
                   values: [avg(l)]
@@ -3446,7 +3728,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit1() throws Exception {
-        assertPlan("create table di (x int, y long)", "select x, count(*) from di group by x order by 1 limit 10", """
+        assertQuery("select x, count(*) from di group by x order by 1 limit 10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Sort light lo: 10
                   keys: [x]
                     GroupBy vectorized: true workers: 1
@@ -3460,7 +3744,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit10() throws Exception {
-        assertPlan("create table di (x int, y long)", "select y, count(*) from di order by y desc limit 1", """
+        assertQuery("select y, count(*) from di order by y desc limit 1")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Long Top K lo: 1
                   keys: [y desc]
                     Async Group By workers: 1
@@ -3475,7 +3761,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit11() throws Exception {
-        assertPlan("create table di (x int, y long)", "select y, count(*) c from di order by c limit 42", """
+        assertQuery("select y, count(*) c from di order by c limit 42")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Long Top K lo: 42
                   keys: [c asc]
                     Async Group By workers: 1
@@ -3492,7 +3780,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByWithLimit12() throws Exception {
         sqlExecutionContext.setParallelGroupByEnabled(false);
         try {
-            assertPlan("create table di (x int, y long)", "select y, count(*) c from di order by c limit 42", """
+            assertQuery("select y, count(*) c from di order by c limit 42")
+                    .ddl("create table di (x int, y long)")
+                    .assertsPlan("""
                     Long Top K lo: 42
                       keys: [c asc]
                         GroupBy vectorized: false
@@ -3509,7 +3799,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit13() throws Exception {
-        assertPlan("create table di (x int, y long)", "select y, 42, count(*) c from di order by c limit 42", """
+        assertQuery("select y, 42, count(*) c from di order by c limit 42")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Long Top K lo: 42
                   keys: [c asc]
                     VirtualRecord
@@ -3526,7 +3818,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit14() throws Exception {
-        assertPlan("create table di (x int, y long, z double)", "select y, c from (select y, z, count(*) c from di) order by c limit 42", """
+        assertQuery("select y, c from (select y, z, count(*) c from di) order by c limit 42")
+                .ddl("create table di (x int, y long, z double)")
+                .assertsPlan("""
                 Long Top K lo: 42
                   keys: [c asc]
                     SelectedRecord
@@ -3542,7 +3836,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit15() throws Exception {
-        assertPlan("create table di (y long, ts timestamp)", "select y, c from (select ts, y, count(*) c from di) order by ts limit 13", """
+        assertQuery("select y, c from (select ts, y, count(*) c from di) order by ts limit 13")
+                .ddl("create table di (y long, ts timestamp)")
+                .assertsPlan("""
                 SelectedRecord
                     Long Top K lo: 13
                       keys: [ts asc]
@@ -3558,7 +3854,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit16() throws Exception {
-        assertPlan("create table di (ts timestamp)", "select ts, 42, count(*) c from di order by ts limit 2", """
+        assertQuery("select ts, 42, count(*) c from di order by ts limit 2")
+                .ddl("create table di (ts timestamp)")
+                .assertsPlan("""
                 Long Top K lo: 2
                   keys: [ts asc]
                     VirtualRecord
@@ -3575,7 +3873,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit17() throws Exception {
-        assertPlan("create table di (i int)", "select i, count(*) c from di order by c limit 2", """
+        assertQuery("select i, count(*) c from di order by c limit 2")
+                .ddl("create table di (i int)")
+                .assertsPlan("""
                 Long Top K lo: 2
                   keys: [c asc]
                     GroupBy vectorized: true workers: 1
@@ -3589,7 +3889,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit2() throws Exception {
-        assertPlan("create table di (x int, y long)", "select x, count(*) from di group by x order by 1 desc limit 10", """
+        assertQuery("select x, count(*) from di group by x order by 1 desc limit 10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Sort light lo: 10
                   keys: [x desc]
                     GroupBy vectorized: true workers: 1
@@ -3603,7 +3905,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit3() throws Exception {
-        assertPlan("create table di (x int, y long)", "select x, count(*) from di group by x limit 10", """
+        assertQuery("select x, count(*) from di group by x limit 10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                     GroupBy vectorized: true workers: 1
                       keys: [x]
@@ -3616,7 +3920,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit4() throws Exception {
-        assertPlan("create table di (x int, y long)", "select x, count(*) from di group by x limit -10", """
+        assertQuery("select x, count(*) from di group by x limit -10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
                     GroupBy vectorized: true workers: 1
                       keys: [x]
@@ -3629,7 +3935,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit5a() throws Exception {
-        assertPlan("create table di (x int, y long)", "select x, count(*) from di where y = 5 group by x limit 10", """
+        assertQuery("select x, count(*) from di where y = 5 group by x limit 10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                     Async JIT Group By workers: 1
                       keys: [x]
@@ -3643,7 +3951,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit5b() throws Exception {
-        assertPlan("create table di (x int, y long)", "select x, count(*) from di where y = 5 group by x limit -10", """
+        assertQuery("select x, count(*) from di where y = 5 group by x limit -10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
                     Async JIT Group By workers: 1
                       keys: [x]
@@ -3657,7 +3967,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit6a() throws Exception {
-        assertPlan("create table di (x int, y long)", "select x, count(*) from di where abs(y) = 5 group by x limit 10", """
+        assertQuery("select x, count(*) from di where abs(y) = 5 group by x limit 10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [x]
@@ -3671,7 +3983,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit6b() throws Exception {
-        assertPlan("create table di (x int, y long)", "select x, count(*) from di where abs(y) = 5 group by x limit -10", """
+        assertQuery("select x, count(*) from di where abs(y) = 5 group by x limit -10")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [x]
@@ -3685,7 +3999,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit7() throws Exception {
-        assertPlan("create table di (x int, y long)", "select x, count(*) from di where abs(y) = 5 group by x limit 10, 20", """
+        assertQuery("select x, count(*) from di where abs(y) = 5 group by x limit 10, 20")
+                .ddl("create table di (x int, y long)")
+                .assertsPlan("""
                 Limit left: 10 right: 20 skip-rows-max: 10 take-rows-max: 10
                     Async Group By workers: 1
                       keys: [x]
@@ -3699,7 +4015,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit8() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10", """
+        assertQuery("select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Long Top K lo: 10
                   keys: [ts desc]
                     Async JIT Group By workers: 1
@@ -3718,7 +4036,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s1 string)");
             execute("create table b ( i int, s2 string)");
 
-            assertPlanNoLeakCheck("select s1, s2 from (select a.s1, b.s2, b.i, a.i  from a join b on i) where i < i1 and s1 = s2", """
+            assertQuery("select s1, s2 from (select a.s1, b.s2, b.i, a.i  from a join b on i) where i < i1 and s1 = s2")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Filter filter: (b.i<a.i and a.s1=b.s2)
                             Hash Join Light
@@ -3775,7 +4095,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from a " + joinType + " join b on i", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b.i=a.i\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: a\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: b\n");
+                assertQuery("select * from a " + joinType + " join b on i")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b.i=a.i\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: a\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: b\n");
             }
         });
     }
@@ -3791,7 +4113,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from a " + joinType + " join b on i where b.i is not null", "SelectedRecord\n" + "    Filter filter: b.i!=null\n" + "        " + factoryType + "\n" + "          condition: b.i=a.i\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: a\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: b\n");
+                assertQuery("select * from a " + joinType + " join b on i where b.i is not null")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    Filter filter: b.i!=null\n" + "        " + factoryType + "\n" + "          condition: b.i=a.i\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: a\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: b\n");
             }
         });
     }
@@ -3809,7 +4133,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("");
 
-            assertPlanNoLeakCheck("select * from a , b where a.i1 = b.i2", """
+            assertQuery("select * from a , b where a.i1 = b.i2")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Cross Join
                             Cross Join
@@ -3828,7 +4154,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testInUuid() throws Exception {
-        assertPlan("create table a (u uuid, ts timestamp) timestamp(ts);", "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')", """
+        assertQuery("select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')")
+                .ddl("create table a (u uuid, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: u in ['33333333-3333-3333-3333-333333333333','11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222']
                     PageFrame
@@ -3839,7 +4167,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testIntersect1() throws Exception {
-        assertPlan("create table a ( i int, s string);", "select * from a intersect select * from a", """
+        assertQuery("select * from a intersect select * from a")
+                .ddl("create table a ( i int, s string);")
+                .assertsPlan("""
                 Intersect
                     PageFrame
                         Row forward scan
@@ -3853,7 +4183,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testIntersect2() throws Exception {
-        assertPlan("create table a ( i int, s string);", "select * from a intersect select * from a where i > 0", """
+        assertQuery("select * from a intersect select * from a where i > 0")
+                .ddl("create table a ( i int, s string);")
+                .assertsPlan("""
                 Intersect
                     PageFrame
                         Row forward scan
@@ -3869,7 +4201,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testIntersectAll() throws Exception {
-        assertPlan("create table a ( i int, s string);", "select * from a intersect all select * from a", """
+        assertQuery("select * from a intersect all select * from a")
+                .ddl("create table a ( i int, s string);")
+                .assertsPlan("""
                 Intersect All
                     PageFrame
                         Row forward scan
@@ -3886,7 +4220,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts desc", """
+            assertQuery("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Intersect
                         Limit value: 10 skip-rows: 0 take-rows: 0
                             PageFrame
@@ -3905,7 +4241,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts asc", """
+            assertQuery("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Intersect
                         Limit value: 10 skip-rows: 0 take-rows: 0
                             PageFrame
@@ -3924,7 +4262,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts asc", """
+            assertQuery("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [ts]
                         Intersect
@@ -3945,7 +4285,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts desc", """
+            assertQuery("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [ts desc]
                         Intersect
@@ -3966,7 +4308,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( k long, x double );");
 
-            assertPlanNoLeakCheck("SELECT k, ksum(x), nsum(x) FROM tab", """
+            assertQuery("SELECT k, ksum(x), nsum(x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async Group By workers: 1
                       keys: [k]
                       values: [ksum(x),nsum(x)]
@@ -4002,7 +4346,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       lt join maps on (cluster,alias)
                       ) order by bits desc
                     limit 10""";
-            assertPlanNoLeakCheck(sql, """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                         Encode sort
                           keys: [bits desc]
@@ -4037,7 +4383,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table tab as ( " + "  select " + "    rnd_str('a','b','c') s, " + "    timestamp_sequence(0, 100000000) ts " + "   from long_sequence(100)" + ") timestamp(ts) partition by hour");
 
             String sql = "with yy as (select ts, max(s) s from tab sample by 1h ALIGN TO FIRST OBSERVATION) " + "select * from yy latest on ts partition by s limit 10";
-            assertPlanNoLeakCheck(sql, """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                         LatestBy
                             Sample By
@@ -4061,7 +4409,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn0() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select i from a latest on ts partition by i", """
+        assertQuery("select i from a latest on ts partition by i")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 LatestByAllFiltered
                     Row backward scan
                     Frame backward scan on: a
@@ -4070,7 +4420,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn0a() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select i from (select * from a where i = 10 union select * from a where i =20) latest on ts partition by i", """
+        assertQuery("select i from (select * from a where i = 10 union select * from a where i =20) latest on ts partition by i")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 SelectedRecord
                     LatestBy
                         Union
@@ -4089,7 +4441,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn0b() throws Exception {
-        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select ts,i from a where s in ('ABC') and i > 0 latest on ts partition by s", """
+        assertQuery("select ts,i from a where s in ('ABC') and i > 0 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 SelectedRecord
                     LatestByValueDeferredFiltered
                       filter: 0<i
@@ -4104,7 +4458,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
             execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck("select ts,i from a where s in ('a1') and i > 0 latest on ts partition by s", """
+            assertQuery("select ts,i from a where s in ('a1') and i > 0 latest on ts partition by s")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         LatestByValueFiltered
                             Row backward scan
@@ -4121,7 +4477,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
             execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck("select ts,i from a where s in ('a1') latest on ts partition by s", """
+            assertQuery("select ts,i from a where s in ('a1') latest on ts partition by s")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         LatestByValueFiltered
                             Row backward scan
@@ -4137,7 +4495,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck("select ts,i, s from a where s in ('a1') and i > 0 latest on ts partition by s", """
+            assertQuery("select ts,i, s from a where s in ('a1') and i > 0 latest on ts partition by s")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Index backward scan on: s
                       filter: 0<i
                       symbolFilter: s=1
@@ -4148,7 +4508,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn1() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select * from a latest on ts partition by i", """
+        assertQuery("select * from a latest on ts partition by i")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 LatestByAllFiltered
                     Row backward scan
                     Frame backward scan on: a
@@ -4157,7 +4519,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should use index
     public void testLatestOn10() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s = 'S1' or s = 'S2' latest on ts partition by s", """
+        assertQuery("select s, i, ts from a where s = 'S1' or s = 'S2' latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 LatestByDeferredListValuesFiltered
                   filter: (s='S1' or s='S2')
                     Frame backward scan on: a
@@ -4166,7 +4530,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn11() throws Exception {
-        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, i, ts from a where s in ('S1', 'S2') latest on ts partition by s", """
+        assertQuery("select s, i, ts from a where s in ('S1', 'S2') latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 LatestByDeferredListValuesFiltered
                   includedSymbols: ['S1','S2']
                     Frame backward scan on: a
@@ -4175,7 +4541,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn12() throws Exception {
-        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s", """
+        assertQuery("select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 LatestBySubQuery
                     Subquery
                         GroupBy vectorized: true workers: 1
@@ -4192,7 +4560,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn12a() throws Exception {
-        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s", """
+        assertQuery("select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 LatestBySubQuery
                     Subquery
                         GroupBy vectorized: true workers: 1
@@ -4208,7 +4578,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn13() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s", """
+        assertQuery("select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 LatestBySubQuery
                     Subquery
                         GroupBy vectorized: true workers: 1
@@ -4225,7 +4597,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn13a() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s", """
+        assertQuery("select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 LatestBySubQuery
                     Subquery
                         GroupBy vectorized: true workers: 1
@@ -4241,7 +4615,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should use one or two indexes
     public void testLatestOn14() throws Exception {
-        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);", "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' and i > 0 latest on ts partition by s1,s2", """
+        assertQuery("select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' and i > 0 latest on ts partition by s1,s2")
+                .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 LatestByAllSymbolsFiltered
                   filter: (s1 in [S1,S2] and s2='S3' and 0<i)
                     Row backward scan
@@ -4252,7 +4628,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should use one or two indexes
     public void testLatestOn15() throws Exception {
-        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);", "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' latest on ts partition by s1,s2", """
+        assertQuery("select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' latest on ts partition by s1,s2")
+                .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 LatestByAllSymbolsFiltered
                   filter: (s1 in [S1,S2] and s2='S3')
                     Row backward scan
@@ -4263,7 +4641,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn16() throws Exception {
-        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);", "select s1, s2, i, ts from a where s1 = 'S1' and ts > 0::timestamp latest on ts partition by s1,s2", """
+        assertQuery("select s1, s2, i, ts from a where s1 = 'S1' and ts > 0::timestamp latest on ts partition by s1,s2")
+                .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 LatestByAllSymbolsFiltered
                   filter: s1='S1'
                     Row backward scan
@@ -4275,7 +4655,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn1a() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select * from (select ts, i as i1, i as i2 from a ) where 0 < i1 and i2 < 10 latest on ts partition by i1", """
+        assertQuery("select * from (select ts, i as i1, i as i2 from a ) where 0 < i1 and i2 < 10 latest on ts partition by i1")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 LatestBy light order_by_timestamp: true
                     SelectedRecord
                         Async JIT Filter workers: 1
@@ -4288,7 +4670,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn1b() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select ts, i as i1, i as i2 from a where 0 < i and i < 10 latest on ts partition by i", """
+        assertQuery("select ts, i as i1, i as i2 from a where 0 < i and i < 10 latest on ts partition by i")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 SelectedRecord
                     LatestByAllFiltered
                         Row backward scan
@@ -4299,7 +4683,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn2() throws Exception {
-        assertPlan("create table a ( i int, d double, ts timestamp) timestamp(ts);", "select ts, d from a latest on ts partition by i", """
+        assertQuery("select ts, d from a latest on ts partition by i")
+                .ddl("create table a ( i int, d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 SelectedRecord
                     LatestByAllFiltered
                         Row backward scan
@@ -4309,7 +4695,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn3() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select * from a latest on ts partition by s", """
+        assertQuery("select * from a latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 LatestByAllIndexed
                     Async index backward scan on: s workers: 2
                     Frame backward scan on: a
@@ -4318,7 +4706,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn4() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s  = 'S1' latest on ts partition by s", """
+        assertQuery("select s, i, ts from a where s  = 'S1' latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 PageFrame
                     Index backward scan on: s deferred: true
                       filter: s='S1'
@@ -4332,7 +4722,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
-            assertPlanNoLeakCheck("select s, i, ts from a where s  in ('def1', 'def2') latest on ts partition by s", """
+            assertQuery("select s, i, ts from a where s  in ('def1', 'def2') latest on ts partition by s")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Index backward scan on: s
                       symbolFilter: s in ['def1','def2']
                         Frame backward scan on: a
@@ -4346,7 +4738,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
-            assertPlanNoLeakCheck("select s, i, ts from a where s  in ('1', 'deferred') latest on ts partition by s", """
+            assertQuery("select s, i, ts from a where s  in ('1', 'deferred') latest on ts partition by s")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Index backward scan on: s
                       symbolFilter: s in [1] or s in ['deferred']
                         Frame backward scan on: a
@@ -4360,7 +4754,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
-            assertPlanNoLeakCheck("select s, i, ts from a where s  in ('1', '2') latest on ts partition by s", """
+            assertQuery("select s, i, ts from a where s  in ('1', '2') latest on ts partition by s")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Index backward scan on: s
                       symbolFilter: s in [1,2]
                         Frame backward scan on: a
@@ -4370,7 +4766,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn6() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s  in ('S1', 'S2') and i > 0 latest on ts partition by s", """
+        assertQuery("select s, i, ts from a where s  in ('S1', 'S2') and i > 0 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Index backward scan on: s
                   filter: 0<i
                   symbolFilter: s in ['S1','S2']
@@ -4380,7 +4778,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn7() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s  in ('S1', 'S2') and length(s)<10 latest on ts partition by s", """
+        assertQuery("select s, i, ts from a where s  in ('S1', 'S2') and length(s)<10 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Index backward scan on: s
                   filter: length(s)<10
                   symbolFilter: s in ['S1','S2']
@@ -4394,7 +4794,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
-            assertPlanNoLeakCheck("select s, i, ts from a where s  in ('s1') latest on ts partition by s", """
+            assertQuery("select s, i, ts from a where s  in ('s1') latest on ts partition by s")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     PageFrame
                         Index backward scan on: s
                           filter: s=1
@@ -4409,7 +4811,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
-            assertPlanNoLeakCheck("select s, i, ts from a where s in ('bogus_key') latest on ts partition by s", """
+            assertQuery("select s, i, ts from a where s in ('bogus_key') latest on ts partition by s")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     PageFrame
                         Index backward scan on: s deferred: true
                           filter: s='bogus_key'
@@ -4420,7 +4824,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // columns in order different to table's
     public void testLatestOn9() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s", """
+        assertQuery("select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Index backward scan on: s
                   filter: length(s)=10
                   symbolFilter: s='S1'
@@ -4430,7 +4836,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // columns in table's order
     public void testLatestOn9a() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);", "select i, s, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s", """
+        assertQuery("select i, s, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Index backward scan on: s
                   filter: length(s)=10
                   symbolFilter: s='S1'
@@ -4444,7 +4852,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select x::int, 'S' || x, x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck("select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s", """
+            assertQuery("select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Index backward scan on: s
                       filter: length(s)=10
                       symbolFilter: s=1
@@ -4459,7 +4869,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
 
-            assertPlanNoLeakCheck("select * from taba left join tabb on a1=b1  or a2=b2", """
+            assertQuery("select * from taba left join tabb on a1=b1  or a2=b2")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Nested Loop Left Join
                           filter: (taba.a1=tabb.b1 or taba.a2=tabb.b2)
@@ -4479,7 +4891,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
 
-            assertPlanNoLeakCheck("select * from taba left join tabb on a1=b1  or a2=b2 where a1 > b2", """
+            assertQuery("select * from taba left join tabb on a1=b1  or a2=b2 where a1 > b2")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Filter filter: tabb.b2<taba.a1
                             Nested Loop Left Join
@@ -4519,7 +4933,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
 
-            assertPlanNoLeakCheck("select * from taba left join tabb on abs(a2+1) = abs(b2)", """
+            assertQuery("select * from taba left join tabb on abs(a2+1) = abs(b2)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Nested Loop Left Join
                           filter: abs(taba.a2+1)=abs(tabb.b2)
@@ -4539,7 +4955,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
 
-            assertPlanNoLeakCheck("select * from taba left join tabb on abs(a2+1) = abs(b2) or a2/2 = b2+1", """
+            assertQuery("select * from taba left join tabb on abs(a2+1) = abs(b2) or a2/2 = b2+1")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Nested Loop Left Join
                           filter: (abs(taba.a2+1)=abs(tabb.b2) or taba.a2/2=tabb.b2+1)
@@ -4565,12 +4983,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
 
-                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value<>T2.value", "Count\n" + "    Filter filter: T2.value=T2.value\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
+                assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value<>T2.value")
+                        .noLeakCheck()
+                        .assertsPlan("Count\n" + "    Filter filter: T2.value=T2.value\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
-                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value=1", "Count\n" + "    Filter filter: T2.value!=1\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
+                assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value=1")
+                        .noLeakCheck()
+                        .assertsPlan("Count\n" + "    Filter filter: T2.value!=1\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
                 // push down predicate to the 'left' table of left join
-                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T1.value=1", "Count\n" + "    " + factoryType + "\n" + (i < 3 ? "      condition: T2.created=T1.created\n" : "") + "        Async JIT Filter workers: 1\n" + "          filter: value!=1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "        Hash\n" : "") + (i < 3 ? "    " : "") + "        PageFrame\n" + (i < 3 ? "    " : "") + "            Row forward scan\n" + (i < 3 ? "    " : "") + "            Frame forward scan on: tab\n");
+                assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T1.value=1")
+                        .noLeakCheck()
+                        .assertsPlan("Count\n" + "    " + factoryType + "\n" + (i < 3 ? "      condition: T2.created=T1.created\n" : "") + "        Async JIT Filter workers: 1\n" + "          filter: value!=1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "        Hash\n" : "") + (i < 3 ? "    " : "") + "        PageFrame\n" + (i < 3 ? "    " : "") + "            Row forward scan\n" + (i < 3 ? "    " : "") + "            Frame forward scan on: tab\n");
             }
 
             // two joins
@@ -4578,16 +5002,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
 
-                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T1.value=1", "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
+                assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T1.value=1")
+                        .noLeakCheck()
+                        .assertsPlan("Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
-                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T2.created=1", "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: 1=T2.created\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
+                assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T2.created=1")
+                        .noLeakCheck()
+                        .assertsPlan("Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: 1=T2.created\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
-                assertPlanNoLeakCheck("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T3.value=1", "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
+                assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T3.value=1")
+                        .noLeakCheck()
+                        .assertsPlan("Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
 
                 // where clause in parent model
-                assertPlanNoLeakCheck("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value1<>value1", "Count\n" + "    SelectedRecord\n" + "        Filter filter: T2.value=T2.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n");
+                assertQuery("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value1<>value1")
+                        .noLeakCheck()
+                        .assertsPlan("Count\n" + "    SelectedRecord\n" + "        Filter filter: T2.value=T2.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n");
 
-                assertPlanNoLeakCheck("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value<>value", "Count\n" + "    SelectedRecord\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
+                assertQuery("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value<>value")
+                        .noLeakCheck()
+                        .assertsPlan("Count\n" + "    SelectedRecord\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
             }
         });
     }
@@ -4597,7 +5031,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (s1 string, s2 string, s3 string, s4 string, s5 string, s6 string);");
 
-            assertPlanNoLeakCheck("select * from tab " + "where s1 like '%a'  and s2 ilike '%a' " + "  and s3 like 'a%'  and s4 ilike 'a%' " + "  and s5 like '%a%' and s6 ilike '%a%';", """
+            assertQuery("select * from tab " + "where s1 like '%a'  and s2 ilike '%a' " + "  and s3 like 'a%'  and s4 ilike 'a%' " + "  and s5 like '%a%' and s6 ilike '%a%';")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async Filter workers: 1
                       filter: ((s1 like %a and s2 ilike %a and s3 like a% and s4 ilike a%) and s5 like %a% and s6 ilike %a%)
                         PageFrame
@@ -4613,7 +5049,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select ts1, ts2, i1, i2 from (select a.i as i1, a.ts as ts1, b.i as i2, b.ts as ts2 from a lt join b on ts) where ts1::long*i1<ts2::long*i2", """
+            assertQuery("select ts1, ts2, i1, i2 from (select a.i as i1, a.ts as ts1, b.i as i2, b.ts as ts2 from a lt join b on ts) where ts1::long*i1<ts2::long*i2")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Filter filter: a.ts::long*a.i<b.ts::long*b.i
                             Lt Join Fast
@@ -4633,7 +5071,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a lt join b on ts", """
+            assertQuery("select * from a lt join b on ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Lt Join Fast
                             PageFrame
@@ -4654,7 +5094,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a lt join b on ts where a.i = b.ts", """
+            assertQuery("select * from a lt join b on ts where a.i = b.ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Filter filter: a.i=b.ts
                             Lt Join Fast
@@ -4674,7 +5116,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a lt join b on ts where a.i = b.ts", """
+            assertQuery("select * from a lt join b on ts where a.i = b.ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Filter filter: a.i=b.ts
                             Lt Join Fast
@@ -4694,7 +5138,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a lt join b where a.i = b.ts", """
+            assertQuery("select * from a lt join b where a.i = b.ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Filter filter: a.i=b.ts
                             Lt Join Fast
@@ -4714,7 +5160,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a lt join (select * from b limit 10) on ts", """
+            assertQuery("select * from a lt join (select * from b limit 10) on ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Lt Join
                             PageFrame
@@ -4757,7 +5205,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (i int, ts timestamp) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a lt join b where a.i > 0", """
+            assertQuery("select * from a lt join b where a.i > 0")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Lt Join Fast
                             Async JIT Filter workers: 1
@@ -4778,7 +5228,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (i int, ts timestamp) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a lt join b", """
+            assertQuery("select * from a lt join b")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Lt Join Fast
                             PageFrame
@@ -4797,7 +5249,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (i int, ts timestamp) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a lt join b on(ts)", """
+            assertQuery("select * from a lt join b on(ts)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Lt Join Fast
                             PageFrame
@@ -4816,7 +5270,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a (ts timestamp, i int) timestamp(ts)");
             execute("create table b (i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a lt join b on(ts)", """
+            assertQuery("select * from a lt join b on(ts)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Lt Join Fast
                             PageFrame
@@ -4835,7 +5291,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a lt join ((select * from b order by ts, i ) timestamp(ts))  on ts", """
+            assertQuery("select * from a lt join ((select * from b order by ts, i ) timestamp(ts))  on ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Lt Join
                             PageFrame
@@ -4856,7 +5314,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * " + "from a " + "lt join b on ts " + "lt join a c on ts", """
+            assertQuery("select * " + "from a " + "lt join b on ts " + "lt join a c on ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Lt Join Fast
                             Lt Join Fast
@@ -4875,7 +5335,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testMultiExcept() throws Exception {
-        assertPlan("create table a ( i int, s string);", "select * from a except select * from a except select * from a", """
+        assertQuery("select * from a except select * from a except select * from a")
+                .ddl("create table a ( i int, s string);")
+                .assertsPlan("""
                 Except
                     Except
                         PageFrame
@@ -4894,7 +5356,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testMultiIntersect() throws Exception {
-        assertPlan("create table a ( i int, s string);", "select * from a intersect select * from a intersect select * from a", """
+        assertQuery("select * from a intersect select * from a intersect select * from a")
+                .ddl("create table a ( i int, s string);")
+                .assertsPlan("""
                 Intersect
                     Intersect
                         PageFrame
@@ -4913,7 +5377,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testMultiUnion() throws Exception {
-        assertPlan("create table a ( i int, s string);", "select * from a union select * from a union select * from a", """
+        assertQuery("select * from a union select * from a union select * from a")
+                .ddl("create table a ( i int, s string);")
+                .assertsPlan("""
                 Union
                     Union
                         PageFrame
@@ -4930,7 +5396,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testMultiUnionAll() throws Exception {
-        assertPlan("create table a ( i int, s string);", "select * from a union all select * from a union all select * from a", """
+        assertQuery("select * from a union all select * from a union all select * from a")
+                .ddl("create table a ( i int, s string);")
+                .assertsPlan("""
                 Union All
                     Union All
                         PageFrame
@@ -4952,7 +5420,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("insert into t select x, x::timestamp from long_sequence(2)");
             String[] queries = {"select * from t t1 left join t t2 on t1.x*t2.x>0 order by t1.ts", "select * from (select * from t order by ts desc) t1 left join t t2 on t1.x*t2.x>0 order by t1.ts"};
             for (String query : queries) {
-                assertPlanNoLeakCheck(query, """
+                assertQuery(query)
+                        .noLeakCheck()
+                        .assertsPlan("""
                         SelectedRecord
                             Nested Loop Left Join
                               filter: 0<t1.x*t2.x
@@ -4987,7 +5457,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             String query = "select * from " + "((select * from t order by ts desc) limit 10) t1 " + "left join t t2 on t1.x*t2.x > 0 " + "order by t1.ts desc";
 
-            assertPlanNoLeakCheck(query, """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Nested Loop Left Join
                           filter: 0<t1.x*t2.x
@@ -5007,14 +5479,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (b boolean, ts timestamp)");
             // true
-            assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where 1>2 and t1.b = t2.b", """
+            assertQuery("update tab t1 set b=true from tab t2 where 1>2 and t1.b = t2.b")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Update table: tab
                         VirtualRecord
                           functions: [true]
                             Empty table
                     """);
             // false
-            assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where 1<2 and t1.b = t2.b", """
+            assertQuery("update tab t1 set b=true from tab t2 where 1<2 and t1.b = t2.b")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Update table: tab
                         VirtualRecord
                           functions: [true]
@@ -5038,9 +5514,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // code generator folds it to Empty table.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (b BOOLEAN, ts TIMESTAMP)");
-            assertPlanNoLeakCheck(
-                    "SELECT * FROM tab T1 INNER JOIN tab T2 ON T1.b = T2.b WHERE 1 > 10 AND NOW() = NOW()",
-                    """
+            assertQuery("SELECT * FROM tab T1 INNER JOIN tab T2 ON T1.b = T2.b WHERE 1 > 10 AND NOW() = NOW()")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Empty table
                             """);
@@ -5051,7 +5527,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testNoArgNonConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
 
-        assertPlan("create table tab (b boolean, ts timestamp)", "update tab t1 set b=true from tab t2 where not sleep(60000) and t1.b = t2.b", """
+        assertQuery("update tab t1 set b=true from tab t2 where not sleep(60000) and t1.b = t2.b")
+                .ddl("create table tab (b boolean, ts timestamp)")
+                .assertsPlan("""
                 Update table: tab
                     VirtualRecord
                       functions: [true]
@@ -5074,7 +5552,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table tab (b boolean, ts timestamp)");
 
             // true
-            assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where now()::long > -1 and t1.b = t2.b", """
+            assertQuery("update tab t1 set b=true from tab t2 where now()::long > -1 and t1.b = t2.b")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Update table: tab
                         VirtualRecord
                           functions: [true]
@@ -5091,7 +5571,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             // false
-            assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where now()::long < 0 and t1.b = t2.b", """
+            assertQuery("update tab t1 set b=true from tab t2 where now()::long < 0 and t1.b = t2.b")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Update table: tab
                         VirtualRecord
                           functions: [true]
@@ -5111,10 +5593,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testNonKeyedGroupByMinMaxTimestamp() throws Exception {
-        assertPlan(
-                "create table x (ts timestamp, ts1 timestamp) timestamp(ts) partition by day;",
-                "select min(ts), max(ts), min(ts1), max(ts1) from x",
-                """
+        assertQuery("select min(ts), max(ts), min(ts1), max(ts1) from x")
+                .ddl("create table x (ts timestamp, ts1 timestamp) timestamp(ts) partition by day;")
+                .assertsPlan("""
                         Async Group By workers: 1
                           vectorized: true
                           values: [min_designated(ts),max_designated(ts),min(ts1),max(ts1)]
@@ -5122,8 +5603,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: x
-                        """
-        );
+                        """);
     }
 
     @Test
@@ -5307,7 +5787,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                 String expectedPlan = "SelectedRecord\n" + "    " + joinType + " Join\n" + "        Encode sort light\n" + "          keys: [timestamp, galon_price desc]\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: gas_prices\n" + "        Encode sort light\n" + "          keys: [timestamp, galon_price desc]\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: gas_prices\n";
 
-                assertPlanNoLeakCheck(query, expectedPlan);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .assertsPlan(expectedPlan);
             }
         });
     }
@@ -5343,7 +5825,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         Frame forward scan on: gas_prices
                     """;
 
-            assertPlanNoLeakCheck(query, expectedPlan);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan(expectedPlan);
         });
     }
 
@@ -5383,14 +5867,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               functions: [2023-02-20T00:00:00.000000Z,null]
                                 long_sequence count: 1
                     """;
-            assertPlanNoLeakCheck(query, expectedPlan);
-            assertPlanNoLeakCheck(query + " order by timestamp", expectedPlan);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan(expectedPlan);
+            assertQuery(query + " order by timestamp")
+                    .noLeakCheck()
+                    .assertsPlan(expectedPlan);
         });
     }
 
     @Test
     public void testOrderByTimestampAndOtherColumns1() throws Exception {
-        assertPlan("create table tab (i int, ts timestamp) timestamp(ts)", "select * from (select * from tab order by ts, i desc limit 10) order by ts", """
+        assertQuery("select * from (select * from tab order by ts, i desc limit 10) order by ts")
+                .ddl("create table tab (i int, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Sort light lo: 10 partiallySorted: true
                   keys: [ts, i desc]
                     PageFrame
@@ -5401,7 +5891,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByTimestampAndOtherColumns2() throws Exception {
-        assertPlan("create table tab (i int, ts timestamp) timestamp(ts)", "select * from (select * from tab order by ts desc, i asc limit 10) order by ts desc", """
+        assertQuery("select * from (select * from tab order by ts desc, i asc limit 10) order by ts desc")
+                .ddl("create table tab (i int, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Sort light lo: 10 partiallySorted: true
                   keys: [ts desc, i]
                     PageFrame
@@ -5421,7 +5913,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a=b", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b=a\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                assertQuery("select * from taba " + joinType + " join tabb on a=b")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b=a\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -5437,7 +5931,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -5453,7 +5949,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1 and (a2=b2+10 or a2=2*b2)", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: (taba.a2=tabb.b2+10 or taba.a2=2*tabb.b2)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                assertQuery("select * from taba " + joinType + " join tabb on a1=b1 and (a2=b2+10 or a2=2*b2)")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: (taba.a2=tabb.b2+10 or taba.a2=2*tabb.b2)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -5473,7 +5971,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1 and a1=5 " + "join tabc on a1=c1", "SelectedRecord\n" + "    Hash Join Light\n" + "      condition: c1=a1\n" + "        " + factoryType + "\n" + "          condition: b1=a1\n" + "          filter: taba.a1=5\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n");
+                assertQuery("select * from taba " + joinType + " join tabb on a1=b1 and a1=5 " + "join tabc on a1=c1")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    Hash Join Light\n" + "      condition: c1=a1\n" + "        " + factoryType + "\n" + "          condition: b1=a1\n" + "          filter: taba.a1=5\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n");
             }
         });
     }
@@ -5489,7 +5989,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2)", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "      filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2)")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "      filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -5505,7 +6007,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and a2+5 = b2+10", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "      filter: taba.a2+5=tabb.b2+10\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and a2+5 = b2+10")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "      filter: taba.a2+5=tabb.b2+10\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -5516,9 +6020,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
 
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
-                    """
+            assertQuery("select * from taba left join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Hash Left Outer Join Light
                                   condition: b2=a2 and b1=a1
@@ -5528,11 +6032,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         Frame forward scan on: taba
                                     Hash
                                         Empty table
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "select * from taba right join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
-                    """
+                            """);
+            assertQuery("select * from taba right join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Hash Right Outer Join Light
                                   condition: b2=a2 and b1=a1
@@ -5542,11 +6045,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tabb
-                            """
-            );
-            assertPlanNoLeakCheck(
-                    "select * from taba full join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
-                    """
+                            """);
+            assertQuery("select * from taba full join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Hash Full Outer Join Light
                                   condition: b2=a2 and b1=a1
@@ -5558,8 +6060,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tabb
-                            """
-            );
+                            """);
         });
     }
 
@@ -5575,7 +6076,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2!=a2", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: taba.a2!=taba.a2\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2!=a2")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: taba.a2!=taba.a2\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -5591,7 +6094,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2=a2", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: taba.a2=taba.a2\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2=a2")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: taba.a2=taba.a2\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -5607,7 +6112,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2 ~ 'a.*' and b2 ~ '.*z'", "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: (taba.a2 ~ a.* and tabb.b2 ~ .*z)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2 ~ 'a.*' and b2 ~ '.*z'")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: (taba.a2 ~ a.* and tabb.b2 ~ .*z)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -5623,7 +6130,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
-                assertPlanNoLeakCheck("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) where a1=b1", "SelectedRecord\n" + "    Filter filter: taba.a1=tabb.b1\n" + "        " + factoryType + "\n" + "          condition: b2=a2 and b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
+                assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) where a1=b1")
+                        .noLeakCheck()
+                        .assertsPlan("SelectedRecord\n" + "    Filter filter: taba.a1=tabb.b1\n" + "        " + factoryType + "\n" + "          condition: b2=a2 and b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
             }
         });
     }
@@ -5640,7 +6149,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table test (event int, created timestamp)");
             execute("insert into test values (1, 1), (2, 2)");
 
-            assertPlanNoLeakCheck(query, """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Count
                         Filter filter: T1.event<T2.event
                             Cross Join
@@ -5671,7 +6182,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String query = "SELECT * " + "FROM ( " + "  SELECT *, ROW_NUMBER() OVER ( PARTITION BY a ORDER BY b ) rownum " + "  FROM (" + "    SELECT 1 a, 2 b, 4 c " + "    UNION " + "    SELECT 1, 3, 5 " + "  ) o " + ") ra " + "WHERE ra.rownum = 1 " + "AND   c = 5";
 
-            assertPlanNoLeakCheck(query, """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Filter filter: (rownum=1 and c=5)
                         CachedWindow
                           orderedFunctions: [[b] => [row_number() over (partition by [a])]]
@@ -5689,7 +6202,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             execute("CREATE TABLE tab AS (SELECT x FROM long_sequence(10))");
 
-            assertPlanNoLeakCheck("SELECT *, ROW_NUMBER() OVER () FROM tab WHERE x = 10", """
+            assertQuery("SELECT *, ROW_NUMBER() OVER () FROM tab WHERE x = 10")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Window
                       functions: [row_number()]
                         Async JIT Filter workers: 1
@@ -5699,7 +6214,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab ) WHERE x = 10", """
+            assertQuery("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab ) WHERE x = 10")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Filter filter: x=10
                         Window
                           functions: [row_number()]
@@ -5708,7 +6225,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab UNION ALL select 11, 11  ) WHERE x = 10", """
+            assertQuery("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab UNION ALL select 11, 11  ) WHERE x = 10")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Filter filter: x=10
                         Union All
                             Window
@@ -5721,7 +6240,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 long_sequence count: 1
                     """);
 
-            assertPlanNoLeakCheck("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab cross join (select 11, 11)  ) WHERE x = 10", """
+            assertQuery("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab cross join (select 11, 11)  ) WHERE x = 10")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Filter filter: x=10
                         Window
                           functions: [row_number()]
@@ -5735,7 +6256,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         long_sequence count: 1
                     """);
 
-            assertPlanNoLeakCheck("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab ) join (select 11L y, 11) on x=y WHERE x = 10", """
+            assertQuery("SELECT * FROM (SELECT *, ROW_NUMBER() OVER () FROM tab ) join (select 11L y, 11) on x=y WHERE x = 10")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Hash Join Light
                           condition: y=x
@@ -5765,33 +6288,36 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 PartitionEncoder.encode(partitionDescriptor, path);
                 assertTrue(Files.exists(path.$()));
 
-                assertPlanNoLeakCheck("select * from read_parquet('x.parquet') where a_long = 42;", """
+                assertQuery("select * from read_parquet('x.parquet') where a_long = 42;")
+                        .noLeakCheck()
+                        .assertsPlan("""
                         Async JIT Filter workers: 1
                           filter: a_long=42
                             parquet page frame scan
                               columns: a_long,a_str,a_ts
-                        """
-                );
+                        """);
 
-                assertPlanNoLeakCheck("select avg(a_long) from read_parquet('x.parquet');", """
+                assertQuery("select avg(a_long) from read_parquet('x.parquet');")
+                        .noLeakCheck()
+                        .assertsPlan("""
                         Async Group By workers: 1
                           vectorized: true
                           values: [avg(a_long)]
                           filter: null
                             parquet page frame scan
                               columns: a_long
-                        """
-                );
+                        """);
 
-                assertPlanNoLeakCheck("select a_str, max(a_long) from read_parquet('x.parquet');", """
+                assertQuery("select a_str, max(a_long) from read_parquet('x.parquet');")
+                        .noLeakCheck()
+                        .assertsPlan("""
                         Async Group By workers: 1
                           keys: [a_str]
                           values: [max(a_long)]
                           filter: null
                             parquet page frame scan
                               columns: a_str,a_long
-                        """
-                );
+                        """);
             }
         });
     }
@@ -5801,7 +6327,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x double );");
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(x+10) FROM tab", """
+            assertQuery("SELECT sum(x), sum(x+10) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async Group By workers: 1
                       vectorized: true
                       values: [sum(x),sum(x+10)]
@@ -5811,7 +6339,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(10+x) FROM tab", """
+            assertQuery("SELECT sum(x), sum(10+x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async Group By workers: 1
                       vectorized: true
                       values: [sum(x),sum(10+x)]
@@ -5829,7 +6359,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("CREATE TABLE taba ( x int, id int );");
             execute("CREATE TABLE tabb ( x int, id int );");
 
-            assertPlanNoLeakCheck("SELECT sum(taba.x),sum(tabb.x), sum(taba.x+10), sum(tabb.x+10) " + "FROM taba " + "join tabb on (id)", """
+            assertQuery("SELECT sum(taba.x),sum(tabb.x), sum(taba.x+10), sum(tabb.x+10) " + "FROM taba " + "join tabb on (id)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum1,sum+COUNT*10,sum1+COUNT1*10]
                         GroupBy vectorized: false
@@ -5846,7 +6378,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: tabb
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(tabb.x),sum(taba.x),sum(10+taba.x), sum(10+tabb.x) " + "FROM taba " + "join tabb on (id)", """
+            assertQuery("SELECT sum(tabb.x),sum(taba.x),sum(10+taba.x), sum(10+tabb.x) " + "FROM taba " + "join tabb on (id)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum1,COUNT*10+sum1,COUNT1*10+sum]
                         GroupBy vectorized: false
@@ -5870,7 +6404,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x int );");
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(x+10) FROM tab", """
+            assertQuery("SELECT sum(x), sum(x+10) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum+COUNT*10]
                         Async Group By workers: 1
@@ -5882,7 +6418,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(10+x) FROM tab", """
+            assertQuery("SELECT sum(x), sum(10+x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,COUNT*10+sum]
                         Async Group By workers: 1
@@ -5901,7 +6439,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x int );");
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
+            assertQuery("SELECT sum(x), sum(x*10) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum*10]
                         Async Group By workers: 1
@@ -5913,7 +6453,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
+            assertQuery("SELECT sum(x), sum(10*x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,10*sum]
                         Async Group By workers: 1
@@ -5932,7 +6474,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x int );");
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
+            assertQuery("SELECT sum(x), sum(x-10) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum-COUNT*10]
                         Async Group By workers: 1
@@ -5944,7 +6488,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
+            assertQuery("SELECT sum(x), sum(10-x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,COUNT*10-sum]
                         Async Group By workers: 1
@@ -5963,7 +6509,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x long );");
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(x+2) FROM tab", """
+            assertQuery("SELECT sum(x), sum(x+2) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum+COUNT*2]
                         Async Group By workers: 1
@@ -5975,7 +6523,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(2+x) FROM tab", """
+            assertQuery("SELECT sum(x), sum(2+x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,COUNT*2+sum]
                         Async Group By workers: 1
@@ -5994,7 +6544,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x long );");
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
+            assertQuery("SELECT sum(x), sum(x*10) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum*10]
                         Async Group By workers: 1
@@ -6006,7 +6558,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
+            assertQuery("SELECT sum(x), sum(10*x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,10*sum]
                         Async Group By workers: 1
@@ -6025,7 +6579,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x long );");
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
+            assertQuery("SELECT sum(x), sum(x-10) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum-COUNT*10]
                         Async Group By workers: 1
@@ -6037,7 +6593,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
+            assertQuery("SELECT sum(x), sum(10-x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,COUNT*10-sum]
                         Async Group By workers: 1
@@ -6056,7 +6614,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x double );");
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
+            assertQuery("SELECT sum(x), sum(x*10) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async Group By workers: 1
                       vectorized: true
                       values: [sum(x),sum(x*10)]
@@ -6066,7 +6626,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
+            assertQuery("SELECT sum(x), sum(10*x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async Group By workers: 1
                       vectorized: true
                       values: [sum(x),sum(10*x)]
@@ -6083,7 +6645,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x double );");
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(x*10.0) FROM tab", """
+            assertQuery("SELECT sum(x), sum(x*10.0) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async Group By workers: 1
                       vectorized: true
                       values: [sum(x),sum(x*10.0)]
@@ -6093,7 +6657,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(10.0*x) FROM tab", """
+            assertQuery("SELECT sum(x), sum(10.0*x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async Group By workers: 1
                       vectorized: true
                       values: [sum(x),sum(10.0*x)]
@@ -6111,7 +6677,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("CREATE TABLE taba ( x int, id int );");
             execute("CREATE TABLE tabb ( x int, id int );");
 
-            assertPlanNoLeakCheck("SELECT sum(taba.x),sum(tabb.x),sum(taba.x*10), sum(tabb.x*10) " + "FROM taba " + "join tabb on (id)", """
+            assertQuery("SELECT sum(taba.x),sum(tabb.x),sum(taba.x*10), sum(tabb.x*10) " + "FROM taba " + "join tabb on (id)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum1,sum*10,sum1*10]
                         GroupBy vectorized: false
@@ -6128,7 +6696,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: tabb
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(taba.x),sum(tabb.x),sum(10*taba.x), sum(10*tabb.x) " + "FROM taba " + "join tabb on (id)", """
+            assertQuery("SELECT sum(taba.x),sum(tabb.x),sum(10*taba.x), sum(10*tabb.x) " + "FROM taba " + "join tabb on (id)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum1,10*sum,10*sum1]
                         GroupBy vectorized: false
@@ -6152,7 +6722,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x short );");
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(x+42) FROM tab", """
+            assertQuery("SELECT sum(x), sum(x+42) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum+COUNT*42]
                         Async Group By workers: 1
@@ -6164,7 +6736,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(42+x) FROM tab", """
+            assertQuery("SELECT sum(x), sum(42+x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,COUNT*42+sum]
                         Async Group By workers: 1
@@ -6183,7 +6757,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x short );");
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
+            assertQuery("SELECT sum(x), sum(x*10) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum*10]
                         Async Group By workers: 1
@@ -6195,7 +6771,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
+            assertQuery("SELECT sum(x), sum(10*x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,10*sum]
                         Async Group By workers: 1
@@ -6214,7 +6792,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x short );");
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
+            assertQuery("SELECT sum(x), sum(x-10) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum-COUNT*10]
                         Async Group By workers: 1
@@ -6226,7 +6806,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
+            assertQuery("SELECT sum(x), sum(10-x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,COUNT*10-sum]
                         Async Group By workers: 1
@@ -6245,7 +6827,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( x double );");
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
+            assertQuery("SELECT sum(x), sum(x-10) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async Group By workers: 1
                       vectorized: true
                       values: [sum(x),sum(x-10)]
@@ -6255,7 +6839,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
+            assertQuery("SELECT sum(x), sum(10-x) FROM tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async Group By workers: 1
                       vectorized: true
                       values: [sum(x),sum(10-x)]
@@ -6273,7 +6859,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("CREATE TABLE taba ( x int, id int );");
             execute("CREATE TABLE tabb ( x int, id int );");
 
-            assertPlanNoLeakCheck("SELECT sum(taba.x),sum(tabb.x),sum(taba.x-10), sum(tabb.x-10) " + "FROM taba " + "join tabb on (id)", """
+            assertQuery("SELECT sum(taba.x),sum(tabb.x),sum(taba.x-10), sum(tabb.x-10) " + "FROM taba " + "join tabb on (id)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum1,sum-COUNT*10,sum1-COUNT1*10]
                         GroupBy vectorized: false
@@ -6290,7 +6878,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: tabb
                     """);
 
-            assertPlanNoLeakCheck("SELECT sum(taba.x),sum(tabb.x),sum(10-taba.x), sum(10-tabb.x) " + "FROM taba " + "join tabb on (id)", """
+            assertQuery("SELECT sum(taba.x),sum(tabb.x),sum(10-taba.x), sum(10-tabb.x) " + "FROM taba " + "join tabb on (id)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,sum1,COUNT*10-sum,COUNT1*10-sum1]
                         GroupBy vectorized: false
@@ -6320,7 +6910,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         ResolutionHeight int
                     ) TIMESTAMP(EventTime) PARTITION BY DAY;""");
 
-            assertPlanNoLeakCheck("SELECT sum(resolutIONWidth), count(resolutionwIDTH), SUM(ResolutionWidth), sum(ResolutionWidth) + count(), " + "SUM(ResolutionWidth+1),SUM(ResolutionWidth*2),sUM(ResolutionWidth), count()\n" + "FROM hits", """
+            assertQuery("SELECT sum(resolutIONWidth), count(resolutionwIDTH), SUM(ResolutionWidth), sum(ResolutionWidth) + count(), " + "SUM(ResolutionWidth+1),SUM(ResolutionWidth*2),sUM(ResolutionWidth), count()\n" + "FROM hits")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]
                         Async Group By workers: 1
@@ -6340,7 +6932,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("CREATE TABLE hits1" + "(" + "    EventTime timestamp, " + "    ResolutionWidth int, " + "    ResolutionHeight int, " + "    id int" + ")");
             execute("create table hits2 as (select * from hits1)");
 
-            assertPlanNoLeakCheck("SELECT sum(h1.resolutIONWidth), count(h1.resolutionwIDTH), SUM(h2.ResolutionWidth), sum(h2.ResolutionWidth) + count(), " + "SUM(h1.ResolutionWidth+1),SUM(h2.ResolutionWidth*2),sUM(h1.ResolutionWidth), count()\n" + "FROM hits1 h1 " + "join hits2 h2 on (id)", """
+            assertQuery("SELECT sum(h1.resolutIONWidth), count(h1.resolutionwIDTH), SUM(h2.ResolutionWidth), sum(h2.ResolutionWidth) + count(), " + "SUM(h1.ResolutionWidth+1),SUM(h2.ResolutionWidth*2),sUM(h1.ResolutionWidth), count()\n" + "FROM hits1 h1 " + "join hits2 h2 on (id)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [sum,count,SUM1,SUM1+count1,sum+count*1,SUM1*2,sum,count1]
                         GroupBy vectorized: false
@@ -6373,8 +6967,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Row forward scan
                             Frame forward scan on: test
                     """;
-            assertPlanNoLeakCheck("SELECT count_distinct(s), count_distinct(x) FROM test", expected);
-            assertPlanNoLeakCheck("SELECT count(distinct s), count(distinct x) FROM test", expected);
+            assertQuery("SELECT count_distinct(s), count_distinct(x) FROM test")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
+            assertQuery("SELECT count(distinct s), count(distinct x) FROM test")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
 
 
             // no where clause, distinct constant
@@ -6387,8 +6985,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Row forward scan
                             Frame forward scan on: test
                     """;
-            assertPlanNoLeakCheck("SELECT count_distinct(10) FROM test", expected);
-            assertPlanNoLeakCheck("SELECT count(distinct 10) FROM test", expected);
+            assertQuery("SELECT count_distinct(10) FROM test")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
+            assertQuery("SELECT count(distinct 10) FROM test")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
 
             // no where clause, distinct column
             expected = """
@@ -6400,8 +7002,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: test
                     """;
-            assertPlanNoLeakCheck("SELECT count_distinct(s) FROM test", expected);
-            assertPlanNoLeakCheck("SELECT count(distinct s) FROM test", expected);
+            assertQuery("SELECT count_distinct(s) FROM test")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
+            assertQuery("SELECT count(distinct s) FROM test")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
 
             // with where clause, distinct column
             expected = """
@@ -6413,8 +7019,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: test
                     """;
-            assertPlanNoLeakCheck("SELECT count_distinct(s) FROM test where s like '%abc%'", expected);
-            assertPlanNoLeakCheck("SELECT count(distinct s) FROM test where s like '%abc%'", expected);
+            assertQuery("SELECT count_distinct(s) FROM test where s like '%abc%'")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
+            assertQuery("SELECT count(distinct s) FROM test where s like '%abc%'")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
 
             // no where clause, distinct expression 1
             expected = """
@@ -6427,8 +7037,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: test
                     """;
-            assertPlanNoLeakCheck("SELECT count_distinct(substring(s,1,1)) FROM test;", expected);
-            assertPlanNoLeakCheck("SELECT count(distinct substring(s,1,1)) FROM test;", expected);
+            assertQuery("SELECT count_distinct(substring(s,1,1)) FROM test;")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
+            assertQuery("SELECT count(distinct substring(s,1,1)) FROM test;")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
 
             // where clause, distinct expression 2
             expected = """
@@ -6441,8 +7055,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: test
                     """;
-            assertPlanNoLeakCheck("SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%'", expected);
-            assertPlanNoLeakCheck("SELECT count(distinct substring(s,1,1)) FROM test where s like '%abc%'", expected);
+            assertQuery("SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%'")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
+            assertQuery("SELECT count(distinct substring(s,1,1)) FROM test where s like '%abc%'")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
 
             // where clause, distinct expression 3, function name clash with column name
             expected = """
@@ -6455,8 +7073,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: test
                     """;
-            assertPlanNoLeakCheck("SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%' and substring != null", expected);
-            assertPlanNoLeakCheck("SELECT count(distinct substring(s,1,1)) FROM test where s like '%abc%' and substring != null", expected);
+            assertQuery("SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%' and substring != null")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
+            assertQuery("SELECT count(distinct substring(s,1,1)) FROM test where s like '%abc%' and substring != null")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
 
             // where clause, distinct expression 3
             expected = """
@@ -6469,8 +7091,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: test
                     """;
-            assertPlanNoLeakCheck("SELECT count_distinct(x+1) FROM test where x > 5", expected);
-            assertPlanNoLeakCheck("SELECT count(distinct x+1) FROM test where x > 5", expected);
+            assertQuery("SELECT count_distinct(x+1) FROM test where x > 5")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
+            assertQuery("SELECT count(distinct x+1) FROM test where x > 5")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
 
             // where clause, distinct expression, col alias
             expected = """
@@ -6483,8 +7109,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: test
                     """;
-            assertPlanNoLeakCheck("SELECT count_distinct(x+1) cnt_dst FROM test where x > 5", expected);
-            assertPlanNoLeakCheck("SELECT count(distinct x+1) cnt_dst FROM test where x > 5", expected);
+            assertQuery("SELECT count_distinct(x+1) cnt_dst FROM test where x > 5")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
+            assertQuery("SELECT count(distinct x+1) cnt_dst FROM test where x > 5")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
 
             expected = """
                     cnt_dst
@@ -6512,8 +7142,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: test
                     """;
-            assertPlanNoLeakCheck("SELECT count_distinct(x+1) FROM test tab where x > 5", expected);
-            assertPlanNoLeakCheck("SELECT count(distinct x+1) FROM test tab where x > 5", expected);
+            assertQuery("SELECT count_distinct(x+1) FROM test tab where x > 5")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
+            assertQuery("SELECT count(distinct x+1) FROM test tab where x > 5")
+                    .noLeakCheck()
+                    .assertsPlan(expected);
 
             expected = """
                     count_distinct
@@ -6535,7 +7169,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleBy() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h align to first observation", """
+            assertQuery("select first(i) from a sample by 1h align to first observation")
+                    .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: none
                       values: [first(i)]
@@ -6544,7 +7181,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select first(i) from a sample by 1h align to calendar", """
+            assertQuery("select first(i) from a sample by 1h align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [ts]
@@ -6565,7 +7204,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
-            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 sample by 2m align to first observation order by x1.a", """
+            assertQuery("select x1.a, sum(x1.b) from x x1 sample by 2m align to first observation order by x1.a")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [a]
                         Sample By
@@ -6576,7 +7217,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m order by \"x1.a\"", """
+            assertQuery("select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m order by \"x1.a\"")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [a]
@@ -6590,7 +7233,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by \"x1.a\"", """
+            assertQuery("select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by \"x1.a\"")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [a]
@@ -6604,7 +7249,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by 10*\"x1.a\"", """
+            assertQuery("select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by 10*\"x1.a\"")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [column]
@@ -6618,7 +7265,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc", """
+            assertQuery("select x1.a, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [a desc]
@@ -6632,7 +7281,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select 10*x1.a as a10, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by a10", """
+            assertQuery("select 10*x1.a as a10, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by a10")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [a10]
@@ -6646,7 +7297,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
+            assertQuery("select x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [column desc, a0]
@@ -6661,7 +7314,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b), x1.ts from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
+            assertQuery("select x1.a as a0, sum(x1.b), x1.ts from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [column desc, a0]
@@ -6676,7 +7331,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc", """
+            assertQuery("select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [column desc, a0, berlin_ts desc]
@@ -6696,7 +7353,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByDuplicateKeys() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table x ( a double, b symbol, k timestamp, ts timestamp) timestamp(ts);", "select b, sum(a), k k1, k from x sample by 3h", """
+            assertQuery("select b, sum(a), k k1, k from x sample by 3h")
+                    .ddl("create table x ( a double, b symbol, k timestamp, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [ts]
@@ -6711,7 +7371,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select b, sum(a), k, k k1 from x sample by 3h", """
+            assertQuery("select b, sum(a), k, k k1 from x sample by 3h")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [ts]
@@ -6731,7 +7393,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h fill(linear) align to first observation", """
+            assertQuery("select first(i) from a sample by 1h fill(linear) align to first observation")
+                    .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: linear
                       values: [first(i)]
@@ -6740,7 +7405,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(linear) align to calendar", """
+            assertQuery("select first(i) from a sample by 1h fill(linear) align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: linear
                       values: [first(i)]
@@ -6754,7 +7421,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillNull() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h fill(null) align to first observation", """
+            assertQuery("select first(i) from a sample by 1h fill(null) align to first observation")
+                    .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: null
                       values: [first(i)]
@@ -6763,7 +7433,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(null) align to calendar with offset '10:00'", """
+            assertQuery("select first(i) from a sample by 1h fill(null) align to calendar with offset '10:00'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
@@ -6781,7 +7453,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             // with rewrite
-            assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(null) align to calendar", """
+            assertQuery("select first(i) from a sample by 1h fill(null) align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
@@ -6803,7 +7477,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillPrevKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, first(i) from a sample by 1h fill(prev) align to first observation", """
+            assertQuery("select s, first(i) from a sample by 1h fill(prev) align to first observation")
+                    .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: prev
                       keys: [s]
@@ -6813,7 +7490,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select s, first(i) from a sample by 1h fill(prev) align to calendar", """
+            assertQuery("select s, first(i) from a sample by 1h fill(prev) align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
@@ -6832,7 +7511,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             // PREV(col_ref) cross-column: fill aggregate `a` with prev value of aggregate `s`.
             // Mirrors the FillRecordDispatchTest.testDoubleCrossColumnPrevToAggregate scenario.
-            assertPlanNoLeakCheck("create table b (i int, j int, k symbol, ts timestamp) timestamp(ts);", "select k, first(i) AS s, first(j) AS a from b sample by 1h fill(prev, prev(s)) align to calendar", """
+            assertQuery("select k, first(i) AS s, first(j) AS a from b sample by 1h fill(prev, prev(s)) align to calendar")
+                    .ddl("create table b (i int, j int, k symbol, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
@@ -6859,7 +7541,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillPrevNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a (i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h fill(prev) align to first observation", """
+            assertQuery("select first(i) from a sample by 1h fill(prev) align to first observation")
+                    .ddl("create table a (i int, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: prev
                       values: [first(i)]
@@ -6868,7 +7553,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(prev) align to calendar", """
+            assertQuery("select first(i) from a sample by 1h fill(prev) align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
@@ -6885,7 +7572,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select first(a1.i) from a a1 asof join a a2 sample by 1h fill(prev) align to calendar", """
+            assertQuery("select first(a1.i) from a a1 asof join a a2 sample by 1h fill(prev) align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
@@ -6907,7 +7596,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             // PREV(col_ref) cross-column on a non-keyed query: fill aggregate `b`
             // with prev value of aggregate `s`.
-            assertPlanNoLeakCheck("create table c (i int, j int, ts timestamp) timestamp(ts);", "select first(i) AS s, first(j) AS b from c sample by 1h fill(prev, prev(s)) align to calendar", """
+            assertQuery("select first(i) AS s, first(j) AS b from c sample by 1h fill(prev, prev(s)) align to calendar")
+                    .ddl("create table c (i int, j int, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
@@ -6934,7 +7626,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillValueKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, s symbol, ts timestamp) timestamp(ts);", "select s, first(i) from a sample by 1h fill(1) align to first observation", """
+            assertQuery("select s, first(i) from a sample by 1h fill(1) align to first observation")
+                    .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: value
                       keys: [s]
@@ -6944,7 +7639,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select s, first(i) from a sample by 1h fill(1) align to calendar", """
+            assertQuery("select s, first(i) from a sample by 1h fill(1) align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
@@ -6966,7 +7663,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillValueNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a (i int, ts timestamp) timestamp(ts);", "select first(i) from a sample by 1h fill(1) align to first observation", """
+            assertQuery("select first(i) from a sample by 1h fill(1) align to first observation")
+                    .ddl("create table a (i int, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: value
                       values: [first(i)]
@@ -6975,7 +7675,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(1) align to calendar with offset '10:00'", """
+            assertQuery("select first(i) from a sample by 1h fill(1) align to calendar with offset '10:00'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
@@ -6993,7 +7695,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             // with rewrite
-            assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(1) align to calendar", """
+            assertQuery("select first(i) from a sample by 1h fill(1) align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
@@ -7023,7 +7727,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // separation visible: 'tag' lives in VirtualRecord.functions, while
         // the inner Async Group By values: lists only the aggregates.
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a (i int, j int, ts timestamp) timestamp(ts);", "select ts, 'tag' as c, first(i) as a, sum(j) as b from a sample by 1h fill(-1, 99) align to calendar", """
+            assertQuery("select ts, 'tag' as c, first(i) as a, sum(j) as b from a sample by 1h fill(-1, 99) align to calendar")
+                    .ddl("create table a (i int, j int, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [ts,'tag',a,b]
                         Sample By Fill
@@ -7041,7 +7748,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select ts, 'tag' as c, first(i) as a, sum(j) as b from a sample by 1h fill(prev) align to calendar", """
+            assertQuery("select ts, 'tag' as c, first(i) as a, sum(j) as b from a sample by 1h fill(prev) align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: [ts,'tag',a,b]
                         Sample By Fill
@@ -7064,7 +7773,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFirstLast() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( l long, s symbol, sym symbol index, i int, ts timestamp) timestamp(ts) partition by day;", "select sym, first(i), last(s), first(l) " + "from a " + "where sym in ('S') " + "and   ts > 0::timestamp and ts < 100::timestamp " + "sample by 1h align to first observation", """
+            assertQuery("select sym, first(i), last(s), first(l) " + "from a " + "where sym in ('S') " + "and   ts > 0::timestamp and ts < 100::timestamp " + "sample by 1h align to first observation")
+                    .ddl("create table a ( l long, s symbol, sym symbol index, i int, ts timestamp) timestamp(ts) partition by day;")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SampleByFirstLast
                       keys: [sym]
                       values: [first(i), last(s), first(l)]
@@ -7075,7 +7787,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000099Z")]
                     """);
 
-            assertPlanNoLeakCheck("select sym, first(i), last(s), first(l) " + "from a " + "where sym in ('S') " + "and   ts > 0::timestamp and ts < 100::timestamp " + "sample by 1h align to calendar", """
+            assertQuery("select sym, first(i), last(s), first(l) " + "from a " + "where sym in ('S') " + "and   ts > 0::timestamp and ts < 100::timestamp " + "sample by 1h align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [ts]
@@ -7096,7 +7810,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
-            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to first observation order by x1.a", """
+            assertQuery("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to first observation order by x1.a")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [a]
                         Sample By
@@ -7112,7 +7828,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m order by x1.a", """
+            assertQuery("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m order by x1.a")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [a]
@@ -7129,7 +7847,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by x1.a", """
+            assertQuery("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by x1.a")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [a]
@@ -7149,7 +7869,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a")
                     .fails(116, "Ambiguous column [name=a]");
 
-            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc", """
+            assertQuery("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [a desc]
@@ -7166,7 +7888,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select 10*x1.a as a10, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by a10", """
+            assertQuery("select 10*x1.a as a10, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by a10")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [a10]
@@ -7183,7 +7907,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
+            assertQuery("select x1.a as a0, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [column desc, a0]
@@ -7200,7 +7926,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b), x1.ts from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
+            assertQuery("select x1.a as a0, sum(x1.b), x1.ts from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [column desc, a0]
@@ -7217,7 +7945,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc", """
+            assertQuery("select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [column desc, a0, berlin_ts desc]
@@ -7239,7 +7969,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed0() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, i, first(i) from a sample by 1h align to first observation", """
+            assertQuery("select l, i, first(i) from a sample by 1h align to first observation")
+                    .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       keys: [l,i]
                       values: [first(i)]
@@ -7248,7 +7981,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select l, i, first(i) from a sample by 1h align to calendar", """
+            assertQuery("select l, i, first(i) from a sample by 1h align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [ts]
@@ -7267,7 +8002,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed1() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, i, first(i) from a sample by 1h align to first observation", """
+            assertQuery("select l, i, first(i) from a sample by 1h align to first observation")
+                    .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       keys: [l,i]
                       values: [first(i)]
@@ -7276,7 +8014,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select l, i, first(i) from a sample by 1h align to calendar", """
+            assertQuery("select l, i, first(i) from a sample by 1h align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [ts]
@@ -7295,7 +8035,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed2() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, first(i) from a sample by 1h fill(null) align to first observation", """
+            assertQuery("select l, first(i) from a sample by 1h fill(null) align to first observation")
+                    .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: null
                       keys: [l]
@@ -7305,7 +8048,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select l, first(i) from a sample by 1h fill(null) align to calendar", """
+            assertQuery("select l, first(i) from a sample by 1h fill(null) align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
@@ -7327,7 +8072,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed3() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a (i int, l long, ts timestamp) timestamp(ts);", "select l, first(i) from a sample by 1d fill(linear) align to first observation", """
+            assertQuery("select l, first(i) from a sample by 1d fill(linear) align to first observation")
+                    .ddl("create table a (i int, l long, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: linear
                       keys: [l]
@@ -7337,7 +8085,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select l, first(i) from a sample by 1d fill(linear) align to calendar", """
+            assertQuery("select l, first(i) from a sample by 1d fill(linear) align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: linear
                       keys: [l]
@@ -7352,7 +8102,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed3MultiKeyLinear() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a (i int, l long, m long, ts timestamp) timestamp(ts);", "select l, m, first(i) from a sample by 1d fill(linear) align to first observation", """
+            assertQuery("select l, m, first(i) from a sample by 1d fill(linear) align to first observation")
+                    .ddl("create table a (i int, l long, m long, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: linear
                       keys: [l,m]
@@ -7362,7 +8115,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select l, m, first(i) from a sample by 1d fill(linear) align to calendar", """
+            assertQuery("select l, m, first(i) from a sample by 1d fill(linear) align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: linear
                       keys: [l,m]
@@ -7377,7 +8132,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed4() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, first(i), last(i) from a sample by 1d fill(1,2) align to first observation", """
+            assertQuery("select l, first(i), last(i) from a sample by 1d fill(1,2) align to first observation")
+                    .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: value
                       keys: [l]
@@ -7387,7 +8145,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select l, first(i), last(i) from a sample by 1d fill(1,2) align to calendar", """
+            assertQuery("select l, first(i), last(i) from a sample by 1d fill(1,2) align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Sample By Fill
                           stride: '1d'
@@ -7409,7 +8169,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed5() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to first observation", """
+            assertQuery("select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to first observation")
+                    .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sample By
                       fill: value
                       keys: [l]
@@ -7419,7 +8182,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to calendar", """
+            assertQuery("select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to calendar")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Sample By Fill
                           stride: '1d'
@@ -7443,7 +8208,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
-            assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to first observation order by a", """
+            assertQuery("select a, sum(b) from x sample by 2m align to first observation order by a")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [a]
                         Sample By
@@ -7454,7 +8221,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m order by a", """
+            assertQuery("select a, sum(b) from x sample by 2m order by a")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [a]
@@ -7468,7 +8237,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a", """
+            assertQuery("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [a]
@@ -7482,7 +8253,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a", """
+            assertQuery("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [column]
@@ -7496,7 +8269,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc", """
+            assertQuery("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [a desc]
@@ -7510,7 +8285,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select 10*a as a10, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a10", """
+            assertQuery("select 10*a as a10, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a10")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [a10]
@@ -7524,7 +8301,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select a as a0, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc", """
+            assertQuery("select a as a0, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [column desc, a0]
@@ -7539,7 +8318,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select a as a0, sum(b), ts from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc", """
+            assertQuery("select a as a0, sum(b), ts from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [column desc, a0]
@@ -7554,7 +8335,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select ts, to_utc(ts, 'Europe/Berlin') berlin_ts, a as a0, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 3 asc, berlin_ts desc", """
+            assertQuery("select ts, to_utc(ts, 'Europe/Berlin') berlin_ts, a as a0, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 3 asc, berlin_ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Encode sort light
                           keys: [column desc, a0, berlin_ts desc]
@@ -7577,7 +8360,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
-            assertPlanNoLeakCheck("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc", """
+            assertQuery("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [berlin_ts desc]
                         VirtualRecord
@@ -7592,7 +8377,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by 3 asc", """
+            assertQuery("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by 3 asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [berlin_ts]
                         VirtualRecord
@@ -7607,7 +8394,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by to_timezone(ts, 'Europe/Berlin')", """
+            assertQuery("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by to_timezone(ts, 'Europe/Berlin')")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [berlin_ts]
                         VirtualRecord
@@ -7622,7 +8411,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select a, timestamp_floor('M', ts) month_ts, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc, a asc, month_ts asc", """
+            assertQuery("select a, timestamp_floor('M', ts) month_ts, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc, a asc, month_ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [berlin_ts desc, a, month_ts]
                         VirtualRecord
@@ -7641,7 +8432,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelect0() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a", """
+        assertQuery("select * from a")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Frame forward scan on: a
@@ -7650,7 +8443,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectConcat() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck("select concat('a', 'b', rnd_str('c', 'd', 'e'))", """
+        assertMemoryLeak(() -> assertQuery("select concat('a', 'b', rnd_str('c', 'd', 'e'))")
+                .noLeakCheck()
+                .assertsPlan("""
                 VirtualRecord
                   functions: [concat(['a','b',rnd_str([c,d,e])])]
                     long_sequence count: 1
@@ -7659,7 +8454,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount1() throws Exception {
-        assertPlan("create table a ( i int, d double)", "select count(*) from a", """
+        assertQuery("select count(*) from a")
+                .ddl("create table a ( i int, d double)")
+                .assertsPlan("""
                 Count
                     PageFrame
                         Row forward scan
@@ -7669,7 +8466,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount10() throws Exception {
-        assertPlan("create table a ( i int, s symbol index)", "select count(*) from (select 1 from a limit 1) ", """
+        assertQuery("select count(*) from (select 1 from a limit 1) ")
+                .ddl("create table a ( i int, s symbol index)")
+                .assertsPlan("""
                 Count
                     Limit value: 1 skip-rows: 0 take-rows: 0
                         VirtualRecord
@@ -7682,7 +8481,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should return count on first table instead
     public void testSelectCount11() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)", "select count(*) from (select * from a lt join a b) ", """
+        assertQuery("select count(*) from (select * from a lt join a b) ")
+                .ddl("create table a ( i int, ts timestamp ) timestamp(ts)")
+                .assertsPlan("""
                 Count
                     SelectedRecord
                         Lt Join Fast
@@ -7697,7 +8498,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should return count on first table instead
     public void testSelectCount12() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)", "select count(*) from (select * from a asof join a b) ", """
+        assertQuery("select count(*) from (select * from a asof join a b) ")
+                .ddl("create table a ( i int, ts timestamp ) timestamp(ts)")
+                .assertsPlan("""
                 Count
                     SelectedRecord
                         AsOf Join Fast
@@ -7712,7 +8515,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should return count(first table)*count(second_table) instead
     public void testSelectCount13() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)", "select count(*) from (select * from a cross join a b) ", """
+        assertQuery("select count(*) from (select * from a cross join a b) ")
+                .ddl("create table a ( i int, ts timestamp ) timestamp(ts)")
+                .assertsPlan("""
                 Count
                     SelectedRecord
                         Cross Join
@@ -7727,7 +8532,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount14() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)", "select * from a where s = 'S1' order by ts desc ", """
+        assertQuery("select * from a where s = 'S1' order by ts desc ")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 DeferredSingleSymbolFilterPageFrame
                     Index backward scan on: s deferred: true
                       filter: s='S1'
@@ -7737,7 +8544,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount15() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)", "select * from a where s = 'S1' order by ts asc", """
+        assertQuery("select * from a where s = 'S1' order by ts asc")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 DeferredSingleSymbolFilterPageFrame
                     Index forward scan on: s deferred: true
                       filter: s='S1'
@@ -7747,7 +8556,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount16() throws Exception {
-        assertPlan("create table a (i long, j long)", "select count(*) from (select i, j from a group by i, j)", """
+        assertQuery("select count(*) from (select i, j from a group by i, j)")
+                .ddl("create table a (i long, j long)")
+                .assertsPlan("""
                 Count
                     Async Group By workers: 1
                       keys: [i,j]
@@ -7760,7 +8571,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount17() throws Exception {
-        assertPlan("create table a (i long, j long, d double)", "select count(*) from (select i, j from a where d > 42 group by i, j)", """
+        assertQuery("select count(*) from (select i, j from a where d > 42 group by i, j)")
+                .ddl("create table a (i long, j long, d double)")
+                .assertsPlan("""
                 Count
                     Async JIT Group By workers: 1
                       keys: [i,j]
@@ -7773,7 +8586,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount2() throws Exception {
-        assertPlan("create table a ( i int, d double)", "select count() from a", """
+        assertQuery("select count() from a")
+                .ddl("create table a ( i int, d double)")
+                .assertsPlan("""
                 Count
                     PageFrame
                         Row forward scan
@@ -7783,7 +8598,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount3() throws Exception {
-        assertPlan("create table a ( i int, d double)", "select count(2) from a", """
+        assertQuery("select count(2) from a")
+                .ddl("create table a ( i int, d double)")
+                .assertsPlan("""
                 Count
                     PageFrame
                         Row forward scan
@@ -7793,7 +8610,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount4() throws Exception {
-        assertPlan("create table a ( i int, s symbol index)", "select count(*) from a where s = 'S1'", """
+        assertQuery("select count(*) from a where s = 'S1'")
+                .ddl("create table a ( i int, s symbol index)")
+                .assertsPlan("""
                 Count
                     DeferredSingleSymbolFilterPageFrame
                         Index forward scan on: s deferred: true
@@ -7804,7 +8623,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount5() throws Exception {
-        assertPlan("create table a ( i int, s symbol index)", "select count(*) from (select * from a union all select * from a) ", """
+        assertQuery("select count(*) from (select * from a union all select * from a) ")
+                .ddl("create table a ( i int, s symbol index)")
+                .assertsPlan("""
                 Count
                     Union All
                         PageFrame
@@ -7818,7 +8639,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount6() throws Exception {
-        assertPlan("create table a ( i int, s symbol index)", "select count(*) from (select * from a union select * from a) ", """
+        assertQuery("select count(*) from (select * from a union select * from a) ")
+                .ddl("create table a ( i int, s symbol index)")
+                .assertsPlan("""
                 Count
                     Union
                         PageFrame
@@ -7832,7 +8655,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount7() throws Exception {
-        assertPlan("create table a ( i int, s symbol index)", "select count(*) from (select * from a intersect select * from a) ", """
+        assertQuery("select count(*) from (select * from a intersect select * from a) ")
+                .ddl("create table a ( i int, s symbol index)")
+                .assertsPlan("""
                 Count
                     Intersect
                         PageFrame
@@ -7847,7 +8672,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount8() throws Exception {
-        assertPlan("create table a ( i int, s symbol index)", "select count(*) from a where 1=0 ", """
+        assertQuery("select count(*) from a where 1=0 ")
+                .ddl("create table a ( i int, s symbol index)")
+                .assertsPlan("""
                 Count
                     Empty table
                 """);
@@ -7855,7 +8682,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCount9() throws Exception {
-        assertPlan("create table a ( i int, s symbol index)", "select count(*) from a where 1=1 ", """
+        assertQuery("select count(*) from a where 1=1 ")
+                .ddl("create table a ( i int, s symbol index)")
+                .assertsPlan("""
                 Count
                     PageFrame
                         Row forward scan
@@ -7872,8 +8701,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab (s symbol, ts timestamp);", "select count_distinct(s) from tab", expected);
-        assertPlan("select count(distinct s) from tab", expected);
+        assertQuery("select count_distinct(s) from tab")
+                .ddl("create table tab (s symbol, ts timestamp);")
+                .assertsPlan(expected);
+        assertQuery("select count(distinct s) from tab")
+                .assertsPlan(expected);
     }
 
     @Test
@@ -7885,8 +8717,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab (s symbol index, ts timestamp);", "select count_distinct(s) from tab", expected);
-        assertPlan("select count(distinct s) from tab", expected);
+        assertQuery("select count_distinct(s) from tab")
+                .ddl("create table tab (s symbol index, ts timestamp);")
+                .assertsPlan(expected);
+        assertQuery("select count(distinct s) from tab")
+                .assertsPlan(expected);
     }
 
     @Test
@@ -7900,8 +8735,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Row forward scan
                             Frame forward scan on: tab
                 """;
-        assertPlan("create table tab ( s string, l long )", "select count_distinct(l) from tab", expected);
-        assertPlan("select count(distinct l) from tab", expected);
+        assertQuery("select count_distinct(l) from tab")
+                .ddl("create table tab ( s string, l long )")
+                .assertsPlan(expected);
+        assertQuery("select count(distinct l) from tab")
+                .assertsPlan(expected);
     }
 
     @Test
@@ -7915,8 +8753,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab ( s string, i int )", "select s, count_distinct(i) from tab", expected);
-        assertPlan("select s, count(distinct i) from tab", expected);
+        assertQuery("select s, count_distinct(i) from tab")
+                .ddl("create table tab ( s string, i int )")
+                .assertsPlan(expected);
+        assertQuery("select s, count(distinct i) from tab")
+                .assertsPlan(expected);
     }
 
     @Test
@@ -7930,8 +8771,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab ( s string, ip ipv4 )", "select s, count_distinct(ip) from tab", expected);
-        assertPlan("select s, count(distinct ip) from tab", expected);
+        assertQuery("select s, count_distinct(ip) from tab")
+                .ddl("create table tab ( s string, ip ipv4 )")
+                .assertsPlan(expected);
+        assertQuery("select s, count(distinct ip) from tab")
+                .assertsPlan(expected);
     }
 
     @Test
@@ -7945,8 +8789,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab ( s string, l long )", "select s, count_distinct(l) from tab", expected);
-        assertPlan("select s, count(distinct l) from tab", expected);
+        assertQuery("select s, count_distinct(l) from tab")
+                .ddl("create table tab ( s string, l long )")
+                .assertsPlan(expected);
+        assertQuery("select s, count(distinct l) from tab")
+                .assertsPlan(expected);
     }
 
     @Test
@@ -7960,8 +8807,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab (s symbol, ts timestamp);", "select count_distinct(s) from tab where s = 'foobar'", expected);
-        assertPlan("select count(distinct s) from tab where s = 'foobar'", expected);
+        assertQuery("select count_distinct(s) from tab where s = 'foobar'")
+                .ddl("create table tab (s symbol, ts timestamp);")
+                .assertsPlan(expected);
+        assertQuery("select count(distinct s) from tab where s = 'foobar'")
+                .assertsPlan(expected);
     }
 
     @Test
@@ -7975,13 +8825,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab (s symbol, ts timestamp);", "select count_distinct(s), first(s) from tab", expected);
-        assertPlan("select count(distinct s), first(s) from tab", expected);
+        assertQuery("select count_distinct(s), first(s) from tab")
+                .ddl("create table tab (s symbol, ts timestamp);")
+                .assertsPlan(expected);
+        assertQuery("select count(distinct s), first(s) from tab")
+                .assertsPlan(expected);
     }
 
     @Test
     public void testSelectDesc() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts desc", """
+        assertQuery("select * from a order by ts desc")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 PageFrame
                     Row backward scan
                     Frame backward scan on: a
@@ -7990,7 +8845,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDesc2() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) ;", "select * from a order by ts desc", """
+        assertQuery("select * from a order by ts desc")
+                .ddl("create table a ( i int, ts timestamp) ;")
+                .assertsPlan("""
                 Encode sort light
                   keys: [ts desc]
                     PageFrame
@@ -8001,7 +8858,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDescMaterialized() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) ;", "select * from (select i, ts from a union all select 1, null ) order by ts desc", """
+        assertQuery("select * from (select i, ts from a union all select 1, null ) order by ts desc")
+                .ddl("create table a ( i int, ts timestamp) ;")
+                .assertsPlan("""
                 Encode sort
                   keys: [ts desc]
                     Union All
@@ -8016,7 +8875,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDistinct0() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select distinct l, ts from tab", """
+        assertQuery("select distinct l, ts from tab")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [l,ts]
                   filter: null
@@ -8029,7 +8890,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Ignore
     @Test // FIXME: somehow only ts gets included, pg returns record type
     public void testSelectDistinct0a() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select distinct (l, ts) from tab", """
+        assertQuery("select distinct (l, ts) from tab")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 DistinctTimeSeries
                   keys: l,ts
                     PageFrame
@@ -8040,7 +8903,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDistinct1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select distinct(l) from tab", """
+        assertQuery("select distinct(l) from tab")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [l]
                   filter: null
@@ -8052,7 +8917,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDistinct2() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp);", "select distinct(s) from tab", """
+        assertQuery("select distinct(s) from tab")
+                .ddl("create table tab ( s symbol, ts timestamp);")
+                .assertsPlan("""
                 GroupBy vectorized: true workers: 1
                   keys: [s]
                   values: [count(*)]
@@ -8064,7 +8931,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDistinct3() throws Exception {
-        assertPlan("create table tab ( s symbol index, ts timestamp);", "select distinct(s) from tab", """
+        assertQuery("select distinct(s) from tab")
+                .ddl("create table tab ( s symbol index, ts timestamp);")
+                .assertsPlan("""
                 GroupBy vectorized: true workers: 1
                   keys: [s]
                   values: [count(*)]
@@ -8076,7 +8945,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDistinct4() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select distinct ts, l  from tab", """
+        assertQuery("select distinct ts, l  from tab")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Group By workers: 1
                   keys: [ts,l]
                   filter: null
@@ -8091,7 +8962,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t ( d double)");
 
-            assertPlanNoLeakCheck("select * from t where d in (5, -1, 1, null)", """
+            assertQuery("select * from t where d in (5, -1, 1, null)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Filter workers: 1
                       filter: d in [-1.0,1.0,5.0,NaN]
                         PageFrame
@@ -8099,7 +8972,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: t
                     """);
 
-            assertPlanNoLeakCheck("select * from t where d not in (5, -1, 1, null)", """
+            assertQuery("select * from t where d not in (5, -1, 1, null)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Filter workers: 1
                       filter: not (d in [-1.0,1.0,5.0,NaN])
                         PageFrame
@@ -8111,7 +8986,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // there's no interval scan because sysdate is evaluated per-row
     public void testSelectDynamicTsInterval1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > sysdate()", """
+        assertQuery("select * from tab where ts > sysdate()")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: sysdate()<ts
                     PageFrame
@@ -8122,7 +8999,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // there's no interval scan because systimestamp is evaluated per-row
     public void testSelectDynamicTsInterval2() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > systimestamp()", """
+        assertQuery("select * from tab where ts > systimestamp()")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: systimestamp()<ts
                     PageFrame
@@ -8133,7 +9012,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDynamicTsInterval3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > now()", """
+        assertQuery("select * from tab where ts > now()")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -8143,7 +9024,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDynamicTsInterval4() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > dateadd('d', -1, now()) and ts < now()", """
+        assertQuery("select * from tab where ts > dateadd('d', -1, now()) and ts < now()")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -8153,7 +9036,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDynamicTsInterval5() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > '2022-01-01' and ts > now()", """
+        assertQuery("select * from tab where ts > '2022-01-01' and ts > now()")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -8163,7 +9048,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectDynamicTsInterval6() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > '2022-01-01' and ts > now() order by ts desc", """
+        assertQuery("select * from tab where ts > '2022-01-01' and ts > now() order by ts desc")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 PageFrame
                     Row backward scan
                     Interval backward scan on: tab
@@ -8173,37 +9060,51 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectFromAllTables() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck("select * from all_tables()", "all_tables()\n"));
+        assertMemoryLeak(() -> assertQuery("select * from all_tables()")
+                .noLeakCheck()
+                .assertsPlan("all_tables()\n"));
     }
 
     @Test
     public void testSelectFromMemoryMetrics() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck("select * from memory_metrics()", "memory_metrics\n"));
+        assertMemoryLeak(() -> assertQuery("select * from memory_metrics()")
+                .noLeakCheck()
+                .assertsPlan("memory_metrics\n"));
     }
 
     @Test
     public void testSelectFromReaderPool() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck("select * from reader_pool()", "reader_pool\n"));
+        assertMemoryLeak(() -> assertQuery("select * from reader_pool()")
+                .noLeakCheck()
+                .assertsPlan("reader_pool\n"));
     }
 
     @Test
     public void testSelectFromTableColumns() throws Exception {
-        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp)", "select * from table_columns('tab')", "show_columns of: tab\n");
+        assertQuery("select * from table_columns('tab')")
+                .ddl("create table tab ( s string, sy symbol, i int, ts timestamp)")
+                .assertsPlan("show_columns of: tab\n");
     }
 
     @Test
     public void testSelectFromTablePartitions() throws Exception {
-        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp)", "select * from table_partitions('tab')", "show_partitions of: tab\n");
+        assertQuery("select * from table_partitions('tab')")
+                .ddl("create table tab ( s string, sy symbol, i int, ts timestamp)")
+                .assertsPlan("show_partitions of: tab\n");
     }
 
     @Test
     public void testSelectFromTableWriterMetrics() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck("select * from table_writer_metrics()", "table_writer_metrics\n"));
+        assertMemoryLeak(() -> assertQuery("select * from table_writer_metrics()")
+                .noLeakCheck()
+                .assertsPlan("table_writer_metrics\n"));
     }
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsAscNotPartitioned() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
+        assertQuery("select * from a where s = 'S1' order by ts desc limit 1 ")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s deferred: true
@@ -8214,7 +9115,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsAscPartitioned() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
+        assertQuery("select * from a where s = 'S1' order by ts desc limit 1 ")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;")
+                .assertsPlan("""
                 Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s deferred: true
@@ -8225,7 +9128,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsDescNotPartitioned() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
+        assertQuery("select * from a where s = 'S1' order by ts desc limit 1 ")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s deferred: true
@@ -8236,7 +9141,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsDescPartitioned() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
+        assertQuery("select * from a where s = 'S1' order by ts desc limit 1 ")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;")
+                .assertsPlan("""
                 Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s deferred: true
@@ -8280,7 +9187,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T23:59:59.999999Z")]
                     """;
 
-            assertPlanNoLeakCheck(queryDesc, expectedPlan.replace("#ORDER#", " desc"));
+            assertQuery(queryDesc)
+                    .noLeakCheck()
+                    .assertsPlan(expectedPlan.replace("#ORDER#", " desc"));
             assertQuery(queryDesc)
                     .noLeakCheck()
                     .expectSize()
@@ -8293,7 +9202,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             // order by asc
             String queryAsc = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
-            assertPlanNoLeakCheck(queryAsc, expectedPlan.replace("#ORDER#", ""));
+            assertQuery(queryAsc)
+                    .noLeakCheck()
+                    .assertsPlan(expectedPlan.replace("#ORDER#", ""));
             assertQuery(queryAsc)
                     .noLeakCheck()
                     .expectSize()
@@ -8308,13 +9219,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01c() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1", "Limit value: 1 skip-rows-max: 0 take-rows-max: 1\n" + "    FilterOnValues symbolOrder: desc\n" + "        Cursor-order scan\n" + //actual order is S2, S1
+        assertQuery("select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("Limit value: 1 skip-rows-max: 0 take-rows-max: 1\n" + "    FilterOnValues symbolOrder: desc\n" + "        Cursor-order scan\n" + //actual order is S2, S1
                 "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S2'\n" + "              filter: length(s)=2\n" + "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S1'\n" + "              filter: length(s)=2\n" + "        Frame forward scan on: a\n");
     }
 
     @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
     public void testSelectIndexedSymbols02() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = $1 or s = $2 order by ts desc limit 1", """
+        assertQuery("select * from a where s = $1 or s = $2 order by ts desc limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: (s=$0::string or s=$1::string)
@@ -8326,7 +9241,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
     public void testSelectIndexedSymbols03() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1", """
+        assertQuery("select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: (s='S1' or s='S2')
@@ -8338,23 +9255,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols04() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1",
-                """
+        assertQuery("select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                         Sort light lo: 1
                           keys: [ts desc]
                             Empty table
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testSelectIndexedSymbols05() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1",
-                """
+        assertQuery("select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                         Sort light lo: 1
                           keys: [ts desc]
                             FilterOnSubQuery
@@ -8366,16 +9280,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                       functions: ['S2']
                                         long_sequence count: 1
                                 Frame backward scan on: a
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testSelectIndexedSymbols05a() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
-                "select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1",
-                """
+        assertQuery("select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                         Sort light lo: 1
                           keys: [ts desc]
                             FilterOnSubQuery
@@ -8388,38 +9300,34 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                       functions: ['S2']
                                         long_sequence count: 1
                                 Frame backward scan on: a
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testSelectIndexedSymbols06() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index) ;",
-                "select * from a where s = 'S1' order by s asc limit 10",
-                """
+        assertQuery("select * from a where s = 'S1' order by s asc limit 10")
+                .ddl("create table a ( s symbol index) ;")
+                .assertsPlan("""
                         Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: s deferred: true
                                   filter: s='S1'
                                 Frame forward scan on: a
-                        """
-        );
+                        """);
     }
 
     @Test
     public void testSelectIndexedSymbols06a() throws Exception {
-        assertPlan(
-                "create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day",
-                "select * from a where s = 'S1' order by s asc limit 10", """
+        assertQuery("select * from a where s = 'S1' order by s asc limit 10")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day")
+                .assertsPlan("""
                         Sort light lo: 10
                           keys: [s]
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: s deferred: true
                                   filter: s='S1'
                                 Frame forward scan on: a
-                        """
-        );
+                        """);
     }
 
     @Test
@@ -8433,8 +9341,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Cursor-order scan
                         Frame forward scan on: a
                     """;
-            assertPlanNoLeakCheck("select * from a where s != 'S1' and length(s) = 2 order by s ", expectedPlan.replace("#ORDER#", "asc"));
-            assertPlanNoLeakCheck("select * from a where s != 'S1' and length(s) = 2 order by s desc", expectedPlan.replace("#ORDER#", "desc"));
+            assertQuery("select * from a where s != 'S1' and length(s) = 2 order by s ")
+                    .noLeakCheck()
+                    .assertsPlan(expectedPlan.replace("#ORDER#", "asc"));
+            assertQuery("select * from a where s != 'S1' and length(s) = 2 order by s desc")
+                    .noLeakCheck()
+                    .assertsPlan(expectedPlan.replace("#ORDER#", "desc"));
         });
     }
 
@@ -8453,9 +9365,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           intervals: [("2023-03-15T00:00:00.000000Z","2023-03-15T23:59:59.999999Z")]
                     """;
 
-            assertPlanNoLeakCheck(query.replace("#ORDER#", "asc"), expectedPlan.replace("#ORDER#", "asc"));
+            assertQuery(query.replace("#ORDER#", "asc"))
+                    .noLeakCheck()
+                    .assertsPlan(expectedPlan.replace("#ORDER#", "asc"));
 
-            assertPlanNoLeakCheck(query.replace("#ORDER#", "desc"), expectedPlan.replace("#ORDER#", "desc"));
+            assertQuery(query.replace("#ORDER#", "desc"))
+                    .noLeakCheck()
+                    .assertsPlan(expectedPlan.replace("#ORDER#", "desc"));
         });
     }
 
@@ -8466,7 +9382,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("insert into a values ('a'), ('w'), ('b'), ('a'), (null);");
 
             String query = "select * from a where s != 'a' order by s";
-            assertPlanNoLeakCheck(query, """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     FilterOnExcludedValues symbolOrder: asc
                       symbolFilter: s not in ['a']
                         Cursor-order scan
@@ -8485,7 +9403,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "b\n" + "w\n");
 
             query = "select * from a where s != 'a' order by s desc";
-            assertPlanNoLeakCheck(query, """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     FilterOnExcludedValues symbolOrder: desc
                       symbolFilter: s not in ['a']
                         Cursor-order scan
@@ -8508,7 +9428,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             """/*null*/);
 
             query = "select * from a where s != null order by s desc";
-            assertPlanNoLeakCheck(query, """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     FilterOnExcludedValues symbolOrder: desc
                       symbolFilter: s not in [null]
                         Cursor-order scan
@@ -8535,7 +9457,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols09() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by year ;", "select * from a where ts >= 0::timestamp and ts < 100::timestamp order by s asc", """
+        assertQuery("select * from a where ts >= 0::timestamp and ts < 100::timestamp order by s asc")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by year ;")
+                .assertsPlan("""
                 SortedSymbolIndex
                     Index forward scan on: s
                       symbolOrder: asc
@@ -8546,7 +9470,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols10() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s in ('S1', 'S2') limit 1", """
+        assertQuery("select * from a where s in ('S1', 'S2') limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                     FilterOnValues
                         Table-order scan
@@ -8572,7 +9498,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( s symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck("select * from a where s in ('S1', 'S2') and length(s) = 2 limit 1", """
+            assertQuery("select * from a where s in ('S1', 'S2') and length(s) = 2 limit 1")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                         FilterOnValues
                             Table-order scan
@@ -8590,7 +9518,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
-            assertPlanNoLeakCheck("select * from a where s1 in ('S1', 'S2') and s2 in ('S2') limit 1", """
+            assertQuery("select * from a where s1 in ('S1', 'S2') and s2 in ('S2') limit 1")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                         PageFrame
                             Index forward scan on: s2
@@ -8605,7 +9535,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
-            assertPlanNoLeakCheck("select * from a where s1 in ('S1')  order by ts desc", """
+            assertQuery("select * from a where s1 in ('S1')  order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s1
                           filter: s1=1
@@ -8619,7 +9551,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
-            assertPlanNoLeakCheck("select * from a where s1 = 'S1'  order by ts desc", """
+            assertQuery("select * from a where s1 = 'S1'  order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s1
                           filter: s1=1
@@ -8633,7 +9567,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
-            assertPlanNoLeakCheck("select * from a " + "where s1 = 'S1' " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc", """
+            assertQuery("select * from a " + "where s1 = 'S1' " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s1
                           filter: s1=1
@@ -8648,7 +9584,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
-            assertPlanNoLeakCheck("select * from a " + "where s1 in ('S1', 'S2') " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc", """
+            assertQuery("select * from a " + "where s1 in ('S1', 'S2') " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     FilterOnValues symbolOrder: asc
                         Cursor-order scan
                             Index backward scan on: s1
@@ -8666,7 +9604,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
-            assertPlanNoLeakCheck("select * from a " + "where (s1 = 'S1' or s1 = 'S2') " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc", """
+            assertQuery("select * from a " + "where (s1 = 'S1' or s1 = 'S2') " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [s1, ts desc]
                         Async JIT Filter workers: 1
@@ -8685,7 +9625,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by hour;");
             execute("insert into a select 'S' || (6-x), dateadd('m', 20*x::int, 0::timestamp) from long_sequence(5)");
             String query = "select * from " + "(" + "  select * from a " + "  where s1 not in ('S1', 'S2') " + "  order by ts asc " + "  limit 5" + ") order by ts asc";
-            assertPlanNoLeakCheck(query, """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: 5 skip-rows-max: 0 take-rows-max: 5
                         FilterOnExcludedValues
                           symbolFilter: s1 not in ['S1','S2']
@@ -8713,7 +9655,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols7b() throws Exception {
-        assertPlan("create table a ( ts timestamp, s symbol index) timestamp(ts);", "select s from a where s != 'S1' and length(s) = 2 order by s ", """
+        assertQuery("select s from a where s != 'S1' and length(s) = 2 order by s ")
+                .ddl("create table a ( ts timestamp, s symbol index) timestamp(ts);")
+                .assertsPlan("""
                 FilterOnExcludedValues symbolOrder: asc
                   symbolFilter: s not in ['S1']
                   filter: length(s)=2
@@ -8727,7 +9671,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t ( l long)");
 
-            assertPlanNoLeakCheck("select * from t where l in (5, -1, 1, null)", """
+            assertQuery("select * from t where l in (5, -1, 1, null)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Filter workers: 1
                       filter: l in [null,-1,1,5]
                         PageFrame
@@ -8735,7 +9681,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: t
                     """);
 
-            assertPlanNoLeakCheck("select * from t where l not in (5, -1, 1, null)", """
+            assertQuery("select * from t where l not in (5, -1, 1, null)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Filter workers: 1
                       filter: not (l in [null,-1,1,5])
                         PageFrame
@@ -8751,7 +9699,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck("select * from a limit -5", """
+            assertQuery("select * from a limit -5")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: -5 skip-rows: 5 take-rows: 5
                         PageFrame
                             Row forward scan
@@ -8766,7 +9716,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck("select * from a limit -10+2", """
+            assertQuery("select * from a limit -10+2")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: -8 skip-rows: 2 take-rows: 8
                         PageFrame
                             Row forward scan
@@ -8777,7 +9729,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderByTsAsIndexDescNegativeLimit() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts);", "select * from a order by 2 desc limit -10", """
+        assertQuery("select * from a order by 2 desc limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row backward scan
@@ -8787,7 +9741,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderByTsAsc() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts asc", """
+        assertQuery("select * from a order by ts asc")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Frame forward scan on: a
@@ -8800,7 +9756,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 5) order by ts desc", """
+            assertQuery("select * from (select * from a order by ts asc limit 5) order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [ts desc]
                         Limit value: 5 skip-rows: 0 take-rows: 5
@@ -8817,7 +9775,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 5) order by ts asc", """
+            assertQuery("select * from (select * from a order by ts desc limit 5) order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [ts]
                         Limit value: 5 skip-rows: 0 take-rows: 5
@@ -8830,7 +9790,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderByTsDescLargeNegativeLimit1() throws Exception {
-        assertPlan("create table a as (select rnd_int() i, timestamp_sequence(0, 100) ts from long_sequence(10000)) timestamp(ts) ;", "select * from a order by ts desc limit 9223372036854775806L+3L ", """
+        assertQuery("select * from a order by ts desc limit 9223372036854775806L+3L ")
+                .ddl("create table a as (select rnd_int() i, timestamp_sequence(0, 100) ts from long_sequence(10000)) timestamp(ts) ;")
+                .assertsPlan("""
                 Limit value: -9223372036854775807L skip-rows: 0 take-rows: 10000
                     PageFrame
                         Row backward scan
@@ -8840,7 +9802,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderByTsDescLargeNegativeLimit2() throws Exception {
-        assertPlan("create table a as (select rnd_int() i, timestamp_sequence(0,100) ts from long_sequence(2_000_000)) timestamp(ts) ;", "select * from a order by ts desc limit -1_000_000 ", """
+        assertQuery("select * from a order by ts desc limit -1_000_000 ")
+                .ddl("create table a as (select rnd_int() i, timestamp_sequence(0,100) ts from long_sequence(2_000_000)) timestamp(ts) ;")
+                .assertsPlan("""
                 Limit value: -1000000 skip-rows: 1000000 take-rows: 1000000
                     PageFrame
                         Row backward scan
@@ -8850,7 +9814,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderByTsDescNegativeLimit() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts desc limit -10", """
+        assertQuery("select * from a order by ts desc limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row backward scan
@@ -8860,7 +9826,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderByTsWithNegativeLimit() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts)", "select * from a order by ts  limit -5", """
+        assertQuery("select * from a order by ts  limit -5")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
                 Limit value: -5 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row forward scan
@@ -8874,7 +9842,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
-            assertPlanNoLeakCheck("select ts, count(*)  from a sample by 1s ALIGN TO FIRST OBSERVATION limit -5", """
+            assertQuery("select ts, count(*)  from a sample by 1s ALIGN TO FIRST OBSERVATION limit -5")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
                         Sample By
                           fill: none
@@ -8884,7 +9854,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select i, count(*)  from a group by i limit -5", """
+            assertQuery("select i, count(*)  from a group by i limit -5")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
                         GroupBy vectorized: true workers: 1
                           keys: [i]
@@ -8894,7 +9866,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select i, count(*)  from a limit -5", """
+            assertQuery("select i, count(*)  from a limit -5")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
                         GroupBy vectorized: true workers: 1
                           keys: [i]
@@ -8904,7 +9878,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: a
                     """);
 
-            assertPlanNoLeakCheck("select distinct(i) from a limit -5", """
+            assertQuery("select distinct(i) from a limit -5")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: -5 skip-rows: baseRows-5 take-rows-max: 5
                         GroupBy vectorized: true workers: 1
                           keys: [i]
@@ -8918,7 +9894,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderedAsc() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by i asc", """
+        assertQuery("select * from a order by i asc")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Encode sort light
                   keys: [i]
                     PageFrame
@@ -8929,7 +9907,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderedDesc() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by i desc", """
+        assertQuery("select * from a order by i desc")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Encode sort light
                   keys: [i desc]
                     PageFrame
@@ -8940,7 +9920,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderedWithLimitLoHi() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by i limit 10, 100", """
+        assertQuery("select * from a order by i limit 10, 100")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Sort light lo: 10 hi: 100
                   keys: [i]
                     PageFrame
@@ -8952,7 +9934,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectRandomBoolean() throws Exception {
         allowFunctionMemoization();
-        assertMemoryLeak(() -> assertPlanNoLeakCheck("select rnd_boolean()", """
+        assertMemoryLeak(() -> assertQuery("select rnd_boolean()")
+                .noLeakCheck()
+                .assertsPlan("""
                 VirtualRecord
                   functions: [memoize(rnd_boolean())]
                     long_sequence count: 1
@@ -8961,7 +9945,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > '2020-03-01'", """
+        assertQuery("select * from tab where ts > '2020-03-01'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -8971,7 +9957,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval10() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc ", """
+        assertQuery("select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc ")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Encode sort light
                   keys: [l desc]
                     PageFrame
@@ -8983,7 +9971,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval10a() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc, ts desc ", """
+        assertQuery("select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc, ts desc ")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Encode sort light
                   keys: [l desc, ts desc]
                     PageFrame
@@ -8995,7 +9985,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval2() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03-01'", """
+        assertQuery("select * from tab where ts in '2020-03-01'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -9005,8 +9997,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
-                """
+        assertQuery("select * from tab where ts in '2020-03-01' or ts in '2020-03-10'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                         PageFrame
                             Row forward scan
                             Interval forward scan on: tab
@@ -9016,12 +10009,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // ranges don't overlap so result is empty
     public void testSelectStaticTsInterval4() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03-01' and ts in '2020-03-10'", "Empty table\n");
+        assertQuery("select * from tab where ts in '2020-03-01' and ts in '2020-03-10'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("Empty table\n");
     }
 
     @Test // only 2020-03-10->2020-03-31 needs to be scanned
     public void testSelectStaticTsInterval5() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-03' and ts > '2020-03-10'", """
+        assertQuery("select * from tab where ts in '2020-03' and ts > '2020-03-10'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -9031,7 +10028,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: this should use interval scan with two ranges !
     public void testSelectStaticTsInterval6() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ", """
+        assertQuery("select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: ((2020-03-01T00:00:00.000000Z<ts and ts<2020-03-10T00:00:00.000000Z) or (2020-04-01T00:00:00.000000Z<ts and ts<2020-04-10T00:00:00.000000Z))
                     PageFrame
@@ -9042,7 +10041,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: this should use interval scan with two ranges !
     public void testSelectStaticTsInterval7() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where (ts between '2020-03-01' and '2020-03-10') or (ts between '2020-04-01' and '2020-04-10') ", """
+        assertQuery("select * from tab where (ts between '2020-03-01' and '2020-03-10') or (ts between '2020-04-01' and '2020-04-10') ")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: (ts between 1583020800000000 and 1583798400000000 or ts between 1585699200000000 and 1586476800000000)
                     PageFrame
@@ -9053,7 +10054,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval8() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' ", """
+        assertQuery("select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' ")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
@@ -9063,7 +10066,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval9() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by ts desc", """
+        assertQuery("select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by ts desc")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 PageFrame
                     Row backward scan
                     Interval backward scan on: tab
@@ -9073,7 +10078,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsIntervalOnTabWithoutDesignatedTimestamp() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where ts > '2020-03-01'", """
+        assertQuery("select * from tab where ts > '2020-03-01'")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: 2020-03-01T00:00:00.000000Z<ts
                     PageFrame
@@ -9084,12 +10091,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWalTransactions() throws Exception {
-        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp) timestamp(ts) partition by day WAL", "select * from wal_transactions('tab')", "wal_transactions of: tab\n");
+        assertQuery("select * from wal_transactions('tab')")
+                .ddl("create table tab ( s string, sy symbol, i int, ts timestamp) timestamp(ts) partition by day WAL")
+                .assertsPlan("wal_transactions of: tab\n");
     }
 
     @Test
     public void testSelectWhereOrderByLimit1() throws Exception {
-        assertPlan("create table xx ( x long, str string) ", "select * from xx where str = 'A' order by str,x limit 10", """
+        assertQuery("select * from xx where str = 'A' order by str,x limit 10")
+                .ddl("create table xx ( x long, str string) ")
+                .assertsPlan("""
                 Async Top K lo: 10 workers: 1
                   filter: str='A'
                   keys: [str, x]
@@ -9101,7 +10112,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWhereOrderByLimit2() throws Exception {
-        assertPlan("create table xx ( x long, str varchar ) ", "select * from xx where str is not null order by str,x limit 10", """
+        assertQuery("select * from xx where str is not null order by str,x limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
                 Async JIT Top K lo: 10 workers: 1
                   filter: str is not null
                   keys: [str, x]
@@ -9113,7 +10126,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWhereOrderByLimit3() throws Exception {
-        assertPlan("create table xx ( x long, id uuid ) ", "select * from xx order by id desc, x limit 10", """
+        assertQuery("select * from xx order by id desc, x limit 10")
+                .ddl("create table xx ( x long, id uuid ) ")
+                .assertsPlan("""
                 Async Top K lo: 10 workers: 1
                   filter: null
                   keys: [id desc, x]
@@ -9125,7 +10140,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // projection wrapper + JIT filter still hits top-K (issue #6528)
     public void testSelectWhereOrderByLimit4() throws Exception {
-        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx where str is not null order by str desc limit 10", """
+        assertQuery("select x, * from xx where str is not null order by str desc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
                 SelectedRecord
                     Async JIT Top K lo: 10 workers: 1
                       filter: str is not null
@@ -9138,7 +10155,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // virtual-column projection + JIT filter still hits top-K
     public void testSelectWhereOrderByLimit5() throws Exception {
-        assertPlan("create table xx ( x long, str varchar ) ", "select x + 1 as xp from xx where str is not null order by str desc limit 10", """
+        assertQuery("select x + 1 as xp from xx where str is not null order by str desc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
                 SelectedRecord
                     VirtualRecord
                       functions: [x+1,str]
@@ -9153,7 +10172,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // bare virtual-column wrapper (no outer SelectedRecord) still hits top-K
     public void testSelectWhereOrderByLimit6() throws Exception {
-        assertPlan("create table xx ( x long, str varchar ) ", "select x + 1 as xp, * from xx where str is not null order by str desc limit 10", """
+        assertQuery("select x + 1 as xp, * from xx where str is not null order by str desc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
                 VirtualRecord
                   functions: [x+1,x,str]
                     Async JIT Top K lo: 10 workers: 1
@@ -9167,7 +10188,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // projection without filter: peel SelectedRecord, run top-K on base, rewrap projection
     public void testSelectWhereOrderByLimit7() throws Exception {
-        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx order by str desc limit 10", """
+        assertQuery("select x, * from xx order by str desc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
                 SelectedRecord
                     Async Top K lo: 10 workers: 1
                       filter: null
@@ -9180,7 +10203,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // ORDER BY on a computed column must fall back to Sort light
     public void testSelectWhereOrderByLimit8() throws Exception {
-        assertPlan("create table xx ( x long, str varchar ) ", "select x + 1 as xp from xx where str is not null order by xp desc limit 10", """
+        assertQuery("select x + 1 as xp from xx where str is not null order by xp desc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
                 Sort light lo: 10
                   keys: [xp desc]
                     VirtualRecord
@@ -9201,10 +10226,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // translateOrderByColumnToBase peels VirtualRecord -> JIT filter leaf in a single step.
         // The outer SelectedRecord visible in the plan is added afterwards by generateSelectChoose
         // and is not what the gate inspects.
-        assertPlan(
-                "create table xx ( x long, str varchar ) ",
-                "select x + 1 as xp, x from xx where str is not null order by str desc limit 10",
-                """
+        assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
                         SelectedRecord
                             VirtualRecord
                               functions: [x+1,x,str]
@@ -9219,7 +10243,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // two-bound LIMIT is not a top-K candidate; Sort light handles it
     public void testSelectWhereOrderByLimit9() throws Exception {
-        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx where str is not null order by str desc limit 10, 20", """
+        assertQuery("select x, * from xx where str is not null order by str desc limit 10, 20")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
                 Sort light lo: 10 hi: 20
                   keys: [str desc]
                     SelectedRecord
@@ -9233,7 +10259,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // multi-key ORDER BY translates every key through a SelectedRecord wrapper
     public void testSelectWhereOrderByLimit_multiKeyThroughSelectedRecord() throws Exception {
-        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx where str is not null order by str desc, x asc limit 10", """
+        assertQuery("select x, * from xx where str is not null order by str desc, x asc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
                 SelectedRecord
                     Async JIT Top K lo: 10 workers: 1
                       filter: str is not null
@@ -9251,10 +10279,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // and getLongTopKColumnIndex must peel the wrapper via ColumnFunction.unwrap;
         // otherwise the gate falls back to Sort light.
         allowFunctionMemoization();
-        assertPlan(
-                "create table xx ( x long, str varchar ) ",
-                "select x + 1 as xp, x as a, x as b, str from xx where str is not null order by a desc limit 10",
-                """
+        assertQuery("select x + 1 as xp, x as a, x as b, str from xx where str is not null order by a desc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
                         VirtualRecord
                           functions: [x+1,memoize(x),x,str]
                             Async JIT Top K lo: 10 workers: 1
@@ -9263,13 +10290,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: xx
-                        """
-        );
+                        """);
     }
 
     @Test // multi-key ORDER BY translates every key through a VirtualRecord wrapper
     public void testSelectWhereOrderByLimit_multiKeyThroughVirtualRecord() throws Exception {
-        assertPlan("create table xx ( x long, str varchar ) ", "select x + 1 as xp, x from xx where str is not null order by str desc, x asc limit 10", """
+        assertQuery("select x + 1 as xp, x from xx where str is not null order by str desc, x asc limit 10")
+                .ddl("create table xx ( x long, str varchar ) ")
+                .assertsPlan("""
                 SelectedRecord
                     VirtualRecord
                       functions: [x+1,x,str]
@@ -9284,7 +10312,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 ", """
+        assertQuery("select * from tab where l > 100 ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: 100<l
                     PageFrame
@@ -9295,7 +10325,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter10() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp);", "select * from tab where s in ( 'A', 'B' )", """
+        assertQuery("select * from tab where s in ( 'A', 'B' )")
+                .ddl("create table tab ( s symbol, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: s in [A,B]
                     PageFrame
@@ -9306,7 +10338,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: this one should interval scan without filter
     public void testSelectWithJittedFilter11() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp);", "select * from tab where ts in ( '2020-01-01', '2020-01-02' )", """
+        assertQuery("select * from tab where ts in ( '2020-01-01', '2020-01-02' )")
+                .ddl("create table tab ( s symbol, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: ts in [1577836800000000,1577923200000000]
                     PageFrame
@@ -9317,7 +10351,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: this one should interval scan with jit filter
     public void testSelectWithJittedFilter12() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp);", "select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'", """
+        assertQuery("select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'")
+                .ddl("create table tab ( s symbol, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: (ts in [1577836800000000,1578009600000000] and s='ABC')
                     PageFrame
@@ -9328,7 +10364,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: this one should interval scan with jit filter
     public void testSelectWithJittedFilter13() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp);", "select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'", """
+        assertQuery("select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'")
+                .ddl("create table tab ( s symbol, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: (ts in [1577836800000000,1577923199999999] and s='ABC')
                     PageFrame
@@ -9339,7 +10377,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter14() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12 or l = 15 ", """
+        assertQuery("select * from tab where l = 12 or l = 15 ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: (l=12 or l=15)
                     PageFrame
@@ -9350,7 +10390,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter15() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12.345 ", """
+        assertQuery("select * from tab where l = 12.345 ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: l=12.345
                     PageFrame
@@ -9361,7 +10403,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter16() throws Exception {
-        assertPlan("create table tab ( b boolean, ts timestamp);", "select * from tab where b = false ", """
+        assertQuery("select * from tab where b = false ")
+                .ddl("create table tab ( b boolean, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: b=false
                     PageFrame
@@ -9372,7 +10416,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter17() throws Exception {
-        assertPlan("create table tab ( b boolean, ts timestamp);", "select * from tab where not(b = false or ts = 123) ", """
+        assertQuery("select * from tab where not(b = false or ts = 123) ")
+                .ddl("create table tab ( b boolean, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: (b!=false and 123!=ts)
                     PageFrame
@@ -9383,7 +10429,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter18() throws Exception {
-        assertPlan("create table tab ( l1 long, l2 long);", "select * from tab where l1 < l2 ", """
+        assertQuery("select * from tab where l1 < l2 ")
+                .ddl("create table tab ( l1 long, l2 long);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: l1<l2
                     PageFrame
@@ -9394,7 +10442,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter19() throws Exception {
-        assertPlan("create table tab ( l1 long, l2 long);", "select * from tab where l1 * l2 > 0  ", """
+        assertQuery("select * from tab where l1 * l2 > 0  ")
+                .ddl("create table tab ( l1 long, l2 long);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: 0<l1*l2
                     PageFrame
@@ -9405,7 +10455,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter2() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 and l < 1000 ", """
+        assertQuery("select * from tab where l > 100 and l < 1000 ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: (100<l and l<1000)
                     PageFrame
@@ -9416,7 +10468,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter20() throws Exception {
-        assertPlan("create table tab ( l1 long, l2 long, l3 long);", "select * from tab where l1 * l2 > l3  ", """
+        assertQuery("select * from tab where l1 * l2 > l3  ")
+                .ddl("create table tab ( l1 long, l2 long, l3 long);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: l3<l1*l2
                     PageFrame
@@ -9427,7 +10481,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter21() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = $1 ", """
+        assertQuery("select * from tab where l = $1 ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: l=$0::long
                     PageFrame
@@ -9438,7 +10494,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter22() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = 1024.1 + 1 ", """
+        assertQuery("select * from tab where d = 1024.1 + 1 ")
+                .ddl("create table tab ( d double, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: d=1025.1
                     PageFrame
@@ -9449,7 +10507,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter23() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = null ", """
+        assertQuery("select * from tab where d = null ")
+                .ddl("create table tab ( d double, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: d is null
                     PageFrame
@@ -9460,7 +10520,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter24a() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit 1 ", """
+        assertQuery("select * from tab where d = 1.2 order by ts limit 1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -9472,7 +10534,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter24b() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit -1 ", """
+        assertQuery("select * from tab where d = 1.2 order by ts limit -1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -9484,7 +10548,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter24b2() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 limit -1 ", """
+        assertQuery("select * from tab where d = 1.2 limit -1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -9496,7 +10562,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter24c() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts desc limit 1 ", """
+        assertQuery("select * from tab where d = 1.2 order by ts desc limit 1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -9508,7 +10576,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter24d() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 limit -1 ", """
+        assertQuery("select * from tab where d = 1.2 limit -1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -9522,7 +10592,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithJittedFilter24e() throws Exception {
         bindVariableService.setInt("maxRows", -1);
 
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 limit :maxRows ", """
+        assertQuery("select * from tab where d = 1.2 limit :maxRows ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -9534,7 +10606,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter25() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts desc limit 1 ", """
+        assertQuery("select * from tab where d = 1.2 order by ts desc limit 1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -9546,7 +10620,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter26() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit -1 ", """
+        assertQuery("select * from tab where d = 1.2 order by ts limit -1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   limit: 1
                   filter: d=1.2
@@ -9558,7 +10634,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter27() throws Exception {
-        assertPlan("create table tab (s string, ts timestamp);", "select * from tab where s = null ", """
+        assertQuery("select * from tab where s = null ")
+                .ddl("create table tab (s string, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: s is null
                     PageFrame
@@ -9569,7 +10647,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter28() throws Exception {
-        assertPlan("create table tab (v varchar, ts timestamp);", "select * from tab where v = null ", """
+        assertQuery("select * from tab where v = null ")
+                .ddl("create table tab (v varchar, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: v is null
                     PageFrame
@@ -9580,7 +10660,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select /*+ ENABLE_PRE_TOUCH(tab) */ * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ", """
+        assertQuery("select /*+ ENABLE_PRE_TOUCH(tab) */ * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: (100<l and l<1000 and 2022-01-01T00:00:00.000000Z=ts) [pre-touch]
                     PageFrame
@@ -9591,7 +10673,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter4() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 and l < 1000 and l = 20", """
+        assertQuery("select * from tab where l > 100 and l < 1000 and l = 20")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: (100<l and l<1000 and l=20)
                     PageFrame
@@ -9602,7 +10686,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter5() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 and l < 1000 or l = 20", """
+        assertQuery("select * from tab where l > 100 and l < 1000 or l = 20")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: ((100<l and l<1000) or l=20)
                     PageFrame
@@ -9613,7 +10699,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter6() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l > 100 and l < 1000 or ts = 123", """
+        assertQuery("select * from tab where l > 100 and l < 1000 or ts = 123")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: ((100<l and l<1000) or 123=ts)
                     PageFrame
@@ -9624,7 +10712,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter7() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp (ts);", "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'", """
+        assertQuery("select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp (ts);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: ((100<l and l<1000) or 2021-01-01T00:00:00.000000Z<ts)
                     PageFrame
@@ -9635,7 +10725,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter8() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp) timestamp (ts);", "select * from tab where l > 100 and l < 1000 and ts in '2021-01-01'", """
+        assertQuery("select * from tab where l > 100 and l < 1000 and ts in '2021-01-01'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp (ts);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: (100<l and l<1000)
                     PageFrame
@@ -9647,7 +10739,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter9() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l in ( 100, 200 )", """
+        assertQuery("select * from tab where l in ( 100, 200 )")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: l in [100,200]
                     PageFrame
@@ -9658,7 +10752,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithLimitLo() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a limit 10", """
+        assertQuery("select * from a limit 10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Limit value: 10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row forward scan
@@ -9668,7 +10764,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithLimitLoHi() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a limit 10, 100", """
+        assertQuery("select * from a limit 10, 100")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Limit left: 10 right: 100 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row forward scan
@@ -9678,7 +10776,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithLimitLoHiNegative() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a limit -10, -100", """
+        assertQuery("select * from a limit -10, -100")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Limit left: -10 right: -100 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row forward scan
@@ -9688,7 +10788,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithLimitLoNegative() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a limit -10", """
+        assertQuery("select * from a limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row forward scan
@@ -9698,7 +10800,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::short ", """
+        assertQuery("select * from tab where l = 12::short ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: l=12
                     PageFrame
@@ -9709,7 +10813,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter10() throws Exception {
-        assertPlan("create table tab ( s short, ts timestamp);", "select * from tab where s = 1::short ", """
+        assertQuery("select * from tab where s = 1::short ")
+                .ddl("create table tab ( s short, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: s=1
                     PageFrame
@@ -9720,7 +10826,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should run with jitted filter just like b = true
     public void testSelectWithNonJittedFilter11() throws Exception {
-        assertPlan("create table tab ( b boolean, ts timestamp);", "select * from tab where b = true::boolean ", """
+        assertQuery("select * from tab where b = true::boolean ")
+                .ddl("create table tab ( b boolean, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: b=true
                     PageFrame
@@ -9731,7 +10839,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should run with jitted filter just like l = 1024
     public void testSelectWithNonJittedFilter12() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 1024::long ", """
+        assertQuery("select * from tab where l = 1024::long ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: l=1024L
                     PageFrame
@@ -9742,7 +10852,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should run with jitted filter just like d = 1024.1
     public void testSelectWithNonJittedFilter13() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = 1024.1::double ", """
+        assertQuery("select * from tab where d = 1024.1::double ")
+                .ddl("create table tab ( d double, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: d=1024.1
                     PageFrame
@@ -9753,7 +10865,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should run with jitted filter just like d = null
     public void testSelectWithNonJittedFilter14() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = null::double ", """
+        assertQuery("select * from tab where d = null::double ")
+                .ddl("create table tab ( d double, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: d is null
                     PageFrame
@@ -9764,7 +10878,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter15() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l | l) > 0  ", """
+        assertQuery("select * from tab where (l | l) > 0  ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: 0<l|l
                     PageFrame
@@ -9775,7 +10891,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter16() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l & l) > 0  ", """
+        assertQuery("select * from tab where (l & l) > 0  ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: 0<l&l
                     PageFrame
@@ -9786,7 +10904,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter17() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l ^ l) > 0  ", """
+        assertQuery("select * from tab where (l ^ l) > 0  ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: 0<l^l
                     PageFrame
@@ -9797,7 +10917,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithNonJittedFilter18() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l ^ l) > 0 limit -1", """
+        assertQuery("select * from tab where (l ^ l) > 0 limit -1")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   limit: 1
                   filter: 0<l^l
@@ -9812,7 +10934,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         bindVariableService.clear();
         bindVariableService.setLong("maxRows", -1);
 
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where (l ^ l) > 0 limit :maxRows", """
+        assertQuery("select * from tab where (l ^ l) > 0 limit :maxRows")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   limit: 1
                   filter: 0<l^l
@@ -9824,7 +10948,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter2() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::byte ", """
+        assertQuery("select * from tab where l = 12::byte ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: l=12
                     PageFrame
@@ -9835,7 +10961,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = '123' ", """
+        assertQuery("select * from tab where l = '123' ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: l='123'
                     PageFrame
@@ -9847,7 +10975,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // jit is not because rnd_long() value is not stable
     public void testSelectWithNonJittedFilter4() throws Exception {
         // Async filter function doesn't support memoization.
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = rnd_long() ", """
+        assertQuery("select * from tab where l = rnd_long() ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: l=rnd_long()
                     PageFrame
@@ -9858,7 +10988,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithNonJittedFilter5() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = case when l > 0 then 1 when l = 0 then 0 else -1 end ", """
+        assertQuery("select * from tab where l = case when l > 0 then 1 when l = 0 then 0 else -1 end ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: l=case([0<l,1,l=0,0,-1])
                     PageFrame
@@ -9869,7 +11001,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // interval scan is not used because of type mismatch
     public void testSelectWithNonJittedFilter6() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = $1::string ", """
+        assertQuery("select * from tab where l = $1::string ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: l=$0::string
                     PageFrame
@@ -9880,7 +11014,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit filter doesn't work for string type
     public void testSelectWithNonJittedFilter7() throws Exception {
-        assertPlan("create table tab ( s string, ts timestamp);", "select * from tab where s = 'test' ", """
+        assertQuery("select * from tab where s = 'test' ")
+                .ddl("create table tab ( s string, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: s='test'
                     PageFrame
@@ -9891,7 +11027,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter9() throws Exception {
-        assertPlan("create table tab ( b byte, ts timestamp);", "select * from tab where b = 1::byte ", """
+        assertQuery("select * from tab where b = 1::byte ")
+                .ddl("create table tab ( b byte, ts timestamp);")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: b=1
                     PageFrame
@@ -9902,7 +11040,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithNotOperator() throws Exception {
-        assertPlan("CREATE TABLE tst ( timestamp TIMESTAMP );", "select * from tst where timestamp not between '2021-01-01' and '2021-01-10' ", """
+        assertQuery("select * from tst where timestamp not between '2021-01-01' and '2021-01-10' ")
+                .ddl("CREATE TABLE tst ( timestamp TIMESTAMP );")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: not (timestamp between 1609459200000000 and 1610236800000000)
                     PageFrame
@@ -9913,7 +11053,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithOrderByTsDescLimitLo() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts desc limit 10", """
+        assertQuery("select * from a order by ts desc limit 10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Limit value: 10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row backward scan
@@ -9923,7 +11065,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithOrderByTsDescLimitLoNegative1() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts desc limit -10", """
+        assertQuery("select * from a order by ts desc limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row backward scan
@@ -9933,7 +11077,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithOrderByTsDescLimitLoNegative2() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select i from a order by ts desc limit -10", """
+        assertQuery("select i from a order by ts desc limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 SelectedRecord
                     Limit value: -10 skip-rows: 0 take-rows: 0
                         PageFrame
@@ -9944,7 +11090,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithOrderByTsLimitLoNegative1() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by ts limit -10", """
+        assertQuery("select * from a order by ts limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Limit value: -10 skip-rows: 0 take-rows: 0
                     PageFrame
                         Row forward scan
@@ -9954,7 +11102,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithOrderByTsLimitLoNegative2() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select i from a order by ts limit -10", """
+        assertQuery("select i from a order by ts limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 SelectedRecord
                     Limit value: -10 skip-rows: 0 take-rows: 0
                         PageFrame
@@ -9965,7 +11115,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder1() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select ts, l, i from a where l<i", """
+        assertQuery("select ts, l, i from a where l<i")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: l<i
                     PageFrame
@@ -9976,7 +11128,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select ts, l, i from a where l::short<i", """
+        assertQuery("select ts, l, i from a where l::short<i")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: l::short<i
                     PageFrame
@@ -9987,7 +11141,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2a() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "where l::short<i " + "limit 100) " + "where l1*i2 != 0", """
+        assertQuery("select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "where l::short<i " + "limit 100) " + "where l1*i2 != 0")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 SelectedRecord
                     Filter filter: l1*i2!=0
                         SelectedRecord
@@ -10002,7 +11158,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2b() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0", """
+        assertQuery("select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Filter filter: i1*i2!=0
                     SelectedRecord
                         Sort light lo: 100 partiallySorted: true
@@ -10016,7 +11174,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2c() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0", """
+        assertQuery("select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 SelectedRecord
                     Filter filter: i1*i2!=0
                         Sort light lo: 100 partiallySorted: true
@@ -10030,7 +11190,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2d() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 1, 3 " + "limit 100 ) " + "where i1*i2 != 0", """
+        assertQuery("select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 1, 3 " + "limit 100 ) " + "where i1*i2 != 0")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 SelectedRecord
                     Filter filter: i1*i2!=0
                         Sort light lo: 100 partiallySorted: true
@@ -10044,7 +11206,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2e() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 2, 3 " + "limit 100 ) " + "where i1*i2 != 0", """
+        assertQuery("select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 2, 3 " + "limit 100 ) " + "where i1*i2 != 0")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 SelectedRecord
                     Filter filter: i1*i2!=0
                         Sort light lo: 100 partiallySorted: true
@@ -10058,7 +11222,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder3() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select k, max(ts) from ( select ts, l as k, i from a where l::short<i ) where k < 0 ", """
+        assertQuery("select k, max(ts) from ( select ts, l as k, i from a where l::short<i ) where k < 0 ")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 GroupBy vectorized: false
                   keys: [k]
                   values: [max(ts)]
@@ -10073,7 +11239,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder4() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;", "select mil, k, minl, mini from " + "( select ts as k, max(i*l) as mil, min(i) as mini, min(l) as minl  " + "from a where l::short<i ) " + "where mil + mini> 1 ", """
+        assertQuery("select mil, k, minl, mini from " + "( select ts as k, max(i*l) as mil, min(i) as mini, min(l) as minl  " + "from a where l::short<i ) " + "where mil + mini> 1 ")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                 Filter filter: 1<mil+mini
                     Async Group By workers: 1
                       keys: [k]
@@ -10090,7 +11258,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) order by ts asc", """
+            assertQuery("select * from (select * from a order by ts asc limit 10) order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: 10 skip-rows: 0 take-rows: 0
                         PageFrame
                             Row forward scan
@@ -10104,7 +11274,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts desc, l desc limit 10) order by ts desc", """
+            assertQuery("select * from (select * from a order by ts desc, l desc limit 10) order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Sort light lo: 10 partiallySorted: true
                       keys: [ts desc, l desc]
                         PageFrame
@@ -10119,7 +11291,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc", """
+            assertQuery("select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Lt Join Fast
                             Sort light lo: 10 partiallySorted: true
@@ -10139,7 +11313,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from " + "(select * from (select * from a order by ts asc, l) limit 10) " + "lt join " + "(select * from a) order by ts asc", """
+            assertQuery("select * from " + "(select * from (select * from a order by ts asc, l) limit 10) " + "lt join " + "(select * from a) order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Lt Join Fast
                             Limit value: 10 skip-rows: 0 take-rows: 0
@@ -10160,7 +11336,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from " + "(select * from (select * from a order by ts desc, l desc) limit 10) " + "order by ts asc", """
+            assertQuery("select * from " + "(select * from (select * from a order by ts desc, l desc) limit 10) " + "order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [ts]
                         Limit value: 10 skip-rows: 0 take-rows: 0
@@ -10178,7 +11356,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from " + "(select * from " + "   (select * from a) " + "    cross join " + "   (select * from a) " + " order by ts asc, l  " + " limit 10" + ") " + "lt join (select * from a) " + "order by ts asc", """
+            assertQuery("select * from " + "(select * from " + "   (select * from a) " + "    cross join " + "   (select * from a) " + " order by ts asc, l  " + " limit 10" + ") " + "lt join (select * from a) " + "order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Lt Join Fast
                             Limit value: 10 skip-rows: 0 take-rows: 0
@@ -10204,7 +11384,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from " + "(select * from " + "   (select * from a) " + "    cross join " + "   (select * from a) " + " order by ts desc " + " limit 10" + ") " + "order by ts desc", """
+            assertQuery("select * from " + "(select * from " + "   (select * from a) " + "    cross join " + "   (select * from a) " + " order by ts desc " + " limit 10" + ") " + "order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: 10 skip-rows: 0 take-rows: 0
                         SelectedRecord
                             Cross Join
@@ -10223,7 +11405,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) order by ts desc", """
+            assertQuery("select * from (select * from a order by ts asc limit 10) order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [ts desc]
                         Limit value: 10 skip-rows: 0 take-rows: 0
@@ -10239,7 +11423,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) order by ts desc", """
+            assertQuery("select * from (select * from a order by ts desc limit 10) order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: 10 skip-rows: 0 take-rows: 0
                         PageFrame
                             Row backward scan
@@ -10253,7 +11439,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) order by ts asc", """
+            assertQuery("select * from (select * from a order by ts desc limit 10) order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [ts]
                         Limit value: 10 skip-rows: 0 take-rows: 0
@@ -10269,7 +11457,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts, l limit 10) order by ts, l", """
+            assertQuery("select * from (select * from a order by ts, l limit 10) order by ts, l")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [ts, l]
                         Async Top K lo: 10 workers: 1
@@ -10287,7 +11477,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp, l long)");
 
-            assertPlanNoLeakCheck("select * from (select * from a order by ts, l limit 10,-10) order by ts, l", """
+            assertQuery("select * from (select * from a order by ts, l limit 10,-10) order by ts, l")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort light
                       keys: [ts, l]
                         Limit left: 10 right: -10 skip-rows: 0 take-rows: 0
@@ -10306,7 +11498,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
             execute("create table b ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a splice join b on ts where a.i = b.ts", """
+            assertQuery("select * from a splice join b on ts where a.i = b.ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Filter filter: a.i=b.ts
                             Splice Join
@@ -10327,7 +11521,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
             execute("create table b ( i int, ts timestamp, l long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a splice join b on ts where a.i + b.i = 1", """
+            assertQuery("select * from a splice join b on ts where a.i + b.i = 1")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Filter filter: a.i+b.i=1
                             Splice Join
@@ -10348,7 +11544,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a splice join b on ts", """
+            assertQuery("select * from a splice join b on ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Splice Join
                           condition: b.ts=a.ts
@@ -10368,7 +11566,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a splice join (select * from b limit 10) on ts", """
+            assertQuery("select * from a splice join (select * from b limit 10) on ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Splice Join
                           condition: _xQdbA1.ts=a.ts
@@ -10389,7 +11589,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a splice join ((select * from b order by ts, i ) timestamp(ts))  on ts", """
+            assertQuery("select * from a splice join ((select * from b order by ts, i ) timestamp(ts))  on ts")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Splice Join
                           condition: _xQdbA1.ts=a.ts
@@ -10411,7 +11613,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select * from a splice join b where a.i = b.i", """
+            assertQuery("select * from a splice join b where a.i = b.i")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         Filter filter: a.i=b.i
                             Splice Join
@@ -10428,14 +11632,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testStringToDoubleArrayPlanDimensionality() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("select '{}'::double[] from long_sequence(1)", """
+            assertQuery("select '{}'::double[] from long_sequence(1)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: ['{}'::DOUBLE[]]
                         long_sequence count: 1
                     """);
 
 
-            assertPlanNoLeakCheck("select '{}'::double[][][] from long_sequence(1)", """
+            assertQuery("select '{}'::double[][][] from long_sequence(1)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     VirtualRecord
                       functions: ['{}'::DOUBLE[][][]]
                         long_sequence count: 1
@@ -10445,7 +11653,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampEqSubQueryFilter1() throws Exception {
-        assertPlan("create table x (l long, ts timestamp)", "select * from x where ts = (select min(ts) from x)", """
+        assertQuery("select * from x where ts = (select min(ts) from x)")
+                .ddl("create table x (l long, ts timestamp)")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: ts=cursor\s
                     Async Group By workers: 1
@@ -10463,7 +11673,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampEqSubQueryFilter2() throws Exception {
-        assertPlan("create table x (l long, ts timestamp) timestamp(ts) partition by day", "select * from x where ts = (select min(ts) from x)", """
+        assertQuery("select * from x where ts = (select min(ts) from x)")
+                .ddl("create table x (l long, ts timestamp) timestamp(ts) partition by day")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Interval forward scan on: x
@@ -10473,7 +11685,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampGtSubQueryFilter1() throws Exception {
-        assertPlan("create table x (l long, ts timestamp)", "select * from x where ts > (select min(ts) from x)", """
+        assertQuery("select * from x where ts > (select min(ts) from x)")
+                .ddl("create table x (l long, ts timestamp)")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: ts [thread-safe] > cursor\s
                     Async Group By workers: 1
@@ -10491,7 +11705,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampGtSubQueryFilter2() throws Exception {
-        assertPlan("create table x (l long, ts timestamp) timestamp(ts) partition by day", "select * from x where ts > (select min(ts) from x)", """
+        assertQuery("select * from x where ts > (select min(ts) from x)")
+                .ddl("create table x (l long, ts timestamp) timestamp(ts) partition by day")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Interval forward scan on: x
@@ -10501,7 +11717,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampLtSubQueryFilter1() throws Exception {
-        assertPlan("create table x (l long, ts timestamp)", "select * from x where ts < (select max(ts) from x)", """
+        assertQuery("select * from x where ts < (select max(ts) from x)")
+                .ddl("create table x (l long, ts timestamp)")
+                .assertsPlan("""
                 Async Filter workers: 1
                   filter: ts [thread-safe] < cursor\s
                     Async Group By workers: 1
@@ -10519,7 +11737,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampLtSubQueryFilter2() throws Exception {
-        assertPlan("create table x (l long, ts timestamp) timestamp(ts) partition by day", "select * from x where ts < (select max(ts) from x)", """
+        assertQuery("select * from x where ts < (select max(ts) from x)")
+                .ddl("create table x (l long, ts timestamp) timestamp(ts) partition by day")
+                .assertsPlan("""
                 PageFrame
                     Row forward scan
                     Interval forward scan on: x
@@ -10529,7 +11749,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testUnion() throws Exception {
-        assertPlan("create table a ( i int, s string);", "select * from a union select * from a", """
+        assertQuery("select * from a union select * from a")
+                .ddl("create table a ( i int, s string);")
+                .assertsPlan("""
                 Union
                     PageFrame
                         Row forward scan
@@ -10542,7 +11764,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testUnionAll() throws Exception {
-        assertPlan("create table a ( i int, s string);", "select * from a union all select * from a", """
+        assertQuery("select * from a union all select * from a")
+                .ddl("create table a ( i int, s string);")
+                .assertsPlan("""
                 Union All
                     PageFrame
                         Row forward scan
@@ -10559,7 +11783,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table t ( x long, ts timestamp) timestamp(ts)");
 
             String query = "select * from t where x < 100 order by ts desc limit -5";
-            assertPlanNoLeakCheck(query, """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Async JIT Filter workers: 1
                       limit: 5
                       filter: x<100
@@ -10587,7 +11813,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testWhereUuid() throws Exception {
-        assertPlan("create table a (u uuid, ts timestamp) timestamp(ts);", "select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'", """
+        assertQuery("select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'")
+                .ddl("create table a (u uuid, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                 Async JIT Filter workers: 1
                   filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333')
                     PageFrame
@@ -10598,7 +11826,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testWindow0() throws Exception {
-        assertPlan("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))", "select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t", """
+        assertQuery("select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t")
+                .ddl("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))")
+                .assertsPlan("""
                 CachedWindow
                   orderedFunctions: [[l] => [row_number()]]
                   unorderedFunctions: [row_number() over (partition by [l])]
@@ -10610,7 +11840,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testWindow1() throws Exception {
-        assertPlan("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))", "select str, ts, l, 10, row_number() over ( partition by l order by ts) from t", """
+        assertQuery("select str, ts, l, 10, row_number() over ( partition by l order by ts) from t")
+                .ddl("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))")
+                .assertsPlan("""
                 CachedWindow
                   orderedFunctions: [[ts] => [row_number() over (partition by [l])]]
                     VirtualRecord
@@ -10623,7 +11855,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testWindow2() throws Exception {
-        assertPlan("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))", "select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t", """
+        assertQuery("select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t")
+                .ddl("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))")
+                .assertsPlan("""
                 CachedWindow
                   orderedFunctions: [[str] => [row_number() over (partition by [l1,ts])]]
                     VirtualRecord
@@ -10640,7 +11874,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
-            assertPlanNoLeakCheck("select ts, i, j, " + "avg(j) over (order by i, j rows unbounded preceding), " + "sum(j) over (order by i, j rows unbounded preceding), " + "first_value(j) over (order by i, j rows unbounded preceding), " + "from tab", """
+            assertQuery("select ts, i, j, " + "avg(j) over (order by i, j rows unbounded preceding), " + "sum(j) over (order by i, j rows unbounded preceding), " + "first_value(j) over (order by i, j rows unbounded preceding), " + "from tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     CachedWindow
                       orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row),\
                     sum(j) over (rows between unbounded preceding and current row),first_value(j) over ()]]
@@ -10649,7 +11885,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("select ts, i, j, " + "avg(j) over (partition by i order by ts rows between 1 preceding and current row), " + "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " + "first_value(j) over (partition by i order by ts rows between 1 preceding and current row) " + "from tab", """
+            assertQuery("select ts, i, j, " + "avg(j) over (partition by i order by ts rows between 1 preceding and current row), " + "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " + "first_value(j) over (partition by i order by ts rows between 1 preceding and current row) " + "from tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Window
                       functions: [avg(j) over (partition by [i] rows between 1 preceding and current row),\
                     sum(j) over (partition by [i] rows between 1 preceding and current row),first_value(j) over (partition by [i] rows between 1 preceding and current row)]
@@ -10658,7 +11896,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("select row_number() over (partition by i order by i desc, j asc), " + "avg(j) over (partition by i order by j, i desc rows unbounded preceding), " + "sum(j) over (partition by i order by j, i desc rows unbounded preceding), " + "first_value(j) over (partition by i order by j, i desc rows unbounded preceding) " + "from tab " + "order by ts desc", """
+            assertQuery("select row_number() over (partition by i order by i desc, j asc), " + "avg(j) over (partition by i order by j, i desc rows unbounded preceding), " + "sum(j) over (partition by i order by j, i desc rows unbounded preceding), " + "first_value(j) over (partition by i order by j, i desc rows unbounded preceding) " + "from tab " + "order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         CachedWindow
                           orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],\
@@ -10670,7 +11910,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame backward scan on: tab
                     """);
 
-            assertPlanNoLeakCheck("select row_number() over (partition by i order by i desc, j asc), " + "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        sum(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        first_value(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        rank() over (partition by j, i) " + "from tab order by ts desc", """
+            assertQuery("select row_number() over (partition by i order by i desc, j asc), " + "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        sum(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        first_value(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        rank() over (partition by j, i) " + "from tab order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     SelectedRecord
                         CachedWindow
                           orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row),\
@@ -10689,9 +11931,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
-            assertPlanNoLeakCheck(
-                    "select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by x1.a",
-                    """
+            assertQuery("select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by x1.a")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort
                               keys: [a]
                                 Async Window Join workers: 1
@@ -10704,12 +11946,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a",
-                    """
+            assertQuery("select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Encode sort
                                   keys: [column]
@@ -10725,12 +11966,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 1 desc",
-                    """
+            assertQuery("select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 1 desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort
                               keys: [a desc]
                                 Async Window Join workers: 1
@@ -10743,12 +11983,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select 10*x1.a as a10, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by a10",
-                    """
+            assertQuery("select 10*x1.a as a10, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by a10")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort
                               keys: [a10]
                                 VirtualRecord
@@ -10763,12 +12002,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select x1.a as a0, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 1 asc",
-                    """
+            assertQuery("select x1.a as a0, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 1 asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Encode sort
                                   keys: [column desc, a0]
@@ -10784,12 +12022,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select x1.a as a0, sum(x1.b), x1.ts from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 1 asc",
-                    """
+            assertQuery("select x1.a as a0, sum(x1.b), x1.ts from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 1 asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Encode sort
                                   keys: [column desc, a0]
@@ -10805,12 +12042,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 3 asc, berlin_ts desc",
-                    """
+            assertQuery("select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 3 asc, berlin_ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Encode sort
                                   keys: [column desc, a0, berlin_ts desc]
@@ -10826,8 +12062,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -10836,7 +12071,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
-            assertPlanNoLeakCheck("""
+            assertQuery("""
                     select sum(avg), sum(sum), sum(first_value) from (
                     select ts, hostname, usage_system, \
                     avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, \
@@ -10844,7 +12079,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value \
                     from cpu_ts \
                     order by ts desc
-                    )\s""", """
+                    )\s""")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     GroupBy vectorized: false
                       values: [sum(avg),sum(sum),sum(first_value)]
                         Window
@@ -10856,7 +12093,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame backward scan on: cpu_ts
                     """);
 
-            assertPlanNoLeakCheck("select sum(avg), sum(sum), sum(first_value) from (\n" + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + ") ", """
+            assertQuery("select sum(avg), sum(sum), sum(first_value) from (\n" + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + ") ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     GroupBy vectorized: false
                       values: [sum(avg),sum(sum),sum(first_value)]
                         Window
@@ -10868,7 +12107,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: cpu_ts
                     """);
 
-            assertPlanNoLeakCheck("""
+            assertQuery("""
                     select sum(avg), sum(sum) sm, sum(first_value) fst from (
                     select ts, hostname, usage_system, \
                     avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, \
@@ -10876,7 +12115,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value \
                     from cpu_ts \
                     order by ts asc
-                    ) order by sm\s""", """
+                    ) order by sm\s""")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [sm]
                         GroupBy vectorized: false
@@ -10898,7 +12139,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
-            assertPlanNoLeakCheck("select sum(avg), sum(sum), first(first_value) from ( " + "select ts, hostname, usage_system, " + "avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts desc" + ") ", """
+            assertQuery("select sum(avg), sum(sum), first(first_value) from ( " + "select ts, hostname, usage_system, " + "avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts desc" + ") ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     GroupBy vectorized: false
                       values: [sum(avg),sum(sum),first(first_value)]
                         Window
@@ -10910,7 +12153,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame backward scan on: cpu_ts
                     """);
 
-            assertPlanNoLeakCheck("select sum(avg), sum(sum), first(first_value) from ( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by 1 desc", """
+            assertQuery("select sum(avg), sum(sum), first(first_value) from ( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by 1 desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [sum desc]
                         GroupBy vectorized: false
@@ -10920,18 +12165,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 PageFrame
                                     Row backward scan
                                     Frame backward scan on: cpu_ts
-                    """
-            );
+                    """);
 
-            assertPlanNoLeakCheck(
-                    "select sum(avg), sum(sum), count(first_value) from ( " +
+            assertQuery("select sum(avg), sum(sum), count(first_value) from ( " +
                             "select ts, hostname, usage_system, " +
                             "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
                             "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
                             "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
                             "from (select * from cpu_ts order by ts desc) " +
-                            ") order by 1 desc",
-                    """
+                            ") order by 1 desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort
                               keys: [sum desc]
                                 GroupBy vectorized: false
@@ -10951,7 +12195,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value, " + "from cpu_ts " + "order by ts desc " + ") order by ts asc", """
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value, " + "from cpu_ts " + "order by ts desc " + ") order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [ts]
                         Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
@@ -10964,7 +12210,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame backward scan on: cpu_ts
                     """);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts asc " + ") order by ts desc", """
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts asc " + ") order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [ts desc]
                         Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
@@ -10977,7 +12225,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: cpu_ts
                     """);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts asc " + ") order by hostname", """
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts asc " + ") order by hostname")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [hostname]
                         Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
@@ -10990,7 +12240,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: cpu_ts
                     """);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by ts asc ", """
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by ts asc ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     CachedWindow
                       orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
                     sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
@@ -11000,7 +12252,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: cpu_ts
                     """);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by ts desc ", """
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by ts desc ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     CachedWindow
                       orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
                     sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
@@ -11010,7 +12264,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame backward scan on: cpu_ts
                     """);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by hostname ", """
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by hostname ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [hostname]
                         Window
@@ -11022,7 +12278,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: cpu_ts
                     """);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by hostname ", """
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by hostname ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [hostname]
                         Window
@@ -11034,7 +12292,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: cpu_ts
                     """);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + "order by ts desc " + ") order by ts asc ", """
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + "order by ts desc " + ") order by ts asc ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [ts]
                         Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
@@ -11047,7 +12307,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame backward scan on: cpu_ts
                     """);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + "order by ts asc " + ") order by ts desc ", """
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + "order by ts asc " + ") order by ts desc ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [ts desc]
                         Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
@@ -11060,7 +12322,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: cpu_ts
                     """);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc ) " + "order by ts asc " + ") order by hostname ", """
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc ) " + "order by ts asc " + ") order by hostname ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Encode sort
                       keys: [hostname]
                         Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
@@ -11090,13 +12354,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Frame forward scan on: cpu_ts
                     """;
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + ") order by ts asc", expectedForwardPlan);
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + ") order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan(expectedForwardPlan);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value, " + "from (select * from cpu_ts order by ts asc) " + ") order by ts asc", expectedForwardPlan);
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value, " + "from (select * from cpu_ts order by ts asc) " + ") order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan(expectedForwardPlan);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by ts asc", expectedForwardPlan);
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan(expectedForwardPlan);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by hostname) " + ") order by ts asc", expectedForwardPlan);
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by hostname) " + ") order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan(expectedForwardPlan);
 
             String expectedForwardLimitPlan = """
                     Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
@@ -11109,9 +12381,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame forward scan on: cpu_ts
                     """;
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts asc  " + ") order by ts asc", expectedForwardLimitPlan);
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts asc  " + ") order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan(expectedForwardLimitPlan);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + "order by ts asc  " + ") order by ts asc", expectedForwardLimitPlan);
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + "order by ts asc  " + ") order by ts asc")
+                    .noLeakCheck()
+                    .assertsPlan(expectedForwardLimitPlan);
 
             String expectedBackwardPlan = """
                     Window
@@ -11122,13 +12398,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Row backward scan
                             Frame backward scan on: cpu_ts
                     """;
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from cpu_ts " + ") order by ts desc", expectedBackwardPlan);
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from cpu_ts " + ") order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan(expectedBackwardPlan);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by ts desc", expectedBackwardPlan);
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan(expectedBackwardPlan);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by ts desc", expectedBackwardPlan);
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan(expectedBackwardPlan);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by hostname) " + ") order by ts desc", expectedBackwardPlan);
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by hostname) " + ") order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan(expectedBackwardPlan);
 
             String expectedBackwardLimitPlan = """
                     Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
@@ -11141,9 +12425,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Frame backward scan on: cpu_ts
                     """;
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts desc  " + ") order by ts desc", expectedBackwardLimitPlan);
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts desc  " + ") order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan(expectedBackwardLimitPlan);
 
-            assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + "order by ts desc  " + ") order by ts desc", expectedBackwardLimitPlan);
+            assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + "order by ts desc  " + ") order by ts desc")
+                    .noLeakCheck()
+                    .assertsPlan(expectedBackwardLimitPlan);
         });
     }
 
@@ -11153,7 +12441,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table x as ( " + "  select " + "    cast(x as int) i, " + "    rnd_symbol('a','b','c') sym, " + "    timestamp_sequence(0, 100000000) ts " + "   from long_sequence(100)" + ") timestamp(ts) partition by hour");
 
             String sql = "select i, " + "row_number() over (partition by sym), " + "avg(i) over (partition by i rows unbounded preceding), " + "sum(i) over (partition by i rows unbounded preceding), " + "first_value(i) over (partition by i rows unbounded preceding) " + "from x limit 3";
-            assertPlanNoLeakCheck(sql, """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlan("""
                     Limit value: 3 skip-rows: 0 take-rows: 3
                         Window
                           functions: [row_number() over (partition by [sym]),\
@@ -11265,8 +12555,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         return factory instanceof EqLong256StrFunctionFactory;
     }
 
-    private void assertBindVarPlan(String type) throws SqlException {
-        assertPlanNoLeakCheck("select * from t where x = :v1 ", "Async Filter workers: 1\n" + "  filter: x=:v1::" + type + "\n" + "    PageFrame\n" + "        Row forward scan\n" + "        Frame forward scan on: t\n");
+    private void assertBindVarPlan(String type) throws Exception {
+        assertQuery("select * from t where x = :v1 ")
+                .noLeakCheck()
+                .assertsPlan("Async Filter workers: 1\n" + "  filter: x=:v1::" + type + "\n" + "    PageFrame\n" + "        Row forward scan\n" + "        Frame forward scan on: t\n");
     }
 
     private void assertNotSupportedByExplain(String sql, SqlExecutionContextImpl sqlExecutionContext) {
@@ -11278,21 +12570,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
         }
     }
 
-    private void assertPlan(String ddl, String query, String expectedPlan) throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(ddl, query, expectedPlan));
-    }
-
-    private void assertPlan(String query, String expectedPlan) throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(null, query, expectedPlan));
-    }
-
-    private void assertPlanNoLeakCheck(String ddl, String query, String expectedPlan) throws Exception {
-        if (ddl != null) {
-            execute(ddl);
-        }
-        assertPlanNoLeakCheck(query, expectedPlan);
-    }
-
     private void assertReadOnlyOperationAllowed(String sql, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
         try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
             assertFalse(factory.isProjection());
@@ -11300,7 +12577,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private void assertSqlAndPlanNoLeakCheck(String sql, String expectedPlan, String expectedResult) throws Exception {
-        assertPlanNoLeakCheck(sql, expectedPlan);
+        assertQuery(sql)
+                .noLeakCheck()
+                .assertsPlan(expectedPlan);
         assertQuery(sql)
                 .noLeakCheck()
                 .returnsOnce(expectedResult);
@@ -11406,7 +12685,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution
         // actual order is S2, S1
-        assertPlanNoLeakCheck(query, """
+        assertQuery(query)
+                .noLeakCheck()
+                .assertsPlan("""
                 Limit value: 5 skip-rows-max: 0 take-rows-max: 5
                     FilterOnValues symbolOrder: desc
                         Cursor-order scan
@@ -11429,7 +12710,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         //order by asc
         query = "select * from a where s in (:s1, :s2) order by s asc limit 5";
 
-        assertPlanNoLeakCheck(query, """
+        assertQuery(query)
+                .noLeakCheck()
+                .assertsPlan("""
                 Limit value: 5 skip-rows-max: 0 take-rows-max: 5
                     FilterOnValues symbolOrder: asc
                         Cursor-order scan
@@ -11463,7 +12746,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution
         // actual order is S2, S1
-        assertPlanNoLeakCheck(query, """
+        assertQuery(query)
+                .noLeakCheck()
+                .assertsPlan("""
                 Limit value: 5 skip-rows-max: 0 take-rows-max: 5
                     FilterOnValues symbolOrder: desc
                         Cursor-order scan
@@ -11487,7 +12772,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         //order by asc
         query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
 
-        assertPlanNoLeakCheck(query, """
+        assertQuery(query)
+                .noLeakCheck()
+                .assertsPlan("""
                 Limit value: 5 skip-rows-max: 0 take-rows-max: 5
                     FilterOnValues symbolOrder: asc
                         Cursor-order scan
@@ -11519,7 +12806,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         bindVariableService.setStr("s2", "S2");
 
         String queryAsc = "select * from a where s in (:s2, :s1) order by ts asc limit 5";
-        assertPlanNoLeakCheck(queryAsc, """
+        assertQuery(queryAsc)
+                .noLeakCheck()
+                .assertsPlan("""
                 Limit value: 5 skip-rows-max: 0 take-rows-max: 5
                     FilterOnValues
                         Table-order scan
@@ -11541,7 +12830,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
 
         String queryDesc = "select * from a where s in (:s2, :s1) order by ts desc limit 5";
-        assertPlanNoLeakCheck(queryDesc, """
+        assertQuery(queryDesc)
+                .noLeakCheck()
+                .assertsPlan("""
                 Sort light lo: 5
                   keys: [ts desc]
                     FilterOnValues symbolOrder: desc
