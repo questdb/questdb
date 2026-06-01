@@ -24,10 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -78,39 +74,25 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDropAndRecreateTable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (old int)");
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                CompiledQuery compile = compiler.compile("select * from pg_catalog.pg_attribute", sqlExecutionContext);
-
-                // we use a single instance of RecordCursorFactory before and after table drop
-                // this mimic behavior of a query cache.
-                try (RecordCursorFactory recordCursorFactory = compile.getRecordCursorFactory()) {
-                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
-                        assertCursor("""
-                                        attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
-                                        1\told\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
-                                        """,
-                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
-                    }
-
-                    // recreate the same table again, this time with a different column
-                    execute("drop table x");
-                    execute("create table x (new long)");
-                    drainWalQueue();
-
-                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
+        // A single cached pg_attribute factory must reflect table x after it is dropped and
+        // recreated with a different column - the attrelid moves from 1 to 2. The builder's
+        // mutateWith(...) path reuses one factory across the DDL, mimicking a query cache.
+        assertQuery("select * from pg_catalog.pg_attribute")
+                .ddl("create table x (old int)")
+                .mutateWith("drop table x; create table x (new long)")
+                .noRandomAccess()
+                .expectSize()
+                .sizeMayVary()
+                .returns(
+                        """
+                                attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
+                                1\told\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
+                                """,
                         // note the ID is 2 now!
-                        assertCursor("""
-                                        attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
-                                        2\tnew\t1\t20\tfalse\t-1\t8\t\tfalse\ttrue
-                                        """,
-                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
-                    }
-                }
-            }
-        });
+                        """
+                                attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
+                                2\tnew\t1\t20\tfalse\t-1\t8\t\tfalse\ttrue
+                                """);
     }
 
     @Test

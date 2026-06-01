@@ -452,7 +452,7 @@ public class QueryAssertion {
             assertVariableColumns(factory, context);
 
             if (ddl2 != null) {
-                engine.execute(ddl2, context);
+                execDdl(ddl2);
                 if (engine.getConfiguration().getWalEnabledDefault()) {
                     drainWalQueue(engine);
                 }
@@ -482,7 +482,7 @@ public class QueryAssertion {
     private void assertReturnsRecords(Record[] expected, Record[] expected2) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                engine.execute(ddl, context);
+                execDdl(ddl);
             }
             snapshotMemoryUsage();
             RecordCursorFactory factory = compileSelect();
@@ -494,7 +494,7 @@ public class QueryAssertion {
                 assertVariableColumns(factory, context);
 
                 if (ddl2 != null) {
-                    engine.execute(ddl2, context);
+                    execDdl(ddl2);
                     int count = 3;
                     while (count > 0) {
                         try {
@@ -624,11 +624,24 @@ public class QueryAssertion {
         }
     }
 
+    private void execDdl(CharSequence sql) throws SqlException {
+        // Run a possibly multi-statement, ';'-separated DDL/DML setup script one statement at a
+        // time. engine.execute() compiles a single statement, so a script such as
+        // "drop table x; create table x (...)" must be split into its parts. A trailing ';'
+        // produces an empty trailing fragment, which this loop skips.
+        for (String statement : sql.toString().split(";")) {
+            String trimmed = statement.trim();
+            if (!trimmed.isEmpty()) {
+                engine.execute(trimmed, context);
+            }
+        }
+    }
+
     private void failsNoLeak(int errorPos, CharSequence contains) throws Exception {
         prepareHook.run();
         if (ddl != null) {
             try {
-                engine.execute(ddl, context);
+                execDdl(ddl);
                 assertThrows(errorPos, contains, false);
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -661,7 +674,7 @@ public class QueryAssertion {
 
     private void runDdl() throws SqlException {
         if (ddl != null) {
-            engine.execute(ddl, context);
+            execDdl(ddl);
             if (engine.getConfiguration().getWalEnabledDefault()) {
                 drainWalQueue(engine);
             }
