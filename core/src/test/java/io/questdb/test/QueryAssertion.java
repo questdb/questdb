@@ -72,6 +72,7 @@ public class QueryAssertion {
     private SqlExecutionContext context;
     private CharSequence ddl;
     private CharSequence ddl2;
+    private ObjList<CharSequence> ddl2More;
     private CairoEngine engine;
     private boolean expectSize;
     private CharSequence expectedPlan;
@@ -209,6 +210,21 @@ public class QueryAssertion {
      */
     public QueryAssertion mutateWith(CharSequence ddl2) {
         this.ddl2 = ddl2;
+        return this;
+    }
+
+    /**
+     * Multi-statement variant of {@link #mutateWith(CharSequence)}. The statements run in order,
+     * each as a separate {@code engine.execute()} call, before the second assertion re-checks the
+     * same factory. Use when the mutation needs more than one statement (e.g. drop then recreate a
+     * table), which {@code engine.execute()} cannot run as a single {@code ;}-separated batch.
+     */
+    public QueryAssertion mutateWith(CharSequence ddl2, CharSequence... more) {
+        this.ddl2 = ddl2;
+        this.ddl2More = new ObjList<>(more.length);
+        for (int i = 0, n = more.length; i < n; i++) {
+            this.ddl2More.add(more[i]);
+        }
         return this;
     }
 
@@ -452,7 +468,7 @@ public class QueryAssertion {
             assertVariableColumns(factory, context);
 
             if (ddl2 != null) {
-                execDdl(ddl2);
+                runMutations();
                 if (engine.getConfiguration().getWalEnabledDefault()) {
                     drainWalQueue(engine);
                 }
@@ -482,7 +498,7 @@ public class QueryAssertion {
     private void assertReturnsRecords(Record[] expected, Record[] expected2) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                execDdl(ddl);
+                engine.execute(ddl, context);
             }
             snapshotMemoryUsage();
             RecordCursorFactory factory = compileSelect();
@@ -494,7 +510,7 @@ public class QueryAssertion {
                 assertVariableColumns(factory, context);
 
                 if (ddl2 != null) {
-                    execDdl(ddl2);
+                    runMutations();
                     int count = 3;
                     while (count > 0) {
                         try {
@@ -624,24 +640,11 @@ public class QueryAssertion {
         }
     }
 
-    private void execDdl(CharSequence sql) throws SqlException {
-        // Run a possibly multi-statement, ';'-separated DDL/DML setup script one statement at a
-        // time. engine.execute() compiles a single statement, so a script such as
-        // "drop table x; create table x (...)" must be split into its parts. A trailing ';'
-        // produces an empty trailing fragment, which this loop skips.
-        for (String statement : sql.toString().split(";")) {
-            String trimmed = statement.trim();
-            if (!trimmed.isEmpty()) {
-                engine.execute(trimmed, context);
-            }
-        }
-    }
-
     private void failsNoLeak(int errorPos, CharSequence contains) throws Exception {
         prepareHook.run();
         if (ddl != null) {
             try {
-                execDdl(ddl);
+                engine.execute(ddl, context);
                 assertThrows(errorPos, contains, false);
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -674,9 +677,18 @@ public class QueryAssertion {
 
     private void runDdl() throws SqlException {
         if (ddl != null) {
-            execDdl(ddl);
+            engine.execute(ddl, context);
             if (engine.getConfiguration().getWalEnabledDefault()) {
                 drainWalQueue(engine);
+            }
+        }
+    }
+
+    private void runMutations() throws SqlException {
+        engine.execute(ddl2, context);
+        if (ddl2More != null) {
+            for (int i = 0, n = ddl2More.size(); i < n; i++) {
+                engine.execute(ddl2More.getQuick(i), context);
             }
         }
     }

@@ -79,7 +79,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
         // mutateWith(...) path reuses one factory across the DDL, mimicking a query cache.
         assertQuery("select * from pg_catalog.pg_attribute")
                 .ddl("create table x (old int)")
-                .mutateWith("drop table x; create table x (new long)")
+                .mutateWith("drop table x", "create table x (new long)")
                 .noRandomAccess()
                 .expectSize()
                 .sizeMayVary()
