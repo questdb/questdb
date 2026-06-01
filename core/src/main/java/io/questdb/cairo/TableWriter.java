@@ -12501,9 +12501,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
 
         IndexWriter writer = indexer.getWriter();
-        if (!writer.hasPendingFuturePurges(currentTableTxn)) {
-            return;
-        }
         writer.drainPendingFuturePurges(
                 deferredPostingSealPurges,
                 getDeferredPostingSealPurgeTaskPool(),

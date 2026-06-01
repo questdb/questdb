@@ -1094,19 +1094,6 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @Override
-    public boolean hasPendingFuturePurges(long currentTableTxn) {
-        for (int i = 0, n = pendingPurges.size(); i < n; i++) {
-            PendingSealPurge entry = pendingPurges.getQuick(i);
-            if (entry.partitionTimestamp != Long.MIN_VALUE
-                    && entry.toTableTxn != Long.MAX_VALUE
-                    && entry.toTableTxn > currentTableTxn) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    @Override
     public void drainPendingFuturePurges(
             ObjList<PostingSealPurgeTask> sink,
             ObjectStackPool<PostingSealPurgeTask> pool,

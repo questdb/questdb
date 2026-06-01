@@ -244,14 +244,6 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
-     * Returns true when purge entries are still unsafe to publish because their
-     * upper txn bound is beyond the durable table txn.
-     */
-    default boolean hasPendingFuturePurges(long currentTableTxn) {
-        return false;
-    }
-
-    /**
      * Moves unsafe finite-future purge entries into a TableWriter-owned queue
      * before this index writer is closed or reopened.
      */
