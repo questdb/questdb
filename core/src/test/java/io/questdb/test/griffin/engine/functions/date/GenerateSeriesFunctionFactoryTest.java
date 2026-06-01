@@ -24,10 +24,13 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import io.questdb.test.tools.StationaryMicrosClock;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -529,6 +532,34 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
         printSql("generate_series(-5, 5, '-T');");
         printSql("generate_series(-5, 5, '-U');");
         printSql("generate_series(-5::timestamp_ns, 5::timestamp_ns, '-n');");
+    }
+
+    @Test
+    public void testScanDirectionReflectsConstantOrBindVariableStep() throws Exception {
+        assertMemoryLeak(() -> {
+            // A constant step lets the factory report the scan order at plan time.
+            // String (period) step -> GenerateSeriesTimestampStringRecordCursorFactory.
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_FORWARD,
+                    "generate_series('2025-01-01', '2025-02-01', '1d')");
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_BACKWARD,
+                    "generate_series('2025-02-01', '2025-01-01', '-1d')");
+            // Long (micros) step -> GenerateSeriesTimestampRecordCursorFactory.
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_FORWARD,
+                    "generate_series('2025-01-01'::timestamp, '2025-02-01'::timestamp, 86_400_000_000)");
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_BACKWARD,
+                    "generate_series('2025-01-01'::timestamp, '2025-02-01'::timestamp, -86_400_000_000)");
+
+            // A bind-variable step is only known at runtime, so the scan order cannot be
+            // guaranteed at plan time: the factory must report SCAN_DIRECTION_OTHER instead of
+            // reading the unbound step function and guessing a direction from it.
+            bindVariableService.setStr("stepStr", "1d");
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                    "generate_series('2025-01-01', '2025-02-01', :stepStr)");
+
+            bindVariableService.setLong("stepLong", 86_400_000_000L);
+            assertScanDirection(RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                    "generate_series('2025-01-01'::timestamp, '2025-02-01'::timestamp, :stepLong)");
+        });
     }
 
     @Test
@@ -1333,5 +1364,14 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                         2025-01-10T00:00:00.000000000Z:TIMESTAMP_NS
                         """,
                 "generate_series(('2025-01-01')::timestamp_ns, ('2025-02-01')::timestamp_ns, '-11d');");
+    }
+
+    private void assertScanDirection(int expectedScanDirection, CharSequence query) throws SqlException {
+        // getScanDirection() is plan-time metadata, so it must be read before the cursor is
+        // opened: once opened, the string-step factory derives the direction from the cursor's
+        // stride rather than from the (constant or bind-variable) step function.
+        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+            Assert.assertEquals(expectedScanDirection, factory.getScanDirection());
+        }
     }
 }
