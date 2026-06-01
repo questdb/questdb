@@ -1372,9 +1372,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // single-sided plans without the suite catching it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            assertPlanNoLeakCheck(
-                    "SELECT first(val), ts FROM x SAMPLE BY 1h FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR",
-                    """
+            assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sample By Fill
                               range: ('2024-01-01',)
                               stride: '1h'
@@ -1390,8 +1390,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                                             Row forward scan
                                             Interval forward scan on: x
                                               intervals: [("2024-01-01T00:00:00.000000Z","MAX")]
-                            """
-            );
+                            """);
         });
     }
 
@@ -1434,9 +1433,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             // The key invariant: filter: s='s2' appears inside the inner Async Group By,
             // nested below the outer Sample By Fill. This is the mechanism -- the inner
             // cartesian only sees s2 rows, so no s1-driven buckets enter the fill grid.
-            assertPlanNoLeakCheck(
-                    sql,
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sample By Fill
                               stride: '1m'
                               fill: null
@@ -1450,8 +1449,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 
@@ -1999,9 +1997,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // "prev", and "mixed" arms are already covered by other plan tests.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            assertPlanNoLeakCheck(
-                    "SELECT first(val), ts FROM x SAMPLE BY 1h FILL(0.0) ALIGN TO CALENDAR",
-                    """
+            assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FILL(0.0) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sample By Fill
                               stride: '1h'
                               fill: value
@@ -2015,8 +2013,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 

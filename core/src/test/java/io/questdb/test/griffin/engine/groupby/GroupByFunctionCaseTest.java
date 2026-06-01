@@ -191,8 +191,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                             ) timestamp (trade_timestamp) PARTITION BY DAY;"""
             );
 
-            assertPlanNoLeakCheck(
-                    """
+            assertQuery("""
                             SELECT \s
                                 trade_timestamp as candle_st,
                                 venue,
@@ -205,8 +204,9 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                                 AND trade_timestamp >= '2022-01-01 00:00'
                                 AND venue in ('CBS', 'FUS', 'LMX', 'BTS')
                               SAMPLE BY 1h\s
-                              ALIGN TO CALENDAR TIME ZONE 'UTC'""",
-                    """
+                              ALIGN TO CALENDAR TIME ZONE 'UTC'""")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [candle_st]
                                 VirtualRecord
@@ -220,8 +220,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                                             Row forward scan
                                             Interval forward scan on: spot_trades
                                               intervals: [("2022-01-01T00:00:00.000000Z","MAX")]
-                            """
-            );
+                            """);
         });
     }
 
@@ -231,7 +230,9 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
 
     private void assertExecutionPlan(StringSink sink, String typeName, String function, CharSequence expectedPlan) throws Exception {
         try {
-            assertPlanNoLeakCheck(sink, expectedPlan);
+            assertQuery(sink)
+                    .noLeakCheck()
+                    .assertsPlan(expectedPlan);
         } catch (AssertionError ae) {
             throwWithContext(typeName, function, ae);
         }
