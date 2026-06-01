@@ -63,9 +63,16 @@ public class TestServerMain extends ServerMain {
             }, sql)
                     .noLeakCheck()
                     .returnsOnce(expected);
+        } catch (SqlException e) {
+            // A transient compile failure (e.g. the table is not yet visible) becomes an
+            // AssertionError so callers polling via TestUtils.assertEventually(...) -- which retries
+            // only on AssertionError -- keep retrying until ingestion lands.
+            throw new AssertionError(e);
+        } catch (RuntimeException e) {
+            // Let runtime exceptions such as CairoException propagate unchanged, so callers that
+            // assert on a specific failure type (e.g. a corrupted-index CairoException) still catch it.
+            throw e;
         } catch (Exception e) {
-            // Wrap as AssertionError so callers polling via TestUtils.assertEventually(...) — which
-            // retries only on AssertionError — keep retrying until ingestion lands.
             throw new AssertionError(e);
         }
     }
