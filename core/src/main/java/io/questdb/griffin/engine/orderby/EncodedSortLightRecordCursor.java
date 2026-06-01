@@ -131,6 +131,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         this.baseCursor = baseCursor;
         this.baseRecord = baseCursor.getRecord();
+        entryMem.setMemoryTracker(executionContext.getMemoryTracker());
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();

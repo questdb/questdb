@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -70,6 +71,17 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
     @BeforeClass
     public static void beforeClass() {
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 128 * 1024L);
+    }
+
+    @Before
+    public void setUpSortPageSize() {
+        // The deterministic ORDER BY in the success queries routes to the
+        // non-light EncodedSort over the non-random-access LATEST BY sub-query,
+        // whose RecordChain now charges the per-query tracker with a 16 MB value
+        // page by default. Shrink it so the sort fits under the limit; the LATEST
+        // BY structures the breach tests target are unaffected. Re-applied per
+        // test because tearDown clears property overrides.
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16 * 1024L);
     }
 
     @Test

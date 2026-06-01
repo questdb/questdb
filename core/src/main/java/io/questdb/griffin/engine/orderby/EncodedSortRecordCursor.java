@@ -143,6 +143,8 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         this.baseCursor = baseCursor;
+        entryMem.setMemoryTracker(executionContext.getMemoryTracker());
+        recordChain.setMemoryTracker(executionContext.getMemoryTracker());
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
