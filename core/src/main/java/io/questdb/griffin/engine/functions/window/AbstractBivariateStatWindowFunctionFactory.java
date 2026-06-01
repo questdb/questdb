@@ -77,7 +77,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         if (cYY < 0) {
             cYY = 0;
         }
-        double denom = Math.sqrt(cXX * cYY);
+        // Prefer sqrt(cXX * cYY) when the product is finite (one rounding step,
+        // bit-exact agreement with prior behaviour). Fall back to sqrt(cXX) * sqrt(cYY)
+        // only when the product would overflow to +Infinity (inputs of very large
+        // magnitude, e.g. near +/-1e153). Both cXX and cYY are clamped to >= 0 above.
+        double prod = cXX * cYY;
+        double denom = Double.isFinite(prod) ? Math.sqrt(prod) : Math.sqrt(cXX) * Math.sqrt(cYY);
         return denom == 0.0 ? Double.NaN : cXY / denom;
     }
 
@@ -92,7 +97,9 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         if (sumYY < 0) {
             sumYY = 0;
         }
-        double denom = Math.sqrt(sumXX * sumYY);
+        // See computeCorr() for the rationale behind the conditional split-sqrt fallback.
+        double prod = sumXX * sumYY;
+        double denom = Double.isFinite(prod) ? Math.sqrt(prod) : Math.sqrt(sumXX) * Math.sqrt(sumYY);
         return denom == 0.0 ? Double.NaN : sumXY / denom;
     }
 
