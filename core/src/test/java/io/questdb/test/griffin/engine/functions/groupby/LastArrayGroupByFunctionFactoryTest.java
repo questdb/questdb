@@ -266,9 +266,26 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillLinearRejectsArrayColumns() throws Exception {
-        assertQuery("SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(LINEAR)")
+        final String sql = "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(LINEAR)";
+        assertQuery(sql)
                 .ddl("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY")
-                .fails(11, "support for LINEAR fill is not yet implemented");
+                .fails(sql.indexOf("LINEAR"), "support for LINEAR fill is not yet implemented");
+    }
+
+    @Test
+    public void testSampleByFillValueRejectedNonKeyed() throws Exception {
+        // Non-keyed companion to testSampleByFillValueRejectedWithArrayColumns. The
+        // non-keyed path routes through SqlOptimiser.rewriteSampleBy + the propagation
+        // of fillValues onto groupByModel in rewriteSelectClause0. last(D[]) shares
+        // getSampleByFlags() = NONE|NULL|PREVIOUS with array_agg, so FILL(VALUE) must
+        // be rejected here as well.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            final String sql = "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("42"), "support for VALUE fill is not yet implemented");
+        });
     }
 
     @Test
@@ -278,7 +295,7 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             final String sql = "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)";
             assertQuery(sql)
                     .noLeakCheck()
-                    .fails(sql.indexOf("42"), "fill value of type INT cannot fill column of type DOUBLE[]");
+                    .fails(sql.indexOf("42"), "support for VALUE fill is not yet implemented");
         });
     }
 

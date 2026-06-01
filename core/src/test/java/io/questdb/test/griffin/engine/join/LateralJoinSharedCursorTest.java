@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assume;
 import org.junit.Before;
@@ -658,6 +659,144 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                             p_long	p_double	p_long3	p_double3	rate
                             20.0	20.5	20.0	20.0078125	0.1
                             """);
+        });
+    }
+
+    @Test
+    public void testSharedArrayAgg() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE items (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_count INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO items VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (2.0, '2024-01-01T01:00:00.000000Z'),
+                    (3.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (1, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (3, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+            // The outer query reads o.arr both for projection and through
+            // array_count(o.arr) in the lateral filter. The lateral subquery
+            // runs as a SharedRecordCursorFactory backed by the inner Group By,
+            // so the shared GroupByFunction flyweight must serve both reads
+            // from the same MapValue without corrupting the rendered array.
+            assertQuery("""
+                            SELECT o.arr, sub.rate
+                            FROM (SELECT array_agg(val) AS arr FROM items) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_count <= array_count(o.arr)
+                            ) sub
+                            ORDER BY sub.rate
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            arr\trate
+                            [1.0,2.0,3.0]\t0.1
+                            [1.0,2.0,3.0]\t0.2
+                            """);
+        });
+    }
+
+    @Test
+    public void testSharedArrayAggKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE items (category SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_count INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO items VALUES
+                    ('A',  1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A',  2.0, '2024-01-01T01:00:00.000000Z'),
+                    ('A',  3.0, '2024-01-01T02:00:00.000000Z'),
+                    ('B', 10.0, '2024-01-01T03:00:00.000000Z'),
+                    ('B', 20.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (2, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (3, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+            // Keyed variant: each group's array is rendered through the shared
+            // cursor's GroupByFunction flyweight, then re-read in the lateral
+            // subquery's filter. The per-instance render cache holds one slot,
+            // so iterating across categories cache-misses on every group and
+            // verifies that each render is computed correctly from a clean
+            // build buffer.
+            assertQuery("""
+                            SELECT o.category, o.arr, sub.rate
+                            FROM (
+                                SELECT category, array_agg(val) AS arr
+                                FROM items
+                                GROUP BY category
+                            ) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_count <= array_count(o.arr)
+                            ) sub
+                            ORDER BY o.category, sub.rate
+                            """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            category\tarr\trate
+                            A\t[1.0,2.0,3.0]\t0.1
+                            A\t[1.0,2.0,3.0]\t0.2
+                            B\t[10.0,20.0]\t0.1
+                            """);
+        });
+    }
+
+    @Test
+    public void testSharedArrayAggReusedFactory() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE items (category SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_count INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO rates VALUES
+                    (1, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (5, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+            // Hold a single factory across multiple getCursor() calls and grow the
+            // input table between calls. The shared GroupByFunction instance for the
+            // keyed group-by survives across executions; AbstractArrayAggDoubleGroupByFunction
+            // overrides cursorClosed() to reset cachedSrcPtr to 0 on every instance
+            // (primary and shared). Without that reset, build-buffer address recycling
+            // between executions could short-circuit getArray() to a stale cachedSrcPtr
+            // match and return stale rendered bytes from a previous run. Different
+            // counts per iteration ensure that any stale render would leak visibly.
+            final String query = """
+                    SELECT o.category, o.arr, sub.rate
+                    FROM (
+                        SELECT category, array_agg(val) AS arr
+                        FROM items
+                        GROUP BY category
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_count <= array_count(o.arr)
+                    ) sub
+                    ORDER BY o.category, sub.rate
+                    """;
+            try (final RecordCursorFactory factory = select(query)) {
+                final int ROW_CNT = 5;
+                for (int i = 1; i <= ROW_CNT; i++) {
+                    execute("INSERT INTO items VALUES ('A', " + i + ".0, '2024-01-01T0" + i + ":00:00.000000Z')");
+                    final StringBuilder arr = new StringBuilder("[");
+                    for (int j = 1; j <= i; j++) {
+                        if (j > 1) arr.append(',');
+                        arr.append(j).append(".0");
+                    }
+                    arr.append(']');
+                    final String expected;
+                    if (i == ROW_CNT) {
+                        expected = "category\tarr\trate\nA\t" + arr + "\t0.1\nA\t" + arr + "\t0.2\n";
+                    } else {
+                        expected = "category\tarr\trate\nA\t" + arr + "\t0.1\n";
+                    }
+                    assertCursor(expected, factory, true, true);
+                }
+            }
         });
     }
 

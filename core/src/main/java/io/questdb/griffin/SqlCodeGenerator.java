@@ -8761,6 +8761,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
+            // After rewriteSampleBy clears sampleBy, SqlOptimiser.rewriteSelectClause0
+            // re-exposes the fill list here via setSampleByFill so each aggregate's
+            // getSampleByFlags() can be validated against the fill mode.
+            final ObjList<ExpressionNode> rewrittenSampleByFill = model.getSampleByFill();
+
             GroupByUtils.assembleGroupByFunctions(
                     functionParser,
                     sqlNodeStack,
@@ -8780,7 +8785,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     valueTypes,
                     keyTypes,
                     listColumnFilterA,
-                    null,
+                    rewrittenSampleByFill,
                     validateSampleByFillType,
                     model.getColumns(),
                     sharedOuterProjectionFunctions

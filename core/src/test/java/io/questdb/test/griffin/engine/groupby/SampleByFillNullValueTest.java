@@ -25,6 +25,75 @@ import org.junit.Test;
 public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
+    public void testFillNonePreservesDuplicateAggregateDedup() throws Exception {
+        // After rewriteSampleBy clears sampleBy, rewriteSelectClause0 re-exposes
+        // the rewritten fill list on groupByModel.sampleByFill so per-aggregate
+        // fill validation can run. The re-expose is skipped for FILL(NONE)
+        // because every aggregate's getSampleByFlags() includes
+        // SAMPLE_BY_FILL_NONE -- validation is a strict no-op -- and an
+        // unconditional re-expose would defeat detectDuplicateAggregates on the
+        // calendar-align path. This test pins the dedup: count(x) appears once
+        // in the inner Async Group By, not twice.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            assertPlanNoLeakCheck(
+                    "SELECT count(x), count(x), ts FROM t SAMPLE BY 1h FILL(NONE) ALIGN TO CALENDAR",
+                    """
+                            Encode sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [count,count,ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [count(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullDisablesDuplicateAggregateDedup() throws Exception {
+        // Counter-test to testFillNonePreservesDuplicateAggregateDedup. With FILL(NULL)
+        // the fill-list propagation in rewriteSelectClause0 re-exposes the fill on
+        // groupByModel.sampleByFill, which gates off detectDuplicateAggregates. This is
+        // deliberate: per-column FILL(NULL) values must reach their own column, so
+        // collapsing count(x), count(x) into one inner aggregate would silently drop the
+        // second column's fill in cases like FILL(NULL, 0). The cost is that duplicate
+        // aggregates under FILL(NULL) are computed twice. This plan asserts the two
+        // count(x) entries remain distinct in the inner Async Group By; a future change
+        // that accidentally re-enables dedup here would re-introduce the per-column fill
+        // bug fixed by testFillValuePerColumnPreservedAcrossDuplicates.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            assertPlanNoLeakCheck(
+                    "SELECT count(x), count(x), ts FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
+                    """
+                            Sample By Fill
+                              stride: '1h'
+                              fill: null
+                                Encode sort light
+                                  keys: [ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [count(x),count(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testFillNullCastMultiKey() throws Exception {
         // FILL(NULL) variant of the multi-key inline-function classifier
         // regression: an inline cast x::STRING is a FUNCTION-form key and must
@@ -1885,6 +1954,57 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueAppliesAfterAggregateArithmetic() throws Exception {
+        // FILL(v) over sum(col*K) must show v in empty buckets, not v*K. Earlier
+        // SqlOptimiser.rewriteAggregate split sum(x*10) into sum(x)*10, so the fill
+        // landed on sum(x) and empty buckets returned 420. Coverage: ALIGN TO CALENDAR
+        // and ALIGN TO FIRST OBSERVATION, each in non-keyed and keyed form.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, k SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 5),
+                    ('2024-01-01T03:00:00.000000Z', 'a', 7)
+                    """);
+            final String expectedNonKeyed = """
+                    ts\ttotal
+                    2024-01-01T00:00:00.000000Z\t50
+                    2024-01-01T01:00:00.000000Z\t42
+                    2024-01-01T02:00:00.000000Z\t42
+                    2024-01-01T03:00:00.000000Z\t70
+                    """;
+            final String expectedKeyed = """
+                    ts\tk\ttotal
+                    2024-01-01T00:00:00.000000Z\ta\t50
+                    2024-01-01T01:00:00.000000Z\ta\t42
+                    2024-01-01T02:00:00.000000Z\ta\t42
+                    2024-01-01T03:00:00.000000Z\ta\t70
+                    """;
+
+            assertQuery("SELECT ts, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedNonKeyed);
+            assertQuery("SELECT ts, k, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedKeyed);
+            assertQuery("SELECT ts, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedNonKeyed);
+            assertQuery("SELECT ts, k, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedKeyed);
+        });
+    }
+
+    @Test
     public void testFillValueKeyed() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1987,6 +2107,58 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             2.0\t2024-01-01T03:00:00.000000Z
                             0.0\t2024-01-01T04:00:00.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testFillValuePerColumnPreservedAcrossDuplicates() throws Exception {
+        // FILL(0, 42) over duplicate aggregates must apply 0 to the first column and
+        // 42 to the second. Before fill-list propagation reached groupByModel.sampleByFill
+        // on the calendar-align path, SqlOptimiser.detectDuplicateAggregates collapsed
+        // sum(x) AS a and sum(x) AS b into a single inner aggregate and codegen mapped
+        // the FILL list against the collapsed count, silently dropping the 42.
+        // Coverage: ALIGN TO CALENDAR and ALIGN TO FIRST OBSERVATION, each in non-keyed
+        // and keyed form.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 5),
+                    ('2024-01-01T02:00:00.000000Z', 'a', 7)
+                    """);
+            final String expectedNonKeyed = """
+                    ts\ta\tb
+                    2024-01-01T00:00:00.000000Z\t5\t5
+                    2024-01-01T01:00:00.000000Z\t0\t42
+                    2024-01-01T02:00:00.000000Z\t7\t7
+                    """;
+            final String expectedKeyed = """
+                    ts\tk\ta\tb
+                    2024-01-01T00:00:00.000000Z\ta\t5\t5
+                    2024-01-01T01:00:00.000000Z\ta\t0\t42
+                    2024-01-01T02:00:00.000000Z\ta\t7\t7
+                    """;
+
+            assertQuery("SELECT ts, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedNonKeyed);
+            assertQuery("SELECT ts, k, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedKeyed);
+            assertQuery("SELECT ts, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedNonKeyed);
+            assertQuery("SELECT ts, k, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expectedKeyed);
         });
     }
 
