@@ -245,6 +245,85 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeDoesNotSkipInsertBeforeColumnAdd() throws Exception {
+        // Exercises the generalized skip barrier with ADD COLUMN - a structural (walId < 1) transaction -
+        // as the barrier, in a single apply batch. The only other add-column test here drains between
+        // steps, so it never runs the barrier in the same batch as a skippable insert and a covering
+        // REPLACE_RANGE; this commits insert + add-column + replace before applying so the apply job sees
+        // the REPLACE_RANGE while deciding whether to skip the insert.
+        //
+        // Unlike the conversion cases, this is path coverage rather than a strict regression guard. In a
+        // single instance the result is self-consistent whether or not the insert is skipped: the covering
+        // REPLACE_RANGE recomputes the new column's column top either way, so the data, symbol count and
+        // column top are identical with and without the fix (verified). The barrier matters for replica
+        // consistency - two instances that skip different transactions ahead of the structural change would
+        // diverge - which a single-instance test cannot observe. This test pins that the path applies
+        // cleanly and returns correct data.
+        assertMemoryLeak(() -> {
+            execute("create table x (id int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
+            final long rangeHi = MicrosTimestampDriver.floor("2022-02-24T01"); // exclusive
+
+            // INSERT covered by the later REPLACE_RANGE - the one at risk of being skipped. Committed first
+            // so its skip would be decided with an empty writer LAG (a non-empty LAG makes the skip bail out).
+            final StringSink insert = new StringSink();
+            insert.put("insert into x values ");
+            for (int i = 0; i < 10; i++) {
+                if (i > 0) {
+                    insert.put(',');
+                }
+                insert.put('(').put(i).put(",'2022-02-24T00:0").put(i).put(":00.000000Z')");
+            }
+            execute(insert.toString());
+
+            // Surviving rows at HIGHER timestamps, outside the REPLACE_RANGE. They are present when ADD
+            // COLUMN runs, so they sit below the new column's top and must read back as null afterwards.
+            execute("insert into x values (100,'2022-02-24T05:00:00.000000Z'),(101,'2022-02-24T05:01:00.000000Z')");
+
+            // ADD COLUMN - the structural barrier between the insert and the replace.
+            execute("alter table x add column c int");
+
+            // REPLACE_RANGE fully covering the first insert, populating the new column for those rows.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                final int idIdx = ww.getMetadata().getColumnIndex("id");
+                final int cIdx = ww.getMetadata().getColumnIndex("c");
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putInt(idIdx, i);
+                    row.putInt(cIdx, 1000 + i);
+                    row.append();
+                }
+                ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+
+            // Apply insert + add-column + replace in one batch.
+            drainWalQueue();
+
+            // The replaced rows carry their c values; the surviving rows predate the column and read null.
+            assertSql(
+                    """
+                            id\tts\tc
+                            0\t2022-02-24T00:00:00.000000Z\t1000
+                            1\t2022-02-24T00:01:00.000000Z\t1001
+                            2\t2022-02-24T00:02:00.000000Z\t1002
+                            3\t2022-02-24T00:03:00.000000Z\t1003
+                            4\t2022-02-24T00:04:00.000000Z\t1004
+                            5\t2022-02-24T00:05:00.000000Z\t1005
+                            6\t2022-02-24T00:06:00.000000Z\t1006
+                            7\t2022-02-24T00:07:00.000000Z\t1007
+                            8\t2022-02-24T00:08:00.000000Z\t1008
+                            9\t2022-02-24T00:09:00.000000Z\t1009
+                            100\t2022-02-24T05:00:00.000000Z\tnull
+                            101\t2022-02-24T05:01:00.000000Z\tnull
+                            """,
+                    "select * from x order by ts"
+            );
+        });
+    }
+
+    @Test
     public void testReplaceRangeDoesNotSkipInsertBeforeSymbolConversion() throws Exception {
         // The WAL apply job's replace-range skip optimization (ApplyWal2TableJob.calculateSkipTransactionCount)
         // must not skip an INSERT that precedes a STRING->SYMBOL conversion, even when a later REPLACE_RANGE
@@ -307,6 +386,113 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             );
 
             // But the symbol map must hold all 20 values (10 inserted + 10 replacement), proving the conversion
+            // processed the inserted rows rather than skipping them. With the bug it would be 10.
+            try (TableReader reader = engine.getReader(tableToken)) {
+                final int colIdx = reader.getMetadata().getColumnIndex("s");
+                Assert.assertEquals(20, reader.getSymbolMapReader(colIdx).getSymbolCount());
+            }
+        });
+    }
+
+    @Test
+    public void testReplaceRangeDoesNotSkipInsertBeforeTruncateAfterBarrier() throws Exception {
+        // Exercises the TRUNCATE skip path when a non-data barrier sits between the insert and the truncate
+        // - the exact interaction the firstNonSkippableTxn removal changed. Previously the skip scan, on
+        // reaching the truncate, would skip everything up to the first non-skippable (barrier) transaction;
+        // now it stops at the barrier (ADD COLUMN, walId < 1) before it can reach the truncate, so the
+        // insert is applied rather than collapsed into the truncate skip.
+        //
+        // Like the ADD COLUMN case this is path coverage, not a strict regression guard: the truncate wipes
+        // the inserted data either way, so a single instance ends in the same state with or without the fix.
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+
+            // Insert that the truncate (not a REPLACE_RANGE) makes skippable; a barrier follows it.
+            final StringSink insert = new StringSink();
+            insert.put("insert into x values ");
+            for (int i = 0; i < 10; i++) {
+                if (i > 0) {
+                    insert.put(',');
+                }
+                insert.put('(').put(i).put(",'2022-02-24T00:0").put(i).put(":00.000000Z')");
+            }
+            execute(insert.toString());
+
+            // ADD COLUMN barrier between the insert and the truncate.
+            execute("alter table x add column c int");
+
+            // TRUNCATE wipes everything inserted above.
+            execute("truncate table x");
+
+            // One row after the truncate, so there is observable data.
+            execute("insert into x values (100, '2022-02-25T00:00:00.000000Z', 900)");
+
+            // Apply insert + add-column + truncate + insert in a single batch.
+            drainWalQueue();
+
+            assertSql(
+                    "a\tts\tc\n100\t2022-02-25T00:00:00.000000Z\t900\n",
+                    "select * from x order by ts"
+            );
+        });
+    }
+
+    @Test
+    public void testReplaceRangeDoesNotSkipInsertBeforeVarcharToSymbolConversion() throws Exception {
+        // Same regression as testReplaceRangeDoesNotSkipInsertBeforeSymbolConversion, except the converted
+        // column starts as VARCHAR rather than STRING. The fix turns any non-data transaction into a skip
+        // barrier, so a VARCHAR->SYMBOL conversion needs the same coverage as STRING->SYMBOL: skipping the
+        // insert ahead of it would make the conversion build its symbol map from fewer rows.
+        assertMemoryLeak(() -> {
+            execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
+            final long rangeHi = MicrosTimestampDriver.floor("2022-02-24T01"); // exclusive
+
+            // INSERT 10 distinct values into the range the REPLACE_RANGE will later cover.
+            final StringSink insert = new StringSink();
+            insert.put("insert into x values ");
+            for (int i = 0; i < 10; i++) {
+                if (i > 0) {
+                    insert.put(',');
+                }
+                insert.put("('v").put(i).put("','2022-02-24T00:0").put(i).put(":00.000000Z')");
+            }
+            execute(insert.toString());
+
+            // Convert the column to SYMBOL (structural change that reads the inserted rows).
+            execute("alter table x alter column s type symbol");
+
+            // REPLACE_RANGE fully covering the inserted rows, with 10 different values.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                int symbolColumnIndex = -1;
+                for (int i = 0, n = ww.getMetadata().getColumnCount(); i < n; i++) {
+                    if (ColumnType.isSymbol(ww.getMetadata().getColumnType(i))) {
+                        symbolColumnIndex = i;
+                        break;
+                    }
+                }
+                Assert.assertTrue("converted symbol column not found", symbolColumnIndex >= 0);
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putSym(symbolColumnIndex, "w" + i);
+                    row.append();
+                }
+                ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+
+            // Apply insert + conversion + replace in one batch.
+            drainWalQueue();
+
+            // Only the replacement values remain in the data.
+            assertSql(
+                    "s\nw0\nw1\nw2\nw3\nw4\nw5\nw6\nw7\nw8\nw9\n",
+                    "select s from x order by ts"
+            );
+
+            // The symbol map must hold all 20 values (10 inserted + 10 replacement), proving the conversion
             // processed the inserted rows rather than skipping them. With the bug it would be 10.
             try (TableReader reader = engine.getReader(tableToken)) {
                 final int colIdx = reader.getMetadata().getColumnIndex("s");
