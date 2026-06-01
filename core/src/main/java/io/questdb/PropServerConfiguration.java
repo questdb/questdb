@@ -838,18 +838,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
-        // Assigned early so that all subsequent property reads tag their entries with the correct dynamic flag.
-        this.dynamicProperties = dynamicProperties;
         this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
         this.metrics = metricsEnabled ? new Metrics(true, new MetricsRegistryImpl()) : Metrics.DISABLED;
-        this.memoryUsageLogEnabled = getBoolean(properties, env, PropertyKey.MEMORY_USAGE_LOG_ENABLED, true);
-        this.memoryUsageLogInterval = getMillis(properties, env, PropertyKey.MEMORY_USAGE_LOG_INTERVAL, 60_000);
-        if (memoryUsageLogInterval <= 0 || memoryUsageLogInterval > MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS) {
-            throw ServerConfigurationException.forInvalidKey(
-                    PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(),
-                    Long.toString(memoryUsageLogInterval)
-            );
-        }
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
         this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "Z");
@@ -870,8 +860,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.microsecondClock = microsecondClock;
         this.validator = newValidator();
         this.staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
+        this.dynamicProperties = dynamicProperties;
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
+        this.memoryUsageLogEnabled = getBoolean(properties, env, PropertyKey.MEMORY_USAGE_LOG_ENABLED, true);
+        this.memoryUsageLogInterval = getMillis(properties, env, PropertyKey.MEMORY_USAGE_LOG_INTERVAL, 60_000);
+        if (memoryUsageLogInterval <= 0 || memoryUsageLogInterval > MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(),
+                    Long.toString(memoryUsageLogInterval)
+            );
+        }
 
         this.memoryConfiguration = new MemoryConfigurationImpl(
                 getLongSize(properties, env, PropertyKey.RAM_USAGE_LIMIT_BYTES, 0),
