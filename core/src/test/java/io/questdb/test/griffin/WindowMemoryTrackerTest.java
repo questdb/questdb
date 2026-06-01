@@ -115,6 +115,34 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCumeDistPartitionReleasesAllocations() throws Exception {
+        // cume_dist() over (partition by k order by v) routes through the cached window
+        // cursor. Its per-partition map (now lazy/openOnInit=false) and its deferred-offsets
+        // ring must free symmetrically across getCursor/close cycles. The (x%20, x%10) shape
+        // puts every row of a partition into one peer group, so the ring accumulates the
+        // whole partition before flushing -- exercising both structures. With the per-query
+        // limit active, an asymmetric alloc/free would leak or drive the counter negative;
+        // assertMemoryLeak around the loop is the load-bearing check.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT (x % 20) AS k, (x % 10)::double AS v FROM long_sequence(2_000))");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile("SELECT k, cume_dist() OVER (PARTITION BY k ORDER BY v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, CachedWindowRecordCursorFactory.class);
+                for (int i = 0; i < 10; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals("iteration " + i, 2_000, rows);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPartitionRangeFrameBufferFailsOnHighDensity() throws Exception {
         // avg(v) over (partition by k order by ts range between ... preceding and current
         // row) with only a handful of partitions keeps the per-partition map tiny, so the

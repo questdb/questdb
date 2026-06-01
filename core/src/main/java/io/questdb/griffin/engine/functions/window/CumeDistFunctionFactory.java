@@ -457,10 +457,14 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                                          IntList orderByDirection) throws SqlException {
             IntList indices = orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
             try {
+                // Lazy: start the map closed so reopen() allocates it under the per-query
+                // tracker the cursor binds, symmetric with the free at cursor close.
                 map = MapFactory.createUnorderedMap(
                         configuration,
                         keyColumnTypes,
-                        CUME_DIST_COLUMN_TYPES
+                        CUME_DIST_COLUMN_TYPES,
+                        false,
+                        false
                 );
                 this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
                 this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
@@ -595,6 +599,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            if (map != null) {
+                map.setMemoryTracker(tracker);
+            }
             deferredOffsets.setMemoryTracker(tracker);
         }
 
