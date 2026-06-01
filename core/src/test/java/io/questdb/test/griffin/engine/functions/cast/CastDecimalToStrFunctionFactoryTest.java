@@ -61,7 +61,7 @@ public class CastDecimalToStrFunctionFactoryTest extends AbstractCairoTest {
                             .expectSize()
                             .returns("""
                                     cast
-
+                                    
                                     """);
 
                     assertQuery("with data as (select cast(null as decimal(30,2)) d) select cast(d as string) from data")
@@ -69,7 +69,7 @@ public class CastDecimalToStrFunctionFactoryTest extends AbstractCairoTest {
                             .expectSize()
                             .returns("""
                                     cast
-
+                                    
                                     """);
 
                     assertQuery("with data as (select cast(null as decimal(60,2)) d) select cast(d as string) from data")
@@ -77,7 +77,7 @@ public class CastDecimalToStrFunctionFactoryTest extends AbstractCairoTest {
                             .expectSize()
                             .returns("""
                                     cast
-
+                                    
                                     """);
 
                     // Also test constant null
@@ -86,7 +86,7 @@ public class CastDecimalToStrFunctionFactoryTest extends AbstractCairoTest {
                             .expectSize()
                             .returns("""
                                     cast
-
+                                    
                                     """);
                 }
         );

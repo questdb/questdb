@@ -652,10 +652,10 @@ public class CastDecimalToLongFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal128() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(92233720368547758.99m as DECIMAL(20,2)) value " +
-                                "UNION ALL SELECT cast(-92233720368547758.99m as DECIMAL(20,2)) " +
-                                "UNION ALL SELECT cast(12345678901234567.89m as DECIMAL(20,2)) " +
-                                "UNION ALL SELECT cast(null as DECIMAL(20,2))) " +
-                                "SELECT value, cast(value as long) as long_value FROM data")
+                        "UNION ALL SELECT cast(-92233720368547758.99m as DECIMAL(20,2)) " +
+                        "UNION ALL SELECT cast(12345678901234567.89m as DECIMAL(20,2)) " +
+                        "UNION ALL SELECT cast(null as DECIMAL(20,2))) " +
+                        "SELECT value, cast(value as long) as long_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -673,10 +673,10 @@ public class CastDecimalToLongFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal16() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(99.5m as DECIMAL(4,2)) value " +
-                                "UNION ALL SELECT cast(-99.5m as DECIMAL(4,2)) " +
-                                "UNION ALL SELECT cast(12.99m as DECIMAL(4,2)) " +
-                                "UNION ALL SELECT cast(null as DECIMAL(4,2))) " +
-                                "SELECT value, cast(value as long) as long_value FROM data")
+                        "UNION ALL SELECT cast(-99.5m as DECIMAL(4,2)) " +
+                        "UNION ALL SELECT cast(12.99m as DECIMAL(4,2)) " +
+                        "UNION ALL SELECT cast(null as DECIMAL(4,2))) " +
+                        "SELECT value, cast(value as long) as long_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -694,10 +694,10 @@ public class CastDecimalToLongFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal256() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(92233720368547758.9999999999m as DECIMAL(40,10)) value " +
-                                "UNION ALL SELECT cast(-92233720368547758.9999999999m as DECIMAL(40,10)) " +
-                                "UNION ALL SELECT cast(12345678901234567.1234567890m as DECIMAL(40,10)) " +
-                                "UNION ALL SELECT cast(null as DECIMAL(40,10))) " +
-                                "SELECT value, cast(value as long) as long_value FROM data")
+                        "UNION ALL SELECT cast(-92233720368547758.9999999999m as DECIMAL(40,10)) " +
+                        "UNION ALL SELECT cast(12345678901234567.1234567890m as DECIMAL(40,10)) " +
+                        "UNION ALL SELECT cast(null as DECIMAL(40,10))) " +
+                        "SELECT value, cast(value as long) as long_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -715,10 +715,10 @@ public class CastDecimalToLongFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal32() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(999999.999m as DECIMAL(9,3)) value " +
-                                "UNION ALL SELECT cast(-999999.999m as DECIMAL(9,3)) " +
-                                "UNION ALL SELECT cast(123456.789m as DECIMAL(9,3)) " +
-                                "UNION ALL SELECT cast(null as DECIMAL(9, 3))) " +
-                                "SELECT value, cast(value as long) as long_value FROM data")
+                        "UNION ALL SELECT cast(-999999.999m as DECIMAL(9,3)) " +
+                        "UNION ALL SELECT cast(123456.789m as DECIMAL(9,3)) " +
+                        "UNION ALL SELECT cast(null as DECIMAL(9, 3))) " +
+                        "SELECT value, cast(value as long) as long_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -736,10 +736,10 @@ public class CastDecimalToLongFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal64() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(999999999999.999999m as DECIMAL(18,6)) value " +
-                                "UNION ALL SELECT cast(-999999999999.999999m as DECIMAL(18,6)) " +
-                                "UNION ALL SELECT cast(123456789012.345678m as DECIMAL(18,6)) " +
-                                "UNION ALL SELECT cast(null as DECIMAL(18, 6))) " +
-                                "SELECT value, cast(value as long) as long_value FROM data")
+                        "UNION ALL SELECT cast(-999999999999.999999m as DECIMAL(18,6)) " +
+                        "UNION ALL SELECT cast(123456789012.345678m as DECIMAL(18,6)) " +
+                        "UNION ALL SELECT cast(null as DECIMAL(18, 6))) " +
+                        "SELECT value, cast(value as long) as long_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -757,10 +757,10 @@ public class CastDecimalToLongFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal8() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(9.9m as DECIMAL(2,1)) value " +
-                                "UNION ALL SELECT cast(-9.9m as DECIMAL(2,1)) " +
-                                "UNION ALL SELECT cast(0.5m as DECIMAL(2,1)) " +
-                                "UNION ALL SELECT cast(null as DECIMAL(2,1))) " +
-                                "SELECT value, cast(value as long) as long_value FROM data")
+                        "UNION ALL SELECT cast(-9.9m as DECIMAL(2,1)) " +
+                        "UNION ALL SELECT cast(0.5m as DECIMAL(2,1)) " +
+                        "UNION ALL SELECT cast(null as DECIMAL(2,1))) " +
+                        "SELECT value, cast(value as long) as long_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -778,10 +778,10 @@ public class CastDecimalToLongFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal128() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(9223372036854775807m as DECIMAL(19)) value " +
-                                "UNION ALL SELECT cast(-9223372036854775807m as DECIMAL(19)) " +
-                                "UNION ALL SELECT cast(1234567890123456789m as DECIMAL(19)) " +
-                                "UNION ALL SELECT cast(null as DECIMAL(19))) " +
-                                "SELECT value, cast(value as long) as long_value FROM data")
+                        "UNION ALL SELECT cast(-9223372036854775807m as DECIMAL(19)) " +
+                        "UNION ALL SELECT cast(1234567890123456789m as DECIMAL(19)) " +
+                        "UNION ALL SELECT cast(null as DECIMAL(19))) " +
+                        "SELECT value, cast(value as long) as long_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -799,10 +799,10 @@ public class CastDecimalToLongFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal16() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(9999m as DECIMAL(4)) value " +
-                                "UNION ALL SELECT cast(-9999m as DECIMAL(4)) " +
-                                "UNION ALL SELECT cast(1234m as DECIMAL(4)) " +
-                                "UNION ALL SELECT cast(null as DECIMAL(4))) " +
-                                "SELECT value, cast(value as long) as long_value FROM data")
+                        "UNION ALL SELECT cast(-9999m as DECIMAL(4)) " +
+                        "UNION ALL SELECT cast(1234m as DECIMAL(4)) " +
+                        "UNION ALL SELECT cast(null as DECIMAL(4))) " +
+                        "SELECT value, cast(value as long) as long_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -820,10 +820,10 @@ public class CastDecimalToLongFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal256() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(9223372036854775807m as DECIMAL(40)) value " +
-                                "UNION ALL SELECT cast(-9223372036854775807m as DECIMAL(40)) " +
-                                "UNION ALL SELECT cast(1234567890123456789m as DECIMAL(40)) " +
-                                "UNION ALL SELECT cast(null as DECIMAL(40))) " +
-                                "SELECT value, cast(value as long) as long_value FROM data")
+                        "UNION ALL SELECT cast(-9223372036854775807m as DECIMAL(40)) " +
+                        "UNION ALL SELECT cast(1234567890123456789m as DECIMAL(40)) " +
+                        "UNION ALL SELECT cast(null as DECIMAL(40))) " +
+                        "SELECT value, cast(value as long) as long_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -841,10 +841,10 @@ public class CastDecimalToLongFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal32() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(999999999m as DECIMAL(9)) value " +
-                                "UNION ALL SELECT cast(-999999999m as DECIMAL(9)) " +
-                                "UNION ALL SELECT cast(123456789m as DECIMAL(9)) " +
-                                "UNION ALL SELECT cast(null as DECIMAL(9))) " +
-                                "SELECT value, cast(value as long) as long_value FROM data")
+                        "UNION ALL SELECT cast(-999999999m as DECIMAL(9)) " +
+                        "UNION ALL SELECT cast(123456789m as DECIMAL(9)) " +
+                        "UNION ALL SELECT cast(null as DECIMAL(9))) " +
+                        "SELECT value, cast(value as long) as long_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -862,10 +862,10 @@ public class CastDecimalToLongFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal64() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(999999999999999999m as DECIMAL(18)) value " +
-                                "UNION ALL SELECT cast(-999999999999999999m as DECIMAL(18)) " +
-                                "UNION ALL SELECT cast(123456789012345678m as DECIMAL(18)) " +
-                                "UNION ALL SELECT cast(null as DECIMAL(18))) " +
-                                "SELECT value, cast(value as long) as long_value FROM data")
+                        "UNION ALL SELECT cast(-999999999999999999m as DECIMAL(18)) " +
+                        "UNION ALL SELECT cast(123456789012345678m as DECIMAL(18)) " +
+                        "UNION ALL SELECT cast(null as DECIMAL(18))) " +
+                        "SELECT value, cast(value as long) as long_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -883,10 +883,10 @@ public class CastDecimalToLongFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal8() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(99m as DECIMAL(2)) value " +
-                                "UNION ALL SELECT cast(-99m as DECIMAL(2)) " +
-                                "UNION ALL SELECT cast(0m as DECIMAL(2)) " +
-                                "UNION ALL SELECT cast(null as DECIMAL(2))) " +
-                                "SELECT value, cast(value as long) as long_value FROM data")
+                        "UNION ALL SELECT cast(-99m as DECIMAL(2)) " +
+                        "UNION ALL SELECT cast(0m as DECIMAL(2)) " +
+                        "UNION ALL SELECT cast(null as DECIMAL(2))) " +
+                        "SELECT value, cast(value as long) as long_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()

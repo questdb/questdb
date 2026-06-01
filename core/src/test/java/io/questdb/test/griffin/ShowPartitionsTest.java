@@ -416,9 +416,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             }
 
             assertQuery("SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
-                            " FROM table_partitions('" + tableName + "')" +
-                            " WHERE attached" +
-                            " ORDER BY name")
+                    " FROM table_partitions('" + tableName + "')" +
+                    " WHERE attached" +
+                    " ORDER BY name")
                     .noLeakCheck()
                     .sizeMayVary()
                     .returns("""
@@ -483,9 +483,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             // Despite the cleared raw bit, the parquet partition reports
             // hasParquetGenerated as true.
             assertQuery("SELECT name, hasParquetGenerated, isParquet" +
-                            " FROM table_partitions('" + tableName + "')" +
-                            " WHERE attached" +
-                            " ORDER BY name")
+                    " FROM table_partitions('" + tableName + "')" +
+                    " WHERE attached" +
+                    " ORDER BY name")
                     .noLeakCheck()
                     .sizeMayVary()
                     .returns("""
@@ -526,9 +526,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             }
 
             assertQuery("SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
-                            " FROM table_partitions('" + tableName + "')" +
-                            " WHERE attached" +
-                            " ORDER BY name")
+                    " FROM table_partitions('" + tableName + "')" +
+                    " WHERE attached" +
+                    " ORDER BY name")
                     .noLeakCheck()
                     .sizeMayVary()
                     .returns("""
@@ -627,7 +627,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             // The remaining three stay native. Both hasParquetGenerated and isParquet
             // must be true for converted partitions; parquetFileSize must be > 0.
             assertQuery("SELECT name, hasParquetGenerated, isParquet, parquetFileSize > 0 hasParquetFile" +
-                            " FROM table_partitions('" + tableName + "')")
+                    " FROM table_partitions('" + tableName + "')")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -684,9 +684,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             // This exercises the ShowPartitionsRecordCursorFactory code path that
             // reads min/max timestamps from the _pm sidecar file.
             assertQuery("SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
-                            " FROM table_partitions('" + tableName + "')" +
-                            " WHERE attached" +
-                            " ORDER BY name")
+                    " FROM table_partitions('" + tableName + "')" +
+                    " WHERE attached" +
+                    " ORDER BY name")
                     .noLeakCheck()
                     .sizeMayVary()
                     .returns("""

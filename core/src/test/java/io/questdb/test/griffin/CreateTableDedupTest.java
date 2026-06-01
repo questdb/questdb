@@ -167,7 +167,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     @Test
     public void testCreateTableWithArrayDedupKey() throws Exception {
         assertMemoryLeak(() -> assertQuery("CREATE TABLE x (ts TIMESTAMP, arr DOUBLE[])" +
-                        " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, arr)")
+                " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, arr)")
                 .fails(101, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"));
     }
 

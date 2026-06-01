@@ -91,12 +91,12 @@ public class RenameTableTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tsym2\tts
-                    1\tDE\t2022-02-24T00:00:00.000000Z
-                    2\tEF\t2022-02-25T00:00:00.000000Z
-                    1\tabc\t2022-02-25T00:00:00.000000Z
-                    1\tabc\t2022-02-25T00:00:00.000000Z
-                    """);
+                            x\tsym2\tts
+                            1\tDE\t2022-02-24T00:00:00.000000Z
+                            2\tEF\t2022-02-25T00:00:00.000000Z
+                            1\tabc\t2022-02-25T00:00:00.000000Z
+                            1\tabc\t2022-02-25T00:00:00.000000Z
+                            """);
 
             execute("rename table " + upperCaseName + " to " + newTableName);
 
@@ -104,12 +104,12 @@ public class RenameTableTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tsym2\tts
-                    1\tDE\t2022-02-24T00:00:00.000000Z
-                    2\tEF\t2022-02-25T00:00:00.000000Z
-                    1\tabc\t2022-02-25T00:00:00.000000Z
-                    1\tabc\t2022-02-25T00:00:00.000000Z
-                    """);
+                            x\tsym2\tts
+                            1\tDE\t2022-02-24T00:00:00.000000Z
+                            2\tEF\t2022-02-25T00:00:00.000000Z
+                            1\tabc\t2022-02-25T00:00:00.000000Z
+                            1\tabc\t2022-02-25T00:00:00.000000Z
+                            """);
         });
     }
 

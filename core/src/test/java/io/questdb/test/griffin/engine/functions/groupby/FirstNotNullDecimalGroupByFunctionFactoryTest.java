@@ -62,9 +62,9 @@ public class FirstNotNullDecimalGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testFirstNotNullKeyed() throws Exception {
         assertQuery("select id%5 key, first_not_null(d8) f8, first_not_null(d16) f16, first_not_null(d32) f32, " +
-                        "first_not_null(d64) f64, first_not_null(d128) f128, first_not_null(d256) f256 " +
-                        "from x " +
-                        "order by key desc")
+                "first_not_null(d64) f64, first_not_null(d128) f128, first_not_null(d256) f256 " +
+                "from x " +
+                "order by key desc")
                 .ddl("create table x as (" +
                         "select" +
                         " x id," +

@@ -282,13 +282,13 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
             String expected,
             String timestamp,
             String timeZone
-    ) throws Exception{
+    ) throws Exception {
         expected = replaceTimestampSuffix(expected, timestampType.getTypeName());
         timestamp = replaceTimestampSuffix(timestamp, timestampType.getTypeName());
         assertQuery("select to_timezone('" +
-                        timestamp + "', " +
-                        (timeZone != null ? "'" + timeZone + "'" : "null") +
-                        ")")
+                timestamp + "', " +
+                (timeZone != null ? "'" + timeZone + "'" : "null") +
+                ")")
                 .noLeakCheck()
                 .expectSize()
                 .returns(expected);
@@ -296,9 +296,9 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
         bindVariableService.clear();
         bindVariableService.setStr("tz", timeZone);
         assertQuery("select to_timezone('" +
-                        timestamp + "', " +
-                        ":tz" +
-                        ")")
+                timestamp + "', " +
+                ":tz" +
+                ")")
                 .noLeakCheck()
                 .expectSize()
                 .returns(expected);

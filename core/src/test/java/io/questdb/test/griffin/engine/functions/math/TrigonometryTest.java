@@ -32,7 +32,7 @@ public class TrigonometryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertQuery("with ANGLE as (select radians(x) x from long_sequence(90, 255, 255))" +
-                        "    select sqrt(power(sin(x), 2) + power(cos(x), 2)) one, sin(x)/cos(x) = tan(x) identity, sin(x), cos(x), tan(x) from ANGLE")
+                "    select sqrt(power(sin(x), 2) + power(cos(x), 2)) one, sin(x)/cos(x) = tan(x) identity, sin(x), cos(x), tan(x) from ANGLE")
                 .expectSize()
                 .returns("""
                         one\tidentity\tsin\tcos\ttan

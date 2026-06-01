@@ -34,15 +34,15 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAll() throws Exception {
         assertMemoryLeak(() -> assertQuery("""
-                        SELECT
-                            max(x),
-                            avg(x),
-                            weighted_avg(x, x),
-                            sum(x),
-                            stddev_samp(x),
-                            weighted_stddev(x, x)
-                        FROM long_sequence(10)
-                        """)
+                SELECT
+                    max(x),
+                    avg(x),
+                    weighted_avg(x, x),
+                    sum(x),
+                    stddev_samp(x),
+                    weighted_stddev(x, x)
+                FROM long_sequence(10)
+                """)
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
@@ -101,18 +101,18 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         END val FROM long_sequence(100)
                     )""");
             assertQuery("""
-                            SELECT
-                                sum(1/val),
-                                avg(1/val),
-                                weighted_avg(1/val, val),
-                                max(1/val),
-                                min(1/val),
-                                ksum(1/val),
-                                nsum(1/val),
-                                stddev_samp(1/val),
-                                weighted_stddev(1/val, val)
-                            FROM test2
-                            """)
+                    SELECT
+                        sum(1/val),
+                        avg(1/val),
+                        weighted_avg(1/val, val),
+                        max(1/val),
+                        min(1/val),
+                        ksum(1/val),
+                        nsum(1/val),
+                        stddev_samp(1/val),
+                        weighted_stddev(1/val, val)
+                    FROM test2
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -133,10 +133,10 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into fill_options values(to_timestamp('2020-01-01:14:00:00', 'yyyy-MM-dd:HH:mm:ss'), 5);");
 
             assertQuery("""
-                            select ts, min(price) min, max(price) max, avg(price) avg, stddev_samp(price) stddev_samp
-                            from fill_options
-                            sample by 1h
-                            fill(linear);""")
+                    select ts, min(price) min, max(price) max, avg(price) avg, stddev_samp(price) stddev_samp
+                    from fill_options
+                    sample by 1h
+                    fill(linear);""")
                     .timestamp("ts")
                     .expectSize()
                     .returns("""
@@ -154,11 +154,11 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testWeightedAvg() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("""
-                            SELECT
-                                weighted_avg(x, x),
-                                sum(x * x) / sum(x)::double sum_over_sum
-                            FROM long_sequence(10)
-                            """)
+                    SELECT
+                        weighted_avg(x, x),
+                        sum(x * x) / sum(x)::double sum_over_sum
+                    FROM long_sequence(10)
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -237,11 +237,11 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                             null
                             """);
             assertQuery("""
-                            SELECT weighted_avg(
-                                x,
-                                CASE WHEN x = 7 THEN 1 ELSE 0 END
-                            ) FROM long_sequence(10)
-                            """)
+                    SELECT weighted_avg(
+                        x,
+                        CASE WHEN x = 7 THEN 1 ELSE 0 END
+                    ) FROM long_sequence(10)
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -297,12 +297,12 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    sym	function	formula
-                    A	1.1832	1.1832
-                    D	1.1332	1.1332
-                    B	1.1528	1.1528
-                    C	1.2291	1.2291
-                    """);
+                            sym	function	formula
+                            A	1.1832	1.1832
+                            D	1.1332	1.1332
+                            B	1.1528	1.1528
+                            C	1.2291	1.2291
+                            """);
             assertQuery("""
                     SELECT
                         sym,
@@ -319,12 +319,12 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    sym	function	formula
-                    A	1.1845	1.1845
-                    D	1.1346	1.1346
-                    B	1.1544	1.1544
-                    C	1.2309	1.2309
-                    """);
+                            sym	function	formula
+                            A	1.1845	1.1845
+                            D	1.1346	1.1346
+                            B	1.1544	1.1544
+                            C	1.2309	1.2309
+                            """);
         });
     }
 

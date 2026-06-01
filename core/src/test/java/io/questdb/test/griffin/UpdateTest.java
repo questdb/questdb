@@ -956,11 +956,11 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts) partition by DAY");
 
             assertQuery("WITH jn AS (select down1.y + down2.y AS sm, down1.s, down2.y " +
-                            "                         FROM down1 JOIN down2 ON down1.s = down2.s" +
-                            ")" +
-                            "UPDATE up SET s = sm, y = jn.y" +
-                            " FROM jn " +
-                            " WHERE jn.s = up.s")
+                    "                         FROM down1 JOIN down2 ON down1.s = down2.s" +
+                    ")" +
+                    "UPDATE up SET s = sm, y = jn.y" +
+                    " FROM jn " +
+                    " WHERE jn.s = up.s")
                     .fails(147, "inconvertible types: LONG -> SYMBOL");
         });
     }
@@ -2389,13 +2389,13 @@ public class UpdateTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    symCol\tts\tx
-                    WCP\t1970-01-01T00:00:00.000000Z\t1
-                    WCP\t1970-01-01T00:00:01.000000Z\t2
-                    WCP\t1970-01-01T00:00:02.000000Z\t3
-                    VTJ\t1970-01-01T00:00:03.000000Z\t4
-                    \t1970-01-01T00:00:04.000000Z\t5
-                    """);
+                            symCol\tts\tx
+                            WCP\t1970-01-01T00:00:00.000000Z\t1
+                            WCP\t1970-01-01T00:00:01.000000Z\t2
+                            WCP\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """);
 
             Assert.assertEquals(2, update("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'"));
 
@@ -3276,13 +3276,13 @@ public class UpdateTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    symCol\tts\tx
-                    WCP\t1970-01-01T00:00:00.000000Z\t1
-                    WCP\t1970-01-01T00:00:01.000000Z\t2
-                    WCP\t1970-01-01T00:00:02.000000Z\t3
-                    VTJ\t1970-01-01T00:00:03.000000Z\t4
-                    \t1970-01-01T00:00:04.000000Z\t5
-                    """);
+                            symCol\tts\tx
+                            WCP\t1970-01-01T00:00:00.000000Z\t1
+                            WCP\t1970-01-01T00:00:01.000000Z\t2
+                            WCP\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """);
 
             execute("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
@@ -3747,7 +3747,7 @@ public class UpdateTest extends AbstractCairoTest {
         );
     }
 
-    private void createTablesToJoin(String createTableSql) throws Exception{
+    private void createTablesToJoin(String createTableSql) throws Exception {
         execute(createTableSql);
 
         execute("create table down1 (s symbol index, y int)" + (walEnabled ? " WAL" : ""));

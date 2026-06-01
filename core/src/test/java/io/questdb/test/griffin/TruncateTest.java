@@ -66,9 +66,9 @@ public class TruncateTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("timestamp")
                     .returns("""
-                    timestamp\tx\tnew_x
-                    2022-02-24T00:00:00.000000Z\t1\t2
-                    """);
+                            timestamp\tx\tnew_x
+                            2022-02-24T00:00:00.000000Z\t1\t2
+                            """);
         });
     }
 
@@ -856,10 +856,10 @@ public class TruncateTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .expectSize()
                             .returns("""
-                            column_with_top
-                            999
-                            1000
-                            """);
+                                    column_with_top
+                                    999
+                                    1000
+                                    """);
                 }
         );
     }
@@ -941,9 +941,9 @@ public class TruncateTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("timestamp")
                     .returns("""
-                    timestamp\tx
-                    2022-02-24T00:00:00.000000Z\t1
-                    """);
+                            timestamp\tx
+                            2022-02-24T00:00:00.000000Z\t1
+                            """);
         });
     }
 

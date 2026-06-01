@@ -178,10 +178,10 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tts\ts1
-                    1\t2022-02-24T00:00:00.000000Z\t
-                    2\t2022-02-24T00:00:01.000000Z\tx
-                    """);
+                            x\tts\ts1
+                            1\t2022-02-24T00:00:00.000000Z\t
+                            2\t2022-02-24T00:00:01.000000Z\tx
+                            """);
             drainPurgeJob();
             assertWalExistence(false, tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0);
@@ -287,12 +287,12 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                             .expectSize()
                             .timestamp("ts")
                             .returns("""
-                            x\tts\ti1\ti2
-                            1\t2022-02-24T00:00:00.000000Z\tnull\tnull
-                            2\t2022-02-25T00:00:00.000000Z\t2\tnull
-                            3\t2022-02-26T00:00:00.000000Z\t3\tnull
-                            4\t2022-02-27T00:00:00.000000Z\t4\t4
-                            """);
+                                    x\tts\ti1\ti2
+                                    1\t2022-02-24T00:00:00.000000Z\tnull\tnull
+                                    2\t2022-02-25T00:00:00.000000Z\t2\tnull
+                                    3\t2022-02-26T00:00:00.000000Z\t3\tnull
+                                    4\t2022-02-27T00:00:00.000000Z\t4\t4
+                                    """);
 
                     assertWalExistence(true, tableName, 1);
                     assertSegmentExistence(true, tableName, 1, 0);
@@ -673,13 +673,13 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tts
-                    1\t2022-02-24T00:00:00.000000Z
-                    2\t2022-02-24T00:00:01.000000Z
-                    3\t2022-02-24T00:00:02.000000Z
-                    4\t2022-02-24T00:00:03.000000Z
-                    5\t2022-02-24T00:00:04.000000Z
-                    """);
+                            x\tts
+                            1\t2022-02-24T00:00:00.000000Z
+                            2\t2022-02-24T00:00:01.000000Z
+                            3\t2022-02-24T00:00:02.000000Z
+                            4\t2022-02-24T00:00:03.000000Z
+                            5\t2022-02-24T00:00:04.000000Z
+                            """);
 
             drainPurgeJob();
 
@@ -922,9 +922,9 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 .expectSize()
                 .timestamp("ts")
                 .returns("""
-                x\tts\ti1
-                1\t2022-02-24T00:00:00.000000Z\tnull
-                """);
+                        x\tts\ti1
+                        1\t2022-02-24T00:00:00.000000Z\tnull
+                        """);
         assertWalExistence(false, tableName, 1);
     }
 
@@ -1038,11 +1038,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                         .expectSize()
                         .timestamp("ts")
                         .returns("""
-                        x\tts\ti1
-                        1\t2022-02-24T00:00:00.000000Z\tnull
-                        11\t2022-02-24T00:00:00.000000Z\tnull
-                        2\t2022-02-25T00:00:00.000000Z\t2
-                        """);
+                                x\tts\ti1
+                                1\t2022-02-24T00:00:00.000000Z\tnull
+                                11\t2022-02-24T00:00:00.000000Z\tnull
+                                2\t2022-02-25T00:00:00.000000Z\t2
+                                """);
 
 
                 // All applied, all segments can be deleted.
@@ -1117,11 +1117,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                         .expectSize()
                         .timestamp("ts")
                         .returns("""
-                        x\tts\ti1\ti2
-                        1\t2022-02-24T00:00:00.000000Z\tnull\tnull
-                        2\t2022-02-25T00:00:00.000000Z\t2\tnull
-                        2\t2022-02-25T00:00:00.000000Z\t2\tnull
-                        """);
+                                x\tts\ti1\ti2
+                                1\t2022-02-24T00:00:00.000000Z\tnull\tnull
+                                2\t2022-02-25T00:00:00.000000Z\t2\tnull
+                                2\t2022-02-25T00:00:00.000000Z\t2\tnull
+                                """);
 
 
                 // All applied, all segments can be deleted.
@@ -1177,14 +1177,14 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tts\tsss
-                    1\t2022-02-24T00:00:00.000000Z\t
-                    2\t2022-02-24T00:00:01.000000Z\t
-                    3\t2022-02-24T00:00:02.000000Z\t
-                    4\t2022-02-24T00:00:03.000000Z\t
-                    5\t2022-02-24T00:00:04.000000Z\t
-                    6\t2022-02-24T00:00:05.000000Z\tx
-                    """);
+                            x\tts\tsss
+                            1\t2022-02-24T00:00:00.000000Z\t
+                            2\t2022-02-24T00:00:01.000000Z\t
+                            3\t2022-02-24T00:00:02.000000Z\t
+                            4\t2022-02-24T00:00:03.000000Z\t
+                            5\t2022-02-24T00:00:04.000000Z\t
+                            6\t2022-02-24T00:00:05.000000Z\tx
+                            """);
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
@@ -1294,13 +1294,13 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tts
-                    1\t2022-02-24T00:00:00.000000Z
-                    2\t2022-02-24T00:00:01.000000Z
-                    3\t2022-02-24T00:00:02.000000Z
-                    4\t2022-02-24T00:00:03.000000Z
-                    5\t2022-02-24T00:00:04.000000Z
-                    """);
+                            x\tts
+                            1\t2022-02-24T00:00:00.000000Z
+                            2\t2022-02-24T00:00:01.000000Z
+                            3\t2022-02-24T00:00:02.000000Z
+                            4\t2022-02-24T00:00:03.000000Z
+                            5\t2022-02-24T00:00:04.000000Z
+                            """);
 
             engine.releaseInactive();
 
@@ -1346,13 +1346,13 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tts
-                    1\t2022-02-24T00:00:00.000000Z
-                    2\t2022-02-24T00:00:01.000000Z
-                    3\t2022-02-24T00:00:02.000000Z
-                    4\t2022-02-24T00:00:03.000000Z
-                    5\t2022-02-24T00:00:04.000000Z
-                    """);
+                            x\tts
+                            1\t2022-02-24T00:00:00.000000Z
+                            2\t2022-02-24T00:00:01.000000Z
+                            3\t2022-02-24T00:00:02.000000Z
+                            4\t2022-02-24T00:00:03.000000Z
+                            5\t2022-02-24T00:00:04.000000Z
+                            """);
 
             engine.releaseInactive();
 

@@ -62,9 +62,9 @@ public class LastDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLastKeyed() throws Exception {
         assertQuery("select id%5 key, last(d8) l8, last(d16) l16, last(d32) l32, " +
-                        "last(d64) l64, last(d128) l128, last(d256) l256 " +
-                        "from x " +
-                        "order by key desc")
+                "last(d64) l64, last(d128) l128, last(d256) l256 " +
+                "from x " +
+                "order by key desc")
                 .ddl("create table x as (" +
                         "select" +
                         " x id," +

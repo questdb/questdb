@@ -64,9 +64,9 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncFilterWithNegativeLimitNoOrderBy() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "limit -5; ")
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "limit -5; ")
                 .ddl(DDL)
                 .timestamp("sensor_time")
                 .expectSize()
@@ -81,10 +81,10 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncFilterWithNegativeLimitNoOrderByThenCount() throws Exception {
         assertQuery("select count(*) from ( " +
-                        "select sensor_time, temperature_out " +
-                        "from weather_data " +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) " +
-                        "limit -5 )")
+                "select sensor_time, temperature_out " +
+                "from weather_data " +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) " +
+                "limit -5 )")
                 .ddl(DDL)
                 .noRandomAccess()
                 .expectSize()
@@ -95,10 +95,10 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncFilterWithNegativeLimitOrderByAsc() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "order by sensor_time  asc \n" +
-                        "limit -5")
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "order by sensor_time  asc \n" +
+                "limit -5")
                 .ddl(DDL)
                 .timestamp("sensor_time")
                 .expectSize()
@@ -113,10 +113,10 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncFilterWithNegativeLimitOrderByDesc() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "order by sensor_time  desc \n" +
-                        "limit -5; ")
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "order by sensor_time  desc \n" +
+                "limit -5; ")
                 .ddl(DDL)
                 .timestampDesc("sensor_time")
                 .expectSize()
@@ -131,9 +131,9 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncFilterWithOrderByAsc() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-07-31:07:25:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "order by sensor_time  asc \n")
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-07-31:07:25:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "order by sensor_time  asc \n")
                 .ddl(DDL)
                 .timestamp("sensor_time")
                 .returns("sensor_time\ttemperature_out\n" +
@@ -147,9 +147,9 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncFilterWithOrderByDesc() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time >= dateadd( 's', rnd_int(0,1,0)*0, to_timestamp('2022-07-31:23:56:00', 'yyyy-MM-dd:HH:mm:ss'))  \n" +
-                        "order by sensor_time  desc \n")
+                "from weather_data \n" +
+                "where sensor_time >= dateadd( 's', rnd_int(0,1,0)*0, to_timestamp('2022-07-31:23:56:00', 'yyyy-MM-dd:HH:mm:ss'))  \n" +
+                "order by sensor_time  desc \n")
                 .ddl(DDL)
                 .timestampDesc("sensor_time")
                 .returns("sensor_time\ttemperature_out\n" +
@@ -163,9 +163,9 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncFilterWithPositiveLimitNoOrderBy() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "limit 5; ")
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "limit 5; ")
                 .ddl(DDL)
                 .timestamp("sensor_time")
                 .returns("sensor_time\ttemperature_out\n" +
@@ -179,10 +179,10 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncFilterWithPositiveLimitOrderByAsc() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "order by sensor_time  asc \n" +
-                        "limit 5; ")
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "order by sensor_time  asc \n" +
+                "limit 5; ")
                 .ddl(DDL)
                 .timestamp("sensor_time")
                 .returns("sensor_time\ttemperature_out\n" +
@@ -196,10 +196,10 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncFilterWithPositiveLimitOrderByDesc() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
-                        "order by sensor_time  desc \n" +
-                        "limit 5; ")
+                "from weather_data \n" +
+                "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                "order by sensor_time  desc \n" +
+                "limit 5; ")
                 .ddl(DDL)
                 .timestampDesc("sensor_time")
                 .returns("sensor_time\ttemperature_out\n" +
@@ -213,9 +213,9 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncJitFilterWithNegativeLimitNoOrderBy() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out <= 10000 \n" +
-                        "limit -5; ")
+                "from weather_data \n" +
+                "where temperature_out <= 10000 \n" +
+                "limit -5; ")
                 .ddl(DDL)
                 .timestamp("sensor_time")
                 .expectSize()
@@ -230,10 +230,10 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncJitFilterWithNegativeLimitOrderByAsc() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out <= 10000 \n" +
-                        "order by sensor_time  asc \n" +
-                        "limit -5; ")
+                "from weather_data \n" +
+                "where temperature_out <= 10000 \n" +
+                "order by sensor_time  asc \n" +
+                "limit -5; ")
                 .ddl(DDL)
                 .timestamp("sensor_time")
                 .expectSize()
@@ -248,10 +248,10 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncJitFilterWithNegativeLimitOrderByDesc() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out <= 10000 \n" +
-                        "order by sensor_time  desc \n" +
-                        "limit -5; ")
+                "from weather_data \n" +
+                "where temperature_out <= 10000 \n" +
+                "order by sensor_time  desc \n" +
+                "limit -5; ")
                 .ddl(DDL)
                 .timestampDesc("sensor_time")
                 .expectSize()
@@ -266,9 +266,9 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncJitFilterWithOrderByAsc() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out > 990 \n" +
-                        "order by sensor_time  asc \n")
+                "from weather_data \n" +
+                "where temperature_out > 990 \n" +
+                "order by sensor_time  asc \n")
                 .ddl(DDL)
                 .timestamp("sensor_time")
                 .returns("sensor_time\ttemperature_out\n" +
@@ -286,9 +286,9 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncJitFilterWithOrderByDesc() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out < 10 \n" +
-                        "order by sensor_time desc \n")
+                "from weather_data \n" +
+                "where temperature_out < 10 \n" +
+                "order by sensor_time desc \n")
                 .ddl(DDL)
                 .timestampDesc("sensor_time")
                 .returns("sensor_time\ttemperature_out\n" +
@@ -307,9 +307,9 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncJitFilterWithPositiveLimitNoOrderBy() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out <= 10000 \n" +
-                        "limit 5; ")
+                "from weather_data \n" +
+                "where temperature_out <= 10000 \n" +
+                "limit 5; ")
                 .ddl(DDL)
                 .timestamp("sensor_time")
                 .returns("sensor_time\ttemperature_out\n" +
@@ -323,10 +323,10 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncJitFilterWithPositiveLimitOrderByAsc() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out <= 10000 \n" +
-                        "order by sensor_time  asc \n" +
-                        "limit 5; ")
+                "from weather_data \n" +
+                "where temperature_out <= 10000 \n" +
+                "order by sensor_time  asc \n" +
+                "limit 5; ")
                 .ddl(DDL)
                 .timestamp("sensor_time")
                 .returns("sensor_time\ttemperature_out\n" +
@@ -340,10 +340,10 @@ public class OrderByWithAsyncFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncJitFilterWithPositiveLimitOrderByDesc() throws Exception {
         assertQuery("select sensor_time, temperature_out\n" +
-                        "from weather_data \n" +
-                        "where temperature_out <= 100000000 \n" +
-                        "order by sensor_time desc \n" +
-                        "limit 5; ")
+                "from weather_data \n" +
+                "where temperature_out <= 100000000 \n" +
+                "order by sensor_time desc \n" +
+                "limit 5; ")
                 .ddl(DDL)
                 .timestampDesc("sensor_time")
                 .returns("sensor_time\ttemperature_out\n" +

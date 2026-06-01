@@ -257,8 +257,8 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             execute("INSERT INTO tabb values (3,1), (4,2)");
 
             assertQuery("SELECT sum(ax), sum(bx), sum(ax+10), sum(bx+10) " +
-                            "FROM taba " +
-                            "join tabb on aid = bid")
+                    "FROM taba " +
+                    "join tabb on aid = bid")
                     .noLeakCheck()
                     .noRandomAccess()
                     .sizeMayVary()

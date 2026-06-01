@@ -83,9 +83,9 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .noRandomAccess()
                         .returns("""
-                        maxUncommittedRows\to3MaxLag
-                        11111\t1000000
-                        """);
+                                maxUncommittedRows\to3MaxLag
+                                11111\t1000000
+                                """);
                 rdr.reload();
                 Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
                 Assert.assertEquals(1000000, rdr.getMetadata().getO3MaxLag());
@@ -106,9 +106,9 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .noRandomAccess()
                         .returns("""
-                        maxUncommittedRows\to3MaxLag
-                        0\t0
-                        """);
+                                maxUncommittedRows\to3MaxLag
+                                0\t0
+                                """);
                 rdr.reload();
                 Assert.assertEquals(0, rdr.getMetadata().getMaxUncommittedRows());
                 Assert.assertEquals(0, rdr.getMetadata().getO3MaxLag());
@@ -476,18 +476,18 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 .expectSize()
                 .timestamp("ts")
                 .returns("""
-                ts\ti\tl
-                2020-01-01T02:23:59.900000Z\t1\t1
-                2020-01-01T04:47:59.800000Z\t2\t2
-                2020-01-01T07:11:59.700000Z\t3\t3
-                2020-01-01T09:35:59.600000Z\t4\t4
-                2020-01-01T11:59:59.500000Z\t5\t5
-                2020-01-01T14:23:59.400000Z\t6\t6
-                2020-01-01T16:47:59.300000Z\t7\t7
-                2020-01-01T19:11:59.200000Z\t8\t8
-                2020-01-01T21:35:59.100000Z\t9\t9
-                2020-01-01T23:59:59.000000Z\t10\t10
-                """);
+                        ts\ti\tl
+                        2020-01-01T02:23:59.900000Z\t1\t1
+                        2020-01-01T04:47:59.800000Z\t2\t2
+                        2020-01-01T07:11:59.700000Z\t3\t3
+                        2020-01-01T09:35:59.600000Z\t4\t4
+                        2020-01-01T11:59:59.500000Z\t5\t5
+                        2020-01-01T14:23:59.400000Z\t6\t6
+                        2020-01-01T16:47:59.300000Z\t7\t7
+                        2020-01-01T19:11:59.200000Z\t8\t8
+                        2020-01-01T21:35:59.100000Z\t9\t9
+                        2020-01-01T23:59:59.000000Z\t10\t10
+                        """);
     }
 
     private void createX(TableModel tbl) throws NumericException, SqlException {

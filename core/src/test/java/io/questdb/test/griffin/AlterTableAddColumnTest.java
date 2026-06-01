@@ -1077,7 +1077,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             "\tl BYTE,\n" +
                             "\tm BINARY,\n" +
                             "\tn STRING,\n" +
-                            "\tarr DOUBLE[]\n" + 
+                            "\tarr DOUBLE[]\n" +
                             ") timestamp(timestamp) PARTITION BY DAY" + (isWal ? "" : " BYPASS WAL") + ";\n");
         });
     }

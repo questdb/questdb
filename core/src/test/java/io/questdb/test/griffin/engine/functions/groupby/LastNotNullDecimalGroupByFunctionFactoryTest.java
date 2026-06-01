@@ -62,9 +62,9 @@ public class LastNotNullDecimalGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void testLastNotNullKeyed() throws Exception {
         assertQuery("select id%5 key, last_not_null(d8) l8, last_not_null(d16) l16, last_not_null(d32) l32, " +
-                        "last_not_null(d64) l64, last_not_null(d128) l128, last_not_null(d256) l256 " +
-                        "from x " +
-                        "order by key desc")
+                "last_not_null(d64) l64, last_not_null(d128) l128, last_not_null(d256) l256 " +
+                "from x " +
+                "order by key desc")
                 .ddl("create table x as (" +
                         "select" +
                         " x id," +

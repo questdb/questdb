@@ -192,11 +192,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t-99.9999
-                    """);
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
 
             execute("DROP TABLE x");
         });
@@ -219,11 +219,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t-99.9999
-                    """);
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
 
             execute("DROP TABLE x");
         });
@@ -281,13 +281,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t
-                    2024-05-14T16:00:03.000000Z\t
-                    2024-05-14T16:00:04.000000Z\t
-                    """);
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t
+                            2024-05-14T16:00:03.000000Z\t
+                            2024-05-14T16:00:04.000000Z\t
+                            """);
 
             execute("DROP TABLE x");
         });
@@ -312,13 +312,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t
-                    2024-05-14T16:00:03.000000Z\t
-                    2024-05-14T16:00:04.000000Z\t
-                    """);
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t
+                            2024-05-14T16:00:03.000000Z\t
+                            2024-05-14T16:00:04.000000Z\t
+                            """);
 
             execute("DROP TABLE x");
         });
@@ -341,11 +341,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t-99.9999
-                    """);
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
 
             execute("DROP TABLE x");
         });
@@ -369,11 +369,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t-99.9999
-                    """);
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
 
             // VARCHAR -> DECIMAL (round trip)
             execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
@@ -384,11 +384,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t12345.6789
-                    2024-05-14T16:00:01.000000Z\t
-                    2024-05-14T16:00:02.000000Z\t-99.9999
-                    """);
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t12345.6789
+                            2024-05-14T16:00:01.000000Z\t
+                            2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
 
             execute("DROP TABLE x");
         });
@@ -435,16 +435,16 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t0
-                    2024-05-14T16:00:01.000000Z\t0
-                    2024-05-14T16:00:02.000000Z\t3
-                    2024-05-14T16:00:02.000000Z\tnull
-                    2024-05-14T16:00:02.000000Z\tnull
-                    2024-05-14T16:00:02.000000Z\tnull
-                    2024-05-14T16:00:02.000000Z\tnull
-                    2024-05-14T16:00:02.000000Z\tnull
-                    """);
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t0
+                            2024-05-14T16:00:01.000000Z\t0
+                            2024-05-14T16:00:02.000000Z\t3
+                            2024-05-14T16:00:02.000000Z\tnull
+                            2024-05-14T16:00:02.000000Z\tnull
+                            2024-05-14T16:00:02.000000Z\tnull
+                            2024-05-14T16:00:02.000000Z\tnull
+                            2024-05-14T16:00:02.000000Z\tnull
+                            """);
         });
     }
 
@@ -468,14 +468,14 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t0.0
-                    2024-05-14T16:00:01.000000Z\t0.10000000149011612
-                    2024-05-14T16:00:02.000000Z\t3.0999999046325684
-                    2024-05-14T16:00:02.000000Z\t-9.223372036854776E18
-                    2024-05-14T16:00:02.000000Z\t-3.3999999521443642E38
-                    2024-05-14T16:00:02.000000Z\t3.3999999521443642E38
-                    """);
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t0.0
+                            2024-05-14T16:00:01.000000Z\t0.10000000149011612
+                            2024-05-14T16:00:02.000000Z\t3.0999999046325684
+                            2024-05-14T16:00:02.000000Z\t-9.223372036854776E18
+                            2024-05-14T16:00:02.000000Z\t-3.3999999521443642E38
+                            2024-05-14T16:00:02.000000Z\t3.3999999521443642E38
+                            """);
 
             execute("alter table x alter column col type int", sqlExecutionContext);
             drainWalQueue();
@@ -485,14 +485,14 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ts\tcol
-                    2024-05-14T16:00:00.000000Z\t0
-                    2024-05-14T16:00:01.000000Z\t0
-                    2024-05-14T16:00:02.000000Z\t3
-                    2024-05-14T16:00:02.000000Z\tnull
-                    2024-05-14T16:00:02.000000Z\tnull
-                    2024-05-14T16:00:02.000000Z\tnull
-                    """);
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t0
+                            2024-05-14T16:00:01.000000Z\t0
+                            2024-05-14T16:00:02.000000Z\t3
+                            2024-05-14T16:00:02.000000Z\tnull
+                            2024-05-14T16:00:02.000000Z\tnull
+                            2024-05-14T16:00:02.000000Z\tnull
+                            """);
         });
     }
 
@@ -817,14 +817,14 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("timestamp")
                     .returns("""
-                    c\ttimestamp
-                    TJWCP\t2018-01-01T00:00:07.200000Z
-                    TJWCP\t2018-01-01T00:00:07.200000Z
-                    abc\t2024-06-20T17:18:27.752076Z
-                    abc\t2024-06-20T17:18:27.752076Z
-                    def\t2024-06-20T17:18:27.752076Z
-                    def\t2024-06-20T17:18:27.752076Z
-                    """);
+                            c\ttimestamp
+                            TJWCP\t2018-01-01T00:00:07.200000Z
+                            TJWCP\t2018-01-01T00:00:07.200000Z
+                            abc\t2024-06-20T17:18:27.752076Z
+                            abc\t2024-06-20T17:18:27.752076Z
+                            def\t2024-06-20T17:18:27.752076Z
+                            def\t2024-06-20T17:18:27.752076Z
+                            """);
         });
     }
 
@@ -1208,12 +1208,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("timestamp")
                     .returns("""
-                    timestamp\td\tik
-                    2018-01-01T02:00:00.000000Z\t0.04488373772232379\tCPSW
-                    2044-02-24T00:00:00.000000Z\t3.0\tabc
-                    2044-02-25T00:00:00.000000Z\t4.0\tabc
-                    2044-02-25T00:00:00.000000Z\t5.0\tdef
-                    """);
+                            timestamp\td\tik
+                            2018-01-01T02:00:00.000000Z\t0.04488373772232379\tCPSW
+                            2044-02-24T00:00:00.000000Z\t3.0\tabc
+                            2044-02-25T00:00:00.000000Z\t4.0\tabc
+                            2044-02-25T00:00:00.000000Z\t5.0\tdef
+                            """);
         });
     }
 
@@ -1261,9 +1261,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             assertQuery("select * from y")
                     .expectSize()
                     .returns("""
-                    converted\tcasted\toriginal
-                    1316134911\t1316134911\t9999999999999
-                    """);
+                            converted\tcasted\toriginal
+                            1316134911\t1316134911\t9999999999999
+                            """);
 
         });
     }
@@ -1346,7 +1346,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntOverflowConversions() throws Exception{
+    public void testIntOverflowConversions() throws Exception {
         execute("create table x (a long, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR" + (walEnabled ? " WAL" : " BYPASS WAL"));
         execute("insert into x(a, timestamp) values(-7178801693176412875L, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);
         drainWalQueue();
@@ -1364,9 +1364,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                cast\ta
-                null\tnull
-                """);
+                        cast\ta
+                        null\tnull
+                        """);
     }
 
     @Test
@@ -1649,7 +1649,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
+                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
 
             execute("drop table x");
         });
@@ -1673,7 +1673,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
+                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
 
             execute("drop table x");
         });
@@ -1693,7 +1693,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
+                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
 
             execute("drop table x");
         });
@@ -1713,7 +1713,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
+                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
 
             execute("DROP TABLE x");
         });
@@ -1733,7 +1733,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
+                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
 
             execute("DROP TABLE x");
         });
@@ -1851,7 +1851,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         });
     }
 
-    private void testWalRollUncommittedConversion(int columnType, String columnCreateSql, String convertToTypeSql) throws Exception{
+    private void testWalRollUncommittedConversion(int columnType, String columnCreateSql, String convertToTypeSql) throws Exception {
         assumeWal();
         execute(
                 "create table x as (" +

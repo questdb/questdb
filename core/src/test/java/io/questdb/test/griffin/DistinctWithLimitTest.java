@@ -199,8 +199,8 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testDistinctOnThreeNonIndexedColumnsWithLimitOrderByChangingInOuterQuery() throws Exception {
         assertQuery("select DISTINCT id, reading, st from " +
-                        "( select *  from test order by st desc, reading asc, id desc  LIMIT 5) " + // 1,0,3 1,0,4 1,1,2 1,1,1 1,2,0
-                        "order by id desc, reading asc LIMIT 3")
+                "( select *  from test order by st desc, reading asc, id desc  LIMIT 5) " + // 1,0,3 1,0,4 1,1,2 1,1,1 1,2,0
+                "order by id desc, reading asc LIMIT 3")
                 .ddl("CREATE TABLE test as (" +
                         "select x%5 as id, cast(x%3 as double) as reading, 's' || x%2 as st  " +
                         "from long_sequence(9) order by 2)")
@@ -304,12 +304,12 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultiLimitAndOrderOnDifferentDepth() throws Exception {
         assertQuery("select id from " +
-                        "( select id from  " +
-                        "  ( select id from " +
-                        "   ( select id from test order by id desc) " +
-                        "    ) " +
-                        "   ) " +
-                        "LIMIT 5")
+                "( select id from  " +
+                "  ( select id from " +
+                "   ( select id from test order by id desc) " +
+                "    ) " +
+                "   ) " +
+                "LIMIT 5")
                 .ddl("CREATE TABLE test as ( select x as id from long_sequence(9) )")
                 .expectSize()
                 .returns("""
@@ -325,12 +325,12 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultiOrderAndLimitOnDifferentDepth() throws Exception {
         assertQuery("select id from " +
-                        "( select id from  " +
-                        "  ( select id from " +
-                        "   ( select id from test limit 5) " +
-                        "    ) " +
-                        "   ) " +
-                        "order by id desc")
+                "( select id from  " +
+                "  ( select id from " +
+                "   ( select id from test limit 5) " +
+                "    ) " +
+                "   ) " +
+                "order by id desc")
                 .ddl("CREATE TABLE test as ( select x as id from long_sequence(9) )")
                 .expectSize()
                 .returns("""
@@ -346,8 +346,8 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultilevelDistinct() throws Exception {
         assertQuery("select DISTINCT id, reading from " +
-                        "( select distinct id, reading  from test order by reading asc, id desc  LIMIT 3) " + //  2,0 0,0 3,1 1,1
-                        "order by id desc, reading asc LIMIT 2")
+                "( select distinct id, reading  from test order by reading asc, id desc  LIMIT 3) " + //  2,0 0,0 3,1 1,1
+                "order by id desc, reading asc LIMIT 2")
                 .ddl("CREATE TABLE test as (" +  // 1,1 2,0 3,1 0,0 1,1 2,0 3,1 0,0 1,1
                         "select cast( x%4 as int) as id, cast(x%2 as double) as reading, rnd_double() as rnd " +
                         "from long_sequence(9) order by 3)")
@@ -362,12 +362,12 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultilevelLimit() throws Exception {
         assertQuery("select id from " +
-                        "( select id from  " +
-                        "  ( select id from " +
-                        "   ( select id from test LIMIT 8) " +
-                        "    LIMIT 7) " +
-                        "   LIMIT 6) " +
-                        "LIMIT 5")
+                "( select id from  " +
+                "  ( select id from " +
+                "   ( select id from test LIMIT 8) " +
+                "    LIMIT 7) " +
+                "   LIMIT 6) " +
+                "LIMIT 5")
                 .ddl("CREATE TABLE test as ( select x as id from long_sequence(9) )")
                 .expectSize()
                 .returns("""
@@ -383,8 +383,8 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultilevelOrderBy() throws Exception {
         assertQuery("select id, reading from " + // 0,0 0,0 2,0 2,0
-                        "( select id, reading  from test order by reading asc, id desc  LIMIT 4) " + // 2,0 2,0 0,0 0,0 3,1 3,1 1,1 1,1 1,1
-                        "order by id asc, reading asc LIMIT 2")
+                "( select id, reading  from test order by reading asc, id desc  LIMIT 4) " + // 2,0 2,0 0,0 0,0 3,1 3,1 1,1 1,1 1,1
+                "order by id asc, reading asc LIMIT 2")
                 .ddl("CREATE TABLE test as (" +  // 1,1 2,0 3,1 0,0 1,1 2,0 3,1 0,0 1,1
                         "select cast( x%4 as int) as id, cast(x%2 as double) as reading, rnd_double() as rnd " +
                         "from long_sequence(9) order by 3)")
@@ -399,8 +399,8 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultilevelOrderByWithInnerQueryUsingTableOrder() throws Exception {
         assertQuery("select id from " +
-                        "( select id from test LIMIT 5) " +
-                        "order by id desc LIMIT 2")
+                "( select id from test LIMIT 5) " +
+                "order by id desc LIMIT 2")
                 .ddl("CREATE TABLE test as ( select x as id from long_sequence(9) )")
                 .expectSize()
                 .returns("""
@@ -413,12 +413,12 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultilevelOrderByWithLimit() throws Exception {
         assertQuery("select id from " +
-                        "( select id from  " +
-                        "  ( select id from " +
-                        "   ( select id from test order by id desc LIMIT 8) " +
-                        "    order by id asc LIMIT 7) " +
-                        "   order by id desc LIMIT 6) " +
-                        "order by id asc limit 5")
+                "( select id from  " +
+                "  ( select id from " +
+                "   ( select id from test order by id desc LIMIT 8) " +
+                "    order by id asc LIMIT 7) " +
+                "   order by id desc LIMIT 6) " +
+                "order by id asc limit 5")
                 .ddl("CREATE TABLE test as ( select x as id from long_sequence(9) )")
                 .expectSize()
                 .returns("""
@@ -434,8 +434,8 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     @Test
     public void testMultilevelOrderByWithOuterQueryUsingCurrentOrder() throws Exception {
         assertQuery("select id from " +
-                        "( select id from test order by id desc LIMIT 5) " +
-                        " LIMIT 2")
+                "( select id from test order by id desc LIMIT 5) " +
+                " LIMIT 2")
                 .ddl("CREATE TABLE test as ( select x as id from long_sequence(9) )")
                 .returns("""
                         id

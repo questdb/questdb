@@ -970,12 +970,12 @@ public class UnionAllCastTest extends AbstractCairoTest {
             execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery("""
-                            events1
-                            except
-                            events2""")
+                    events1
+                    except
+                    events2""")
                     .noLeakCheck()
                     .returns(// Empty table expected
-                    "contact\tgroupid\teventid\n");
+                            "contact\tgroupid\teventid\n");
         });
     }
 
@@ -993,16 +993,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
             execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery("""
-                            (events1
-                            except
-                            events2) order by 1 desc""")
+                    (events1
+                    except
+                    events2) order by 1 desc""")
                     .noLeakCheck()
                     .returns(// Empty table expected
-                    """
-                            contact\tgroupid\teventid
-                            2\t1.600000023841858\tstand
-                            1\t1.600000023841858\tstand
-                            """);
+                            """
+                                    contact\tgroupid\teventid
+                                    2\t1.600000023841858\tstand
+                                    1\t1.600000023841858\tstand
+                                    """);
         });
     }
 
@@ -1018,12 +1018,12 @@ public class UnionAllCastTest extends AbstractCairoTest {
             execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery("""
-                            events1
-                            except
-                            events2""")
+                    events1
+                    except
+                    events2""")
                     .noLeakCheck()
                     .returns(// Empty table expected
-                    "contact\tgroupid\teventid\n");
+                            "contact\tgroupid\teventid\n");
         });
     }
 
@@ -1041,16 +1041,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
             execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery("""
-                            (events1
-                            except
-                            events2) order by 1 desc""")
+                    (events1
+                    except
+                    events2) order by 1 desc""")
                     .noLeakCheck()
                     .returns(// Empty table expected
-                    """
-                            contact\tgroupid\teventid
-                            2\t1.6\tstand
-                            1\t1.6\tstand
-                            """);
+                            """
+                                    contact\tgroupid\teventid
+                                    2\t1.6\tstand
+                                    1\t1.6\tstand
+                                    """);
         });
     }
 
@@ -2001,16 +2001,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
             execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery("""
-                            (events1
-                            intersect
-                            events2) order by 1 desc""")
+                    (events1
+                    intersect
+                    events2) order by 1 desc""")
                     .noLeakCheck()
                     .returns(// Empty table expected
-                    """
-                            contact\tgroupid\teventid
-                            2\t1.5\tstand
-                            1\t1.5\tflash
-                            """);
+                            """
+                                    contact\tgroupid\teventid
+                                    2\t1.5\tstand
+                                    1\t1.5\tflash
+                                    """);
         });
     }
 
@@ -2028,16 +2028,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
             execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQuery("""
-                            (events1
-                            intersect
-                            events2) order by 1 desc""")
+                    (events1
+                    intersect
+                    events2) order by 1 desc""")
                     .noLeakCheck()
                     .returns(// Empty table expected
-                    """
-                            contact\tgroupid\teventid
-                            2\t1.5\tstand
-                            1\t1.5\tflash
-                            """);
+                            """
+                                    contact\tgroupid\teventid
+                                    2\t1.5\tstand
+                                    1\t1.5\tflash
+                                    """);
         });
     }
 
@@ -2059,14 +2059,14 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testInterval2() throws Exception {
         setCurrentMicros(7 * Micros.DAY_MICROS + Micros.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
         assertMemoryLeak(() -> assertQuery("""
-                        select * from (
-                          select today() a, yesterday() b
-                          union all
-                          select yesterday(), yesterday()
-                          union all
-                          select today() a, null b
-                        )
-                        where b = a""")
+                select * from (
+                  select today() a, yesterday() b
+                  union all
+                  select yesterday(), yesterday()
+                  union all
+                  select today() a, null b
+                )
+                where b = a""")
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("""
@@ -2079,21 +2079,21 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testInterval3() throws Exception {
         setCurrentMicros(7 * Micros.DAY_MICROS + Micros.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
         assertMemoryLeak(() -> assertQuery("""
-                        select * from (
-                          select today() a
-                          union\s
-                          select yesterday()
-                          union\s
-                          select tomorrow()
-                        ) a
-                        join (
-                          select today() a
-                          union\s
-                          select yesterday()
-                          union\s
-                          select tomorrow()
-                        ) b
-                        on a.a = b.a""")
+                select * from (
+                  select today() a
+                  union\s
+                  select yesterday()
+                  union\s
+                  select tomorrow()
+                ) a
+                join (
+                  select today() a
+                  union\s
+                  select yesterday()
+                  union\s
+                  select tomorrow()
+                ) b
+                on a.a = b.a""")
                 .noLeakCheck()
                 .expectSize()
                 .noRandomAccess()
@@ -2109,14 +2109,14 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testInterval4() throws Exception {
         setCurrentMicros(7 * Micros.DAY_MICROS + Micros.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
         assertMemoryLeak(() -> assertQuery("""
-                        select * from (
-                          select today() a, yesterday() b
-                          union all
-                          select yesterday(), yesterday()
-                          union all
-                          select 'foobar' a, null b
-                        )
-                        where b != a""")
+                select * from (
+                  select today() a, yesterday() b
+                  union all
+                  select yesterday(), yesterday()
+                  union all
+                  select 'foobar' a, null b
+                )
+                where b != a""")
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("""

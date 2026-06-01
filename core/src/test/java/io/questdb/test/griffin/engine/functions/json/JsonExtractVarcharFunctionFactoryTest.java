@@ -202,7 +202,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
                             a
                             2
                             1
-
+                            
                             """);
         });
     }
@@ -492,7 +492,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("""
                         json_extract
-
+                        
                         """);
     }
 

@@ -281,16 +281,16 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 """);
 
         assertQuery("""
-                        select sym, price, ts, first(concat(price0, '000')) f
-                        from (
-                          select t.*, p.price as price0
-                          from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t
-                          left join prices p
-                          on (t.sym = p.sym) and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
-                          order by t.ts, p.ts
-                        )
-                        order by ts
-                        """)
+                select sym, price, ts, first(concat(price0, '000')) f
+                from (
+                  select t.*, p.price as price0
+                  from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t
+                  left join prices p
+                  on (t.sym = p.sym) and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
+                  order by t.ts, p.ts
+                )
+                order by ts
+                """)
                 .ddl(null)
                 .timestamp("ts")
                 .expectSize()

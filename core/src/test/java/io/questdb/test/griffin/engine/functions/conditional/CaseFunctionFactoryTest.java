@@ -32,13 +32,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBinary() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_bin() a," +
@@ -86,14 +86,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBinaryOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_bin() a," +
@@ -150,13 +150,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBindVar() throws Exception {
         assertQuery("""
-                        select\s
-                            a,
-                            case
-                                when a > 10 then $1
-                                else $2
-                            end k
-                        from test""")
+                select\s
+                    a,
+                    case
+                        when a > 10 then $1
+                        else $2
+                    end k
+                from test""")
                 .ddl("create table test as (select cast(x as long) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))")
                 .fails(49, "CASE values cannot be bind variables");
     }
@@ -164,13 +164,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBindVarInElse() throws Exception {
         assertQuery("""
-                        select\s
-                            a,
-                            case
-                                when a > 10 then '>10'
-                                else $2
-                            end k
-                        from test""")
+                select\s
+                    a,
+                    case
+                        when a > 10 then '>10'
+                        else $2
+                    end k
+                from test""")
                 .ddl("create table test as (select cast(x as long) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))")
                 .fails(68, "CASE values cannot be bind variables");
     }
@@ -178,13 +178,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBoolean() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_boolean() a," +
@@ -221,14 +221,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBooleanOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_boolean() a," +
@@ -265,13 +265,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testByte() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_byte() a," +
@@ -308,14 +308,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testByteOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_byte() a," +
@@ -361,14 +361,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         ")"
         );
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else 3::byte\
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else 3::byte\
+                    end\s
+                from tanc""")
                 .fails(104, "inconvertible types: BYTE -> VARCHAR [from=BYTE, to=VARCHAR]");
     }
 
@@ -510,13 +510,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testChar() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_char() a," +
@@ -553,14 +553,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCharOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_char() a," +
@@ -597,14 +597,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCharToVarcharCast() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else 'f'::char\
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else 'f'::char\
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -626,13 +626,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDate() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_date() a," +
@@ -669,14 +669,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDateOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_date() a," +
@@ -713,13 +713,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDecimal128() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select x," +
                         " cast(123456789012345678.123456789012345678 as DECIMAL(36,18)) a," +
@@ -741,14 +741,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDecimal128OrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select x," +
                         " cast(123456789012345678.123456789012345678 as DECIMAL(36,18)) a," +
@@ -770,13 +770,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDecimal16() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select x," +
                         " cast(12.34 as DECIMAL(4,2)) a," +
@@ -798,14 +798,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDecimal16OrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select x," +
                         " cast(12.34 as DECIMAL(4,2)) a," +
@@ -827,13 +827,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDecimal256() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select x," +
                         " cast(1234567890123456789012345678901234567890.12345678901234567890123456789012345 as DECIMAL(76,35)) a," +
@@ -855,14 +855,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDecimal256OrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select x," +
                         " cast(1234567890123456789012345678901234567890.12345678901234567890123456789012345 as DECIMAL(76,35)) a," +
@@ -884,13 +884,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDecimal32() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select x," +
                         " cast(12345.6789 as DECIMAL(9,4)) a," +
@@ -912,14 +912,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDecimal32OrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select x," +
                         " cast(12345.6789 as DECIMAL(9,4)) a," +
@@ -941,13 +941,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDecimal64() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select x," +
                         " cast(1234567890.12345678 as DECIMAL(18,8)) a," +
@@ -969,14 +969,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDecimal64OrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select x," +
                         " cast(1234567890.12345678 as DECIMAL(18,8)) a," +
@@ -998,13 +998,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDecimal8() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select x," +
                         " cast(1.2 as DECIMAL(2,1)) a," +
@@ -1026,14 +1026,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDecimal8OrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select x," +
                         " cast(1.2 as DECIMAL(2,1)) a," +
@@ -1055,13 +1055,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDouble() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_double() a," +
@@ -1098,14 +1098,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDoubleOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_double() a," +
@@ -1151,14 +1151,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         ")"
         );
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else 3.5::double\
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else 3.5::double\
+                    end\s
+                from tanc""")
                 .fails(106, "inconvertible types: DOUBLE -> VARCHAR [from=DOUBLE, to=VARCHAR]");
     }
 
@@ -1175,13 +1175,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFloat() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_float() a," +
@@ -1218,14 +1218,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFloatOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_float() a," +
@@ -1272,14 +1272,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
         );
 
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else 3.5::float\
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else 3.5::float\
+                    end\s
+                from tanc""")
                 .fails(106, "inconvertible types: DOUBLE -> VARCHAR [from=DOUBLE, to=VARCHAR]");
     }
 
@@ -1297,14 +1297,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
             );
 
             assertQuery("""
-                            select\s
-                                x,
-                                case
-                                    when x < 0 then a
-                                    when x > 100 and x < 200 then b
-                                    else '127.0.0.1'::ipv4\
-                                end\s
-                            from tanc""")
+                    select\s
+                        x,
+                        case
+                            when x < 0 then a
+                            when x > 100 and x < 200 then b
+                            else '127.0.0.1'::ipv4\
+                        end\s
+                    from tanc""")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1336,13 +1336,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testInt() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_int() a," +
@@ -1379,14 +1379,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testIntOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then c
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then c
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_int() a," +
@@ -1423,14 +1423,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testIntOrElseMalformedBinaryOperator() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then c
-                                else +125
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then c
+                        else +125
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_int() a," +
@@ -1444,14 +1444,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testIntOrElseUnaryNeg() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then c
-                                else -125
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then c
+                        else -125
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_int() a," +
@@ -1497,14 +1497,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         ")"
         );
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else 5\
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else 5\
+                    end\s
+                from tanc""")
                 .fails(103, "inconvertible types: INT -> STRING [from=INT, to=STRING]");
     }
 
@@ -1520,13 +1520,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         ")"
         );
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 500 then 10
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 500 then 10
+                    end\s
+                from tanc""")
                 .fails(88, "inconvertible types: INT -> STRING [from=INT, to=STRING]");
     }
 
@@ -1543,14 +1543,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
         );
 
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else 3\
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else 3\
+                    end\s
+                from tanc""")
                 .fails(103, "inconvertible types: INT -> VARCHAR [from=INT, to=VARCHAR]");
     }
 
@@ -1567,13 +1567,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
         );
 
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 500 then 10
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 500 then 10
+                    end\s
+                from tanc""")
                 .fails(88, "inconvertible types: INT -> VARCHAR [from=INT, to=VARCHAR]");
     }
 
@@ -1605,13 +1605,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLong() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_long() a," +
@@ -1648,13 +1648,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLong256() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_long256() a," +
@@ -1691,14 +1691,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLong256OrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_long256() a," +
@@ -1735,14 +1735,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLongOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_long() a," +
@@ -1788,36 +1788,36 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         ")"
         );
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else 3::long\
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else 3::long\
+                    end\s
+                from tanc""")
                 .fails(104, "inconvertible types: LONG -> VARCHAR [from=LONG, to=VARCHAR]");
     }
 
     @Test
     public void testNoArgs() throws Exception {
         assertQuery("select " +
-                        "    x " +
-                        "    case end c " +
-                        "from long_sequence(1);")
+                "    x " +
+                "    case end c " +
+                "from long_sequence(1);")
                 .fails(17, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"case\"");
     }
 
     @Test
     public void testNonBooleanWhen() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_date() a," +
@@ -1831,13 +1831,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testShort() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_short() a," +
@@ -1874,14 +1874,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testShortOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_short() a," +
@@ -1927,26 +1927,26 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         ")"
         );
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else '42'::short\
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else '42'::short\
+                    end\s
+                from tanc""")
                 .fails(107, "inconvertible types: SHORT -> VARCHAR [from=SHORT, to=VARCHAR]");
     }
 
     @Test
     public void testSingleCharSymbol() throws Exception {
         assertQuery("""
-                        SELECT category,\s
-                          CASE
-                            WHEN category = 'W' THEN true
-                            ELSE false
-                          END AS res
-                        FROM tab""")
+                SELECT category,\s
+                  CASE
+                    WHEN category = 'W' THEN true
+                    ELSE false
+                  END AS res
+                FROM tab""")
                 .ddl("create table tab as (" +
                         "select rnd_char()::symbol as category" +
                         " from long_sequence(10)" +
@@ -1970,13 +1970,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStr() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_str() a," +
@@ -2013,14 +2013,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStrOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_str() a," +
@@ -2057,14 +2057,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStringToVarcharCast() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else 'foo'::string\
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else 'foo'::string\
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -2086,13 +2086,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTimestamp() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " timestamp_sequence(0, 10) a," +
@@ -2129,14 +2129,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTimestampOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x < 0 then a
-                                when x > 100 and x < 200 then b
-                                else c
-                            end\s
-                        from tanc""")
+                select\s
+                    x,
+                    case
+                        when x < 0 then a
+                        when x > 100 and x < 200 then b
+                        else c
+                    end\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " timestamp_sequence_ns(0, 10000) a," +
@@ -2184,14 +2184,14 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
             );
 
             assertQuery("""
-                            select\s
-                                x,
-                                case
-                                    when x < 0 then a
-                                    when x > 100 and x < 200 then b
-                                    else 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid\
-                                end\s
-                            from tanc""")
+                    select\s
+                        x,
+                        case
+                            when x < 0 then a
+                            when x > 100 and x < 200 then b
+                            else 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid\
+                        end\s
+                    from tanc""")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2208,13 +2208,13 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarcharCast() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            case
-                                when x = 97 then a
-                                else ''\
-                            end\s
-                        from x""")
+                select\s
+                    x,
+                    case
+                        when x = 97 then a
+                        else ''\
+                    end\s
+                from x""")
                 .ddl("create table x as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a" +

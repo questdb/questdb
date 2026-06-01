@@ -134,11 +134,11 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                     "('1970-01-01T00:00:04.000000Z'::timestamp, 4, 1, 200.0)");
 
             assertQuery("select ts, sort_key, i, val, " +
-                            "avg(val, 'period', 3) over (order by sort_key) ema_period, " +
-                            "avg(val, 'period', 3) over (partition by i order by sort_key) ema_period_part, " +
-                            "avg(val, 'second', 1) over (order by sort_key) ema_second, " +
-                            "avg(val, 'second', 1) over (partition by i order by sort_key) ema_second_part " +
-                            "from tab")
+                    "avg(val, 'period', 3) over (order by sort_key) ema_period, " +
+                    "avg(val, 'period', 3) over (partition by i order by sort_key) ema_period_part, " +
+                    "avg(val, 'second', 1) over (order by sort_key) ema_second, " +
+                    "avg(val, 'second', 1) over (partition by i order by sort_key) ema_second_part " +
+                    "from tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
@@ -173,9 +173,9 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             //   partition i=1: (sk=1,NULL) (sk=2,10) -> NULL (first row NULL), 10 (first valid)
             //   partition i=0: (sk=3,30)  (sk=4,100) (sk=5,NULL) -> 30, 65, 65
             assertQuery("select ts, sort_key, i, val, " +
-                            "avg(val, 'period', 3) over (order by sort_key) ema_no_part, " +
-                            "avg(val, 'period', 3) over (partition by i order by sort_key) ema_part " +
-                            "from tab")
+                    "avg(val, 'period', 3) over (order by sort_key) ema_no_part, " +
+                    "avg(val, 'period', 3) over (partition by i order by sort_key) ema_part " +
+                    "from tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()

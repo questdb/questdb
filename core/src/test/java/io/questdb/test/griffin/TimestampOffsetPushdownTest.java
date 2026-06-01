@@ -139,8 +139,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // -(-2147483648) = 2147483648 which exceeds Integer.MAX_VALUE
         // Error position 35 is at the stride argument "-2147483648"
         assertQuery("SELECT * FROM (" +
-                        "SELECT dateadd('s', -2147483648, timestamp) as ts, price FROM trades" +
-                        ") WHERE ts > '2022-01-01'")
+                "SELECT dateadd('s', -2147483648, timestamp) as ts, price FROM trades" +
+                ") WHERE ts > '2022-01-01'")
                 .fails(35, "timestamp offset value 2147483648 exceeds maximum allowed range for dateadd");
     }
 
@@ -157,8 +157,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Use an offset of 3 billion seconds (exceeds Integer.MAX_VALUE of 2,147,483,647)
         // Error position 35 is at the stride argument "3000000000"
         assertQuery("SELECT * FROM (" +
-                        "SELECT dateadd('s', 3000000000, timestamp) as ts, price FROM trades" +
-                        ") WHERE ts > '2100-01-01'")
+                "SELECT dateadd('s', 3000000000, timestamp) as ts, price FROM trades" +
+                ") WHERE ts > '2100-01-01'")
                 .fails(35, "timestamp offset value -3000000000 exceeds maximum allowed range for dateadd");
     }
 
@@ -1201,8 +1201,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // When pushing down ts > '2022-01-01', it needs to apply +300000 years to 2022-01-01,
         // resulting in year 302022 which overflows the microsecond timestamp range (~year 294247).
         assertQuery("SELECT * FROM (" +
-                        "SELECT dateadd('y', -300000, timestamp) as ts, price FROM trades" +
-                        ") WHERE ts > '2022-01-01'")
+                "SELECT dateadd('y', -300000, timestamp) as ts, price FROM trades" +
+                ") WHERE ts > '2022-01-01'")
                 .fails(0, "timestamp overflow");
     }
 

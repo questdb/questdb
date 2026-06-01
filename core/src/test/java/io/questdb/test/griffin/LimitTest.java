@@ -400,16 +400,16 @@ public class LimitTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("""
-                            select * from (
-                                select timestamp, symbol, venue,
-                                    bids[1][1] as bid_price,
-                                    bids[2][1] as bid_size,
-                                    asks[1][1] as ask_price,
-                                    asks[2][1] as ask_size
-                                from eq_equities_market_data
-                                where symbol='AAPL' and timestamp in '1970'
-                                limit -4
-                            ) limit 2""")
+                    select * from (
+                        select timestamp, symbol, venue,
+                            bids[1][1] as bid_price,
+                            bids[2][1] as bid_size,
+                            asks[1][1] as ask_price,
+                            asks[2][1] as ask_size
+                        from eq_equities_market_data
+                        where symbol='AAPL' and timestamp in '1970'
+                        limit -4
+                    ) limit 2""")
                     .noLeakCheck()
                     .timestamp("timestamp")
                     .returns("""
@@ -1001,8 +1001,8 @@ public class LimitTest extends AbstractCairoTest {
 
                     // last 4 + last 10 rows
                     assertQuery("(select * from x order by ts, a desc limit -4)" +
-                                    " union all " +
-                                    "(select * from y order by ts, a limit -10)")
+                            " union all " +
+                            "(select * from y order by ts, a limit -10)")
                             .noRandomAccess()
                             .expectSize()
                             .returns("""
@@ -1232,9 +1232,9 @@ public class LimitTest extends AbstractCairoTest {
                     from long_sequence(600000)""");
 
             assertQuery("""
-                            select count(*)
-                            from intervaltest
-                            WHERE ts > '2023-04-06T00:09:59.000000Z'""")
+                    select count(*)
+                    from intervaltest
+                    WHERE ts > '2023-04-06T00:09:59.000000Z'""")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -1579,10 +1579,10 @@ public class LimitTest extends AbstractCairoTest {
             // ORDER BY a real master column. Pre-fix the gate peeled the splice and produced
             // three columns; post-fix the splice is preserved and window_price is present (NULL).
             assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p ON (0 = 1) " +
-                            "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING " +
-                            "ORDER BY t.sym DESC LIMIT 3")
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p ON (0 = 1) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING " +
+                    "ORDER BY t.sym DESC LIMIT 3")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""

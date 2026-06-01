@@ -305,11 +305,11 @@ public class WeightedStdDevRelGroupByFunctionFactoryTest extends AbstractCairoTe
                             null
                             """);
             assertQuery("""
-                            SELECT weighted_stddev_rel(
-                                x,
-                                CASE WHEN x < 3 THEN 1 ELSE 0 END
-                            ) FROM long_sequence(10)
-                            """)
+                    SELECT weighted_stddev_rel(
+                        x,
+                        CASE WHEN x < 3 THEN 1 ELSE 0 END
+                    ) FROM long_sequence(10)
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -318,11 +318,11 @@ public class WeightedStdDevRelGroupByFunctionFactoryTest extends AbstractCairoTe
                             0.7071067811865476
                             """);
             assertQuery("""
-                            SELECT weighted_stddev(
-                                x,
-                                CASE WHEN x < 3 THEN 1 ELSE 0 END
-                            ) FROM long_sequence(10)
-                            """)
+                    SELECT weighted_stddev(
+                        x,
+                        CASE WHEN x < 3 THEN 1 ELSE 0 END
+                    ) FROM long_sequence(10)
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()

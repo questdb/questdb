@@ -356,11 +356,11 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
             assertQuery(query)
                     .returns("""
-                    month\tuid
-                    1970-01-01T00:05:00.000000Z\tA5a
-                    1970-01-01T00:04:00.000000Z\tA6a
-                    1970-01-01T00:03:00.000000Z\tA7a
-                    """);
+                            month\tuid
+                            1970-01-01T00:05:00.000000Z\tA5a
+                            1970-01-01T00:04:00.000000Z\tA6a
+                            1970-01-01T00:03:00.000000Z\tA7a
+                            """);
         });
     }
 
@@ -403,11 +403,11 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
             assertQuery(query)
                     .returns("""
-                    month\tuid
-                    1970-01-01T00:03:00.000000Z\tA3a
-                    1970-01-01T00:04:00.000000Z\tA4a
-                    1970-01-01T00:05:00.000000Z\tA5a
-                    """);
+                            month\tuid
+                            1970-01-01T00:03:00.000000Z\tA3a
+                            1970-01-01T00:04:00.000000Z\tA4a
+                            1970-01-01T00:05:00.000000Z\tA5a
+                            """);
         });
     }
 
@@ -509,10 +509,10 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
             assertQuery(query)
                     .returns("""
-                    vendor_id
-                    A1
-                    A2
-                    """);
+                            vendor_id
+                            A1
+                            A2
+                            """);
         });
     }
 
@@ -733,8 +733,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         );
 
         assertQuery("select l, ts from trips " +
-                        "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
-                        "order by ts desc limit 1")
+                "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
+                "order by ts desc limit 1")
                 .ddl(null)
                 .timestampDesc("ts")
                 .returns("""
@@ -754,8 +754,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         );
 
         assertQuery("select l, ts from trips " +
-                        "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
-                        "order by ts desc limit 3, 5")
+                "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
+                "order by ts desc limit 3, 5")
                 .ddl(null)
                 .timestampDesc("ts")
                 .returns("""
@@ -777,8 +777,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         );
 
         assertQuery("select l, ts from trips " +
-                        "where l <=5 and ts < '2022-01-04T04' " +
-                        "order by ts desc")
+                "where l <=5 and ts < '2022-01-04T04' " +
+                "order by ts desc")
                 .ddl(null)
                 .timestampDesc("ts")
                 .returns("""
@@ -907,9 +907,9 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
             // this would fail with an UnsupportedOperationException due to getLongIPv4 not being implemented
             // for SelectedRecord
             assertQuery("""
-                            select * from (network_nodes_test LATEST on timestamp PARTITION by host_ip)
-                            where status = 'active'
-                            order by host_ip;""")
+                    select * from (network_nodes_test LATEST on timestamp PARTITION by host_ip)
+                    where status = 'active'
+                    order by host_ip;""")
                     .noLeakCheck()
                     .returns("""
                             timestamp\tnode_name\thost_ip\tstatus
@@ -970,13 +970,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
     private void assertOrderByInOverClause(String expected, String direction) throws Exception {
         assertQuery("select ts, temp from \n" +
-                        "( \n" +
-                        "  select temp, ts, \n" +
-                        "         row_number() over (partition by timestamp_floor('y', ts) order by temp " + direction + ")  rid \n" +
-                        "  from weather \n" +
-                        ") inq \n" +
-                        "where rid = 1 \n" +
-                        "order by ts")
+                "( \n" +
+                "  select temp, ts, \n" +
+                "         row_number() over (partition by timestamp_floor('y', ts) order by temp " + direction + ")  rid \n" +
+                "  from weather \n" +
+                ") inq \n" +
+                "where rid = 1 \n" +
+                "order by ts")
                 .ddl("create table weather as " +
                         "(select cast(x*36000000000 as timestamp) ts, \n" +
                         "  rnd_float(0)*100 temp from long_sequence(1000));")

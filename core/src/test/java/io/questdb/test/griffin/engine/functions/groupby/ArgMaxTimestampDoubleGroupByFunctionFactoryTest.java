@@ -73,7 +73,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
                 .expectSize()
                 .returns("""
                         arg_max
-
+                        
                         """);
     }
 
@@ -313,7 +313,7 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
                 .expectSize()
                 .returns("""
                         arg_max
-
+                        
                         """);
     }
 

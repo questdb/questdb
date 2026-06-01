@@ -237,9 +237,9 @@ public class MatViewTest extends AbstractCairoTest {
 
             // expect new limit
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_status, refresh_base_table_txn, base_table_txn, " +
-                            "refresh_limit, refresh_limit_unit " +
-                            "from materialized_views")
+                    "view_status, refresh_base_table_txn, base_table_txn, " +
+                    "refresh_limit, refresh_limit_unit " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -543,9 +543,9 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_status, refresh_base_table_txn, base_table_txn, " +
-                            "refresh_limit, refresh_limit_unit " +
-                            "from materialized_views")
+                    "view_status, refresh_base_table_txn, base_table_txn, " +
+                    "refresh_limit, refresh_limit_unit " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -583,9 +583,9 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
-                            "period_length, period_length_unit, refresh_limit, refresh_limit_unit " +
-                            "from materialized_views")
+                    "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
+                    "period_length, period_length_unit, refresh_limit, refresh_limit_unit " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -1027,10 +1027,10 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_status, refresh_base_table_txn, base_table_txn, " +
-                            "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
-                            "from materialized_views " +
-                            "order by view_name")
+                    "view_status, refresh_base_table_txn, base_table_txn, " +
+                    "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
+                    "from materialized_views " +
+                    "order by view_name")
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit
@@ -1077,8 +1077,8 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("column\tsymbolCapacity\nsym\t1024\n");
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -1186,8 +1186,8 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -1269,8 +1269,8 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -1530,8 +1530,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -1629,8 +1629,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -1644,8 +1644,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -1665,8 +1665,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -1698,8 +1698,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -1711,8 +1711,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -1746,8 +1746,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -1784,8 +1784,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -1801,8 +1801,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -2408,8 +2408,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -2456,8 +2456,8 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("sym\tprice\tts\n");
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -2965,8 +2965,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -3158,8 +3158,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -3227,8 +3227,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -3274,8 +3274,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -4669,9 +4669,9 @@ public class MatViewTest extends AbstractCairoTest {
             }
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
-                            "period_length, period_length_unit, refresh_limit, refresh_limit_unit " +
-                            "from materialized_views")
+                    "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
+                    "period_length, period_length_unit, refresh_limit, refresh_limit_unit " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -4750,7 +4750,7 @@ public class MatViewTest extends AbstractCairoTest {
                                     gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
                                     """));
             assertQuery("select view_status, last_refresh_start_timestamp <= last_refresh_finish_timestamp as refresh_finished " +
-                            "from materialized_views where view_name = 'price_1h'")
+                    "from materialized_views where view_name = 'price_1h'")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -4822,7 +4822,7 @@ public class MatViewTest extends AbstractCairoTest {
                                     gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
                                     """));
             assertQuery("select view_status, last_refresh_start_timestamp <= last_refresh_finish_timestamp as refresh_finished " +
-                            "from materialized_views where view_name = 'price_1h'")
+                    "from materialized_views where view_name = 'price_1h'")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -5146,9 +5146,9 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
-                            "period_length, period_length_unit, refresh_limit, refresh_limit_unit " +
-                            "from materialized_views")
+                    "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
+                    "period_length, period_length_unit, refresh_limit, refresh_limit_unit " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -5252,9 +5252,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("sym\tprice\tts\n");
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
-                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -5276,9 +5276,9 @@ public class MatViewTest extends AbstractCairoTest {
                                     jpyusd\t103.21\t2024-09-11T12:00:00.000000Z
                                     """));
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
-                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -5298,9 +5298,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
-                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -5318,9 +5318,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
-                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -5445,9 +5445,9 @@ public class MatViewTest extends AbstractCairoTest {
                                     jpyusd\t103.21\t2024-09-11T12:00:00.000000Z
                                     """));
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
-                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -5478,9 +5478,9 @@ public class MatViewTest extends AbstractCairoTest {
                                     "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n" +
                                     "jpyusd\t214.32\t2024-09-12T01:00:00.000000Z\n"));
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
-                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -5505,9 +5505,9 @@ public class MatViewTest extends AbstractCairoTest {
                                     "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n" +
                                     "jpyusd\t214.32\t2024-09-12T01:00:00.000000Z\n"));
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
-                            "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6175,7 +6175,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // The catalogue function must surface the same EMA values via SQL.
             assertQuery("select refresh_avg_commit_nanos, refresh_avg_scan_sample_nanos, refresh_avg_scan_range_ts_units, refresh_gap_threshold_ts_units " +
-                            "from materialized_views() where view_name = 'price_1h'")
+                    "from materialized_views() where view_name = 'price_1h'")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("refresh_avg_commit_nanos\trefresh_avg_scan_sample_nanos\trefresh_avg_scan_range_ts_units\trefresh_gap_threshold_ts_units\n" +
@@ -6772,8 +6772,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6925,9 +6925,9 @@ public class MatViewTest extends AbstractCairoTest {
                     gbpusd\t1.327\t1.328\t2\t2024-10-27T23:00:00.000000Z
                     """;
             assertQuery("select sym, first(price) as first, last(price) as last, count() count, ts " +
-                            "from base_price " +
-                            "sample by 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' " +
-                            "order by ts, sym")
+                    "from base_price " +
+                    "sample by 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' " +
+                    "order by ts, sym")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6957,8 +6957,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -7934,8 +7934,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -8048,8 +8048,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             // the view must be marked as invalid as the result of refresh attempt
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -8106,8 +8106,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             // the view must be marked as invalid since the base table was dropped
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views")
+                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -8178,9 +8178,9 @@ public class MatViewTest extends AbstractCairoTest {
                     2025-08-25T00:00:00.000000000Z\tHP\tNYSE\t28.5\t28.55\t28.5\t28.52\t300
                     """;
             assertQuery("SELECT timestamp, symbol, market, " +
-                            "first(price) AS open, max(price) AS high, min(price) AS low, last(price) AS close, sum(volume) AS volume " +
-                            "FROM historical_prices " +
-                            "SAMPLE BY 1w")
+                    "first(price) AS open, max(price) AS high, min(price) AS low, last(price) AS close, sum(volume) AS volume " +
+                    "FROM historical_prices " +
+                    "SAMPLE BY 1w")
                     .timestamp("timestamp")
                     .expectSize()
                     .noLeakCheck()
@@ -8421,9 +8421,9 @@ public class MatViewTest extends AbstractCairoTest {
                                     jpyusd\t1.321\t2024-12-13T13:00:00.000000Z
                                     """));
             assertQuery("select view_name, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, timer_interval, timer_interval_unit, timer_time_zone, timer_start, " +
-                            "period_length, period_length_unit, period_delay, period_delay_unit " +
-                            "from materialized_views")
+                    "view_sql, view_status, timer_interval, timer_interval_unit, timer_time_zone, timer_start, " +
+                    "period_length, period_length_unit, period_delay, period_delay_unit " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -8941,9 +8941,9 @@ public class MatViewTest extends AbstractCairoTest {
             final StringSink tsSink = new StringSink();
             MicrosFormatUtils.appendDateTimeUSec(tsSink, currentMicros);
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
-                            "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
-                            "from materialized_views")
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
+                    "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\n" +
@@ -9046,9 +9046,9 @@ public class MatViewTest extends AbstractCairoTest {
             final StringSink tsSink = new StringSink();
             MicrosTimestampDriver.INSTANCE.append(tsSink, currentMicros);
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
-                            "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
-                            "from materialized_views")
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
+                    "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
+                    "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\n" +

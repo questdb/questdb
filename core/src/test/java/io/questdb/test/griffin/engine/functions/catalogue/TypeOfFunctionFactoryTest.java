@@ -112,7 +112,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTypeOfGeoHash() throws Exception{
+    public void testTypeOfGeoHash() throws Exception {
         for (int i = 1; i <= ColumnType.GEOLONG_MAX_BITS; i++) {
             int type = ColumnType.getGeoHashTypeWithBits(i);
             sink.clear();

@@ -309,15 +309,15 @@ public class IntersectTest extends AbstractCairoTest {
 
             // explicit cast to micros truncates nanos: 2 matching rows
             assertQuery("select id, ts_micro, type from micro_events " +
-                            "intersect " +
-                            "select id, ts_nano::timestamp as ts_micro, type from nano_events")
+                    "intersect " +
+                    "select id, ts_nano::timestamp as ts_micro, type from nano_events")
                     .noLeakCheck()
                     .returns(expected);
 
             // implicit cast promotes micros to nanos -> only the first row matches
             assertQuery("select id, ts_micro as ts, type from micro_events " +
-                            "intersect " +
-                            "select id, ts_nano as ts, type from nano_events")
+                    "intersect " +
+                    "select id, ts_nano as ts, type from nano_events")
                     .noLeakCheck()
                     .returns("""
                             id\tts\ttype

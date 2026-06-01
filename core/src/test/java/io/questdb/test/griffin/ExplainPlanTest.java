@@ -687,11 +687,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .returns("""
-                    i\trow_number\tavg\tsum\tfirst_value
-                    1\t1\t50.5\t5050.0\t1
-                    2\t2\t50.5\t5050.0\t1
-                    3\t1\t50.5\t5050.0\t1
-                    """);
+                            i\trow_number\tavg\tsum\tfirst_value
+                            1\t1\t50.5\t5050.0\t1
+                            2\t2\t50.5\t5050.0\t1
+                            3\t1\t50.5\t5050.0\t1
+                            """);
         });
     }
 
@@ -859,12 +859,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .expectSize()
                         .returns("""
-                        x\tts\tx1\tts1
-                        1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
-                        1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z
-                        2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z
-                        2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z
-                        """);
+                                x\tts\tx1\tts1
+                                1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
+                                1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z
+                                2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z
+                                2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z
+                                """);
             }
         });
     }
@@ -1560,16 +1560,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                QUERY PLAN
-                [
-                  {
-                    "Plan": {
-                        "Node Type": "long_sequence",
-                        "count":  1
-                    }
-                  }
-                ]
-                """);
+                        QUERY PLAN
+                        [
+                          {
+                            "Plan": {
+                                "Node Type": "long_sequence",
+                                "count":  1
+                            }
+                          }
+                        ]
+                        """);
     }
 
     @Test
@@ -1759,20 +1759,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                QUERY PLAN
-                [
-                  {
-                    "Plan": {
-                        "Node Type": "Count",
-                        "Plans": [
-                        {
-                            "Node Type": "long_sequence",
-                            "count":  10
-                        } ]
-                    }
-                  }
-                ]
-                """);
+                        QUERY PLAN
+                        [
+                          {
+                            "Plan": {
+                                "Node Type": "Count",
+                                "Plans": [
+                                {
+                                    "Node Type": "long_sequence",
+                                    "count":  10
+                                } ]
+                            }
+                          }
+                        ]
+                        """);
     }
 
     @Test
@@ -1858,45 +1858,45 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                QUERY PLAN
-                [
-                  {
-                    "Plan": {
-                        "Node Type": "GroupBy",
-                        "vectorized":  false,
-                        "keys": "[d]",
-                        "values": "[max(i)]",
-                        "Plans": [
-                        {
-                            "Node Type": "Union",
-                            "Plans": [
-                            {
-                                "Node Type": "PageFrame",
+                        QUERY PLAN
+                        [
+                          {
+                            "Plan": {
+                                "Node Type": "GroupBy",
+                                "vectorized":  false,
+                                "keys": "[d]",
+                                "values": "[max(i)]",
                                 "Plans": [
                                 {
-                                    "Node Type": "Row forward scan"
-                                },
-                                {
-                                    "Node Type": "Frame forward scan",
-                                    "on": "a"
+                                    "Node Type": "Union",
+                                    "Plans": [
+                                    {
+                                        "Node Type": "PageFrame",
+                                        "Plans": [
+                                        {
+                                            "Node Type": "Row forward scan"
+                                        },
+                                        {
+                                            "Node Type": "Frame forward scan",
+                                            "on": "a"
+                                        } ]
+                                    },
+                                    {
+                                        "Node Type": "PageFrame",
+                                        "Plans": [
+                                        {
+                                            "Node Type": "Row forward scan"
+                                        },
+                                        {
+                                            "Node Type": "Frame forward scan",
+                                            "on": "a"
+                                        } ]
+                                    } ]
                                 } ]
-                            },
-                            {
-                                "Node Type": "PageFrame",
-                                "Plans": [
-                                {
-                                    "Node Type": "Row forward scan"
-                                },
-                                {
-                                    "Node Type": "Frame forward scan",
-                                    "on": "a"
-                                } ]
-                            } ]
-                        } ]
-                    }
-                  }
-                ]
-                """);
+                            }
+                          }
+                        ]
+                        """);
     }
 
     @Test
@@ -1910,43 +1910,43 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
-                    QUERY PLAN
-                    [
-                      {
-                        "Plan": {
-                            "Node Type": "SelectedRecord",
-                            "Plans": [
-                            {
-                                "Node Type": "Nested Loop Left Join",
-                                "filter": "(taba.a1=tabb.b1 or taba.a2=tabb.b2)",
-                                "Plans": [
-                                {
-                                    "Node Type": "PageFrame",
+                            QUERY PLAN
+                            [
+                              {
+                                "Plan": {
+                                    "Node Type": "SelectedRecord",
                                     "Plans": [
                                     {
-                                        "Node Type": "Row forward scan"
-                                    },
-                                    {
-                                        "Node Type": "Frame forward scan",
-                                        "on": "taba"
+                                        "Node Type": "Nested Loop Left Join",
+                                        "filter": "(taba.a1=tabb.b1 or taba.a2=tabb.b2)",
+                                        "Plans": [
+                                        {
+                                            "Node Type": "PageFrame",
+                                            "Plans": [
+                                            {
+                                                "Node Type": "Row forward scan"
+                                            },
+                                            {
+                                                "Node Type": "Frame forward scan",
+                                                "on": "taba"
+                                            } ]
+                                        },
+                                        {
+                                            "Node Type": "PageFrame",
+                                            "Plans": [
+                                            {
+                                                "Node Type": "Row forward scan"
+                                            },
+                                            {
+                                                "Node Type": "Frame forward scan",
+                                                "on": "tabb"
+                                            } ]
+                                        } ]
                                     } ]
-                                },
-                                {
-                                    "Node Type": "PageFrame",
-                                    "Plans": [
-                                    {
-                                        "Node Type": "Row forward scan"
-                                    },
-                                    {
-                                        "Node Type": "Frame forward scan",
-                                        "on": "tabb"
-                                    } ]
-                                } ]
-                            } ]
-                        }
-                      }
-                    ]
-                    """);
+                                }
+                              }
+                            ]
+                            """);
         });
     }
 
@@ -4017,9 +4017,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .returns("""
-                    timestamp\tcluster\talias\tinterval\tbits\tpackets
-                    2023-09-01T09:42:00.000000Z\tcluster10\ta\t60000000\t8\t1
-                    """);
+                            timestamp\tcluster\talias\tinterval\tbits\tpackets
+                            2023-09-01T09:42:00.000000Z\tcluster10\ta\t60000000\t8\t1
+                            """);
         });
     }
 
@@ -4045,9 +4045,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .timestamp("ts")
                     .returns("""
-                    ts\ts
-                    1970-01-01T02:00:00.000000Z\tc
-                    """);
+                            ts\ts
+                            1970-01-01T02:00:00.000000Z\tc
+                            """);
         });
     }
 
@@ -4961,12 +4961,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         .timestamp("ts")
                         .noRandomAccess()
                         .returns("""
-                        x\tts\tx1\tts1
-                        1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
-                        1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z
-                        2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z
-                        2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z
-                        """);
+                                x\tts\tx1\tts1
+                                1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
+                                1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z
+                                2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z
+                                2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z
+                                """);
             }
         });
     }
@@ -8277,11 +8277,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    s\tts
-                    S2\t1970-01-01T01:00:00.000003Z
-                    S2\t1970-01-01T00:00:00.000000Z
-                    S1\t1970-01-01T00:00:00.000001Z
-                    """);
+                            s\tts
+                            S2\t1970-01-01T01:00:00.000003Z
+                            S2\t1970-01-01T00:00:00.000000Z
+                            S1\t1970-01-01T00:00:00.000001Z
+                            """);
 
             // order by asc
             String queryAsc = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
@@ -8290,11 +8290,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    s\tts
-                    S1\t1970-01-01T00:00:00.000001Z
-                    S2\t1970-01-01T01:00:00.000003Z
-                    S2\t1970-01-01T00:00:00.000000Z
-                    """);
+                            s\tts
+                            S1\t1970-01-01T00:00:00.000001Z
+                            S2\t1970-01-01T01:00:00.000003Z
+                            S2\t1970-01-01T00:00:00.000000Z
+                            """);
         });
     }
 
@@ -8474,7 +8474,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .returns("s\n" + "\n" +//null
-                    "b\n" + "w\n");
+                            "b\n" + "w\n");
 
             query = "select * from a where s != 'a' order by s desc";
             assertPlanNoLeakCheck(query, """
@@ -8493,11 +8493,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .returns("""
-                    s
-                    w
-                    b
-                    
-                    """/*null*/);
+                            s
+                            w
+                            b
+                            
+                            """/*null*/);
 
             query = "select * from a where s != null order by s desc";
             assertPlanNoLeakCheck(query, """
@@ -8516,12 +8516,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .returns("""
-                    s
-                    w
-                    b
-                    a
-                    a
-                    """);
+                            s
+                            w
+                            b
+                            a
+                            a
+                            """);
         });
     }
 
@@ -8695,11 +8695,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
-                    s1\tts
-                    S5\t1970-01-01T00:20:00.000000Z
-                    S4\t1970-01-01T00:40:00.000000Z
-                    S3\t1970-01-01T01:00:00.000000Z
-                    """);
+                            s1\tts
+                            S5\t1970-01-01T00:20:00.000000Z
+                            S4\t1970-01-01T00:40:00.000000Z
+                            S3\t1970-01-01T01:00:00.000000Z
+                            """);
         });
     }
 
@@ -10567,13 +10567,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .timestampDesc("ts")
                     .expectSize()
                     .returns("""
-                    x\tts
-                    5\t1970-01-01T00:00:00.000005Z
-                    4\t1970-01-01T00:00:00.000004Z
-                    3\t1970-01-01T00:00:00.000003Z
-                    2\t1970-01-01T00:00:00.000002Z
-                    1\t1970-01-01T00:00:00.000001Z
-                    """);
+                            x\tts
+                            5\t1970-01-01T00:00:00.000005Z
+                            4\t1970-01-01T00:00:00.000004Z
+                            3\t1970-01-01T00:00:00.000003Z
+                            2\t1970-01-01T00:00:00.000002Z
+                            1\t1970-01-01T00:00:00.000001Z
+                            """);
         });
     }
 
@@ -11162,11 +11162,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("""
-                    i\trow_number\tavg\tsum\tfirst_value
-                    1\t1\t1.0\t1.0\t1
-                    2\t2\t2.0\t2.0\t2
-                    3\t1\t3.0\t3.0\t3
-                    """);
+                            i\trow_number\tavg\tsum\tfirst_value
+                            1\t1\t1.0\t1.0\t1
+                            2\t2\t2.0\t2.0\t2
+                            3\t1\t3.0\t3.0\t3
+                            """);
         });
     }
 
@@ -11291,7 +11291,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSqlAndPlanNoLeakCheck(String sql, String expectedPlan, String expectedResult) throws Exception{
+    private void assertSqlAndPlanNoLeakCheck(String sql, String expectedPlan, String expectedResult) throws Exception {
         assertPlanNoLeakCheck(sql, expectedPlan);
         assertQuery(sql)
                 .noLeakCheck()
@@ -11412,11 +11412,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .returns("""
-                s\tts
-                S2\t1970-01-01T00:00:00.000000Z
-                S2\t1970-01-01T01:00:00.000003Z
-                S1\t1970-01-01T00:00:00.000001Z
-                """);
+                        s\tts
+                        S2\t1970-01-01T00:00:00.000000Z
+                        S2\t1970-01-01T01:00:00.000003Z
+                        S1\t1970-01-01T00:00:00.000001Z
+                        """);
 
         //order by asc
         query = "select * from a where s in (:s1, :s2) order by s asc limit 5";
@@ -11435,11 +11435,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .returns("""
-                s\tts
-                S1\t1970-01-01T00:00:00.000001Z
-                S2\t1970-01-01T00:00:00.000000Z
-                S2\t1970-01-01T01:00:00.000003Z
-                """);
+                        s\tts
+                        S1\t1970-01-01T00:00:00.000001Z
+                        S2\t1970-01-01T00:00:00.000000Z
+                        S2\t1970-01-01T01:00:00.000003Z
+                        """);
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -11470,11 +11470,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .returns("""
-                s\tts
-                S2\t1970-01-01T00:00:00.000000Z
-                S2\t1970-01-01T01:00:00.000003Z
-                S1\t1970-01-01T00:00:00.000001Z
-                """);
+                        s\tts
+                        S2\t1970-01-01T00:00:00.000000Z
+                        S2\t1970-01-01T01:00:00.000003Z
+                        S1\t1970-01-01T00:00:00.000001Z
+                        """);
 
         //order by asc
         query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
@@ -11494,11 +11494,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .returns("""
-                s\tts
-                S1\t1970-01-01T00:00:00.000001Z
-                S2\t1970-01-01T00:00:00.000000Z
-                S2\t1970-01-01T01:00:00.000003Z
-                """);
+                        s\tts
+                        S1\t1970-01-01T00:00:00.000001Z
+                        S2\t1970-01-01T00:00:00.000000Z
+                        S2\t1970-01-01T01:00:00.000003Z
+                        """);
     }
 
     private void testSelectIndexedSymbols10WithOrder(String partitionByClause) throws Exception {
@@ -11525,12 +11525,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .timestamp("ts")
                 .returns("""
-                s\tts
-                S2\t1970-01-01T00:00:00.000001Z
-                S1\t1970-01-01T01:00:00.000003Z
-                S2\t1970-01-01T01:00:00.000004Z
-                S1\t1970-01-01T01:00:00.000005Z
-                """);
+                        s\tts
+                        S2\t1970-01-01T00:00:00.000001Z
+                        S1\t1970-01-01T01:00:00.000003Z
+                        S2\t1970-01-01T01:00:00.000004Z
+                        S1\t1970-01-01T01:00:00.000005Z
+                        """);
 
         String queryDesc = "select * from a where s in (:s2, :s1) order by ts desc limit 5";
         assertPlanNoLeakCheck(queryDesc, """
@@ -11549,11 +11549,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .timestampDesc("ts")
                 .expectSize()
                 .returns("""
-                s\tts
-                S1\t1970-01-01T01:00:00.000005Z
-                S2\t1970-01-01T01:00:00.000004Z
-                S1\t1970-01-01T01:00:00.000003Z
-                S2\t1970-01-01T00:00:00.000001Z
-                """);
+                        s\tts
+                        S1\t1970-01-01T01:00:00.000005Z
+                        S2\t1970-01-01T01:00:00.000004Z
+                        S1\t1970-01-01T01:00:00.000003Z
+                        S2\t1970-01-01T00:00:00.000001Z
+                        """);
     }
 }

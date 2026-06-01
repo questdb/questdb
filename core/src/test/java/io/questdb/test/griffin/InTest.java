@@ -233,7 +233,7 @@ public class InTest extends AbstractCairoTest {
                 ") TIMESTAMP(ts) PARTITION BY MONTH");
 
         assertQuery("SELECT count(*) FROM anomaly_log " +
-                        "where action IN (-2, 0, -1) ")
+                "where action IN (-2, 0, -1) ")
                 .withPlan("""
                         Count
                             Async JIT Filter workers: 1
@@ -246,7 +246,7 @@ public class InTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("count\n889\n");
         assertQuery("SELECT count(*) FROM anomaly_log " +
-                        "where action IN (null, -2, 0, -1) ")
+                "where action IN (null, -2, 0, -1) ")
                 .withPlan("""
                         Count
                             Async JIT Filter workers: 1
@@ -264,7 +264,7 @@ public class InTest extends AbstractCairoTest {
         bindVariableService.setInt("c", 0);
         bindVariableService.setInt("d", Numbers.INT_NULL);
         assertQuery("SELECT count(*) FROM anomaly_log " +
-                        "where action IN (:a, :b, :c, :d) ")
+                "where action IN (:a, :b, :c, :d) ")
                 .withPlan("""
                         Count
                             Async JIT Filter workers: 1

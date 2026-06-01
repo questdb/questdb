@@ -5654,46 +5654,46 @@ public class IPv4Test extends AbstractCairoTest {
             assertQuery("select * from tipv4 where '255.255.255.255/31' >>= ip")
                     .noLeakCheck()
                     .returns("""
-                    ip
-                    255.255.255.254
-                    """);
+                            ip
+                            255.255.255.254
+                            """);
             assertQuery("select * from tipv4 where '255.255.255.255/32' >>= ip")
                     .noLeakCheck()
                     .returns("ip\n");
             assertQuery("select * from tipv4 where '255.255.255.255/30' >>= ip")
                     .noLeakCheck()
                     .returns("""
-                    ip
-                    255.255.255.254
-                    """);
+                            ip
+                            255.255.255.254
+                            """);
             assertQuery("select * from tipv4 where '255.255.255.0/24' >>= ip")
                     .noLeakCheck()
                     .returns("""
-                    ip
-                    255.255.255.254
-                    """);
+                            ip
+                            255.255.255.254
+                            """);
 
             assertQuery("select '255.255.255.255'::ipv4 <<= '255.255.255.255'")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column
-                    true
-                    """);
+                            column
+                            true
+                            """);
             assertQuery("select '255.255.255.255'::ipv4 <<= '255.255.255.254'")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column
-                    false
-                    """);
+                            column
+                            false
+                            """);
             assertQuery("select '255.255.255.255'::ipv4 <<= '255.255.255.254/31'")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column
-                    true
-                    """);
+                            column
+                            true
+                            """);
 
             assertQuery("select netmask('1.1.1.1/0');")
                     .noLeakCheck()
@@ -5746,46 +5746,46 @@ public class IPv4Test extends AbstractCairoTest {
             assertQuery("select * from tipv4 where '255.255.255.255/31'::varchar >>= ip")
                     .noLeakCheck()
                     .returns("""
-                    ip
-                    255.255.255.254
-                    """);
+                            ip
+                            255.255.255.254
+                            """);
             assertQuery("select * from tipv4 where '255.255.255.255/32'::varchar >>= ip")
                     .noLeakCheck()
                     .returns("ip\n");
             assertQuery("select * from tipv4 where '255.255.255.255/30'::varchar >>= ip")
                     .noLeakCheck()
                     .returns("""
-                    ip
-                    255.255.255.254
-                    """);
+                            ip
+                            255.255.255.254
+                            """);
             assertQuery("select * from tipv4 where '255.255.255.0/24'::varchar >>= ip")
                     .noLeakCheck()
                     .returns("""
-                    ip
-                    255.255.255.254
-                    """);
+                            ip
+                            255.255.255.254
+                            """);
 
             assertQuery("select '255.255.255.255'::ipv4 <<= '255.255.255.255'::varchar")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column
-                    true
-                    """);
+                            column
+                            true
+                            """);
             assertQuery("select '255.255.255.255'::ipv4 <<= '255.255.255.254'::varchar")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column
-                    false
-                    """);
+                            column
+                            false
+                            """);
             assertQuery("select '255.255.255.255'::ipv4 <<= '255.255.255.254/31'::varchar")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column
-                    true
-                    """);
+                            column
+                            true
+                            """);
 
             assertQuery("select netmask('1.1.1.1/0'::varchar);")
                     .noLeakCheck()

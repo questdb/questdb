@@ -122,7 +122,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                     .noRandomAccess()
                     .expectSize()
                     .returns("l2price\n" +
-                    "25740.038313200002\n");
+                            "25740.038313200002\n");
 
             assertFailure(
                     "[869] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`.",

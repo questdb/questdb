@@ -424,10 +424,10 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     assertQuery("WITH data AS (SELECT cast(99.5m as DECIMAL(4,2)) value " +
-                                    "UNION ALL SELECT cast(-99.5m as DECIMAL(4,2)) " +
-                                    "UNION ALL SELECT cast(12.99m as DECIMAL(4,2)) " +
-                                    "UNION ALL SELECT cast(null as DECIMAL(4,2))) " +
-                                    "SELECT value, cast(value as double) as double_value FROM data")
+                            "UNION ALL SELECT cast(-99.5m as DECIMAL(4,2)) " +
+                            "UNION ALL SELECT cast(12.99m as DECIMAL(4,2)) " +
+                            "UNION ALL SELECT cast(null as DECIMAL(4,2))) " +
+                            "SELECT value, cast(value as double) as double_value FROM data")
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
@@ -445,10 +445,10 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     assertQuery("WITH data AS (SELECT cast(999999.999m as DECIMAL(9,3)) value " +
-                                    "UNION ALL SELECT cast(-999999.999m as DECIMAL(9,3)) " +
-                                    "UNION ALL SELECT cast(123456.789m as DECIMAL(9,3)) " +
-                                    "UNION ALL SELECT cast(null as DECIMAL(9, 3))) " +
-                                    "SELECT value, cast(value as double) as double_value FROM data")
+                            "UNION ALL SELECT cast(-999999.999m as DECIMAL(9,3)) " +
+                            "UNION ALL SELECT cast(123456.789m as DECIMAL(9,3)) " +
+                            "UNION ALL SELECT cast(null as DECIMAL(9, 3))) " +
+                            "SELECT value, cast(value as double) as double_value FROM data")
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
@@ -466,10 +466,10 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     assertQuery("WITH data AS (SELECT cast(999999999999.999999m as DECIMAL(18,6)) value " +
-                                    "UNION ALL SELECT cast(-999999999999.999999m as DECIMAL(18,6)) " +
-                                    "UNION ALL SELECT cast(123456789012.345678m as DECIMAL(18,6)) " +
-                                    "UNION ALL SELECT cast(null as DECIMAL(18, 6))) " +
-                                    "SELECT value, cast(value as double) as double_value FROM data")
+                            "UNION ALL SELECT cast(-999999999999.999999m as DECIMAL(18,6)) " +
+                            "UNION ALL SELECT cast(123456789012.345678m as DECIMAL(18,6)) " +
+                            "UNION ALL SELECT cast(null as DECIMAL(18, 6))) " +
+                            "SELECT value, cast(value as double) as double_value FROM data")
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
@@ -487,10 +487,10 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     assertQuery("WITH data AS (SELECT cast(9.9m as DECIMAL(2,1)) value " +
-                                    "UNION ALL SELECT cast(-9.9m as DECIMAL(2,1)) " +
-                                    "UNION ALL SELECT cast(0.5m as DECIMAL(2,1)) " +
-                                    "UNION ALL SELECT cast(null as DECIMAL(2,1))) " +
-                                    "SELECT value, cast(value as double) as double_value FROM data")
+                            "UNION ALL SELECT cast(-9.9m as DECIMAL(2,1)) " +
+                            "UNION ALL SELECT cast(0.5m as DECIMAL(2,1)) " +
+                            "UNION ALL SELECT cast(null as DECIMAL(2,1))) " +
+                            "SELECT value, cast(value as double) as double_value FROM data")
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
@@ -508,10 +508,10 @@ public class CastDecimalToDoubleFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     assertQuery("WITH data AS (SELECT cast(99m as DECIMAL(2)) value " +
-                                    "UNION ALL SELECT cast(-99m as DECIMAL(2)) " +
-                                    "UNION ALL SELECT cast(0m as DECIMAL(2)) " +
-                                    "UNION ALL SELECT cast(null as DECIMAL(2))) " +
-                                    "SELECT value, cast(value as double) as double_value FROM data")
+                            "UNION ALL SELECT cast(-99m as DECIMAL(2)) " +
+                            "UNION ALL SELECT cast(0m as DECIMAL(2)) " +
+                            "UNION ALL SELECT cast(null as DECIMAL(2))) " +
+                            "SELECT value, cast(value as double) as double_value FROM data")
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()

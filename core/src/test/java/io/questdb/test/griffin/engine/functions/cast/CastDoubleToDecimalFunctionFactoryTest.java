@@ -195,7 +195,7 @@ public class CastDoubleToDecimalFunctionFactoryTest extends AbstractCairoTest {
                 () -> {
                     // Runtime cast from double column
                     assertQuery("WITH data AS (SELECT 123.45 value UNION ALL SELECT -67.89 UNION ALL SELECT 0.0 UNION ALL SELECT cast('NaN' as double)) " +
-                                    "SELECT value, cast(value as DECIMAL(5,2)) as decimal_value FROM data")
+                            "SELECT value, cast(value as DECIMAL(5,2)) as decimal_value FROM data")
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
@@ -209,14 +209,14 @@ public class CastDoubleToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
                     // Runtime cast from double column
                     assertQuery("""
-                                    WITH data AS (
-                                     SELECT 123.45 value UNION ALL
-                                     SELECT -67.89 UNION ALL
-                                     SELECT 0.0 UNION ALL
-                                     SELECT cast('NaN' as double)
-                                    )
-                                    SELECT value, cast(value as DECIMAL(25,2)) as decimal_value FROM data
-                                    """)
+                            WITH data AS (
+                             SELECT 123.45 value UNION ALL
+                             SELECT -67.89 UNION ALL
+                             SELECT 0.0 UNION ALL
+                             SELECT cast('NaN' as double)
+                            )
+                            SELECT value, cast(value as DECIMAL(25,2)) as decimal_value FROM data
+                            """)
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
@@ -230,14 +230,14 @@ public class CastDoubleToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
                     // Runtime cast from double column
                     assertQuery("""
-                                    WITH data AS (
-                                     SELECT 123.45 value UNION ALL
-                                     SELECT -67.89 UNION ALL
-                                     SELECT 0.0 UNION ALL
-                                     SELECT cast('NaN' as double)
-                                    )
-                                    SELECT value, cast(value as DECIMAL(55,2)) as decimal_value FROM data
-                                    """)
+                            WITH data AS (
+                             SELECT 123.45 value UNION ALL
+                             SELECT -67.89 UNION ALL
+                             SELECT 0.0 UNION ALL
+                             SELECT cast('NaN' as double)
+                            )
+                            SELECT value, cast(value as DECIMAL(55,2)) as decimal_value FROM data
+                            """)
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()

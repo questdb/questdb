@@ -33,8 +33,8 @@ public class FunctionParserErrorTest extends AbstractCairoTest {
     public void testFunctionParserErrorIsNotPersistent() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("select * from " +
-                            "(select cast(x as timestamp) ts, '0x05cb69971d94a00000192178ef80f0' as id, x from long_sequence(10) ) " +
-                            "where ts between '2022-03-20' AND id <> '0x05ab6d9fabdabb00066a5db735d17a' AND id <> '0x05aba84839b9c7000006765675e630' AND id <> '0x05abc58d80ba1f000001ed05351873'")
+                    "(select cast(x as timestamp) ts, '0x05cb69971d94a00000192178ef80f0' as id, x from long_sequence(10) ) " +
+                    "where ts between '2022-03-20' AND id <> '0x05ab6d9fabdabb00066a5db735d17a' AND id <> '0x05aba84839b9c7000006765675e630' AND id <> '0x05abc58d80ba1f000001ed05351873'")
                     .noLeakCheck()
                     .fails(153, "there is no matching operator `!=` with the argument types: BOOLEAN != STRING");
             runTestQuery();

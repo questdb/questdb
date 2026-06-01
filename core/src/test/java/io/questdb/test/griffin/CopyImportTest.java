@@ -539,28 +539,28 @@ public class CopyImportTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    phase\tstatus\trows_handled\trows_imported\terrors
-                    \tstarted\tnull\tnull\t0
-                    analyze_file_structure\tstarted\tnull\tnull\t0
-                    analyze_file_structure\tfinished\tnull\tnull\t0
-                    boundary_check\tstarted\tnull\tnull\t0
-                    boundary_check\tfinished\tnull\tnull\t0
-                    indexing\tstarted\tnull\tnull\t0
-                    indexing\tfinished\tnull\tnull\t0
-                    partition_import\tstarted\tnull\tnull\t0
-                    partition_import\tfinished\tnull\tnull\t0
-                    symbol_table_merge\tstarted\tnull\tnull\t0
-                    symbol_table_merge\tfinished\tnull\tnull\t0
-                    update_symbol_keys\tstarted\tnull\tnull\t0
-                    update_symbol_keys\tfinished\tnull\tnull\t0
-                    build_symbol_index\tstarted\tnull\tnull\t0
-                    build_symbol_index\tfinished\tnull\tnull\t0
-                    move_partitions\tstarted\tnull\tnull\t0
-                    move_partitions\tfinished\tnull\tnull\t0
-                    attach_partitions\tstarted\tnull\tnull\t0
-                    attach_partitions\tfinished\tnull\tnull\t0
-                    \tfinished\t1000\t1000\t0
-                    """);
+                            phase\tstatus\trows_handled\trows_imported\terrors
+                            \tstarted\tnull\tnull\t0
+                            analyze_file_structure\tstarted\tnull\tnull\t0
+                            analyze_file_structure\tfinished\tnull\tnull\t0
+                            boundary_check\tstarted\tnull\tnull\t0
+                            boundary_check\tfinished\tnull\tnull\t0
+                            indexing\tstarted\tnull\tnull\t0
+                            indexing\tfinished\tnull\tnull\t0
+                            partition_import\tstarted\tnull\tnull\t0
+                            partition_import\tfinished\tnull\tnull\t0
+                            symbol_table_merge\tstarted\tnull\tnull\t0
+                            symbol_table_merge\tfinished\tnull\tnull\t0
+                            update_symbol_keys\tstarted\tnull\tnull\t0
+                            update_symbol_keys\tfinished\tnull\tnull\t0
+                            build_symbol_index\tstarted\tnull\tnull\t0
+                            build_symbol_index\tfinished\tnull\tnull\t0
+                            move_partitions\tstarted\tnull\tnull\t0
+                            move_partitions\tfinished\tnull\tnull\t0
+                            attach_partitions\tstarted\tnull\tnull\t0
+                            attach_partitions\tfinished\tnull\tnull\t0
+                            \tfinished\t1000\t1000\t0
+                            """);
         };
 
         testCopy(stmt, test);
@@ -865,10 +865,10 @@ public class CopyImportTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    phase\tstatus\trows_handled\trows_imported\terrors
-                    \tstarted\tnull\tnull\t0
-                    \tfinished\t1000\t1000\t0
-                    """);
+                            phase\tstatus\trows_handled\trows_imported\terrors
+                            \tstarted\tnull\tnull\t0
+                            \tfinished\t1000\t1000\t0
+                            """);
         };
 
         testCopy(stmt, test);
@@ -915,10 +915,10 @@ public class CopyImportTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    phase\tstatus\trows_handled\trows_imported\terrors
-                    \tstarted\tnull\tnull\t0
-                    \tfinished\t1000\t1000\t0
-                    """);
+                            phase\tstatus\trows_handled\trows_imported\terrors
+                            \tstarted\tnull\tnull\t0
+                            \tfinished\t1000\t1000\t0
+                            """);
         };
 
         testCopy(stmt, test);
@@ -1140,10 +1140,10 @@ public class CopyImportTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    phase\tstatus\trows_handled\trows_imported\terrors
-                    \tstarted\tnull\tnull\t0
-                    \tfinished\t129\t127\t2
-                    """);
+                            phase\tstatus\trows_handled\trows_imported\terrors
+                            \tstarted\tnull\tnull\t0
+                            \tfinished\t129\t127\t2
+                            """);
         };
         testCopy(insert, assertion);
     }

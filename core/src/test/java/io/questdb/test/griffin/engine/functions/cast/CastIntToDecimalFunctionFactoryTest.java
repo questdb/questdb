@@ -722,7 +722,7 @@ public class CastIntToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal128() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(21474836 as int) value UNION ALL SELECT cast(-21474836 as int) UNION ALL SELECT cast(12345678 as int) UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(19,2)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(19,2)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -740,7 +740,7 @@ public class CastIntToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal16() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(99 as int) value UNION ALL SELECT cast(-99 as int) UNION ALL SELECT cast(12 as int) UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(4,2)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(4,2)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -758,7 +758,7 @@ public class CastIntToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal256() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(21474836 as int) value UNION ALL SELECT cast(-21474836 as int) UNION ALL SELECT cast(12345678 as int) UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(40,10)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(40,10)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -776,7 +776,7 @@ public class CastIntToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal32() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(999999 as int) value UNION ALL SELECT cast(-999999 as int) UNION ALL SELECT cast(123456 as int) UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(9,3)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(9,3)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -794,7 +794,7 @@ public class CastIntToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal64() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(2147483 as int) value UNION ALL SELECT cast(-2147483 as int) UNION ALL SELECT cast(1234567 as int) UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(10,3)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(10,3)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -812,7 +812,7 @@ public class CastIntToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal8() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(9 as int) value UNION ALL SELECT cast(-9 as int) UNION ALL SELECT cast(0 as int) UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(2,1)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(2,1)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -830,7 +830,7 @@ public class CastIntToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal128() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(2147483647 as int) value UNION ALL SELECT cast(-2147483647 as int) UNION ALL SELECT cast(1234567890 as int) UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(19)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(19)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -848,7 +848,7 @@ public class CastIntToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal16() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(9999 as int) value UNION ALL SELECT cast(-9999 as int) UNION ALL SELECT cast(1234 as int) UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(4)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(4)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -866,7 +866,7 @@ public class CastIntToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal256() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(2147483647 as int) value UNION ALL SELECT cast(-2147483647 as int) UNION ALL SELECT cast(1234567890 as int) UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(40)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(40)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -884,7 +884,7 @@ public class CastIntToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal32() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(999999999 as int) value UNION ALL SELECT cast(-999999999 as int) UNION ALL SELECT cast(123456789 as int) UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(9)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(9)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -902,7 +902,7 @@ public class CastIntToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal64() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT cast(2147483647 as int) value UNION ALL SELECT cast(-2147483647 as int) UNION ALL SELECT cast(1234567890 as int) UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(10)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(10)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -922,7 +922,7 @@ public class CastIntToDecimalFunctionFactoryTest extends AbstractCairoTest {
                 () -> {
                     // Use WITH clause to create runtime values (non-constant)
                     assertQuery("WITH data AS (SELECT cast(99 as int) value UNION ALL SELECT cast(-99 as int) UNION ALL SELECT cast(0 as int) UNION ALL SELECT null) " +
-                                    "SELECT value, cast(value as DECIMAL(2)) as decimal_value FROM data")
+                            "SELECT value, cast(value as DECIMAL(2)) as decimal_value FROM data")
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()

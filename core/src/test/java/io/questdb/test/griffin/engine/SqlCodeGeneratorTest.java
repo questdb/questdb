@@ -452,40 +452,40 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testCg() throws Exception {
         assertQuery("""
+                SELECT
+                  'Revenue' as title,
+                  current_orders as current,
+                  old_orders as old,
+                  current_orders - old_orders as difference,
+                  ((current_orders - old_orders) / current_orders) * 100.0 difference_percentage,
+                  'rag' as colors
+                from
+                (
+                    SELECT
+                      cast(max('orders_1'.revenue) as float) as current_orders,
+                      cast(max('orders_2'.revenue) as float) as old_orders
+                    from
+                      (
                         SELECT
-                          'Revenue' as title,
-                          current_orders as current,
-                          old_orders as old,
-                          current_orders - old_orders as difference,
-                          ((current_orders - old_orders) / current_orders) * 100.0 difference_percentage,
-                          'rag' as colors
+                          timestamp as time,
+                          sum(total_revenue) as revenue
                         from
-                        (
-                            SELECT
-                              cast(max('orders_1'.revenue) as float) as current_orders,
-                              cast(max('orders_2'.revenue) as float) as old_orders
-                            from
-                              (
-                                SELECT
-                                  timestamp as time,
-                                  sum(total_revenue) as revenue
-                                from
-                                  'mdc_data'
-                                WHERE
-                                  timestamp > timestamp_floor('d', now()) SAMPLE BY 10s
-                              ) as orders_1,
-                              (
-                                SELECT
-                                  timestamp as time,
-                                  sum(total_revenue) as revenue
-                                from
-                                  'mdc_data'
-                                WHERE
-                                  timestamp < dateadd('d', -1, now())
-                                  and timestamp > timestamp_floor('d', dateadd('d', -1, now())) SAMPLE BY 10s
-                              ) as orders_2
-                          );
-                        """)
+                          'mdc_data'
+                        WHERE
+                          timestamp > timestamp_floor('d', now()) SAMPLE BY 10s
+                      ) as orders_1,
+                      (
+                        SELECT
+                          timestamp as time,
+                          sum(total_revenue) as revenue
+                        from
+                          'mdc_data'
+                        WHERE
+                          timestamp < dateadd('d', -1, now())
+                          and timestamp > timestamp_floor('d', dateadd('d', -1, now())) SAMPLE BY 10s
+                      ) as orders_2
+                  );
+                """)
                 .ddl("create table mdc_data as (select rnd_double() total_revenue, timestamp_sequence(dateadd('d', -1, now()),2) timestamp from long_sequence(10000)) timestamp(timestamp) partition by day")
                 .noRandomAccess()
                 .expectSize()
@@ -726,16 +726,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ('2024-03-11T23:00:00.000000Z', 32.0),
                         ('2024-03-12T01:00:00.000000Z', 400.0)""");
             assertQuery("""
-                            WITH Test AS ((
-                             SELECT timestamp AS ts, amount
-                            FROM (
-                             SELECT timestamp, amount
-                             FROM trades
-                             WHERE timestamp IN '2024-03-08'\s
-                             OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')
-                            ) timestamp(timestamp))
-                            ) SELECT ts, sum(amount) FROM Test \
-                            SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'""")
+                    WITH Test AS ((
+                     SELECT timestamp AS ts, amount
+                    FROM (
+                     SELECT timestamp, amount
+                     FROM trades
+                     WHERE timestamp IN '2024-03-08'\s
+                     OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')
+                    ) timestamp(timestamp))
+                    ) SELECT ts, sum(amount) FROM Test \
+                    SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'""")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -1147,21 +1147,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         TestMatchFunctionFactory.clear();
 
         assertQuery("""
-                        SELECT
-                            DISTINCT E.contactId AS contactId
-                        FROM
-                            contact_events E
-                        WHERE
-                            E.groupId = 'ZIMN'
-                            AND E.eventId = 'IPHZ'
-                        EXCEPT
-                        SELECT
-                            DISTINCT E.contactId AS contactId
-                        FROM
-                            contact_events  E
-                        WHERE
-                            E.groupId = 'MLGL'
-                            AND E.site__clean = 'EPIH'""")
+                SELECT
+                    DISTINCT E.contactId AS contactId
+                FROM
+                    contact_events E
+                WHERE
+                    E.groupId = 'ZIMN'
+                    AND E.eventId = 'IPHZ'
+                EXCEPT
+                SELECT
+                    DISTINCT E.contactId AS contactId
+                FROM
+                    contact_events  E
+                WHERE
+                    E.groupId = 'MLGL'
+                    AND E.site__clean = 'EPIH'""")
                 .ddl("create table contact_events as (" +
                         "select" +
                         " rnd_str(5,10,0) id," +
@@ -1402,7 +1402,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 """;
         assertMemoryLeak(() -> {
             assertQuery("select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()" +
-                            "and a < 80")
+                    "and a < 80")
                     .ddl("create table x as " +
                             "(" +
                             "select" +
@@ -1891,16 +1891,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 FROM tab
                 WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, systimestamp())""")
                 .ddl("""
-                CREATE TABLE tab AS (
-                    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts\s
-                    FROM long_sequence(10)
-                ) TIMESTAMP(ts) PARTITION BY DAY""")
+                        CREATE TABLE tab AS (
+                            SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts\s
+                            FROM long_sequence(10)
+                        ) TIMESTAMP(ts) PARTITION BY DAY""")
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                min\tmax
-                \t
-                """);
+                        min\tmax
+                        \t
+                        """);
 
         execute("drop table tab");
 
@@ -1909,16 +1909,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                  FROM tab
                  WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, now())""")
                 .ddl("""
-                CREATE TABLE tab AS (
-                    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts\s
-                    FROM long_sequence(10)
-                ) TIMESTAMP(ts) PARTITION BY DAY""")
+                        CREATE TABLE tab AS (
+                            SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts\s
+                            FROM long_sequence(10)
+                        ) TIMESTAMP(ts) PARTITION BY DAY""")
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                min\tmax
-                \t
-                """);
+                        min\tmax
+                        \t
+                        """);
     }
 
     @Test
@@ -2125,12 +2125,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .mutateWith("insert into tt " +
-                "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
-                "from long_sequence(2L)")
+                        "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
+                        "from long_sequence(2L)")
                 .returns("nts\tmin\nnts\t\n", """
-                nts\tmin
-                nts\t2020-01-01T00:00:00.000010Z
-                """);
+                        nts\tmin
+                        nts\t2020-01-01T00:00:00.000010Z
+                        """);
     }
 
     @Test
@@ -3350,7 +3350,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             createRndGeoHashBitsTable();
             assertQuery("select * from x where bits7 within(#wt/5) latest on ts partition by s")
                     .timestamp(//(##11100)",
-                    "ts")
+                            "ts")
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("""
@@ -3690,31 +3690,31 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 """;
         assertQuery("select k,a from x latest on k partition by b")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                "), index(b) timestamp(k) partition by DAY")
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY")
                 .timestamp("k")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                " select" +
-                " rnd_double(0)*100," +
-                " 'VTJW'," +
-                " to_timestamp('2019', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp (t)")
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)")
                 .returns(expected, """
-                k\ta
-                1970-01-03T07:33:20.000000Z\t23.90529010846525
-                1970-01-11T10:00:00.000000Z\t12.026122412833129
-                1970-01-18T08:40:00.000000Z\t49.00510449885239
-                1970-01-22T23:46:40.000000Z\t40.455469747939254
-                2019-01-01T00:00:00.000000Z\t56.594291398612405
-                """);
+                        k\ta
+                        1970-01-03T07:33:20.000000Z\t23.90529010846525
+                        1970-01-11T10:00:00.000000Z\t12.026122412833129
+                        1970-01-18T08:40:00.000000Z\t49.00510449885239
+                        1970-01-22T23:46:40.000000Z\t40.455469747939254
+                        2019-01-01T00:00:00.000000Z\t56.594291398612405
+                        """);
     }
 
     @Test
@@ -3774,45 +3774,45 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByAllMixed() throws Exception {
         assertQuery("select b,k,a from x latest on k partition by b")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " timestamp_sequence(0, 100000000000) k," +
-                " rnd_double(0)*100 a1," +
-                " rnd_double(0)*100 a2," +
-                " rnd_double(0)*100 a3," +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b" +
-                " from long_sequence(20)" +
-                ") timestamp(k) partition by DAY")
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(0, 100000000000) k," +
+                        " rnd_double(0)*100 a1," +
+                        " rnd_double(0)*100 a2," +
+                        " rnd_double(0)*100 a3," +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b" +
+                        " from long_sequence(20)" +
+                        ") timestamp(k) partition by DAY")
                 .timestamp("k")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                " select" +
-                " to_timestamp('2019', 'yyyy') t," +
-                " rnd_double(0)*100," +
-                " rnd_double(0)*100," +
-                " rnd_double(0)*100," +
-                " rnd_double(0)*100," +
-                " 'VTJW'" +
-                " from long_sequence(1)" +
-                ") timestamp (t)")
+                        " select" +
+                        " to_timestamp('2019', 'yyyy') t," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)")
                 .returns("""
-                b\tk\ta
-                VTJW\t1970-01-04T11:20:00.000000Z\t78.83065830055033
-                HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473
-                PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458
-                CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574
-                RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257
-                \t1970-01-22T23:46:40.000000Z\t72.604681060764
-                """, """
-                b\tk\ta
-                HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473
-                PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458
-                CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574
-                RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257
-                \t1970-01-22T23:46:40.000000Z\t72.604681060764
-                VTJW\t2019-01-01T00:00:00.000000Z\t6.578761277152223
-                """);
+                        b\tk\ta
+                        VTJW\t1970-01-04T11:20:00.000000Z\t78.83065830055033
+                        HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473
+                        PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458
+                        CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574
+                        RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257
+                        \t1970-01-22T23:46:40.000000Z\t72.604681060764
+                        """, """
+                        b\tk\ta
+                        HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473
+                        PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458
+                        CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574
+                        RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257
+                        \t1970-01-22T23:46:40.000000Z\t72.604681060764
+                        VTJW\t2019-01-01T00:00:00.000000Z\t6.578761277152223
+                        """);
     }
 
     @Test
@@ -3877,25 +3877,25 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 """;
         assertQuery("select * from x where a > 40 latest on k partition by b")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by DAY")
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY")
                 .timestamp("k")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                " select" +
-                " rnd_double(0)*100," +
-                " 'CCKS'," +
-                " to_timestamp('2019', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp (t)")
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'CCKS'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)")
                 .returns(expected, expected +
-                "56.594291398612405\tCCKS\t2019-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tCCKS\t2019-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -4361,32 +4361,32 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         // no index
         assertQuery("select * from x where b in ('RXGZ','HYRX') latest on k partition by b")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by DAY")
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY")
                 .timestamp("k")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100," +
-                " 'RXGZ'," +
-                " to_timestamp('1971', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)")
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)")
                 .returns("""
-                a\tb\tk
-                23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                """, """
-                a\tb\tk
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z
-                """);
+                        a\tb\tk
+                        23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        """, """
+                        a\tb\tk
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
@@ -4646,31 +4646,31 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         // no index
         assertQuery("select * from x where b in ('XYZ','HYRX') latest on k partition by b")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by DAY")
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY")
                 .timestamp("k")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100," +
-                " 'XYZ'," +
-                " to_timestamp('1971', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)")
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'XYZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)")
                 .returns("""
-                a\tb\tk
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                """, """
-                a\tb\tk
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z
-                """);
+                        a\tb\tk
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        """, """
+                        a\tb\tk
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
@@ -4714,31 +4714,31 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByMissingKeyValuesIndexed() throws Exception {
         assertQuery("select * from x where b in ('XYZ', 'HYRX') latest on k partition by b")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                "), index(b) timestamp(k) partition by DAY")
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY")
                 .timestamp("k")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100," +
-                " 'XYZ'," +
-                " to_timestamp('1971', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)")
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'XYZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)")
                 .returns("""
-                a\tb\tk
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                """, """
-                a\tb\tk
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z
-                """);
+                        a\tb\tk
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        """, """
+                        a\tb\tk
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
@@ -4859,39 +4859,39 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByMultipleColumns() throws Exception {
         assertQuery("select * from balances latest on timestamp partition by cust_id, balance_ccy")
                 .ddl("""
-                create table balances (
-                \tcust_id int,\s
-                \tbalance_ccy symbol,\s
-                \tbalance double,\s
-                \tstatus byte,\s
-                \ttimestamp timestamp
-                ) timestamp(timestamp)""")
+                        create table balances (
+                        \tcust_id int,\s
+                        \tbalance_ccy symbol,\s
+                        \tbalance double,\s
+                        \tstatus byte,\s
+                        \ttimestamp timestamp
+                        ) timestamp(timestamp)""")
                 .timestamp("timestamp")
                 .expectSize()
                 .mutateWith("insert into balances select * from (" +
-                " select" +
-                " abs(rnd_int()) % 4," +
-                " rnd_str('USD', 'GBP', 'EUR')," +
-                " rnd_double()," +
-                " rnd_byte(0,1)," +
-                " cast(0 as timestamp) timestamp" +
-                " from long_sequence(150)" +
-                ") timestamp (timestamp)")
+                        " select" +
+                        " abs(rnd_int()) % 4," +
+                        " rnd_str('USD', 'GBP', 'EUR')," +
+                        " rnd_double()," +
+                        " rnd_byte(0,1)," +
+                        " cast(0 as timestamp) timestamp" +
+                        " from long_sequence(150)" +
+                        ") timestamp (timestamp)")
                 .returns("cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n", """
-                cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp
-                3\tUSD\t0.8796413468565342\t0\t1970-01-01T00:00:00.000000Z
-                3\tEUR\t0.011099265671968506\t0\t1970-01-01T00:00:00.000000Z
-                1\tEUR\t0.10747511833573742\t1\t1970-01-01T00:00:00.000000Z
-                1\tGBP\t0.15274858078119136\t1\t1970-01-01T00:00:00.000000Z
-                0\tGBP\t0.07383464174908916\t1\t1970-01-01T00:00:00.000000Z
-                2\tEUR\t0.30062011052460846\t0\t1970-01-01T00:00:00.000000Z
-                1\tUSD\t0.12454054765285283\t0\t1970-01-01T00:00:00.000000Z
-                0\tUSD\t0.3124458010612313\t0\t1970-01-01T00:00:00.000000Z
-                2\tUSD\t0.7943185767500432\t1\t1970-01-01T00:00:00.000000Z
-                2\tGBP\t0.4388864091771264\t1\t1970-01-01T00:00:00.000000Z
-                0\tEUR\t0.5921457770297527\t1\t1970-01-01T00:00:00.000000Z
-                3\tGBP\t0.31861843394057765\t1\t1970-01-01T00:00:00.000000Z
-                """);
+                        cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp
+                        3\tUSD\t0.8796413468565342\t0\t1970-01-01T00:00:00.000000Z
+                        3\tEUR\t0.011099265671968506\t0\t1970-01-01T00:00:00.000000Z
+                        1\tEUR\t0.10747511833573742\t1\t1970-01-01T00:00:00.000000Z
+                        1\tGBP\t0.15274858078119136\t1\t1970-01-01T00:00:00.000000Z
+                        0\tGBP\t0.07383464174908916\t1\t1970-01-01T00:00:00.000000Z
+                        2\tEUR\t0.30062011052460846\t0\t1970-01-01T00:00:00.000000Z
+                        1\tUSD\t0.12454054765285283\t0\t1970-01-01T00:00:00.000000Z
+                        0\tUSD\t0.3124458010612313\t0\t1970-01-01T00:00:00.000000Z
+                        2\tUSD\t0.7943185767500432\t1\t1970-01-01T00:00:00.000000Z
+                        2\tGBP\t0.4388864091771264\t1\t1970-01-01T00:00:00.000000Z
+                        0\tEUR\t0.5921457770297527\t1\t1970-01-01T00:00:00.000000Z
+                        3\tGBP\t0.31861843394057765\t1\t1970-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
@@ -5161,34 +5161,34 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         // no index
         assertQuery("select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by DAY")
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY")
                 .timestamp("k")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100," +
-                " 'RXGZ'," +
-                " to_timestamp('1971', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)")
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)")
                 .returns("""
-                a\tb\tk
-                23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                40.455469747939254\t\t1970-01-22T23:46:40.000000Z
-                """, """
-                a\tb\tk
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                40.455469747939254\t\t1970-01-22T23:46:40.000000Z
-                56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z
-                """);
+                        a\tb\tk
+                        23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        40.455469747939254\t\t1970-01-22T23:46:40.000000Z
+                        """, """
+                        a\tb\tk
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        40.455469747939254\t\t1970-01-22T23:46:40.000000Z
+                        56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
@@ -5196,35 +5196,35 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         // no index
         assertQuery("select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by DAY")
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY")
                 .timestamp("k")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100," +
-                " 'UCLA'," +
-                " to_timestamp('1971', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)")
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'UCLA'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)")
                 .returns("""
-                a\tb\tk
-                23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                40.455469747939254\t\t1970-01-22T23:46:40.000000Z
-                """, """
-                a\tb\tk
-                23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                40.455469747939254\t\t1970-01-22T23:46:40.000000Z
-                56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z
-                """);
+                        a\tb\tk
+                        23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        40.455469747939254\t\t1970-01-22T23:46:40.000000Z
+                        """, """
+                        a\tb\tk
+                        23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        40.455469747939254\t\t1970-01-22T23:46:40.000000Z
+                        56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
@@ -5233,8 +5233,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // no index
             assertQuery("select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
-                            " and a > 12 and a < 50 and test_match()" +
-                            " latest on k partition by b")
+                    " and a > 12 and a < 50 and test_match()" +
+                    " latest on k partition by b")
                     .ddl("create table x as " +
                             "(" +
                             "select" +
@@ -5275,35 +5275,35 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestBySubQueryDeferredIndexed() throws Exception {
         assertQuery("select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                "), index(b) timestamp(k) partition by DAY")
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY")
                 .timestamp("k")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100," +
-                " 'UCLA'," +
-                " to_timestamp('1971', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)")
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'UCLA'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)")
                 .returns("""
-                a\tb\tk
-                23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                40.455469747939254\t\t1970-01-22T23:46:40.000000Z
-                """, """
-                a\tb\tk
-                23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                40.455469747939254\t\t1970-01-22T23:46:40.000000Z
-                56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z
-                """);
+                        a\tb\tk
+                        23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        40.455469747939254\t\t1970-01-22T23:46:40.000000Z
+                        """, """
+                        a\tb\tk
+                        23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        40.455469747939254\t\t1970-01-22T23:46:40.000000Z
+                        56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
@@ -5311,8 +5311,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         TestMatchFunctionFactory.clear();
         assertMemoryLeak(() -> {
             assertQuery("select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
-                            " and a > 12 and a < 50 and test_match()" +
-                            " latest on k partition by b")
+                    " and a > 12 and a < 50 and test_match()" +
+                    " latest on k partition by b")
                     .ddl("create table x as " +
                             "(" +
                             "select" +
@@ -5354,8 +5354,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // no index
             assertQuery("select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
-                            " and a > 12 and a < 50 and test_match()" +
-                            " latest on k partition by b")
+                    " and a > 12 and a < 50 and test_match()" +
+                    " latest on k partition by b")
                     .ddl("create table x as " +
                             "(" +
                             "select" +
@@ -5394,34 +5394,34 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestBySubQueryIndexed() throws Exception {
         assertQuery("select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                "), index(b) timestamp(k) partition by DAY")
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY")
                 .timestamp("k")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100," +
-                " 'RXGZ'," +
-                " to_timestamp('1971', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)")
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)")
                 .returns("""
-                a\tb\tk
-                23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                40.455469747939254\t\t1970-01-22T23:46:40.000000Z
-                """, """
-                a\tb\tk
-                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
-                40.455469747939254\t\t1970-01-22T23:46:40.000000Z
-                56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z
-                """);
+                        a\tb\tk
+                        23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        40.455469747939254\t\t1970-01-22T23:46:40.000000Z
+                        """, """
+                        a\tb\tk
+                        12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                        40.455469747939254\t\t1970-01-22T23:46:40.000000Z
+                        56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
@@ -5429,8 +5429,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         TestMatchFunctionFactory.clear();
         assertMemoryLeak(() -> {
             assertQuery("select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
-                            " and a > 12 and a < 50 and test_match()" +
-                            " latest on k partition by b")
+                    " and a > 12 and a < 50 and test_match()" +
+                    " latest on k partition by b")
                     .ddl("create table x as " +
                             "(" +
                             "select" +
@@ -5484,30 +5484,30 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestBySubQueryIndexedStrColumn() throws Exception {
         assertQuery("select * from x where b in (select 'RXGZ' from long_sequence(4)) latest on k partition by b")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                "), index(b) timestamp(k) partition by DAY")
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY")
                 .timestamp("k")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100," +
-                " 'RXGZ'," +
-                " to_timestamp('1971', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)")
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)")
                 .returns("""
-                a\tb\tk
-                23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
-                """, """
-                a\tb\tk
-                56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z
-                """);
+                        a\tb\tk
+                        23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
+                        """, """
+                        a\tb\tk
+                        56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
@@ -5991,7 +5991,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 """;
 
         assertQuery("select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))" +
-                        " order by b,a,x.a")
+                " order by b,a,x.a")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -6576,7 +6576,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 """;
 
         assertQuery("select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))" +
-                        " order by k")
+                " order by k")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -6701,48 +6701,48 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         assertQuery("x order by c,n desc")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " rnd_int() a," +
-                " rnd_str(1,1,2) c," +
-                " timestamp_sequence(0, 1000000000) k," +
-                " rnd_str(5,16,2) n" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by NONE")
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_str(1,1,2) c," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_str(5,16,2) n" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                "select" +
-                " rnd_int()," +
-                " 'J'," +
-                " to_timestamp('1971', 'yyyy') t," +
-                " 'ZZCC'" +
-                " from long_sequence(1)" +
-                ") timestamp(t)")
+                        "select" +
+                        " rnd_int()," +
+                        " 'J'," +
+                        " to_timestamp('1971', 'yyyy') t," +
+                        " 'ZZCC'" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)")
                 .returns(expected, """
-                a\tc\tk\tn
-                -1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS
-                -1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS
-                -1470806499\t\t1970-01-01T03:53:20.000000Z\t
-                -2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL
-                852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN
-                1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT
-                -147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB
-                -1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL
-                1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ
-                -514934130\tH\t1970-01-01T03:20:00.000000Z\t
-                116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML
-                1570930196\tJ\t1971-01-01T00:00:00.000000Z\tZZCC
-                -1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH
-                -1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY
-                410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR
-                1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ
-                326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ
-                1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY
-                1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY
-                -938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ
-                -235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK
-                """);
+                        a\tc\tk\tn
+                        -1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS
+                        -1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS
+                        -1470806499\t\t1970-01-01T03:53:20.000000Z\t
+                        -2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL
+                        852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN
+                        1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT
+                        -147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB
+                        -1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL
+                        1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ
+                        -514934130\tH\t1970-01-01T03:20:00.000000Z\t
+                        116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML
+                        1570930196\tJ\t1971-01-01T00:00:00.000000Z\tZZCC
+                        -1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH
+                        -1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY
+                        410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR
+                        1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ
+                        326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ
+                        1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY
+                        1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY
+                        -938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ
+                        -235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK
+                        """);
     }
 
     @Test
@@ -6774,69 +6774,69 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testOrderChar() throws Exception {
         assertQuery("select * from x order by a")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " rnd_char() a" +
-                " from" +
-                " long_sequence(20)" +
-                ")")
+                        "(" +
+                        "select" +
+                        " rnd_char() a" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ")")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                "select" +
-                " rnd_char()" +
-                " from" +
-                " long_sequence(5)" +
-                ")")
+                        "select" +
+                        " rnd_char()" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ")")
                 .returns("""
-                a
-                C
-                E
-                G
-                H
-                H
-                J
-                N
-                P
-                P
-                R
-                R
-                S
-                T
-                V
-                W
-                W
-                X
-                X
-                Y
-                Z
-                """, """
-                a
-                C
-                E
-                G
-                H
-                H
-                I
-                J
-                N
-                P
-                P
-                R
-                R
-                S
-                S
-                T
-                U
-                V
-                W
-                W
-                X
-                X
-                X
-                X
-                Y
-                Z
-                """);
+                        a
+                        C
+                        E
+                        G
+                        H
+                        H
+                        J
+                        N
+                        P
+                        P
+                        R
+                        R
+                        S
+                        T
+                        V
+                        W
+                        W
+                        X
+                        X
+                        Y
+                        Z
+                        """, """
+                        a
+                        C
+                        E
+                        G
+                        H
+                        H
+                        I
+                        J
+                        N
+                        P
+                        P
+                        R
+                        R
+                        S
+                        S
+                        T
+                        U
+                        V
+                        W
+                        W
+                        X
+                        X
+                        X
+                        X
+                        Y
+                        Z
+                        """);
     }
 
     @Test
@@ -7284,10 +7284,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         execute("insert into t1 (id, value, timestamp) values ('id1', 2, '2024-12-26T14:30:00Z');\n");
         execute("insert into t2 (id, value, value_max, timestamp) values ('id2', 1, 10, '2024-12-26T14:30:00Z');\n");
         assertQuery("with base as ( select max(value) as val, timestamp from t1 sample by 1m " +
-                        "UNION select max(value) as val, timestamp from t2 sample by 1m ), " +
-                        "sub as ( select min(value) as val, timestamp from t1 sample by 1m " +
-                        "UNION select min(value) as val, timestamp from t2 sample by 1m ) " +
-                        "select (base.val - sub.val) as delta, base.timestamp from base join sub on timestamp;")
+                "UNION select max(value) as val, timestamp from t2 sample by 1m ), " +
+                "sub as ( select min(value) as val, timestamp from t1 sample by 1m " +
+                "UNION select min(value) as val, timestamp from t2 sample by 1m ) " +
+                "select (base.val - sub.val) as delta, base.timestamp from base join sub on timestamp;")
                 .noRandomAccess()
                 .expectSize()
                 .noLeakCheck()
@@ -7632,18 +7632,18 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         assertQuery("select distinct a from x order by a")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " abs(rnd_int())%10 a" +
-                " from" +
-                " long_sequence(20)" +
-                ")")
+                        "(" +
+                        "select" +
+                        " abs(rnd_int())%10 a" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ")")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                "select" +
-                " abs(rnd_int())%10 a" +
-                " from long_sequence(1000000)" +
-                ") ")
+                        "select" +
+                        " abs(rnd_int())%10 a" +
+                        " from long_sequence(1000000)" +
+                        ") ")
                 .returns(expected, expected);
     }
 
@@ -7770,9 +7770,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testSelectDistinctWithColumnAliasOnExplicitJoin() throws Exception {
         assertQuery("select distinct t1.id " +
-                        "from  tab t1 " +
-                        "join (select x as id from long_sequence(2)) t2 on (t1.id=t2.id) " +
-                        "order by id")
+                "from  tab t1 " +
+                "join (select x as id from long_sequence(2)) t2 on (t1.id=t2.id) " +
+                "order by id")
                 .ddl("create table tab as (select x as id from long_sequence(3))")
                 .expectSize()
                 .returns("""
@@ -7785,8 +7785,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testSelectDistinctWithColumnAliasOnImplicitJoin() throws Exception {
         assertQuery("select distinct t1.id " +
-                        "from  tab t1, tab t2 " +
-                        "order by id")
+                "from  tab t1, tab t2 " +
+                "order by id")
                 .ddl("create table tab as (select x as id from long_sequence(2))")
                 .expectSize()
                 .returns("""
@@ -8189,12 +8189,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // to shut up memory leak check
             engine.clear();
             assertQuery("""
-                            SELECT
-                                t as "time",
-                                avg(d) as visMiles
-                            FROM ((x timestamp(t)) WHERE t BETWEEN '2018-01-31T23:00:00Z' AND '2018-02-28T22:59:59Z')
-                            ASOF JOIN (y timestamp(timestamp))
-                            SAMPLE BY 20s""")
+                    SELECT
+                        t as "time",
+                        avg(d) as visMiles
+                    FROM ((x timestamp(t)) WHERE t BETWEEN '2018-01-31T23:00:00Z' AND '2018-02-28T22:59:59Z')
+                    ASOF JOIN (y timestamp(timestamp))
+                    SAMPLE BY 20s""")
                     .ddl("insert into x select rnd_double(), timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 10000) from long_sequence(100000)")
                     .timestamp("time")
                     .noRandomAccess()
@@ -8282,11 +8282,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                      (50.0, '2024-01-01T00:02:00Z'),
                      (60.0, '2024-01-01T00:03:00Z')""");
             assertQuery("""
-                            SELECT high FROM (
-                                SELECT timestamp, max(price) AS high FROM trades SAMPLE BY 1m
-                                UNION ALL
-                                SELECT timestamp, high FROM trades_agg
-                            )""")
+                    SELECT high FROM (
+                        SELECT timestamp, max(price) AS high FROM trades SAMPLE BY 1m
+                        UNION ALL
+                        SELECT timestamp, high FROM trades_agg
+                    )""")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -8315,11 +8315,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                      (50.0, '2024-01-01T00:02:00Z'),
                      (60.0, '2024-01-01T00:03:00Z')""");
             assertQuery("""
-                            SELECT high FROM (
-                                SELECT timestamp, high FROM trades_agg
-                                UNION ALL
-                                SELECT timestamp, max(price) AS high FROM trades SAMPLE BY 1m
-                            )""")
+                    SELECT high FROM (
+                        SELECT timestamp, high FROM trades_agg
+                        UNION ALL
+                        SELECT timestamp, max(price) AS high FROM trades SAMPLE BY 1m
+                    )""")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -8350,12 +8350,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // but to the SYMBOL column in the second branch.
             // WHERE honors the alias assignment in the first branch.
             assertQuery("""
-                            SELECT ts FROM (
-                                SELECT name1, ts1 ts, sym1 FROM t1
-                                UNION ALL
-                                SELECT name2, ts2, sym2 ts FROM t2
-                            ) WHERE ts IN '2025-12-01T01;2h'
-                            """)
+                    SELECT ts FROM (
+                        SELECT name1, ts1 ts, sym1 FROM t1
+                        UNION ALL
+                        SELECT name2, ts2, sym2 ts FROM t2
+                    ) WHERE ts IN '2025-12-01T01;2h'
+                    """)
                     .timestamp("")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -8745,11 +8745,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testWithinClauseWithTsFilter() throws Exception {
         assertQuery("select * " +
-                        "from t1 " +
-                        "where geo within(#zz) " +
-                        "and ts < '1970-01-01T00:00:00.000019Z' " +
-                        "latest on ts " +
-                        "partition by sym")
+                "from t1 " +
+                "where geo within(#zz) " +
+                "and ts < '1970-01-01T00:00:00.000019Z' " +
+                "latest on ts " +
+                "partition by sym")
                 .ddl("create table t1 as " +
                         "(" +
                         " select  x, rnd_symbol('a', 'b') sym, #zz as geo, x::timestamp ts " +

@@ -306,8 +306,8 @@ public class ExceptTest extends AbstractCairoTest {
             // note: nanos is truncated when casting to micros, so the 2nd row in nano_events becomes equivalent to the 2nd row in micro_events
             // and is excluded from the result set
             assertQuery("select id, ts_micro, type from micro_events " +
-                            "except " +
-                            "select id, CAST(ts_nano as timestamp) as ts_micro, type from nano_events")
+                    "except " +
+                    "select id, CAST(ts_nano as timestamp) as ts_micro, type from nano_events")
                     .noLeakCheck()
                     .returns(expected);
         });
@@ -336,8 +336,8 @@ public class ExceptTest extends AbstractCairoTest {
                     """;
 
             assertQuery("select id, ts_micro as ts, type from micro_events " +
-                            "except " +
-                            "select id, ts_nano as ts, type from nano_events")
+                    "except " +
+                    "select id, ts_nano as ts, type from nano_events")
                     .noLeakCheck()
                     .returns(expected);
         });

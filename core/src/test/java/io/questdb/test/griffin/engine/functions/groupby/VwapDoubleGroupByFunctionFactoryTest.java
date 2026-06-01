@@ -54,10 +54,10 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                             """);
             // make sure they are the same
             assertQuery("select (new_vwap=old_vwap) same_vwap " +
-                            "from (" +
-                            "      (select vwap(p, q) new_vwap from tab) a," +
-                            "      (select (sum(p*q)/sum(q)) old_vwap from tab where p != null and q != null and q > 0) b" +
-                            ")")
+                    "from (" +
+                    "      (select vwap(p, q) new_vwap from tab) a," +
+                    "      (select (sum(p*q)/sum(q)) old_vwap from tab where p != null and q != null and q > 0) b" +
+                    ")")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -159,8 +159,8 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                     "2024-01-01T04:00:00.000000Z\tGOOGL\t108.0\n";
 
             assertQuery("select ts, ticker, vwap(price, volume) " +
-                            "from trades " +
-                            "sample by 1h fill(linear) ")
+                    "from trades " +
+                    "sample by 1h fill(linear) ")
                     .timestamp("ts")
                     .expectSize()
                     .returns(expected);

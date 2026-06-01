@@ -64,8 +64,8 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             bindVariableService.setStr("offset", "00:00");
             bindVariableService.setStr("tz", "Europe/Berlin");
             assertQuery("SELECT count_distinct(timestamp_floor_utc('30m', k, null, :offset, :tz)) > " +
-                            "count_distinct(timestamp_floor('30m', k, null, :offset, :tz)) has_more_buckets " +
-                            "FROM ts")
+                    "count_distinct(timestamp_floor('30m', k, null, :offset, :tz)) has_more_buckets " +
+                    "FROM ts")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -122,10 +122,10 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Berlin");
             assertQuery("SELECT count(*) violations FROM (" +
-                            "SELECT timestamp_floor_utc('30m', k, null, '00:00', :tz) curr, " +
-                            "lag(timestamp_floor_utc('30m', k, null, '00:00', :tz)) OVER () prev " +
-                            "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    "SELECT timestamp_floor_utc('30m', k, null, '00:00', :tz) curr, " +
+                    "lag(timestamp_floor_utc('30m', k, null, '00:00', :tz)) OVER () prev " +
+                    "FROM ts" +
+                    ") WHERE prev IS NOT NULL AND curr < prev")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -288,8 +288,8 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             // Count distinct buckets — should be more than what timestamp_floor produces
             // because timestamp_floor collapses the repeated hour
             assertQuery("SELECT count_distinct(timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin')) > " +
-                            "count_distinct(timestamp_floor('30m', k, null, '00:00', 'Europe/Berlin')) has_more_buckets " +
-                            "FROM ts")
+                    "count_distinct(timestamp_floor('30m', k, null, '00:00', 'Europe/Berlin')) has_more_buckets " +
+                    "FROM ts")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -312,10 +312,10 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             assertQuery("SELECT count(*) violations FROM (" +
-                            "SELECT timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin') curr, " +
-                            "lag(timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
-                            "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    "SELECT timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin') curr, " +
+                    "lag(timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
+                    "FROM ts" +
+                    ") WHERE prev IS NOT NULL AND curr < prev")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -361,10 +361,10 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             assertQuery("SELECT count(*) violations FROM (" +
-                            "SELECT timestamp_floor_utc('30m', k, null, '00:00', 'America/New_York') curr, " +
-                            "lag(timestamp_floor_utc('30m', k, null, '00:00', 'America/New_York')) OVER () prev " +
-                            "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    "SELECT timestamp_floor_utc('30m', k, null, '00:00', 'America/New_York') curr, " +
+                    "lag(timestamp_floor_utc('30m', k, null, '00:00', 'America/New_York')) OVER () prev " +
+                    "FROM ts" +
+                    ") WHERE prev IS NOT NULL AND curr < prev")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -413,10 +413,10 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             assertQuery("SELECT count(*) violations FROM (" +
-                            "SELECT timestamp_floor_utc('15m', k, null, '00:00', 'Europe/Berlin') curr, " +
-                            "lag(timestamp_floor_utc('15m', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
-                            "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    "SELECT timestamp_floor_utc('15m', k, null, '00:00', 'Europe/Berlin') curr, " +
+                    "lag(timestamp_floor_utc('15m', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
+                    "FROM ts" +
+                    ") WHERE prev IS NOT NULL AND curr < prev")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -445,8 +445,8 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             assertQuery("SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('7m', k, null, '00:00', 'Europe/Berlin') != " +
-                            "timestamp_floor_utc('7m', k, null, '00:00', 'Europe/Berlin')")
+                    "WHERE timestamp_floor_utc('7m', k, null, '00:00', 'Europe/Berlin') != " +
+                    "timestamp_floor_utc('7m', k, null, '00:00', 'Europe/Berlin')")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -471,10 +471,10 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             assertQuery("SELECT count(*) violations FROM (" +
-                            "SELECT timestamp_floor_utc('90s', k, null, '00:00', 'Europe/Berlin') curr, " +
-                            "lag(timestamp_floor_utc('90s', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
-                            "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    "SELECT timestamp_floor_utc('90s', k, null, '00:00', 'Europe/Berlin') curr, " +
+                    "lag(timestamp_floor_utc('90s', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
+                    "FROM ts" +
+                    ") WHERE prev IS NOT NULL AND curr < prev")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -543,10 +543,10 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             assertQuery("SELECT count(*) violations FROM (" +
-                            "SELECT timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin') curr, " +
-                            "lag(timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
-                            "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    "SELECT timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin') curr, " +
+                    "lag(timestamp_floor_utc('30m', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
+                    "FROM ts" +
+                    ") WHERE prev IS NOT NULL AND curr < prev")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -570,8 +570,8 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             assertQuery("SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('1h', k, null, '00:00', 'GMT+05:30') != " +
-                            "to_utc(timestamp_floor('1h', k, null, '00:00', 'GMT+05:30'), 'GMT+05:30')")
+                    "WHERE timestamp_floor_utc('1h', k, null, '00:00', 'GMT+05:30') != " +
+                    "to_utc(timestamp_floor('1h', k, null, '00:00', 'GMT+05:30'), 'GMT+05:30')")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -610,10 +610,10 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             assertQuery("SELECT count(*) violations FROM (" +
-                            "SELECT timestamp_floor_utc('1h', k, '2021-10-30T00:15:00Z', '00:00', 'Europe/Berlin') curr, " +
-                            "lag(timestamp_floor_utc('1h', k, '2021-10-30T00:15:00Z', '00:00', 'Europe/Berlin')) OVER () prev " +
-                            "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    "SELECT timestamp_floor_utc('1h', k, '2021-10-30T00:15:00Z', '00:00', 'Europe/Berlin') curr, " +
+                    "lag(timestamp_floor_utc('1h', k, '2021-10-30T00:15:00Z', '00:00', 'Europe/Berlin')) OVER () prev " +
+                    "FROM ts" +
+                    ") WHERE prev IS NOT NULL AND curr < prev")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -644,8 +644,8 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             for (String tz : new String[]{"GMT+05:30", "GMT-03:00", "GMT+09:00", "Asia/Kolkata", "Asia/Kathmandu"}) {
                 for (String stride : new String[]{"30m", "1h"}) {
                     assertQuery("SELECT count(*) mismatches FROM ts " +
-                                    "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', '" + tz + "') != " +
-                                    "to_utc(timestamp_floor('" + stride + "', k, null, '00:00', '" + tz + "'), '" + tz + "')")
+                            "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', '" + tz + "') != " +
+                            "to_utc(timestamp_floor('" + stride + "', k, null, '00:00', '" + tz + "'), '" + tz + "')")
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
@@ -672,8 +672,8 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
 
             for (String stride : new String[]{"30m", "1h", "4h", "1d"}) {
                 assertQuery("SELECT count(*) mismatches FROM ts " +
-                                "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', null) != " +
-                                "timestamp_floor('" + stride + "', k, null, '00:00', null)")
+                        "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', null) != " +
+                        "timestamp_floor('" + stride + "', k, null, '00:00', null)")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -699,10 +699,10 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:15");
             assertQuery("SELECT count(*) violations FROM (" +
-                            "SELECT timestamp_floor_utc('30m', k, null, :offset, 'Europe/Berlin') curr, " +
-                            "lag(timestamp_floor_utc('30m', k, null, :offset, 'Europe/Berlin')) OVER () prev " +
-                            "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev")
+                    "SELECT timestamp_floor_utc('30m', k, null, :offset, 'Europe/Berlin') curr, " +
+                    "lag(timestamp_floor_utc('30m', k, null, :offset, 'Europe/Berlin')) OVER () prev " +
+                    "FROM ts" +
+                    ") WHERE prev IS NOT NULL AND curr < prev")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -727,8 +727,8 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
 
             for (String stride : new String[]{"15m", "30m", "1h", "6h"}) {
                 assertQuery("SELECT count(*) mismatches FROM ts " +
-                                "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', 'UTC') != " +
-                                "timestamp_floor('" + stride + "', k, null, '00:00', 'UTC')")
+                        "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', 'UTC') != " +
+                        "timestamp_floor('" + stride + "', k, null, '00:00', 'UTC')")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -796,7 +796,7 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             assertQuery("SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('30m', k, null, '00:00', null) != timestamp_floor('30m', k, null, '00:00', null)")
+                    "WHERE timestamp_floor_utc('30m', k, null, '00:00', null) != timestamp_floor('30m', k, null, '00:00', null)")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -829,7 +829,7 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             assertQuery("SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('1h', k, null, '00:00', 'UTC') != timestamp_floor('1h', k, null, '00:00', 'UTC')")
+                    "WHERE timestamp_floor_utc('1h', k, null, '00:00', 'UTC') != timestamp_floor('1h', k, null, '00:00', 'UTC')")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -917,8 +917,8 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             assertQuery("SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin') != " +
-                            "timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin')")
+                    "WHERE timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin') != " +
+                    "timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin')")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -947,8 +947,8 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             assertQuery("SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin') != " +
-                            "timestamp_floor_utc('1h', k, null, '00:30', '+01:00')")
+                    "WHERE timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin') != " +
+                    "timestamp_floor_utc('1h', k, null, '00:30', '+01:00')")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -1048,8 +1048,8 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") TIMESTAMP(k)"
             );
             assertQuery("SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('1h', k, '2024-01-15T00:30:00.000000Z', '00:15', 'Europe/Berlin') != " +
-                            "timestamp_floor_utc('1h', k, '2024-01-15T00:30:00.000000Z', '00:15', '+01:00')")
+                    "WHERE timestamp_floor_utc('1h', k, '2024-01-15T00:30:00.000000Z', '00:15', 'Europe/Berlin') != " +
+                    "timestamp_floor_utc('1h', k, '2024-01-15T00:30:00.000000Z', '00:15', '+01:00')")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -1071,10 +1071,10 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             );
             // Verify monotonicity: no row should have a bucket > the next row's bucket
             assertQuery("SELECT count(*) violations FROM (" +
-                            "SELECT timestamp_floor_utc('1h', k, '2021-03-28T00:30:00.000000Z', '00:20', 'Europe/Berlin') bucket, " +
-                            "lead(timestamp_floor_utc('1h', k, '2021-03-28T00:30:00.000000Z', '00:20', 'Europe/Berlin')) OVER (ORDER BY k) next_bucket " +
-                            "FROM ts2" +
-                            ") WHERE next_bucket IS NOT NULL AND bucket > next_bucket")
+                    "SELECT timestamp_floor_utc('1h', k, '2021-03-28T00:30:00.000000Z', '00:20', 'Europe/Berlin') bucket, " +
+                    "lead(timestamp_floor_utc('1h', k, '2021-03-28T00:30:00.000000Z', '00:20', 'Europe/Berlin')) OVER (ORDER BY k) next_bucket " +
+                    "FROM ts2" +
+                    ") WHERE next_bucket IS NOT NULL AND bucket > next_bucket")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -1092,14 +1092,14 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
             @Nullable String from,
             @Nullable String offset,
             @Nullable String timezone
-    ) throws Exception{
+    ) throws Exception {
         assertQuery("SELECT timestamp_floor_utc('" +
-                        interval + "', " +
-                        (timestamp != null ? "'" + timestamp + "'" : "null") + "::timestamp, " +
-                        (from != null ? "'" + from + "'" : "null") + ", " +
-                        (offset != null ? "'" + offset + "'" : "null") + ", " +
-                        (timezone != null ? "'" + timezone + "'" : "null") +
-                        ")")
+                interval + "', " +
+                (timestamp != null ? "'" + timestamp + "'" : "null") + "::timestamp, " +
+                (from != null ? "'" + from + "'" : "null") + ", " +
+                (offset != null ? "'" + offset + "'" : "null") + ", " +
+                (timezone != null ? "'" + timezone + "'" : "null") +
+                ")")
                 .noLeakCheck()
                 .expectSize()
                 .returns(expected);

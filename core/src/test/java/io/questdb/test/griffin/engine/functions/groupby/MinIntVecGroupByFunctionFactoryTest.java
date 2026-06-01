@@ -81,12 +81,12 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                                min
-                                null
-                                """, """
-                                min
-                                2147483647
-                                """);
+                        min
+                        null
+                        """, """
+                        min
+                        2147483647
+                        """);
     }
 
     @Test

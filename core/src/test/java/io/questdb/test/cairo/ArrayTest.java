@@ -746,29 +746,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [7.0,null]\t[[5.0,7.0],[9.0,11.0]]\t[11.0,16.0]\t[[41.0,51.0]]
-                    [19.0,22.0]\t[[17.0,19.0]]\t[41.0,46.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [7.0,null]\t[[5.0,7.0],[9.0,11.0]]\t[11.0,16.0]\t[[41.0,51.0]]
+                            [19.0,22.0]\t[[17.0,19.0]]\t[41.0,46.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT transpose(a) + 3.0, transpose(b) + 2.0 FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [5.0,null]\t[[4.0,6.0],[5.0,7.0]]
-                    [9.0,10.0]\t[[10.0],[11.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [5.0,null]\t[[4.0,6.0],[5.0,7.0]]
+                            [9.0,10.0]\t[[10.0],[11.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT 3.0 + a, 2.0 + b, 5.0 + b[1], 10.0 + b[2:] FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [5.0,null]\t[[4.0,5.0],[6.0,7.0]]\t[7.0,8.0]\t[[14.0,15.0]]
-                    [9.0,10.0]\t[[10.0,11.0]]\t[13.0,14.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [5.0,null]\t[[4.0,5.0],[6.0,7.0]]\t[7.0,8.0]\t[[14.0,15.0]]
+                            [9.0,10.0]\t[[10.0,11.0]]\t[13.0,14.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
         });
     }
 
@@ -938,29 +938,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [12.0,null]\t[[8.0,12.0],[16.0,20.0]]\t[20.0,30.0]\t[[80.0,100.0]]
-                    [36.0,42.0]\t[[32.0,36.0]]\t[80.0,90.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [12.0,null]\t[[8.0,12.0],[16.0,20.0]]\t[20.0,30.0]\t[[80.0,100.0]]
+                            [36.0,42.0]\t[[32.0,36.0]]\t[80.0,90.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT transpose(a)/0.5, transpose(b)/0.5 FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [4.0,null]\t[[4.0,8.0],[6.0,10.0]]
-                    [12.0,14.0]\t[[16.0],[18.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [4.0,null]\t[[4.0,8.0],[6.0,10.0]]
+                            [12.0,14.0]\t[[16.0],[18.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT a/0.0, a/null::double FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [null,null]\t[null,null]
-                    [null,null]\t[null,null]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [null,null]\t[null,null]
+                            [null,null]\t[null,null]
+                            null\tnull
+                            """);
         });
     }
 
@@ -975,18 +975,18 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    product
-                    40.0
-                    5.0
-                    """);
+                            product
+                            40.0
+                            5.0
+                            """);
             assertQuery("SELECT dot_product(transpose(left), transpose(right)) AS product FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    product
-                    40.0
-                    5.0
-                    """);
+                            product
+                            40.0
+                            5.0
+                            """);
             assertExceptionNoLeakCheck("SELECT dot_product(Array[1.0], Array[[1.0]]) AS product FROM tango",
                     24, "arrays have different number of dimensions [dimsLeft=1, dimsRight=2]");
             assertExceptionNoLeakCheck("SELECT dot_product(Array[1.0], Array[1.0, 2.0]) AS product FROM tango",
@@ -1005,18 +1005,18 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    dot_product\tdot_product1\tdot_product2
-                    11.0\t30.0\tnull
-                    2.0\t10.0\tnull
-                    """);
+                            dot_product\tdot_product1\tdot_product2
+                            11.0\t30.0\tnull
+                            2.0\t10.0\tnull
+                            """);
             assertQuery("SELECT dot_product(transpose(left), 1.0), dot_product(transpose(right), 2.0), dot_product(2.0, transpose(right)) FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    dot_product\tdot_product1\tdot_product2
-                    11.0\t30.0\t30.0
-                    2.0\t10.0\t10.0
-                    """);
+                            dot_product\tdot_product1\tdot_product2
+                            11.0\t30.0\t30.0
+                            2.0\t10.0\t10.0
+                            """);
         });
     }
 
@@ -1229,29 +1229,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]
-                    [18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]
+                            [18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT transpose(a) * 3.0, transpose(b) * 2.0 FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [6.0,null]\t[[4.0,8.0],[6.0,10.0]]
-                    [18.0,21.0]\t[[16.0],[18.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [6.0,null]\t[[4.0,8.0],[6.0,10.0]]
+                            [18.0,21.0]\t[[16.0],[18.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT 3.0 * a, 2.0 * b, 5.0 * b[1], 10.0 * b[2:] FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]
-                    [18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]
+                            [18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
         });
     }
 
@@ -1265,11 +1265,11 @@ public class ArrayTest extends AbstractCairoTest {
                     "(null, null)"
             );
             assertQuery("SELECT " +
-                            "array_position(arr1, 8), " +
-                            "array_position(arr1, null), " +
-                            "array_position(arr1, 11), " +
-                            "array_position(arr1[2:], 9) " +
-                            "FROM tango")
+                    "array_position(arr1, 8), " +
+                    "array_position(arr1, null), " +
+                    "array_position(arr1, 11), " +
+                    "array_position(arr1[2:], 9) " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1280,11 +1280,11 @@ public class ArrayTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT " +
-                            "array_position(arr2[1], 8), " +
-                            "array_position(arr2[1], null), " +
-                            "array_position(arr2[1], 11), " +
-                            "array_position(arr2[1][2:], 9) " +
-                            "FROM tango")
+                    "array_position(arr2[1], 8), " +
+                    "array_position(arr2[1], null), " +
+                    "array_position(arr2[1], 11), " +
+                    "array_position(arr2[1][2:], 9) " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1295,11 +1295,11 @@ public class ArrayTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT " +
-                            "array_position(arr1, arr1[1]), " +
-                            "array_position(arr1, arr1[2]), " +
-                            "array_position(arr1, arr1[3]), " +
-                            "array_position(arr1[2:], arr1[2]) " +
-                            "FROM tango")
+                    "array_position(arr1, arr1[1]), " +
+                    "array_position(arr1, arr1[2]), " +
+                    "array_position(arr1, arr1[3]), " +
+                    "array_position(arr1[2:], arr1[2]) " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1321,11 +1321,11 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[[1.0], [9], [10], [12], [8], [null], [20], [12]]) "
             );
             assertQuery("SELECT " +
-                            "array_position(transpose(arr)[1], 8), " +
-                            "array_position(transpose(arr)[1], null), " +
-                            "array_position(transpose(arr)[1], 11), " +
-                            "array_position(transpose(arr)[1, 2:], 9) " +
-                            "FROM tango")
+                    "array_position(transpose(arr)[1], 8), " +
+                    "array_position(transpose(arr)[1], null), " +
+                    "array_position(transpose(arr)[1], 11), " +
+                    "array_position(transpose(arr)[1, 2:], 9) " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1367,29 +1367,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [5.0,null]\t[[3.0,5.0],[7.0,9.0]]\t[9.0,14.0]\t[[39.0,49.0]]
-                    [17.0,20.0]\t[[15.0,17.0]]\t[39.0,44.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [5.0,null]\t[[3.0,5.0],[7.0,9.0]]\t[9.0,14.0]\t[[39.0,49.0]]
+                            [17.0,20.0]\t[[15.0,17.0]]\t[39.0,44.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT transpose(a) - 3.0, transpose(b) - 2.0 FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [-1.0,null]\t[[0.0,2.0],[1.0,3.0]]
-                    [3.0,4.0]\t[[6.0],[7.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [-1.0,null]\t[[0.0,2.0],[1.0,3.0]]
+                            [3.0,4.0]\t[[6.0],[7.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT a - null::double FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column
-                    [null,null]
-                    [null,null]
-                    null
-                    """);
+                            column
+                            [null,null]
+                            [null,null]
+                            null
+                            """);
         });
     }
 
@@ -1603,16 +1603,16 @@ public class ArrayTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("""
-                            select\s
-                              case\s
-                                when ts in '2020' then array[]::double[]
-                                when ts in '2021' then array[1.0]\s
-                                when ts in '2022' then '{1.0, 2.0}'::double[]\s
-                                when ts in '2023' then array[1.0, 2.0, 3.0]\s
-                                when ts in '2024' then array[1.0, 2.0, 3.0, 4.0]\s
-                                else a\s
-                              end, *
-                            from tango;""")
+                    select\s
+                      case\s
+                        when ts in '2020' then array[]::double[]
+                        when ts in '2021' then array[1.0]\s
+                        when ts in '2022' then '{1.0, 2.0}'::double[]\s
+                        when ts in '2023' then array[1.0, 2.0, 3.0]\s
+                        when ts in '2024' then array[1.0, 2.0, 3.0, 4.0]\s
+                        else a\s
+                      end, *
+                    from tango;""")
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
@@ -1627,15 +1627,15 @@ public class ArrayTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            select\s
-                              case\s
-                                when a = ARRAY[-1.0] then 'literal'
-                                when a = '{-1,-2}'::double[] then 'casting'
-                                when a = ARRAY[[1.0],[2.0]] then 'never'
-                                when a = ARRAY[]::double[] then 'empty'
-                                else 'whatever'
-                              end, *
-                            from tango;""")
+                    select\s
+                      case\s
+                        when a = ARRAY[-1.0] then 'literal'
+                        when a = '{-1,-2}'::double[] then 'casting'
+                        when a = ARRAY[[1.0],[2.0]] then 'never'
+                        when a = ARRAY[]::double[] then 'empty'
+                        else 'whatever'
+                      end, *
+                    from tango;""")
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
@@ -2348,105 +2348,105 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    [1.0,2.0]
-                    """);
+                            cast
+                            [1.0,2.0]
+                            """);
 
             // quoted elements
             assertQuery("SELECT '{\"1\", \"2\"}'::double[] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    [1.0,2.0]
-                    """);
+                            cast
+                            [1.0,2.0]
+                            """);
 
             // quoted elements with spaces, 2D array
             assertQuery("SELECT '{{\"1\", \"2\"}, {\"3\", \"4\"}}'::double[][] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    [[1.0,2.0],[3.0,4.0]]
-                    """);
+                            cast
+                            [[1.0,2.0],[3.0,4.0]]
+                            """);
 
             // 2D array
             assertQuery("SELECT '{{1,2}, {3, 4}}'::double[][] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    [[1.0,2.0],[3.0,4.0]]
-                    """);
+                            cast
+                            [[1.0,2.0],[3.0,4.0]]
+                            """);
 
             // 2D array with null - nulls are not allowed, casting fails and explicit casting produces NULL on the output
             assertQuery("SELECT '{{1,2}, {3, NULL}}'::double[][] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    null
-                    """);
+                            cast
+                            null
+                            """);
 
             // empty arrays are always printed as [], regardless of dimensionality. at least of now. this may change.
             assertQuery("SELECT '{{}, {}}'::double[][] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    []
-                    """);
+                            cast
+                            []
+                            """);
 
             // empty array can be cast to higher dimensionality -> empty array
             assertQuery("SELECT '{}'::double[][] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    []
-                    """);
+                            cast
+                            []
+                            """);
 
             // but empty array cannot cast to lower dimensionality -> NULL
             assertQuery("SELECT '{{},{}}'::double[] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    null
-                    """);
+                            cast
+                            null
+                            """);
 
             assertQuery("SELECT NULL::double[] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    null
-                    """);
+                            cast
+                            null
+                            """);
 
             assertQuery("SELECT 'not an array'::double[] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    null
-                    """);
+                            cast
+                            null
+                            """);
 
             // 2D array explicitly cast to 1D array -> null
             assertQuery("SELECT '{{1,2}, {3, 4}}'::double[] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    null
-                    """);
+                            cast
+                            null
+                            """);
 
             assertQuery("SELECT '{nonsense, 2}'::double[] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    null
-                    """);
+                            cast
+                            null
+                            """);
 
         });
     }
@@ -2497,9 +2497,9 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES (null, 0)");
 
             assertQuery("""
-                            select arr, count(*)
-                            from tango
-                            group by arr;""")
+                    select arr, count(*)
+                    from tango
+                    group by arr;""")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2521,9 +2521,9 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES (ARRAY[[2.0, 3.0], [1.0, 4.0]], 5)");
 
             assertQuery("""
-                            select arr[1:2], sum(i)
-                            from tango
-                            """)
+                    select arr[1:2], sum(i)
+                    from tango
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2650,14 +2650,14 @@ public class ArrayTest extends AbstractCairoTest {
                     "(null, null)"
             );
             assertQuery("SELECT " +
-                            "insertion_point(arr1, 8, false) i1, " +
-                            "insertion_point(arr1, 2000, false) i2, " +
-                            "insertion_point(arr1, 9, false) i3, " +
-                            "insertion_point(arr1, 1001, false) i4, " +
-                            "insertion_point(arr1, 18, false) i5, " +
-                            "insertion_point(arr1, 22, false) i6, " +
-                            "insertion_point(arr1[1:], 1000, false) i7, " +
-                            "FROM tango")
+                    "insertion_point(arr1, 8, false) i1, " +
+                    "insertion_point(arr1, 2000, false) i2, " +
+                    "insertion_point(arr1, 9, false) i3, " +
+                    "insertion_point(arr1, 1001, false) i4, " +
+                    "insertion_point(arr1, 18, false) i5, " +
+                    "insertion_point(arr1, 22, false) i6, " +
+                    "insertion_point(arr1[1:], 1000, false) i7, " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2667,14 +2667,14 @@ public class ArrayTest extends AbstractCairoTest {
                             null\tnull\tnull\tnull\tnull\tnull\tnull
                             """);
             assertQuery("SELECT " +
-                            "insertion_point(arr1, 8, true) i1, " +
-                            "insertion_point(arr1, 2000, true) i2, " +
-                            "insertion_point(arr1, 9, true) i3, " +
-                            "insertion_point(arr1, 1001, true) i4, " +
-                            "insertion_point(arr1, 18, true) i5, " +
-                            "insertion_point(arr1, 22, true) i6, " +
-                            "insertion_point(arr1[1:], 1000, true) i7, " +
-                            "FROM tango")
+                    "insertion_point(arr1, 8, true) i1, " +
+                    "insertion_point(arr1, 2000, true) i2, " +
+                    "insertion_point(arr1, 9, true) i3, " +
+                    "insertion_point(arr1, 1001, true) i4, " +
+                    "insertion_point(arr1, 18, true) i5, " +
+                    "insertion_point(arr1, 22, true) i6, " +
+                    "insertion_point(arr1[1:], 1000, true) i7, " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2684,14 +2684,14 @@ public class ArrayTest extends AbstractCairoTest {
                             null\tnull\tnull\tnull\tnull\tnull\tnull
                             """);
             assertQuery("SELECT " +
-                            "insertion_point(arr2[1], 8) i1, " +
-                            "insertion_point(arr2[1], 2000) i2, " +
-                            "insertion_point(arr2[1], 9) i3, " +
-                            "insertion_point(arr2[1], 1001) i4, " +
-                            "insertion_point(arr2[1], 18) i5, " +
-                            "insertion_point(arr2[1], 22) i6, " +
-                            "insertion_point(arr2[1, 1:], 1000) i7, " +
-                            "FROM tango")
+                    "insertion_point(arr2[1], 8) i1, " +
+                    "insertion_point(arr2[1], 2000) i2, " +
+                    "insertion_point(arr2[1], 9) i3, " +
+                    "insertion_point(arr2[1], 1001) i4, " +
+                    "insertion_point(arr2[1], 18) i5, " +
+                    "insertion_point(arr2[1], 22) i6, " +
+                    "insertion_point(arr2[1, 1:], 1000) i7, " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2716,14 +2716,14 @@ public class ArrayTest extends AbstractCairoTest {
                     "(null)"
             );
             assertQuery("SELECT " +
-                            "insertion_point(transpose(arr)[1], 8, false) i1, " +
-                            "insertion_point(transpose(arr)[1], 2000, false) i2, " +
-                            "insertion_point(transpose(arr)[1], 9, false) i3, " +
-                            "insertion_point(transpose(arr)[1], 1001, false) i4, " +
-                            "insertion_point(transpose(arr)[1], 18, false) i5, " +
-                            "insertion_point(transpose(arr)[1], 22, false) i6, " +
-                            "insertion_point(transpose(arr)[1, 1:], 1000, false) i7, " +
-                            "FROM tango")
+                    "insertion_point(transpose(arr)[1], 8, false) i1, " +
+                    "insertion_point(transpose(arr)[1], 2000, false) i2, " +
+                    "insertion_point(transpose(arr)[1], 9, false) i3, " +
+                    "insertion_point(transpose(arr)[1], 1001, false) i4, " +
+                    "insertion_point(transpose(arr)[1], 18, false) i5, " +
+                    "insertion_point(transpose(arr)[1], 22, false) i6, " +
+                    "insertion_point(transpose(arr)[1, 1:], 1000, false) i7, " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2733,14 +2733,14 @@ public class ArrayTest extends AbstractCairoTest {
                             null\tnull\tnull\tnull\tnull\tnull\tnull
                             """);
             assertQuery("SELECT " +
-                            "insertion_point(transpose(arr)[1], 8, true) i1, " +
-                            "insertion_point(transpose(arr)[1], 2000, true) i2, " +
-                            "insertion_point(transpose(arr)[1], 9, true) i3, " +
-                            "insertion_point(transpose(arr)[1], 1001, true) i4, " +
-                            "insertion_point(transpose(arr)[1], 18, true) i5, " +
-                            "insertion_point(transpose(arr)[1], 22, true) i6, " +
-                            "insertion_point(transpose(arr)[1][1:], 1000, true) i7, " +
-                            "FROM tango")
+                    "insertion_point(transpose(arr)[1], 8, true) i1, " +
+                    "insertion_point(transpose(arr)[1], 2000, true) i2, " +
+                    "insertion_point(transpose(arr)[1], 9, true) i3, " +
+                    "insertion_point(transpose(arr)[1], 1001, true) i4, " +
+                    "insertion_point(transpose(arr)[1], 18, true) i5, " +
+                    "insertion_point(transpose(arr)[1], 22, true) i6, " +
+                    "insertion_point(transpose(arr)[1][1:], 1000, true) i7, " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2750,14 +2750,14 @@ public class ArrayTest extends AbstractCairoTest {
                             null\tnull\tnull\tnull\tnull\tnull\tnull
                             """);
             assertQuery("SELECT " +
-                            "insertion_point(transpose(arr)[1], 8) i1, " +
-                            "insertion_point(transpose(arr)[1], 2000) i2, " +
-                            "insertion_point(transpose(arr)[1], 9) i3, " +
-                            "insertion_point(transpose(arr)[1], 1001) i4, " +
-                            "insertion_point(transpose(arr)[1], 18) i5, " +
-                            "insertion_point(transpose(arr)[1], 22) i6, " +
-                            "insertion_point(transpose(arr)[1, 1:], 1000) i7, " +
-                            "FROM tango")
+                    "insertion_point(transpose(arr)[1], 8) i1, " +
+                    "insertion_point(transpose(arr)[1], 2000) i2, " +
+                    "insertion_point(transpose(arr)[1], 9) i3, " +
+                    "insertion_point(transpose(arr)[1], 1001) i4, " +
+                    "insertion_point(transpose(arr)[1], 18) i5, " +
+                    "insertion_point(transpose(arr)[1], 22) i6, " +
+                    "insertion_point(transpose(arr)[1, 1:], 1000) i7, " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2898,9 +2898,9 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    product
-                    [[8.0],[14.0],[20.0]]
-                    """);
+                            product
+                            [[8.0],[14.0],[20.0]]
+                            """);
         });
     }
 
@@ -3018,29 +3018,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [6.0,null]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]
-                    [-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [6.0,null]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]
+                            [-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT - transpose(a) + 16.0, - transpose(b) + 16.0 FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [14.0,null]\t[[14.0,12.0],[12.0,8.0]]
-                    [0.0,16.0]\t[[8.0],[12.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [14.0,null]\t[[14.0,12.0],[12.0,8.0]]
+                            [0.0,16.0]\t[[8.0],[12.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT - a + 0.0, - a + null::double FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [-2.0,null]\t[null,null]
-                    [-16.0,0.0]\t[null,null]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [-2.0,null]\t[null,null]
+                            [-16.0,0.0]\t[null,null]
+                            null\tnull
+                            """);
         });
     }
 
@@ -3400,9 +3400,9 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             assertSql("""
-                            rnd_double_array
-                            [[null,0.9856290845874263],[null,0.5093827001617407]]
-                            """, "select rnd_double_array(2, 2, 0, 2, 2)");
+                    rnd_double_array
+                    [[null,0.9856290845874263],[null,0.5093827001617407]]
+                    """, "select rnd_double_array(2, 2, 0, 2, 2)");
 
             assertSql("""
                             QUERY PLAN
@@ -3434,29 +3434,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [4.0,null]\t[[4.0,2.0],[2.0,1.0]]\t[0.5,0.25]\t[[5.0,2.5]]
-                    [0.5,null]\t[[1.0,2.0]]\t[0.125,0.25]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [4.0,null]\t[[4.0,2.0],[2.0,1.0]]\t[0.5,0.25]\t[[5.0,2.5]]
+                            [0.5,null]\t[[1.0,2.0]]\t[0.125,0.25]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT 16.0 / transpose(a), 16.0 / transpose(b)FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [8.0,null]\t[[8.0,4.0],[4.0,2.0]]
-                    [1.0,null]\t[[2.0],[4.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [8.0,null]\t[[8.0,4.0],[4.0,2.0]]
+                            [1.0,null]\t[[2.0],[4.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT 0.0 / a, null::double / a FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [0.0,null]\t[null,null]
-                    [0.0,null]\t[null,null]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [0.0,null]\t[null,null]
+                            [0.0,null]\t[null,null]
+                            null\tnull
+                            """);
         });
     }
 
@@ -3472,29 +3472,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [6.0,null]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]
-                    [-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [6.0,null]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]
+                            [-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT 16.0 - transpose(a), 16.0 - transpose(b)FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [14.0,null]\t[[14.0,12.0],[12.0,8.0]]
-                    [0.0,16.0]\t[[8.0],[12.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [14.0,null]\t[[14.0,12.0],[12.0,8.0]]
+                            [0.0,16.0]\t[[8.0],[12.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT 0.0 - a, null::double - a FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [-2.0,null]\t[null,null]
-                    [-16.0,0.0]\t[null,null]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [-2.0,null]\t[null,null]
+                            [-16.0,0.0]\t[null,null]
+                            null\tnull
+                            """);
         });
     }
 
@@ -3628,18 +3628,18 @@ public class ArrayTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("""
-                            SELECT * FROM (DECLARE
-                            \t@price := 1,
-                            \t@size := 2,
-                            \t@avg_price := avg(l2price(0.1, asks[@size], asks[@price])),
-                            \t@best_price := asks[@price, 1]
-                            \tSELECT\s
-                            \t\ttimestamp,
-                            \t\t@avg_price as avg_price,
-                            \t\t@best_price as best_price,
-                            \t\t@avg_price - @best_price as drift
-                            \tFROM AAPL_orderbook
-                            \tSAMPLE BY 1m) LIMIT 5;""")
+                    SELECT * FROM (DECLARE
+                    \t@price := 1,
+                    \t@size := 2,
+                    \t@avg_price := avg(l2price(0.1, asks[@size], asks[@price])),
+                    \t@best_price := asks[@price, 1]
+                    \tSELECT\s
+                    \t\ttimestamp,
+                    \t\t@avg_price as avg_price,
+                    \t\t@best_price as best_price,
+                    \t\t@avg_price - @best_price as drift
+                    \tFROM AAPL_orderbook
+                    \tSAMPLE BY 1m) LIMIT 5;""")
                     .noLeakCheck()
                     .timestamp("timestamp")
                     .returns("""

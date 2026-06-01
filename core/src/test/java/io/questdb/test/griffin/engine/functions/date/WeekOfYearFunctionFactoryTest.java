@@ -99,7 +99,7 @@ public class WeekOfYearFunctionFactoryTest extends AbstractCairoTest {
                 expectedWeekFormatted = weekSink.toString();
 
                 assertQuery("with timestamp as (select '" + expectedDayFormatted + "T23:59:59.999999Z'::" + ColumnType.nameOf(timestampType) + " as ts)\n" +
-                                "  select to_str(ts, 'YYYY-Www') week_partition_dir_name, week_of_year(ts) week from timestamp")
+                        "  select to_str(ts, 'YYYY-Www') week_partition_dir_name, week_of_year(ts) week from timestamp")
                         .ddl(null)
                         .expectSize()
                         .returns("week_partition_dir_name\tweek\n" +

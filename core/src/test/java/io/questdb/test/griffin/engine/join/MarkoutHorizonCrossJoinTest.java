@@ -497,14 +497,14 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
             execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:05.000000Z')");
 
             assertQuery("""
-                            WITH offsets AS (
-                                SELECT 1_000_000 * (x-3) usec_offs
-                                FROM long_sequence(5)
-                            )
-                            SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs
-                            """)
+                    WITH offsets AS (
+                        SELECT 1_000_000 * (x-3) usec_offs
+                        FROM long_sequence(5)
+                    )
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -745,13 +745,13 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            WITH offsets AS (
-                                SELECT 1_000_000 * (x-1) usec_offs
-                                FROM long_sequence(1)
-                            )
-                            SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""")
+                    WITH offsets AS (
+                        SELECT 1_000_000 * (x-1) usec_offs
+                        FROM long_sequence(1)
+                    )
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs""")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -777,13 +777,13 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            WITH offsets AS (
-                                SELECT 1_000_000 * (x-1) usec_offs
-                                FROM long_sequence(2)
-                            )
-                            SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""")
+                    WITH offsets AS (
+                        SELECT 1_000_000 * (x-1) usec_offs
+                        FROM long_sequence(2)
+                    )
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs""")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -810,13 +810,13 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            WITH offsets AS (
-                                SELECT 1_000_000 * (x-1) usec_offs
-                                FROM long_sequence(3)
-                            )
-                            SELECT /*+ markout_horizon(orders offsets) */ id, customer, amount, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""")
+                    WITH offsets AS (
+                        SELECT 1_000_000 * (x-1) usec_offs
+                        FROM long_sequence(3)
+                    )
+                    SELECT /*+ markout_horizon(orders offsets) */ id, customer, amount, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs""")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -843,14 +843,14 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
-                                FROM long_sequence(3)
-                            )
-                            SELECT /*+ markout_horizon(orders offsets) */ id, sec_offs, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs
-                            """)
+                    WITH offsets AS (
+                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
+                        FROM long_sequence(3)
+                    )
+                    SELECT /*+ markout_horizon(orders offsets) */ id, sec_offs, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()

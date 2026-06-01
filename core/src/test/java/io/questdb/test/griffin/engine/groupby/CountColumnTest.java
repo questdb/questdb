@@ -75,22 +75,22 @@ public class CountColumnTest extends AbstractCairoTest {
         });
 
         assertQuery("select k, " +
-                        "count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl, " +
-                        "count(f) cf, " +
-                        "count(d) cd, " +
-                        "count(dat) cdat, " +
-                        "count(ts) cts, " +
-                        "count(l256) cl256, " +
-                        "count(str) cstr, " +
-                        "count(sym) csym, " +
-                        "count(gb) cgb, " +
-                        "count(gs) cgs, " +
-                        "count(gi) cgi, " +
-                        "count(gl) cgl " +
-                        "from x order by k")
+                "count(1) c1, " +
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl, " +
+                "count(f) cf, " +
+                "count(d) cd, " +
+                "count(dat) cdat, " +
+                "count(ts) cts, " +
+                "count(l256) cl256, " +
+                "count(str) cstr, " +
+                "count(sym) csym, " +
+                "count(gb) cgb, " +
+                "count(gs) cgs, " +
+                "count(gi) cgi, " +
+                "count(gl) cgl " +
+                "from x order by k")
                 .expectSize()
                 .returns("k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
                         "null\t3\t3\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
@@ -105,22 +105,22 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testKeyedCountAllColumnTypesOnEmptyData() throws Exception {
         assertQuery("select k, " +
-                        "count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl, " +
-                        "count(f) cf, " +
-                        "count(d) cd, " +
-                        "count(dat) cdat, " +
-                        "count(ts) cts, " +
-                        "count(l256) cl256, " +
-                        "count(str) cstr, " +
-                        "count(sym) csym, " +
-                        "count(gb) cgb, " +
-                        "count(gs) cgs, " +
-                        "count(gi) cgi, " +
-                        "count(gl) cgl " +
-                        "from x")
+                "count(1) c1, " +
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl, " +
+                "count(f) cf, " +
+                "count(d) cd, " +
+                "count(dat) cdat, " +
+                "count(ts) cts, " +
+                "count(l256) cl256, " +
+                "count(str) cstr, " +
+                "count(sym) csym, " +
+                "count(gb) cgb, " +
+                "count(gs) cgs, " +
+                "count(gi) cgi, " +
+                "count(gl) cgl " +
+                "from x")
                 .ddl("create table x " +
                         "( " +
                         " ignore int," +
@@ -146,22 +146,22 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testKeyedCountAllColumnTypesOnFixedData1() throws Exception {
         assertQuery("select k, " +
-                        "count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl, " +
-                        "count(f) cf, " +
-                        "count(d) cd, " +
-                        "count(dat) cdat, " +
-                        "count(ts) cts, " +
-                        "count(l256) cl256, " +
-                        "count(str) cstr, " +
-                        "count(sym) csym, " +
-                        "count(gb) cgb, " +
-                        "count(gs) cgs, " +
-                        "count(gi) cgi, " +
-                        "count(gl) cgl " +
-                        "from x")
+                "count(1) c1, " +
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl, " +
+                "count(f) cf, " +
+                "count(d) cd, " +
+                "count(dat) cdat, " +
+                "count(ts) cts, " +
+                "count(l256) cl256, " +
+                "count(str) cstr, " +
+                "count(sym) csym, " +
+                "count(gb) cgb, " +
+                "count(gs) cgs, " +
+                "count(gi) cgi, " +
+                "count(gl) cgl " +
+                "from x")
                 .ddl("create table x as " +
                         "(" +
                         " select 0 k, 1 i, 2L l, 3f f, 4d d, cast(1 as date) dat, 1::timestamp ts, rnd_long256() l256, 's' str, 'sym'::symbol sym, rnd_geohash(5) gb, rnd_geohash(10) gs, rnd_geohash(20) gi, rnd_geohash(40) gl from long_sequence(1) " +
@@ -176,23 +176,23 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testKeyedCountAllColumnTypesOnFixedData2() throws Exception {
         assertQuery("select k, " +
-                        "count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl, " +
-                        "count(f) cf, " +
-                        "count(d) cd, " +
-                        "count(dat) cdat, " +
-                        "count(ts) cts, " +
-                        "count(l256) cl256, " +
-                        "count(str) cstr, " +
-                        "count(sym) csym, " +
-                        "count(gb) cgb, " +
-                        "count(gs) cgs, " +
-                        "count(gi) cgi, " +
-                        "count(gl) cgl " +
-                        "from x " +
-                        "order by k")
+                "count(1) c1, " +
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl, " +
+                "count(f) cf, " +
+                "count(d) cd, " +
+                "count(dat) cdat, " +
+                "count(ts) cts, " +
+                "count(l256) cl256, " +
+                "count(str) cstr, " +
+                "count(sym) csym, " +
+                "count(gb) cgb, " +
+                "count(gs) cgs, " +
+                "count(gi) cgi, " +
+                "count(gl) cgl " +
+                "from x " +
+                "order by k")
                 .ddl("create table x as " +
                         "(" +
                         " select 0 k, 1 i, 2L l, 3f f, 4d d, cast(1 as date) dat, 1::timestamp ts, rnd_long256() l256, 's' str, 'sym'::symbol sym, rnd_geohash(5) gb, rnd_geohash(10) gs, rnd_geohash(20) gi, rnd_geohash(40) gl from long_sequence(1) " +
@@ -208,23 +208,23 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testKeyedCountAllColumnTypesOnNullData() throws Exception {
         assertQuery("select k, " +
-                        "count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl, " +
-                        "count(f) cf, " +
-                        "count(d) cd, " +
-                        "count(dat) cdat, " +
-                        "count(ts) cts, " +
-                        "count(l256) cl256, " +
-                        "count(str) cstr, " +
-                        "count(var) cvar, " +
-                        "count(sym) csym, " +
-                        "count(gb) cgb, " +
-                        "count(gs) cgs, " +
-                        "count(gi) cgi, " +
-                        "count(gl) cgl " +
-                        "from x")
+                "count(1) c1, " +
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl, " +
+                "count(f) cf, " +
+                "count(d) cd, " +
+                "count(dat) cdat, " +
+                "count(ts) cts, " +
+                "count(l256) cl256, " +
+                "count(str) cstr, " +
+                "count(var) cvar, " +
+                "count(sym) csym, " +
+                "count(gb) cgb, " +
+                "count(gs) cgs, " +
+                "count(gi) cgi, " +
+                "count(gl) cgl " +
+                "from x")
                 .ddl("create table x as " +
                         "(" +
                         " select 0 k, 1 i, 2L l, 3f f, 4d d, cast(1 as date) dat, 1::timestamp ts, rnd_long256() l256, 's' str, 'v'::varchar var, 'sym'::symbol sym, rnd_geohash(5) gb, rnd_geohash(10) gs, rnd_geohash(20) gi, rnd_geohash(40) gl from long_sequence(1) where x = 10 " +
@@ -239,24 +239,24 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testKeyedCountAllColumnTypesOnRandomData() throws Exception {
         assertQuery("select k, " +
-                        "count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl, " +
-                        "count(f) cf, " +
-                        "count(d) cd, " +
-                        "count(dat) cdat, " +
-                        "count(ts) cts, " +
-                        "count(l256) cl256, " +
-                        "count(str) cstr, " +
-                        "count(varchar) cvar, " +
-                        "count(sym) csym, " +
-                        "count(gb) cgb, " +
-                        "count(gs) cgs, " +
-                        "count(gi) cgi, " +
-                        "count(gl) cgl " +
-                        "from x " +
-                        "order by k")
+                "count(1) c1, " +
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl, " +
+                "count(f) cf, " +
+                "count(d) cd, " +
+                "count(dat) cdat, " +
+                "count(ts) cts, " +
+                "count(l256) cl256, " +
+                "count(str) cstr, " +
+                "count(varchar) cvar, " +
+                "count(sym) csym, " +
+                "count(gb) cgb, " +
+                "count(gs) cgs, " +
+                "count(gi) cgi, " +
+                "count(gl) cgl " +
+                "from x " +
+                "order by k")
                 .ddl("create table x as " +
                         "(" +
                         "select x%10 k," +
@@ -294,22 +294,22 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testNotKeyedCountAllColumnTypesOnEmptyData() throws Exception {
         assertQuery("select count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl, " +
-                        "count(f) cf, " +
-                        "count(d) cd, " +
-                        "count(dat) cdat, " +
-                        "count(ts) cts, " +
-                        "count(l256) cl256, " +
-                        "count(str) cstr, " +
-                        "count(var) cvar, " +
-                        "count(sym) csym, " +
-                        "count(gb) cgb, " +
-                        "count(gs) cgs, " +
-                        "count(gi) cgi, " +
-                        "count(gl) cgl " +
-                        "from x")
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl, " +
+                "count(f) cf, " +
+                "count(d) cd, " +
+                "count(dat) cdat, " +
+                "count(ts) cts, " +
+                "count(l256) cl256, " +
+                "count(str) cstr, " +
+                "count(var) cvar, " +
+                "count(sym) csym, " +
+                "count(gb) cgb, " +
+                "count(gs) cgs, " +
+                "count(gi) cgi, " +
+                "count(gl) cgl " +
+                "from x")
                 .ddl("create table x " +
                         "(" +
                         " i int, " +
@@ -336,21 +336,21 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testNotKeyedCountAllColumnTypesOnFixedData() throws Exception {
         assertQuery("select count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl, " +
-                        "count(f) cf, " +
-                        "count(d) cd, " +
-                        "count(dat) cdat, " +
-                        "count(ts) cts, " +
-                        "count(l256) cl256, " +
-                        "count(str) cstr, " +
-                        "count(sym) csym, " +
-                        "count(gb) cgb, " +
-                        "count(gs) cgs, " +
-                        "count(gi) cgi, " +
-                        "count(gl) cgl " +
-                        "from x")
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl, " +
+                "count(f) cf, " +
+                "count(d) cd, " +
+                "count(dat) cdat, " +
+                "count(ts) cts, " +
+                "count(l256) cl256, " +
+                "count(str) cstr, " +
+                "count(sym) csym, " +
+                "count(gb) cgb, " +
+                "count(gs) cgs, " +
+                "count(gi) cgi, " +
+                "count(gl) cgl " +
+                "from x")
                 .ddl("create table x as " +
                         "(" +
                         " select 1 i, 2L l, 3f f, 4d d, cast(1 as date) dat, 1::timestamp ts, rnd_long256() l256, 's' str, 'sym'::symbol sym, rnd_geohash(5) gb, rnd_geohash(10) gs, rnd_geohash(20) gi, rnd_geohash(40) gl from long_sequence(1) " +
@@ -366,21 +366,21 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testNotKeyedCountAllColumnTypesOnNullData() throws Exception {
         assertQuery("select count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl, " +
-                        "count(f) cf, " +
-                        "count(d) cd, " +
-                        "count(dat) cdat, " +
-                        "count(ts) cts, " +
-                        "count(l256) cl256, " +
-                        "count(str) cstr, " +
-                        "count(sym) csym, " +
-                        "count(gb) cgb, " +
-                        "count(gs) cgs, " +
-                        "count(gi) cgi, " +
-                        "count(gl) cgl " +
-                        "from x")
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl, " +
+                "count(f) cf, " +
+                "count(d) cd, " +
+                "count(dat) cdat, " +
+                "count(ts) cts, " +
+                "count(l256) cl256, " +
+                "count(str) cstr, " +
+                "count(sym) csym, " +
+                "count(gb) cgb, " +
+                "count(gs) cgs, " +
+                "count(gi) cgi, " +
+                "count(gl) cgl " +
+                "from x")
                 .ddl("create table x as " +
                         "(" +
                         " select 1 i, 2L l, 3f f, 4d d, cast(1 as date) dat, 1::timestamp ts, rnd_long256() l256, 's' str, 'sym'::symbol sym, rnd_geohash(5) gb, rnd_geohash(10) gs, rnd_geohash(20) gi, rnd_geohash(40) gl from long_sequence(1) where x = 10 " +
@@ -396,21 +396,21 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testNotKeyedCountAllColumnTypesOnRandomData() throws Exception {
         assertQuery("select count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl, " +
-                        "count(f) cf, " +
-                        "count(d) cd, " +
-                        "count(dat) cdat, " +
-                        "count(ts) cts, " +
-                        "count(l256) cl256, " +
-                        "count(str) cstr, " +
-                        "count(sym) csym, " +
-                        "count(gb) cgb, " +
-                        "count(gs) cgs, " +
-                        "count(gi) cgi, " +
-                        "count(gl) cgl " +
-                        "from x")
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl, " +
+                "count(f) cf, " +
+                "count(d) cd, " +
+                "count(dat) cdat, " +
+                "count(ts) cts, " +
+                "count(l256) cl256, " +
+                "count(str) cstr, " +
+                "count(sym) csym, " +
+                "count(gb) cgb, " +
+                "count(gs) cgs, " +
+                "count(gi) cgi, " +
+                "count(gl) cgl " +
+                "from x")
                 .ddl("create table x as " +
                         "(" +
                         "select " +
@@ -439,11 +439,11 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testVectorizedKeyedCount() throws Exception {
         assertQuery("select k, " +
-                        "count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl " +
-                        "from x order by k")
+                "count(1) c1, " +
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl " +
+                "from x order by k")
                 .ddl("create table x as " +
                         "(" +
                         "select case when x%13 != 0 then (x%13)::int else null end k," +
@@ -484,11 +484,11 @@ public class CountColumnTest extends AbstractCairoTest {
         });
 
         assertQuery("select k, " +
-                        "count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl " +
-                        "from x order by k")
+                "count(1) c1, " +
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl " +
+                "from x order by k")
                 .expectSize()
                 .returns("k\tc1\tcstar\tci\tcl\n" +
                         "null\t3\t3\t0\t0\n" +
@@ -500,12 +500,12 @@ public class CountColumnTest extends AbstractCairoTest {
                         "5\t1\t1\t0\t0\n");
 
         assertQuery("select hour(tstmp), " +
-                        "count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl " +
-                        "from x " +
-                        "order by 1")
+                "count(1) c1, " +
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl " +
+                "from x " +
+                "order by 1")
                 .expectSize()
                 .returns("hour\tc1\tcstar\tci\tcl\n" +
                         "0\t2\t2\t0\t0\n" +
@@ -518,13 +518,13 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testVectorizedNotKeyedCount() throws Exception {
         assertQuery("select count(1) c1, " +
-                        "count(*) cstar, " +
-                        "count(i) ci, " +
-                        "count(l) cl," +
-                        "count(d) dl, " +
-                        "count(dat) ddat, " +
-                        "count(ts) dts " +
-                        "from x")
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl," +
+                "count(d) dl, " +
+                "count(dat) ddat, " +
+                "count(ts) dts " +
+                "from x")
                 .ddl("create table x as " +
                         "(" +
                         "select " +

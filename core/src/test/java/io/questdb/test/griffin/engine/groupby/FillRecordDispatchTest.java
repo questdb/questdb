@@ -106,7 +106,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
             // either fail compilation (wrong number of fill values) or
             // assign -1 to the wrong column.
             assertQuery("SELECT ts, 'tag' AS c, first(i) AS a, sum(j) AS b FROM x " +
-                            "SAMPLE BY 1h FILL(-1, 99) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(-1, 99) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -119,7 +119,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
             // Bare FILL(PREV) variant: same hoisting assumption, different
             // dispatch arm (factoryColToUserFillIdx classifies key vs. agg).
             assertQuery("SELECT ts, 'tag' AS c, first(i) AS a, sum(j) AS b FROM x " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -145,7 +145,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(false, 30, '2024-01-01T02:00:00.000000Z')");
             // FILL(PREV, PREV(s)) -- a at 01:00 pulls s's prev value (true).
             assertQuery("SELECT ts, first(b) AS s, first(b) AS a FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -167,7 +167,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('A', '2024-01-01T00:00:00.000000Z')," +
                     "('B', '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT ts, first(c) AS s, first(c) AS a FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -189,7 +189,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(10, '2024-01-01T00:00:00.000000Z')," +
                     "(30, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT ts, first(i) AS s, first(i) AS a FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -211,7 +211,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(1_000_000, '2024-01-01T00:00:00.000000Z')," +
                     "(3_000_000, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT ts, first(l) AS s, first(l) AS a FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -234,7 +234,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('alpha', '2024-01-01T00:00:00.000000Z')," +
                     "('beta', '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT ts, first(s) AS sv, first(s) AS a FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(sv)) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV, PREV(sv)) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -256,7 +256,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('2023-12-31T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z')," +
                     "('2023-12-31T05:00:00.000000Z', '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT ts, first(t) AS s, first(t) AS a FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -284,9 +284,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(false, 20.0, true, '2024-01-01T00:00:00.000000Z')," +
                     "(true, 30.0, false, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -312,9 +312,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(22::BYTE, 20.0, 200::BYTE, '2024-01-01T00:00:00.000000Z')," +
                     "(11::BYTE, 30.0, 121::BYTE, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -340,9 +340,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('B', 20.0, 'Y', '2024-01-01T00:00:00.000000Z')," +
                     "('A', 30.0, 'Z', '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -369,9 +369,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('2020-02-02T00:00:00.000Z'::DATE, 20.0, '2021-07-20T00:00:00.000Z'::DATE, '2024-01-01T00:00:00.000000Z')," +
                     "('2020-01-01T00:00:00.000Z'::DATE, 30.0, '2021-08-25T00:00:00.000Z'::DATE, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -399,9 +399,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('2.00'::DECIMAL(25,2), 20.0, '222.22'::DECIMAL(25,2), '2024-01-01T00:00:00.000000Z')," +
                     "('1.00'::DECIMAL(25,2), 30.0, '333.33'::DECIMAL(25,2), '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -427,9 +427,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(2.2::DECIMAL(4,1), 20.0, 88.8::DECIMAL(4,1), '2024-01-01T00:00:00.000000Z')," +
                     "(1.1::DECIMAL(4,1), 30.0, 77.7::DECIMAL(4,1), '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -455,9 +455,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('2.00'::DECIMAL(60,2), 20.0, '888.88'::DECIMAL(60,2), '2024-01-01T00:00:00.000000Z')," +
                     "('1.00'::DECIMAL(60,2), 30.0, '777.77'::DECIMAL(60,2), '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -481,9 +481,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(2.20::DECIMAL(9,2), 20.0, 8888.88::DECIMAL(9,2), '2024-01-01T00:00:00.000000Z')," +
                     "(1.10::DECIMAL(9,2), 30.0, 7777.77::DECIMAL(9,2), '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -507,9 +507,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(2.20::DECIMAL(18,2), 20.0, 22222.22::DECIMAL(18,2), '2024-01-01T00:00:00.000000Z')," +
                     "(1.10::DECIMAL(18,2), 30.0, 33333.33::DECIMAL(18,2), '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -533,9 +533,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(2.2::DECIMAL(2,1), 20.0, 8.8::DECIMAL(2,1), '2024-01-01T00:00:00.000000Z')," +
                     "(1.1::DECIMAL(2,1), 30.0, 7.7::DECIMAL(2,1), '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -563,9 +563,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(2.5, 20.0, 200.5, '2024-01-01T00:00:00.000000Z')," +
                     "(1.5, 30.0, 300.5, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -589,9 +589,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(2.5::FLOAT, 20.0, 200.5::FLOAT, '2024-01-01T00:00:00.000000Z')," +
                     "(1.5::FLOAT, 30.0, 300.5::FLOAT, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -617,9 +617,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(##11000, 20.0, ##00000, '2024-01-01T00:00:00.000000Z')," +
                     "(##00111, 30.0, ##10101, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -645,9 +645,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('u33d', 20.0, 'bcde', '2024-01-01T00:00:00.000000Z')," +
                     "('sp05', 30.0, 'rstv', '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -673,9 +673,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('u33d8b1234', 20.0, 'bcdebcdebc', '2024-01-01T00:00:00.000000Z')," +
                     "('sp052n01b3', 30.0, 'mnpqrstvwx', '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -701,9 +701,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(##111000111000, 20.0, ##000000000000, '2024-01-01T00:00:00.000000Z')," +
                     "(##011001100101, 30.0, ##101010101010, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -729,9 +729,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('5.6.7.8'::IPV4, 20.0, '10.0.0.2'::IPV4, '2024-01-01T00:00:00.000000Z')," +
                     "('1.2.3.4'::IPV4, 30.0, '10.0.0.3'::IPV4, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -758,9 +758,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(2, 20.0, 200, '2024-01-01T00:00:00.000000Z')," +
                     "(1, 30.0, 300, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -788,9 +788,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(2_000_000, 20.0, 222, '2024-01-01T00:00:00.000000Z')," +
                     "(1_000_000, 30.0, 333, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -814,9 +814,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(22::SHORT, 20.0, 2002::SHORT, '2024-01-01T00:00:00.000000Z')," +
                     "(11::SHORT, 30.0, 3003::SHORT, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -842,9 +842,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('Kb', 20.0, 'bar', '2024-01-01T00:00:00.000000Z')," +
                     "('Ka', 30.0, 'baz', '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -871,9 +871,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('2020-02-02T00:00:00.000000Z', 20.0, '2021-07-20T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z')," +
                     "('2020-01-01T00:00:00.000000Z', 30.0, '2021-08-25T00:00:00.000000Z', '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -900,9 +900,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('00000000-0000-0000-0000-000000000002'::UUID, 20.0, 'ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb'::UUID, '2024-01-01T00:00:00.000000Z')," +
                     "('00000000-0000-0000-0000-000000000001'::UUID, 30.0, '11111111-2222-3333-4444-555555555555'::UUID, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -930,9 +930,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('Kb', 20.0, 'bar', '2024-01-01T00:00:00.000000Z')," +
                     "('Ka', 30.0, 'baz', '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m FROM x " +
+                    "SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -967,9 +967,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
             // 01:00 is a gap bucket for both keys. Both keys have prev values
             // observed at 00:00, so the cached slots return 1.0 / 2.0 directly.
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, first(v) fv FROM x " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, first(v) fv FROM x " +
+                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -998,7 +998,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(3.0, 30, '2024-01-01T02:00:00.000000Z')");
             // FILL(PREV, PREV(s)) -- a at 01:00 pulls s's prev value (1.0).
             assertQuery("SELECT ts, sum(val) AS s, sum(ival::DOUBLE) AS a FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -1025,12 +1025,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
             // Key B has no data in the 00:00 or 01:00 buckets -- its fill
             // rows fall through to the null sentinel (no prev yet).
             assertQuery("SELECT * FROM (" +
-                            "SELECT ts, k, first(v) fv FROM x " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k")
+                    "SELECT ts, k, first(v) fv FROM x " +
+                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
+                    ") ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp(// Outer ORDER BY wraps the FILL cursor in a sort factory that supports random access.
-                    "ts")
+                            "ts")
                     .returns("""
                             ts\tk\tfv
                             2024-01-01T00:00:00.000000Z\tA\t1.0
@@ -1057,8 +1057,8 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
             execute("INSERT INTO x SELECT rnd_bin(4, 4, 0), 1.0, " +
                     "'2024-01-01T00:00:00.000000Z' FROM long_sequence(1)");
             assertQuery("SELECT ts, bn, sum(v) FROM x " +
-                            "SAMPLE BY 1h FROM '2024-01-01T00:00:00' TO '2024-01-01T03:00:00' FILL(NULL) " +
-                            "ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FROM '2024-01-01T00:00:00' TO '2024-01-01T03:00:00' FILL(NULL) " +
+                    "ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -1382,7 +1382,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(##00111, '2024-01-01T00:00:00.000000Z')," +
                     "(##11000, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT ts, first(g) fg FROM x " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -1405,7 +1405,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('sp05', '2024-01-01T00:00:00.000000Z')," +
                     "('u33d', '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT ts, first(g) fg FROM x " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -1427,7 +1427,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('sp052n01b3', '2024-01-01T00:00:00.000000Z')," +
                     "('u33d8b1234', '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT ts, first(g) fg FROM x " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -1449,7 +1449,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(##011001100101, '2024-01-01T00:00:00.000000Z')," +
                     "(##111000111000, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT ts, first(g) fg FROM x " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -1536,7 +1536,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('2020-01-01T00:00:00.000Z'::TIMESTAMP, '2020-02-01T00:00:00.000Z'::TIMESTAMP, 10.0, '2024-01-01T00:00:00.000000Z')," +
                     "('2020-01-01T00:00:00.000Z'::TIMESTAMP, '2020-02-01T00:00:00.000Z'::TIMESTAMP, 30.0, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT ts, interval(lo, hi) k, first(v) FROM t " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -1586,9 +1586,9 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(cast('0x01' AS LONG256), 1.0, '2024-01-01T00:00:00.000000Z')," +
                     "(cast('0x01' AS LONG256), 3.0, '2024-01-01T02:00:00.000000Z')");
             assertQuery("SELECT count(*) c FROM (" +
-                            "SELECT ts, l, sum(v) v FROM x " +
-                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR" +
-                            ")")
+                    "SELECT ts, l, sum(v) v FROM x " +
+                    "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR" +
+                    ")")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()

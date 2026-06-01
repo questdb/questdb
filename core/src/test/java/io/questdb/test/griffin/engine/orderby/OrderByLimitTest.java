@@ -55,18 +55,18 @@ public class OrderByLimitTest extends AbstractCairoTest {
             execute("INSERT INTO 'order_book' VALUES ('2020-01-01T01:01', 3, 3, 4, 4);");
 
             assertQuery("SELECT * " +
-                            "FROM (" +
-                            "  SELECT *" +
-                            "  FROM (" +
-                            "    SELECT *" +
-                            "    FROM trades" +
-                            "    WHERE price = '42.0'" +
-                            "    ORDER BY price, size, ts" +
-                            "    LIMIT 1" +
-                            "  )" +
-                            "  ORDER BY ts" +
-                            ")" +
-                            "ASOF JOIN order_book")
+                    "FROM (" +
+                    "  SELECT *" +
+                    "  FROM (" +
+                    "    SELECT *" +
+                    "    FROM trades" +
+                    "    WHERE price = '42.0'" +
+                    "    ORDER BY price, size, ts" +
+                    "    LIMIT 1" +
+                    "  )" +
+                    "  ORDER BY ts" +
+                    ")" +
+                    "ASOF JOIN order_book")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -80,9 +80,9 @@ public class OrderByLimitTest extends AbstractCairoTest {
     @Test
     public void testNegativeLimitDescOrderBy() throws Exception {
         assertQuery("select price, ts " +
-                        "from x " +
-                        "where price > 0 AND ts >= '2024-01-01' AND ts <= '2024-12-31' " +
-                        "order by ts desc limit -1")
+                "from x " +
+                "where price > 0 AND ts >= '2024-01-01' AND ts <= '2024-12-31' " +
+                "order by ts desc limit -1")
                 .ddl("create table x as " +
                         "(" +
                         "select" +

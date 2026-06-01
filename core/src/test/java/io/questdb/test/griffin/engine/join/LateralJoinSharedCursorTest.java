@@ -75,17 +75,17 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.category, o.region, o.total, sub.rate
-                            FROM (
-                                SELECT category, region, sum(amount) AS total
-                                FROM orders
-                                GROUP BY category, region
-                            ) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY o.category, o.region, sub.rate
-                            """)
+                    SELECT o.category, o.region, o.total, sub.rate
+                    FROM (
+                        SELECT category, region, sum(amount) AS total
+                        FROM orders
+                        GROUP BY category, region
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) sub
+                    ORDER BY o.category, o.region, sub.rate
+                    """)
                     .withPlan(enableParallelGroupBy ? """
                             Encode sort
                               keys: [category, region, rate]
@@ -182,18 +182,18 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.id, o.region, o.total, sub.rate
-                            FROM (
-                                SELECT id, region, sum(amount) AS total
-                                FROM orders
-                                GROUP BY id, region
-                            ) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            WHERE o.total > 1900
-                            ORDER BY o.id
-                            """)
+                    SELECT o.id, o.region, o.total, sub.rate
+                    FROM (
+                        SELECT id, region, sum(amount) AS total
+                        FROM orders
+                        GROUP BY id, region
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) sub
+                    WHERE o.total > 1900
+                    ORDER BY o.id
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -221,12 +221,12 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.correlation, sub.rate
-                            FROM (SELECT corr(x, y) AS correlation FROM orders) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_val <= o.correlation
-                            ) sub
-                            """)
+                    SELECT o.correlation, sub.rate
+                    FROM (SELECT corr(x, y) AS correlation FROM orders) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_val <= o.correlation
+                    ) sub
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -256,13 +256,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.bucket, o.total, sub.rate
-                            FROM (SELECT id % 2 AS bucket, sum(amount) AS total FROM orders GROUP BY id % 2) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY o.bucket, sub.rate
-                            """)
+                    SELECT o.bucket, o.total, sub.rate
+                    FROM (SELECT id % 2 AS bucket, sum(amount) AS total FROM orders GROUP BY id % 2) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) sub
+                    ORDER BY o.bucket, sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -293,13 +293,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.category, o.total, sub.rate
-                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY o.category, sub.rate
-                            """)
+                    SELECT o.category, o.total, sub.rate
+                    FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) sub
+                    ORDER BY o.category, sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -329,13 +329,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.total, o.category, sub.rate
-                            FROM (SELECT sum(amount) AS total, category FROM orders GROUP BY category) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY o.category, sub.rate
-                            """)
+                    SELECT o.total, o.category, sub.rate
+                    FROM (SELECT sum(amount) AS total, category FROM orders GROUP BY category) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) sub
+                    ORDER BY o.category, sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -357,13 +357,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.category, o.total, sub.rate
-                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY o.category, sub.rate
-                            """)
+                    SELECT o.category, o.total, sub.rate
+                    FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) sub
+                    ORDER BY o.category, sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -390,13 +390,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.category, o.total, sub.rate
-                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
-                            LEFT JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY o.category, sub.rate
-                            """)
+                    SELECT o.category, o.total, sub.rate
+                    FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
+                    LEFT JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) sub
+                    ORDER BY o.category, sub.rate
+                    """)
                     .noLeakCheck()
                     .returns("""
                             category\ttotal\trate
@@ -425,13 +425,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.category, o.total, sub.rate
-                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY o.category, sub.rate
-                            """)
+                    SELECT o.category, o.total, sub.rate
+                    FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) sub
+                    ORDER BY o.category, sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -461,17 +461,17 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.category, o.items, sub.rate
-                            FROM (
-                                SELECT category, string_agg(item, ',') AS items
-                                FROM orders
-                                GROUP BY category
-                            ) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_len <= length(o.items)
-                            ) sub
-                            ORDER BY o.category, sub.rate
-                            """)
+                    SELECT o.category, o.items, sub.rate
+                    FROM (
+                        SELECT category, string_agg(item, ',') AS items
+                        FROM orders
+                        GROUP BY category
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_len <= length(o.items)
+                    ) sub
+                    ORDER BY o.category, sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -505,16 +505,16 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.category, o.total, r.rate, d.discount
-                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) r
-                            JOIN LATERAL (
-                                SELECT discount FROM discounts WHERE min_amount <= o.total
-                            ) d
-                            ORDER BY o.category
-                            """)
+                    SELECT o.category, o.total, r.rate, d.discount
+                    FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) r
+                    JOIN LATERAL (
+                        SELECT discount FROM discounts WHERE min_amount <= o.total
+                    ) d
+                    ORDER BY o.category
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -541,13 +541,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.total, sub.rate
-                            FROM (SELECT sum(amount) AS total FROM orders) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY sub.rate
-                            """)
+                    SELECT o.total, sub.rate
+                    FROM (SELECT sum(amount) AS total FROM orders) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) sub
+                    ORDER BY sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -569,12 +569,12 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.total, sub.rate
-                            FROM (SELECT sum(amount) AS total FROM orders) o
-                            LEFT JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            """)
+                    SELECT o.total, sub.rate
+                    FROM (SELECT sum(amount) AS total FROM orders) o
+                    LEFT JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) sub
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
@@ -602,13 +602,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.all_items, sub.rate
-                            FROM (SELECT string_agg(item, ',') AS all_items FROM orders) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_len <= length(o.all_items)
-                            ) sub
-                            ORDER BY sub.rate
-                            """)
+                    SELECT o.all_items, sub.rate
+                    FROM (SELECT string_agg(item, ',') AS all_items FROM orders) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_len <= length(o.all_items)
+                    ) sub
+                    ORDER BY sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -639,19 +639,19 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
             // approx_percentile(lval, 0.5) ≈ 20, approx_percentile(dval, 0.5) ≈ 20.0
             // approx_percentile(lval, 0.5, 3) ≈ 20, approx_percentile(dval, 0.5, 3) ≈ 20.0
             assertQuery("""
-                            SELECT o.p_long, o.p_double, o.p_long3, o.p_double3, sub.rate
-                            FROM (
-                                SELECT approx_percentile(lval, 0.5) AS p_long,
-                                       approx_percentile(dval, 0.5) AS p_double,
-                                       approx_percentile(lval, 0.5, 3) AS p_long3,
-                                       approx_percentile(dval, 0.5, 3) AS p_double3
-                                FROM items
-                            ) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_val <= o.p_double
-                            ) sub
-                            ORDER BY sub.rate
-                            """)
+                    SELECT o.p_long, o.p_double, o.p_long3, o.p_double3, sub.rate
+                    FROM (
+                        SELECT approx_percentile(lval, 0.5) AS p_long,
+                               approx_percentile(dval, 0.5) AS p_double,
+                               approx_percentile(lval, 0.5, 3) AS p_long3,
+                               approx_percentile(dval, 0.5, 3) AS p_double3
+                        FROM items
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_val <= o.p_double
+                    ) sub
+                    ORDER BY sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -679,16 +679,16 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     (2, 0.2, '2024-01-01T00:00:01.000000Z')
                     """);
             assertQuery("""
-                            SELECT o.cd_str, o.cd_var, sub.rate
-                            FROM (
-                                SELECT count_distinct(name) AS cd_str, count_distinct(vname) AS cd_var
-                                FROM items
-                            ) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_cnt <= o.cd_str
-                            ) sub
-                            ORDER BY sub.rate
-                            """)
+                    SELECT o.cd_str, o.cd_var, sub.rate
+                    FROM (
+                        SELECT count_distinct(name) AS cd_str, count_distinct(vname) AS cd_var
+                        FROM items
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_cnt <= o.cd_str
+                    ) sub
+                    ORDER BY sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -717,13 +717,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.total, o.category, sub.rate
-                            FROM (select total,category  from (SELECT category, sum(amount) AS total FROM orders GROUP BY category)) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY o.category, sub.rate
-                            """)
+                    SELECT o.total, o.category, sub.rate
+                    FROM (select total,category  from (SELECT category, sum(amount) AS total FROM orders GROUP BY category)) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) sub
+                    ORDER BY o.category, sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -733,13 +733,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            SELECT o.total, o.category, sub.rate
-                            FROM (select total, category, category as category1  from (SELECT category, sum(amount) AS total FROM orders GROUP BY category)) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY o.category, sub.rate
-                            """)
+                    SELECT o.total, o.category, sub.rate
+                    FROM (select total, category, category as category1  from (SELECT category, sum(amount) AS total FROM orders GROUP BY category)) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) sub
+                    ORDER BY o.category, sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -770,18 +770,18 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.category, o.max_id, sub.rate
-                            FROM (
-                                SELECT category, max(id) AS max_id
-                                FROM orders
-                                GROUP BY category
-                            ) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_id <= o.max_id
-                            ) sub
-                            ORDER BY o.max_id DESC
-                            LIMIT 2
-                            """)
+                    SELECT o.category, o.max_id, sub.rate
+                    FROM (
+                        SELECT category, max(id) AS max_id
+                        FROM orders
+                        GROUP BY category
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_id <= o.max_id
+                    ) sub
+                    ORDER BY o.max_id DESC
+                    LIMIT 2
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -810,17 +810,17 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.category, o.status, o.total, sub.rate
-                            FROM (
-                                SELECT category, last(status) AS status, sum(amount) AS total
-                                FROM orders
-                                GROUP BY category
-                            ) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY o.category, sub.rate
-                            """)
+                    SELECT o.category, o.status, o.total, sub.rate
+                    FROM (
+                        SELECT category, last(status) AS status, sum(amount) AS total
+                        FROM orders
+                        GROUP BY category
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_amount <= o.total
+                    ) sub
+                    ORDER BY o.category, sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -905,17 +905,17 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.name, o.items, sub.rate
-                            FROM (
-                                SELECT name, string_agg(item, ',') AS items
-                                FROM orders
-                                GROUP BY name
-                            ) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_len <= length(o.items)
-                            ) sub
-                            ORDER BY o.name, sub.rate
-                            """)
+                    SELECT o.name, o.items, sub.rate
+                    FROM (
+                        SELECT name, string_agg(item, ',') AS items
+                        FROM orders
+                        GROUP BY name
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_len <= length(o.items)
+                    ) sub
+                    ORDER BY o.name, sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -943,12 +943,12 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     (5, 0.1, '2024-01-01T00:00:00.000000Z')
                     """);
             assertQuery("""
-                            SELECT o.all_names, sub.rate
-                            FROM (SELECT string_agg(name, ',') AS all_names FROM items) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_len <= length(o.all_names)
-                            ) sub
-                            """)
+                    SELECT o.all_names, sub.rate
+                    FROM (SELECT string_agg(name, ',') AS all_names FROM items) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_len <= length(o.all_names)
+                    ) sub
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -977,18 +977,18 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     (3, 0.2, '2024-01-01T00:00:01.000000Z')
                     """);
             assertQuery("""
-                            SELECT o.sd_str, o.sd_var, o.sd_sym, sub.rate
-                            FROM (
-                                SELECT string_distinct_agg(name, ',') AS sd_str,
-                                       string_distinct_agg(vname, ',') AS sd_var,
-                                       string_distinct_agg(sname, ',') AS sd_sym
-                                FROM items
-                            ) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_len <= length(o.sd_str)
-                            ) sub
-                            ORDER BY sub.rate
-                            """)
+                    SELECT o.sd_str, o.sd_var, o.sd_sym, sub.rate
+                    FROM (
+                        SELECT string_distinct_agg(name, ',') AS sd_str,
+                               string_distinct_agg(vname, ',') AS sd_var,
+                               string_distinct_agg(sname, ',') AS sd_sym
+                        FROM items
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_len <= length(o.sd_str)
+                    ) sub
+                    ORDER BY sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1019,13 +1019,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.group_id, o.total, sub.rate
-                            FROM (SELECT group_id, sum(qty) AS total FROM orders GROUP BY group_id) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_qty <= o.total
-                            ) sub
-                            ORDER BY o.group_id, sub.rate
-                            """)
+                    SELECT o.group_id, o.total, sub.rate
+                    FROM (SELECT group_id, sum(qty) AS total FROM orders GROUP BY group_id) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_qty <= o.total
+                    ) sub
+                    ORDER BY o.group_id, sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1054,13 +1054,13 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT o.total, sub.rate
-                            FROM (SELECT sum(qty) AS total FROM orders) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_qty <= o.total
-                            ) sub
-                            ORDER BY sub.rate
-                            """)
+                    SELECT o.total, sub.rate
+                    FROM (SELECT sum(qty) AS total FROM orders) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_qty <= o.total
+                    ) sub
+                    ORDER BY sub.rate
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""

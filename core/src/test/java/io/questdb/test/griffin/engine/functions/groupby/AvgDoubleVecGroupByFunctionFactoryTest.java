@@ -66,12 +66,12 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                avg
-                null
-                """, """
-                avg
-                123.0
-                """);
+                        avg
+                        null
+                        """, """
+                        avg
+                        123.0
+                        """);
     }
 
     @Test

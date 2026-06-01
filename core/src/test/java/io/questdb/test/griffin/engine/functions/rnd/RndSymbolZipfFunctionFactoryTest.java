@@ -42,8 +42,8 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
 
         // Should return all 5 symbols, but with different frequencies (AAPL most common)
         assertQuery("""
-                        select testCol, count() as cnt from abc order by 1
-                        """)
+                select testCol, count() as cnt from abc order by 1
+                """)
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
@@ -126,10 +126,10 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                testCol\tcnt
-                1AAPL\t98
-                2MSFT\t2
-                """);
+                        testCol\tcnt
+                        1AAPL\t98
+                        2MSFT\t2
+                        """);
     }
 
     @Test
@@ -153,13 +153,13 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                testCol\tcnt
-                1AAPL\t26
-                2MSFT\t22
-                3GOOGL\t20
-                4TSLA\t14
-                5AMZN\t18
-                """);
+                        testCol\tcnt
+                        1AAPL\t26
+                        2MSFT\t22
+                        3GOOGL\t20
+                        4TSLA\t14
+                        5AMZN\t18
+                        """);
     }
 
     @Test
@@ -181,10 +181,10 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                testCol\tcnt
-                A\t63
-                B\t37
-                """);
+                        testCol\tcnt
+                        A\t63
+                        B\t37
+                        """);
     }
 
     @Test
@@ -200,10 +200,10 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                testCol\tcnt
-                A\t63
-                B\t37
-                """);
+                        testCol\tcnt
+                        A\t63
+                        B\t37
+                        """);
     }
 
     @Test
@@ -219,10 +219,10 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                testCol\tcnt
-                A\t63
-                B\t37
-                """);
+                        testCol\tcnt
+                        A\t63
+                        B\t37
+                        """);
     }
 
     @Test
@@ -238,10 +238,10 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                testCol\tcnt
-                A\t63
-                B\t37
-                """);
+                        testCol\tcnt
+                        A\t63
+                        B\t37
+                        """);
     }
 
     @Test
@@ -257,10 +257,10 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                testCol\tcnt
-                A\t63
-                B\t37
-                """);
+                        testCol\tcnt
+                        A\t63
+                        B\t37
+                        """);
     }
 
     @Test
@@ -276,10 +276,10 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                testCol\tcnt
-                A\t63
-                B\t37
-                """);
+                        testCol\tcnt
+                        A\t63
+                        B\t37
+                        """);
     }
 
     @Test

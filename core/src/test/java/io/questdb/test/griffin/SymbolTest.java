@@ -129,8 +129,8 @@ public class SymbolTest extends AbstractCairoTest {
                     " from long_sequence(51)");
             engine.releaseAllWriters();
             assertQuery("select sym from x" +
-                            " where timestamp in '2024-03-05T12:13'" +
-                            " order by sym desc")
+                    " where timestamp in '2024-03-05T12:13'" +
+                    " order by sym desc")
                     .noLeakCheck()
                     .returns("""
                             sym

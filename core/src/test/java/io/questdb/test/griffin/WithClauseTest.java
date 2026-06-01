@@ -34,7 +34,7 @@ public class WithClauseTest extends AbstractCairoTest {
     @Test
     public void testWithAliasOverridingTable1() throws Exception {
         assertMemoryLeak(() -> assertQuery("WITH balance as ( SELECT * FROM balance WHERE address = 1 ) " +
-                        "SELECT * FROM balance ")
+                "SELECT * FROM balance ")
                 .ddl("""
                         CREATE TABLE balance (
                           address LONG,
@@ -80,18 +80,18 @@ public class WithClauseTest extends AbstractCairoTest {
     public void testWithAliasOverridingTable4() throws Exception {
         assertMemoryLeak(() -> {//to force 2nd balance with clause parsing
             assertQuery("WITH balance2 as ( SELECT * FROM balance WHERE address = 2 ) " +
-                            "SELECT * FROM (" +
-                            "(" +
-                            "WITH balance as (select * from balance where address = 1) " +
-                            "SELECT b1.*, b2.* " +
-                            "FROM balance b1 " +
-                            "JOIN balance2 b2 on b1.address = b2.address " +
-                            "JOIN balance b3 on b1.address = b3.address " +//to force 2nd balance with clause parsing
-                            ") UNION ALL  " +
-                            "SELECT * " +
-                            "FROM balance b1 " +
-                            "JOIN balance2 b2 on b1.address = b2.address " +
-                            ")")
+                    "SELECT * FROM (" +
+                    "(" +
+                    "WITH balance as (select * from balance where address = 1) " +
+                    "SELECT b1.*, b2.* " +
+                    "FROM balance b1 " +
+                    "JOIN balance2 b2 on b1.address = b2.address " +
+                    "JOIN balance b3 on b1.address = b3.address " +//to force 2nd balance with clause parsing
+                    ") UNION ALL  " +
+                    "SELECT * " +
+                    "FROM balance b1 " +
+                    "JOIN balance2 b2 on b1.address = b2.address " +
+                    ")")
                     .ddl("""
                             CREATE TABLE balance (
                               address LONG,
@@ -142,7 +142,7 @@ public class WithClauseTest extends AbstractCairoTest {
     @Test
     public void testWithSelectTwoWheres() throws Exception {
         assertQuery("with example as (select * from long_sequence(1))\n" +
-                        "select * from example where true where false;")
+                "select * from example where true where false;")
                 .fails(82, "unexpected token [where]");
     }
 }

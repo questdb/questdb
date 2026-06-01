@@ -201,15 +201,15 @@ public class CompiledFilterTest extends AbstractCairoTest {
     @Test
     public void testFilteringOnSingleQuote() throws Exception {
         assertQuery("""
-                        SELECT timestamp as Time,
-                        avg(asks[1,1]-bids[1,1]) as Spread,
-                        sum(bids[1,1]*bids[2,1]) as Bid_Volume,
-                        sum(asks[1,1]*asks[2,1]) as ask_volume
-                        FROM market_data
-                        WHERE symbol = ''''
-                        SAMPLE BY 1s
-                        ORDER BY timestamp DESC
-                        LIMIT 6;""")
+                SELECT timestamp as Time,
+                avg(asks[1,1]-bids[1,1]) as Spread,
+                sum(bids[1,1]*bids[2,1]) as Bid_Volume,
+                sum(asks[1,1]*asks[2,1]) as ask_volume
+                FROM market_data
+                WHERE symbol = ''''
+                SAMPLE BY 1s
+                ORDER BY timestamp DESC
+                LIMIT 6;""")
                 .withPlan("""
                         Long Top K lo: 6
                           keys: [Time desc]

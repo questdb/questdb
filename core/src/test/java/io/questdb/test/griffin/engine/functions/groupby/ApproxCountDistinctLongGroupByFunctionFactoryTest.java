@@ -398,7 +398,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     @Test
     public void testSampleFillNone() throws Exception {
         assertMemoryLeak(() -> assertQuery("with x as (select * from (select rnd_long(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
-                        "select ts, approx_count_distinct(s) from x sample by 2s align to first observation")
+                "select ts, approx_count_distinct(s) from x sample by 2s align to first observation")
                 .noLeakCheck()
                 .timestamp("ts")
                 .noRandomAccess()

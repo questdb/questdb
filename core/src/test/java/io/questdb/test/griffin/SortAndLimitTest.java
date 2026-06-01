@@ -353,7 +353,7 @@ public class SortAndLimitTest extends AbstractCairoTest {
                 .returns("i\n8\n9\n9\n10\n10\n");
     }
 
-private void prepareRandomOrderTable() throws Exception {
+    private void prepareRandomOrderTable() throws Exception {
         runQueries(
                 "CREATE TABLE sorttest (l long, ts TIMESTAMP) timestamp(ts) partition by year;",
                 """

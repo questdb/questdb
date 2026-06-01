@@ -1206,15 +1206,15 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> assertQuery("select i, count() from (" +
-                        "  (select interval(100000,200000) i) " +
-                        "  union all " +
-                        "  (select interval(100000,200000) i) " +
-                        "  union all " +
-                        "  (select null::interval i)" +
-                        ")")
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                "  (select interval(100000,200000) i) " +
+                "  union all " +
+                "  (select interval(100000,200000) i) " +
+                "  union all " +
+                "  (select null::interval i)" +
+                ")")
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         i\tcount
                         ('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\t2
                         \t1
@@ -1227,15 +1227,15 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> assertQuery("select i, s, count() from (" +
-                        "  (select interval(100000,200000) i, 'foobar' s) " +
-                        "  union all " +
-                        "  (select interval(100000,200000) i, 'foobar' s) " +
-                        "  union all " +
-                        "  (select null::interval i, null::string s)" +
-                        ")")
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                "  (select interval(100000,200000) i, 'foobar' s) " +
+                "  union all " +
+                "  (select interval(100000,200000) i, 'foobar' s) " +
+                "  union all " +
+                "  (select null::interval i, null::string s)" +
+                ")")
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         i\ts\tcount
                         ('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tfoobar\t2
                         \t\t1
@@ -2830,10 +2830,10 @@ public class GroupByTest extends AbstractCairoTest {
             execute("create table x (sym symbol, ts timestamp) timestamp(ts) partition by day;");
             execute("insert into x values ('1','2023-01-01T00:00:00'),('1','2023-01-01T00:00:01'),('2','2023-01-01T00:00:03')");
             assertQuery("SELECT sym, first((0::timestamp)::long) latest " +
-                            "FROM x " +
-                            "WHERE ts IN '2023-01-01' " +
-                            "ORDER BY latest DESC " +
-                            "LIMIT 10;")
+                    "FROM x " +
+                    "WHERE ts IN '2023-01-01' " +
+                    "ORDER BY latest DESC " +
+                    "LIMIT 10;")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -2944,7 +2944,7 @@ public class GroupByTest extends AbstractCairoTest {
             bindVariableService.setStr("b0", "KNWL");
 
             assertQuery("SELECT * FROM (SELECT sym AS k, count() AS cnt FROM t)\n" +
-                            "WHERE (cnt IS NOT NULL) AND (:b0::VARCHAR != 'UX')")
+                    "WHERE (cnt IS NOT NULL) AND (:b0::VARCHAR != 'UX')")
                     .noLeakCheck()
                     .returns("""
                             k\tcnt
@@ -2968,15 +2968,15 @@ public class GroupByTest extends AbstractCairoTest {
                 SHRUEDRQQU\t2\t2\t468.0
                 """;
         assertQuery("""
-                        WITH x_sample AS (
-                          SELECT id, uuid, url, sum(metric) m_sum
-                          FROM x
-                          WHERE ts >= '1023-03-31T00:00:00' and ts <= '2023-04-02T23:59:59'
-                          GROUP BY id, uuid, url
-                        )
-                        SELECT url, count_distinct(uuid) u_count, count() cnt, avg(m_sum) avg_m_sum
-                        FROM x_sample
-                        GROUP BY url""")
+                WITH x_sample AS (
+                  SELECT id, uuid, url, sum(metric) m_sum
+                  FROM x
+                  WHERE ts >= '1023-03-31T00:00:00' and ts <= '2023-04-02T23:59:59'
+                  GROUP BY id, uuid, url
+                )
+                SELECT url, count_distinct(uuid) u_count, count() cnt, avg(m_sum) avg_m_sum
+                FROM x_sample
+                GROUP BY url""")
                 .ddl("""
                         create table x as (
                         select timestamp_sequence(100000000, 100000000) ts,
@@ -2988,15 +2988,15 @@ public class GroupByTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(expected);
         assertQuery("""
-                        WITH x_sample AS (
-                          SELECT id, uuid, url, sum(metric) m_sum
-                          FROM x
-                          WHERE ts >= '1023-03-31T00:00:00' and ts <= '2023-04-02T23:59:59'
-                          GROUP BY id, uuid, url
-                        )
-                        SELECT url, count(distinct uuid) u_count, count() cnt, avg(m_sum) avg_m_sum
-                        FROM x_sample
-                        GROUP BY url""")
+                WITH x_sample AS (
+                  SELECT id, uuid, url, sum(metric) m_sum
+                  FROM x
+                  WHERE ts >= '1023-03-31T00:00:00' and ts <= '2023-04-02T23:59:59'
+                  GROUP BY id, uuid, url
+                )
+                SELECT url, count(distinct uuid) u_count, count() cnt, avg(m_sum) avg_m_sum
+                FROM x_sample
+                GROUP BY url""")
                 .expectSize()
                 .noLeakCheck()
                 .returns(expected);
@@ -3412,36 +3412,36 @@ public class GroupByTest extends AbstractCairoTest {
 
             // single table
             assertQuery("SELECT ts AS ref0 " +
-                            "FROM tst " +
-                            "GROUP BY ts " +
-                            "ORDER BY ts")
+                    "FROM tst " +
+                    "GROUP BY ts " +
+                    "ORDER BY ts")
                     .timestamp("ref0")
                     .expectSize()
                     .noLeakCheck()
                     .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
             assertQuery("SELECT tst.ts AS ref0 " +
-                            "FROM tst " +
-                            "GROUP BY tst.ts " +
-                            "ORDER BY tst.ts")
+                    "FROM tst " +
+                    "GROUP BY tst.ts " +
+                    "ORDER BY tst.ts")
                     .timestamp("ref0")
                     .expectSize()
                     .noLeakCheck()
                     .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
             assertQuery("SELECT tst.ts AS ref0 " +
-                            "FROM tst " +
-                            "GROUP BY ts " +
-                            "ORDER BY tst.ts")
+                    "FROM tst " +
+                    "GROUP BY ts " +
+                    "ORDER BY tst.ts")
                     .timestamp("ref0")
                     .expectSize()
                     .noLeakCheck()
                     .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
             assertQuery("SELECT ts AS ref0 " +
-                            "FROM tst " +
-                            "GROUP BY tst.ts " +
-                            "ORDER BY ts")
+                    "FROM tst " +
+                    "GROUP BY tst.ts " +
+                    "ORDER BY ts")
                     .timestamp("ref0")
                     .expectSize()
                     .noLeakCheck()
@@ -3450,20 +3450,20 @@ public class GroupByTest extends AbstractCairoTest {
             // joins
             for (String join : Arrays.asList("LT JOIN data ", "ASOF JOIN data ", "LEFT JOIN data on (tst.ts > data.dts) ", "INNER JOIN data on (tst.ts > data.dts) ", "CROSS JOIN data ")) {
                 assertQuery("SELECT ts AS ref0, dts " +
-                                "FROM tst " +
-                                join +
-                                "GROUP BY tst.ts, data.dts " +
-                                "ORDER BY ts")
+                        "FROM tst " +
+                        join +
+                        "GROUP BY tst.ts, data.dts " +
+                        "ORDER BY ts")
                         .timestamp("ref0")
                         .expectSize()
                         .noLeakCheck()
                         .returns("ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n");
 
                 assertQuery("SELECT ts AS ref0, dts " +
-                                "FROM tst " +
-                                join +
-                                "GROUP BY ts, data.dts " +
-                                "ORDER BY tst.ts")
+                        "FROM tst " +
+                        join +
+                        "GROUP BY ts, data.dts " +
+                        "ORDER BY tst.ts")
                         .timestamp("ref0")
                         .expectSize()
                         .noLeakCheck()

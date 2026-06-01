@@ -90,9 +90,9 @@ public class InsertTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    id\tccy\tts
-                    1\tUSD\t2019-03-10T00:00:00.000000Z
-                    """);
+                            id\tccy\tts
+                            1\tUSD\t2019-03-10T00:00:00.000000Z
+                            """);
 
             execute("insert into currencies select max(id) + 1, 'EUR', '2019-03-10T01:00:00.000000Z' from currencies");
             assertQuery("currencies")
@@ -100,10 +100,10 @@ public class InsertTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    id\tccy\tts
-                    1\tUSD\t2019-03-10T00:00:00.000000Z
-                    2\tEUR\t2019-03-10T01:00:00.000000Z
-                    """);
+                            id\tccy\tts
+                            1\tUSD\t2019-03-10T00:00:00.000000Z
+                            2\tEUR\t2019-03-10T01:00:00.000000Z
+                            """);
 
             execute("insert into currencies select max(id) + 1, 'GBP', '2019-03-10T02:00:00.000000Z' from currencies");
             assertQuery("currencies")
@@ -111,11 +111,11 @@ public class InsertTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    id\tccy\tts
-                    1\tUSD\t2019-03-10T00:00:00.000000Z
-                    2\tEUR\t2019-03-10T01:00:00.000000Z
-                    3\tGBP\t2019-03-10T02:00:00.000000Z
-                    """);
+                            id\tccy\tts
+                            1\tUSD\t2019-03-10T00:00:00.000000Z
+                            2\tEUR\t2019-03-10T01:00:00.000000Z
+                            3\tGBP\t2019-03-10T02:00:00.000000Z
+                            """);
         });
     }
 
@@ -130,9 +130,9 @@ public class InsertTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ccy\tid\tts
-                    USD\t1\t2019-03-10T00:00:00.000000Z
-                    """);
+                            ccy\tid\tts
+                            USD\t1\t2019-03-10T00:00:00.000000Z
+                            """);
 
             execute("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
             assertQuery("currencies")
@@ -140,10 +140,10 @@ public class InsertTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ccy\tid\tts
-                    USD\t1\t2019-03-10T00:00:00.000000Z
-                    EUR\t2\t2019-03-10T01:00:00.000000Z
-                    """);
+                            ccy\tid\tts
+                            USD\t1\t2019-03-10T00:00:00.000000Z
+                            EUR\t2\t2019-03-10T01:00:00.000000Z
+                            """);
 
             execute("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
             assertQuery("currencies")
@@ -151,11 +151,11 @@ public class InsertTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ccy\tid\tts
-                    USD\t1\t2019-03-10T00:00:00.000000Z
-                    EUR\t2\t2019-03-10T01:00:00.000000Z
-                    GBP\t3\t2019-03-10T02:00:00.000000Z
-                    """);
+                            ccy\tid\tts
+                            USD\t1\t2019-03-10T00:00:00.000000Z
+                            EUR\t2\t2019-03-10T01:00:00.000000Z
+                            GBP\t3\t2019-03-10T02:00:00.000000Z
+                            """);
         });
     }
 
@@ -1539,17 +1539,17 @@ public class InsertTest extends AbstractCairoTest {
 
         assertQuery("x")
                 .ddl("""
-                create table x (
-                    sym symbol index,
-                    id int,
-                    ts timestamp
-                ) timestamp(ts) partition by DAY""")
+                        create table x (
+                            sym symbol index,
+                            id int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
                 .timestamp("ts")
                 .mutateWith("""
-                insert into x select * from (select rnd_symbol('A', 'BB', 'CC', 'DDD') sym,\s
-                        rnd_int() id,\s
-                        timestamp_sequence(172800000000, 360000000) ts\s
-                    from long_sequence(10)) timestamp (ts)""")
+                        insert into x select * from (select rnd_symbol('A', 'BB', 'CC', 'DDD') sym,\s
+                                rnd_int() id,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
                 .expectSize()
                 .returns("sym\tid\tts\n", expected);
     }
@@ -1594,9 +1594,9 @@ public class InsertTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
-                    ts\tvch
-                    1970-01-01T00:00:00.020000Z\t
-                    """);
+                            ts\tvch
+                            1970-01-01T00:00:00.020000Z\t
+                            """);
         });
     }
 
@@ -1948,9 +1948,9 @@ public class InsertTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
-                    ts\tvch
-                    1970-01-01T00:00:00.020000Z\t
-                    """);
+                            ts\tvch
+                            1970-01-01T00:00:00.020000Z\t
+                            """);
         });
     }
 
@@ -1995,9 +1995,9 @@ public class InsertTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
-                    ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym
-                    1970-01-01T00:00:00.020000Z\t\tnull\t0\tnull\t0\t\tnull\tnull\t\t\t\t
-                    """);
+                            ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym
+                            1970-01-01T00:00:00.020000Z\t\tnull\t0\tnull\t0\t\tnull\tnull\t\t\t\t
+                            """);
         });
     }
 
