@@ -79,10 +79,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_bool_str ORDER BY ts",
-                    "col\ntrue\nfalse\nfalse\nfalse\ntrue\n"
-            );
+            assertQuery("SELECT col FROM tc_bool_str ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\ntrue\nfalse\nfalse\nfalse\ntrue\n");
         });
     }
 
@@ -135,17 +134,16 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             drainWalQueue();
             // Omitted boolean columns send false (0), not SQL NULL,
             // so omitted rows produce 0/0.0 across all numeric types.
-            assertSql(
-                    "SELECT b, s, i, l, f, d FROM tc_bool_num ORDER BY ts",
-                    """
+            assertQuery("SELECT b, s, i, l, f, d FROM tc_bool_num ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             b\ts\ti\tl\tf\td
                             1\t1\t1\t1\t1.0\t1.0
                             0\t0\t0\t0\t0.0\t0.0
                             0\t0\t0\t0\t0.0\t0.0
                             0\t0\t0\t0\t0.0\t0.0
                             1\t1\t1\t1\t1.0\t1.0
-                            """
-            );
+                            """);
         });
     }
 
@@ -178,10 +176,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_bool_vc ORDER BY ts",
-                    "col\nfalse\nfalse\ntrue\nfalse\nfalse\n"
-            );
+            assertQuery("SELECT col FROM tc_bool_vc ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\nfalse\nfalse\ntrue\nfalse\nfalse\n");
         });
     }
 
@@ -216,10 +213,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_char_char ORDER BY ts",
-                    "col\nA\n\nZ\n\nm\n"
-            );
+            assertQuery("SELECT col FROM tc_char_char ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\nA\n\nZ\n\nm\n");
         });
     }
 
@@ -252,10 +248,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dec128_str ORDER BY ts",
-                    "col\n123.45\n\n-99.99\n\n0.01\n"
-            );
+            assertQuery("SELECT col FROM tc_dec128_str ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n123.45\n\n-99.99\n\n0.01\n");
         });
     }
 
@@ -288,10 +283,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dec128_vc ORDER BY ts",
-                    "col\n25.00\n\n-1.00\n\n50.50\n"
-            );
+            assertQuery("SELECT col FROM tc_dec128_vc ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n25.00\n\n-1.00\n\n50.50\n");
         });
     }
 
@@ -324,10 +318,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dec256_str ORDER BY ts",
-                    "col\n987.65\n\n-543.21\n\n111.11\n"
-            );
+            assertQuery("SELECT col FROM tc_dec256_str ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n987.65\n\n-543.21\n\n111.11\n");
         });
     }
 
@@ -360,10 +353,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dec256_vc ORDER BY ts",
-                    "col\n42.000\n\n-7.500\n\n99.999\n"
-            );
+            assertQuery("SELECT col FROM tc_dec256_vc ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.000\n\n-7.500\n\n99.999\n");
         });
     }
 
@@ -396,10 +388,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dec_dec128 ORDER BY ts",
-                    "col\n123.45000000\n\n-99.99000000\n\n0.01000000\n"
-            );
+            assertQuery("SELECT col FROM tc_dec_dec128 ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n123.45000000\n\n-99.99000000\n\n0.01000000\n");
         });
     }
 
@@ -432,10 +423,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dec_dec256 ORDER BY ts",
-                    "col\n987.6500000000000000\n\n-543.2100000000000000\n\n111.1100000000000000\n"
-            );
+            assertQuery("SELECT col FROM tc_dec_dec256 ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n987.6500000000000000\n\n-543.2100000000000000\n\n111.1100000000000000\n");
         });
     }
 
@@ -468,10 +458,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dec_dec64 ORDER BY ts",
-                    "col\n1.5000\n\n-3.7500\n\n0.2500\n"
-            );
+            assertQuery("SELECT col FROM tc_dec_dec64 ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n1.5000\n\n-3.7500\n\n0.2500\n");
         });
     }
 
@@ -504,10 +493,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dec_smdec ORDER BY ts",
-                    "col\n1.50\n\n-3.75\n\n0.25\n"
-            );
+            assertQuery("SELECT col FROM tc_dec_smdec ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n1.50\n\n-3.75\n\n0.25\n");
         });
     }
 
@@ -540,10 +528,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dec_str ORDER BY ts",
-                    "col\n1.50\n\n-3.75\n\n0.25\n"
-            );
+            assertQuery("SELECT col FROM tc_dec_str ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n1.50\n\n-3.75\n\n0.25\n");
         });
     }
 
@@ -576,10 +563,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dec_vc ORDER BY ts",
-                    "col\n2.50\n\n-1.00\n\n8.88\n"
-            );
+            assertQuery("SELECT col FROM tc_dec_vc ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n2.50\n\n-1.00\n\n8.88\n");
         });
     }
 
@@ -612,10 +598,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dbl_dec128 ORDER BY ts",
-                    "col\n42.50000000\n\n-7.25000000\n\n100.00000000\n"
-            );
+            assertQuery("SELECT col FROM tc_dbl_dec128 ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.50000000\n\n-7.25000000\n\n100.00000000\n");
         });
     }
 
@@ -648,10 +633,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dbl_dec256 ORDER BY ts",
-                    "col\n42.5000000000000000\n\n-7.2500000000000000\n\n100.0000000000000000\n"
-            );
+            assertQuery("SELECT col FROM tc_dbl_dec256 ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.5000000000000000\n\n-7.2500000000000000\n\n100.0000000000000000\n");
         });
     }
 
@@ -684,10 +668,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dbl_dec64 ORDER BY ts",
-                    "col\n42.5000\n\n-7.2500\n\n100.0000\n"
-            );
+            assertQuery("SELECT col FROM tc_dbl_dec64 ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.5000\n\n-7.2500\n\n100.0000\n");
         });
     }
 
@@ -720,10 +703,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dbl_flt ORDER BY ts",
-                    "col\n42.5\nnull\n-7.25\nnull\n3.14\n"
-            );
+            assertQuery("SELECT col FROM tc_dbl_flt ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.5\nnull\n-7.25\nnull\n3.14\n");
         });
     }
 
@@ -756,10 +738,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dbl_int ORDER BY ts",
-                    "col\n42\nnull\n-7\nnull\n0\n"
-            );
+            assertQuery("SELECT col FROM tc_dbl_int ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42\nnull\n-7\nnull\n0\n");
         });
     }
 
@@ -792,10 +773,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dbl_smdec ORDER BY ts",
-                    "col\n42.50\n\n-7.25\n\n100.00\n"
-            );
+            assertQuery("SELECT col FROM tc_dbl_smdec ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.50\n\n-7.25\n\n100.00\n");
         });
     }
 
@@ -828,10 +808,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dbl_str ORDER BY ts",
-                    "col\n3.14\n\n-2.5\n\n100.0\n"
-            );
+            assertQuery("SELECT col FROM tc_dbl_str ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n3.14\n\n-2.5\n\n100.0\n");
         });
     }
 
@@ -864,14 +843,12 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dbl_sym ORDER BY ts",
-                    "col\n1.5\n\n2.75\n\n1.5\n"
-            );
-            assertSql(
-                    "SELECT count_distinct(col) FROM tc_dbl_sym",
-                    "count_distinct\n2\n"
-            );
+            assertQuery("SELECT col FROM tc_dbl_sym ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n1.5\n\n2.75\n\n1.5\n");
+            assertQuery("SELECT count_distinct(col) FROM tc_dbl_sym")
+                    .noLeakCheck()
+                    .returnsOnce("count_distinct\n2\n");
         });
     }
 
@@ -904,10 +881,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_dbl_vc ORDER BY ts",
-                    "col\n99.9\n\n-0.5\n\n3.14\n"
-            );
+            assertQuery("SELECT col FROM tc_dbl_vc ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n99.9\n\n-0.5\n\n3.14\n");
         });
     }
 
@@ -944,10 +920,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_geo_str ORDER BY ts",
-                    "col\n10110\n\n11111\n\n01010\n"
-            );
+            assertQuery("SELECT col FROM tc_geo_str ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n10110\n\n11111\n\n01010\n");
         });
     }
 
@@ -984,10 +959,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_geo_vc ORDER BY ts",
-                    "col\n00001\n\n00000\n\n10101\n"
-            );
+            assertQuery("SELECT col FROM tc_geo_vc ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n00001\n\n00000\n\n10101\n");
         });
     }
 
@@ -1020,10 +994,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_long_dec128 ORDER BY ts",
-                    "col\n42.00000000\n\n-100.00000000\n\n0.00000000\n"
-            );
+            assertQuery("SELECT col FROM tc_long_dec128 ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.00000000\n\n-100.00000000\n\n0.00000000\n");
         });
     }
 
@@ -1056,10 +1029,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_long_dec256 ORDER BY ts",
-                    "col\n42.0000000000000000\n\n-100.0000000000000000\n\n0.0000000000000000\n"
-            );
+            assertQuery("SELECT col FROM tc_long_dec256 ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.0000000000000000\n\n-100.0000000000000000\n\n0.0000000000000000\n");
         });
     }
 
@@ -1092,10 +1064,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_long_dec64 ORDER BY ts",
-                    "col\n42.0000\n\n-100.0000\n\n0.0000\n"
-            );
+            assertQuery("SELECT col FROM tc_long_dec64 ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.0000\n\n-100.0000\n\n0.0000\n");
         });
     }
 
@@ -1129,9 +1100,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT value, ts FROM " + table + " ORDER BY ts",
-                    """
+            assertQuery("SELECT value, ts FROM " + table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value\tts
                             42\t2022-02-25T00:00:00.000000Z
                             99\t2022-02-25T00:00:01.000000Z
@@ -1173,9 +1144,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             // BUG: the appender treats the LONG wire type as microseconds because
             // wireIsNanos is false, then tries to multiply by 1000, which overflows
             // for realistic nanosecond values and drops the rows.
-            assertSql(
-                    "SELECT value, ts FROM " + table + " ORDER BY ts",
-                    """
+            assertQuery("SELECT value, ts FROM " + table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value\tts
                             42\t2022-02-25T00:00:00.000000000Z
                             99\t2022-02-25T00:00:01.000000000Z
@@ -1212,10 +1183,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_long_dbl ORDER BY ts",
-                    "col\n42.0\nnull\n-100.0\nnull\n0.0\n"
-            );
+            assertQuery("SELECT col FROM tc_long_dbl ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.0\nnull\n-100.0\nnull\n0.0\n");
         });
     }
 
@@ -1248,10 +1218,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_long_short ORDER BY ts",
-                    "col\n100\n0\n-200\n0\n50\n"
-            );
+            assertQuery("SELECT col FROM tc_long_short ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n100\n0\n-200\n0\n50\n");
         });
     }
 
@@ -1284,10 +1253,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_long_smdec ORDER BY ts",
-                    "col\n42.00\n\n-100.00\n\n0.00\n"
-            );
+            assertQuery("SELECT col FROM tc_long_smdec ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.00\n\n-100.00\n\n0.00\n");
         });
     }
 
@@ -1320,10 +1288,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_long_str ORDER BY ts",
-                    "col\n12345\n\n-67890\n\n0\n"
-            );
+            assertQuery("SELECT col FROM tc_long_str ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n12345\n\n-67890\n\n0\n");
         });
     }
 
@@ -1356,14 +1323,12 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_long_sym ORDER BY ts",
-                    "col\n1\n\n2\n\n1\n"
-            );
-            assertSql(
-                    "SELECT count_distinct(col) FROM tc_long_sym",
-                    "count_distinct\n2\n"
-            );
+            assertQuery("SELECT col FROM tc_long_sym ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n1\n\n2\n\n1\n");
+            assertQuery("SELECT count_distinct(col) FROM tc_long_sym")
+                    .noLeakCheck()
+                    .returnsOnce("count_distinct\n2\n");
         });
     }
 
@@ -1399,10 +1364,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_long_ts ORDER BY ts",
-                    "col\n2024-01-01T00:00:00.000000Z\n\n2024-06-15T12:00:00.000000Z\n\n2023-01-01T00:00:00.000000Z\n"
-            );
+            assertQuery("SELECT col FROM tc_long_ts ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n2024-01-01T00:00:00.000000Z\n\n2024-06-15T12:00:00.000000Z\n\n2023-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -1435,10 +1399,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_long_vc ORDER BY ts",
-                    "col\n999\n\n-1\n\n42\n"
-            );
+            assertQuery("SELECT col FROM tc_long_vc ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n999\n\n-1\n\n42\n");
         });
     }
 
@@ -1471,10 +1434,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_str_bool ORDER BY ts",
-                    "col\ntrue\nfalse\nfalse\nfalse\ntrue\n"
-            );
+            assertQuery("SELECT col FROM tc_str_bool ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\ntrue\nfalse\nfalse\nfalse\ntrue\n");
         });
     }
 
@@ -1507,10 +1469,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_str_char ORDER BY ts",
-                    "col\nA\n\nZ\n\nx\n"
-            );
+            assertQuery("SELECT col FROM tc_str_char ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\nA\n\nZ\n\nx\n");
         });
     }
 
@@ -1543,10 +1504,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_str_dec128 ORDER BY ts",
-                    "col\n42.50000000\n\n-7.25000000\n\n100.00000000\n"
-            );
+            assertQuery("SELECT col FROM tc_str_dec128 ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.50000000\n\n-7.25000000\n\n100.00000000\n");
         });
     }
 
@@ -1579,10 +1539,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_str_dec256 ORDER BY ts",
-                    "col\n42.5000000000000000\n\n-7.2500000000000000\n\n100.0000000000000000\n"
-            );
+            assertQuery("SELECT col FROM tc_str_dec256 ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.5000000000000000\n\n-7.2500000000000000\n\n100.0000000000000000\n");
         });
     }
 
@@ -1615,10 +1574,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_str_dec64 ORDER BY ts",
-                    "col\n42.5000\n\n-7.2500\n\n100.0000\n"
-            );
+            assertQuery("SELECT col FROM tc_str_dec64 ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.5000\n\n-7.2500\n\n100.0000\n");
         });
     }
 
@@ -1651,10 +1609,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_str_geo ORDER BY ts",
-                    "col\nu33d\n\nsp05\n\n9q8y\n"
-            );
+            assertQuery("SELECT col FROM tc_str_geo ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\nu33d\n\nsp05\n\n9q8y\n");
         });
     }
 
@@ -1687,10 +1644,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_str_int ORDER BY ts",
-                    "col\n42\nnull\n-7\nnull\n0\n"
-            );
+            assertQuery("SELECT col FROM tc_str_int ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42\nnull\n-7\nnull\n0\n");
         });
     }
 
@@ -1723,17 +1679,16 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_str_l256 ORDER BY ts",
-                    """
+            assertQuery("SELECT col FROM tc_str_l256 ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             col
                             0x4444444444444444333333333333333322222222222222221111111111111111
-                            
+
                             0xdeadbeef00000000cafebabe0000000012345678000000009abcdef000000000
-                            
+
                             0x01
-                            """
-            );
+                            """);
         });
     }
 
@@ -1766,10 +1721,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_str_long ORDER BY ts",
-                    "col\n1000000\nnull\n-999\nnull\n0\n"
-            );
+            assertQuery("SELECT col FROM tc_str_long ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n1000000\nnull\n-999\nnull\n0\n");
         });
     }
 
@@ -1802,10 +1756,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_str_smdec ORDER BY ts",
-                    "col\n42.50\n\n-7.25\n\n100.00\n"
-            );
+            assertQuery("SELECT col FROM tc_str_smdec ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n42.50\n\n-7.25\n\n100.00\n");
         });
     }
 
@@ -1838,14 +1791,12 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_str_sym ORDER BY ts",
-                    "col\nalpha\n\nbeta\n\nalpha\n"
-            );
-            assertSql(
-                    "SELECT count_distinct(col) FROM tc_str_sym",
-                    "count_distinct\n2\n"
-            );
+            assertQuery("SELECT col FROM tc_str_sym ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\nalpha\n\nbeta\n\nalpha\n");
+            assertQuery("SELECT count_distinct(col) FROM tc_str_sym")
+                    .noLeakCheck()
+                    .returnsOnce("count_distinct\n2\n");
         });
     }
 
@@ -1878,10 +1829,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_str_ts ORDER BY ts",
-                    "col\n2024-01-15T10:30:00.000000Z\n\n2023-06-01T00:00:00.000000Z\n\n2025-12-31T23:59:59.000000Z\n"
-            );
+            assertQuery("SELECT col FROM tc_str_ts ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n2024-01-15T10:30:00.000000Z\n\n2023-06-01T00:00:00.000000Z\n\n2025-12-31T23:59:59.000000Z\n");
         });
     }
 
@@ -1914,10 +1864,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_str_uuid ORDER BY ts",
-                    "col\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n\n550e8400-e29b-41d4-a716-446655440000\n\n12345678-1234-5678-1234-567812345678\n"
-            );
+            assertQuery("SELECT col FROM tc_str_uuid ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n\n550e8400-e29b-41d4-a716-446655440000\n\n12345678-1234-5678-1234-567812345678\n");
         });
     }
 
@@ -1950,10 +1899,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_sym_str ORDER BY ts",
-                    "col\nhello\n\nworld\n\nhello\n"
-            );
+            assertQuery("SELECT col FROM tc_sym_str ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\nhello\n\nworld\n\nhello\n");
         });
     }
 
@@ -1986,10 +1934,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_sym_vc ORDER BY ts",
-                    "col\nfoo\n\nbar\n\nfoo\n"
-            );
+            assertQuery("SELECT col FROM tc_sym_vc ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\nfoo\n\nbar\n\nfoo\n");
         });
     }
 
@@ -2025,10 +1972,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_ts_str ORDER BY ts",
-                    "col\n2024-01-01T00:00:00.000Z\n\n2024-06-15T11:30:00.000Z\n\n2023-01-01T00:00:00.000Z\n"
-            );
+            assertQuery("SELECT col FROM tc_ts_str ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n2024-01-01T00:00:00.000Z\n\n2024-06-15T11:30:00.000Z\n\n2023-01-01T00:00:00.000Z\n");
         });
     }
 
@@ -2064,10 +2010,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_ts_vc ORDER BY ts",
-                    "col\n2024-01-01T00:00:00.000Z\n\n2023-12-25T15:00:00.000Z\n\n2023-01-01T00:00:00.000Z\n"
-            );
+            assertQuery("SELECT col FROM tc_ts_vc ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n2024-01-01T00:00:00.000Z\n\n2023-12-25T15:00:00.000Z\n\n2023-01-01T00:00:00.000Z\n");
         });
     }
 
@@ -2105,10 +2050,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_uuid_str ORDER BY ts",
-                    "col\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n\n550e8400-e29b-41d4-a716-446655440000\n\n12345678-1234-5678-1234-567812345678\n"
-            );
+            assertQuery("SELECT col FROM tc_uuid_str ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n\n550e8400-e29b-41d4-a716-446655440000\n\n12345678-1234-5678-1234-567812345678\n");
         });
     }
 
@@ -2146,10 +2090,9 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT col FROM tc_uuid_vc ORDER BY ts",
-                    "col\n12345678-1234-5678-1234-567812345678\n\n00000000-0000-0000-0000-000000000001\n\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n"
-            );
+            assertQuery("SELECT col FROM tc_uuid_vc ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("col\n12345678-1234-5678-1234-567812345678\n\n00000000-0000-0000-0000-000000000001\n\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n");
         });
     }
 }

@@ -33,11 +33,8 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
 
 public class TestServerMain extends ServerMain {
-    private final StringSink sink = new StringSink();
     private SqlExecutionContext sqlExecutionContext;
 
     public TestServerMain(String... args) {
@@ -62,9 +59,13 @@ public class TestServerMain extends ServerMain {
 
     public void assertSql(String sql, String expected) {
         try {
-            ensureContext();
-            TestUtils.assertSql(getEngine(), sqlExecutionContext, sql, sink, expected);
-        } catch (SqlException e) {
+            new QueryAssertion(getEngine(), getSqlExecutionContext(), () -> {
+            }, sql)
+                    .noLeakCheck()
+                    .returnsOnce(expected);
+        } catch (Exception e) {
+            // Wrap as AssertionError so callers polling via TestUtils.assertEventually(...) — which
+            // retries only on AssertionError — keep retrying until ingestion lands.
             throw new AssertionError(e);
         }
     }
@@ -88,6 +89,11 @@ public class TestServerMain extends ServerMain {
         } catch (SqlException e) {
             throw new AssertionError(e);
         }
+    }
+
+    public SqlExecutionContext getSqlExecutionContext() {
+        ensureContext();
+        return sqlExecutionContext;
     }
 
     public void reset() {
