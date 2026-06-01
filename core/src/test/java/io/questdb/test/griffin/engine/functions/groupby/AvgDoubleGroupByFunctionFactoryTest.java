@@ -166,13 +166,12 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                             weighted_avg	sum_over_sum
                             7.0	7.0
                             """);
-            assertSql(
-                    """
+            assertQuery("SELECT round(weighted_avg(5.0, rnd_double()), 10) weighted_avg FROM long_sequence(10)\n")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             weighted_avg
                             5.0
-                            """,
-                    "SELECT round(weighted_avg(5.0, rnd_double()), 10) weighted_avg FROM long_sequence(10)\n"
-            );
+                            """);
         });
     }
 

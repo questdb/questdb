@@ -619,7 +619,9 @@ public class GeoHashQueryTest extends AbstractCairoTest {
     public void testInvalidGeoHashRnd() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertSql("", "select rnd_geohash(0) from long_sequence(1)");
+                assertQuery("select rnd_geohash(0) from long_sequence(1)")
+                        .noLeakCheck()
+                        .returnsOnce("");
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "precision must be in [1..60] range");
@@ -631,7 +633,9 @@ public class GeoHashQueryTest extends AbstractCairoTest {
     public void testInvalidGeoHashRnd2() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertSql("", "select rnd_geohash(61) from long_sequence(1)");
+                assertQuery("select rnd_geohash(61) from long_sequence(1)")
+                        .noLeakCheck()
+                        .returnsOnce("");
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "precision must be in [1..60] range");
@@ -641,34 +645,34 @@ public class GeoHashQueryTest extends AbstractCairoTest {
 
     @Test
     public void testMakeGeoHashFromCoords() throws Exception {
-        assertMemoryLeak(() -> assertSql("""
-                h8c
-                jr1nj0dv
-                29tdrk0h
-                9su67p3e
-                """, """
+        assertQuery("""
                 select make_geohash(lon,lat,40) as h8c
                 from ( select\s
                 (rnd_double()*180.0 - 90.0) as lat,
                 (rnd_double()*360.0 - 180.0) as lon
-                from long_sequence(3))"""
-        ));
+                from long_sequence(3))""")
+                .returnsOnce("""
+                        h8c
+                        jr1nj0dv
+                        29tdrk0h
+                        9su67p3e
+                        """);
     }
 
     @Test
     public void testMakeGeoHashNullOnOutOfRange() throws Exception {
-        assertMemoryLeak(() -> assertSql("""
-                h8c
-                
-                u9tdrk0h
-                
-                """, """
+        assertQuery("""
                 select make_geohash(lon, lat,40) as h8c
                 from ( select\s
                 (rnd_double()*180.0) as lat,
                 (rnd_double()*360.0) as lon
-                from long_sequence(3))"""
-        ));
+                from long_sequence(3))""")
+                .returnsOnce("""
+                        h8c
+                        
+                        u9tdrk0h
+                        
+                        """);
     }
 
     @Test

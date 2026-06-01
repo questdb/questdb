@@ -11014,21 +11014,29 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAvgRescaleStreamingAllScalesOverRangeFrame() throws Exception {
-        // Streaming path (single ZERO_PASS function per query, no TWO_PASS sibling) for each target scale.
-        // Forces getDecimalX call for each of the 6 target types: D8, D16, D32, D64, D128, D256.
+    public void testAvgRescaleMixedTwoPassForcesPass1AllSubTypes() throws Exception {
+        // Mix a ZERO_PASS AvgRescale OverPartitionRangeFrame with a TWO_PASS OverPartition function
+        // -> entire query goes cached -> ZERO_PASS function's pass1 path is exercised.
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            execute(INSERT_5);
-            for (int[] sourceScales : new int[][]{
-                    {8, 0}, {8, 3}, {8, 5}, {8, 14}, {8, 30}, {8, 60}
-            }) {
-                String col = "v" + sourceScales[0];
-                int scale = sourceScales[1];
-                // Query with only ZERO_PASS function (avg in RANGE frame) — streaming path.
-                String query = "SELECT ts, avg(" + col + ", " + scale + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) av FROM t";
-                // Just verify it runs (5 rows expected).
-                assertSql("ts\tav\n", "SELECT ts, av FROM (" + query + ") WHERE 1=0");
+            execute(INSERT_6_PART);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                int scale = switch (col) {
+                    case "v8" -> 3;
+                    case "v16" -> 6;
+                    case "v32" -> 10;
+                    case "v64" -> 22;
+                    case "v128" -> 44;
+                    default -> 16;
+                };
+                // ZERO_PASS sibling (OverPartitionRangeFrame avg) + TWO_PASS sibling (OverPartition sum).
+                // The query becomes cached, pass1 of the ZERO_PASS function is called.
+                assertQuery("SELECT ts FROM (SELECT ts, " +
+                                "avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) a, " +
+                                "sum(" + col + ") OVER (PARTITION BY grp) s " +
+                        "FROM t) ORDER BY ts")
+                        .noLeakCheck()
+                        .returnsOnce("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n2024-01-01T00:02:00.000000Z\n2024-01-01T00:03:00.000000Z\n2024-01-01T00:04:00.000000Z\n2024-01-01T00:05:00.000000Z\n");
             }
         });
     }
@@ -11393,38 +11401,35 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                     default -> 16;
                 };
                 // OverPartitionRangeFrame
-                assertSql("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n",
-                        "SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) av FROM t)");
+                assertQuery("SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) av FROM t)")
+                        .noLeakCheck()
+                        .returnsOnce("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n");
                 // OverPartitionRowsFrame
-                assertSql("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n",
-                        "SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) av FROM t)");
+                assertQuery("SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) av FROM t)")
+                        .noLeakCheck()
+                        .returnsOnce("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n");
             }
         });
     }
 
     @Test
-    public void testAvgRescaleMixedTwoPassForcesPass1AllSubTypes() throws Exception {
-        // Mix a ZERO_PASS AvgRescale OverPartitionRangeFrame with a TWO_PASS OverPartition function
-        // -> entire query goes cached -> ZERO_PASS function's pass1 path is exercised.
+    public void testAvgRescaleStreamingAllScalesOverRangeFrame() throws Exception {
+        // Streaming path (single ZERO_PASS function per query, no TWO_PASS sibling) for each target scale.
+        // Forces getDecimalX call for each of the 6 target types: D8, D16, D32, D64, D128, D256.
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            execute(INSERT_6_PART);
-            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
-                int scale = switch (col) {
-                    case "v8" -> 3;
-                    case "v16" -> 6;
-                    case "v32" -> 10;
-                    case "v64" -> 22;
-                    case "v128" -> 44;
-                    default -> 16;
-                };
-                // ZERO_PASS sibling (OverPartitionRangeFrame avg) + TWO_PASS sibling (OverPartition sum).
-                // The query becomes cached, pass1 of the ZERO_PASS function is called.
-                assertSql("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n2024-01-01T00:02:00.000000Z\n2024-01-01T00:03:00.000000Z\n2024-01-01T00:04:00.000000Z\n2024-01-01T00:05:00.000000Z\n",
-                        "SELECT ts FROM (SELECT ts, " +
-                                "avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) a, " +
-                                "sum(" + col + ") OVER (PARTITION BY grp) s " +
-                                "FROM t) ORDER BY ts");
+            execute(INSERT_5);
+            for (int[] sourceScales : new int[][]{
+                    {8, 0}, {8, 3}, {8, 5}, {8, 14}, {8, 30}, {8, 60}
+            }) {
+                String col = "v" + sourceScales[0];
+                int scale = sourceScales[1];
+                // Query with only ZERO_PASS function (avg in RANGE frame) — streaming path.
+                String query = "SELECT ts, avg(" + col + ", " + scale + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) av FROM t";
+                // Just verify it runs (5 rows expected).
+                assertQuery("SELECT ts, av FROM (" + query + ") WHERE 1=0")
+                        .noLeakCheck()
+                        .returnsOnce("ts\tav\n");
             }
         });
     }

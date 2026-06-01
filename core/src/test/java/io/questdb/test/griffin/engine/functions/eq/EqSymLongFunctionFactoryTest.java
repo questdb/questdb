@@ -35,10 +35,12 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
             execute("create table x as (select rnd_symbol('1','3','5') a, abs(rnd_long())%5 b  from long_sequence(10))");
             assertQuery("select a,b from x where a = b")
                     .noLeakCheck()
-                    .returns("a\tb\n" +
-                            "1\t1\n" +
-                            "1\t1\n" +
-                            "1\t1\n");
+                    .returns("""
+                            a\tb
+                            1\t1
+                            1\t1
+                            1\t1
+                            """);
         });
     }
 
@@ -48,12 +50,14 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
             execute("create table x as (select rnd_symbol('1','3','5', null) a, abs(rnd_long())%5 b  from long_sequence(20))");
             assertQuery("select a,b from x where a = null::long")
                     .noLeakCheck()
-                    .returns("a\tb\n" +
-                            "\t3\n" +
-                            "\t1\n" +
-                            "\t2\n" +
-                            "\t0\n" +
-                            "\t3\n");
+                    .returns("""
+                            a\tb
+                            \t3
+                            \t1
+                            \t2
+                            \t0
+                            \t3
+                            """);
         });
     }
 
@@ -63,25 +67,27 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
             execute("create table x as (select rnd_symbol('1','3','5', null) a, abs(rnd_long())%5 b  from long_sequence(20))");
             assertQuery("select a,b from x where a = b")
                     .noLeakCheck()
-                    .returns("a\tb\n" +
-                            "1\t1\n" +
-                            "3\t3\n" +
-                            "1\t1\n" +
-                            "1\t1\n" +
-                            "3\t3\n" +
-                            "1\t1\n");
+                    .returns("""
+                            a\tb
+                            1\t1
+                            3\t3
+                            1\t1
+                            1\t1
+                            3\t3
+                            1\t1
+                            """);
         });
     }
 
     @Test
     public void testDynamicSymbolTable() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "x\n" +
-                        "3\n" +
-                        "8\n" +
-                        "10\n",
-                "select x from long_sequence(10) where rnd_symbol('1','3','5') = 3"
-        ));
+        assertQuery("select x from long_sequence(10) where rnd_symbol('1','3','5') = 3")
+                .returnsOnce("""
+                        x
+                        3
+                        8
+                        10
+                        """);
     }
 
     @Test
@@ -90,10 +96,12 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
             execute("create table x as (select rnd_symbol('1','3','5') a from long_sequence(10))");
             assertQuery("select a from x where a = 3")
                     .noLeakCheck()
-                    .returns("a\n" +
-                            "3\n" +
-                            "3\n" +
-                            "3\n");
+                    .returns("""
+                            a
+                            3
+                            3
+                            3
+                            """);
         });
     }
 
@@ -103,15 +111,17 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
             execute("create table x as (select rnd_symbol('1','3','5', null) a from long_sequence(30))");
             assertQuery("select a from x where a = null::long")
                     .noLeakCheck()
-                    .returns("a\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n");
+                    .returns("""
+                            a
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            """);
         });
     }
 }

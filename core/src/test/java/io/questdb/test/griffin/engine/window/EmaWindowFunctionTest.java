@@ -335,56 +335,52 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
 
             // Non-partitioned alpha mode
-            assertSql(
-                    """
+            assertQuery("explain select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Window
                               functions: [avg(val, 'alpha', 0.5) over (rows between unbounded preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab"
-            );
+                            """);
 
             // Partitioned period mode
-            assertSql(
-                    """
+            assertQuery("explain select ts, i, val, avg(val, 'period', 10) over (partition by i order by ts) from tab")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Window
                               functions: [avg(val, 'period', 10.0) over (partition by [i] rows between unbounded preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, i, val, avg(val, 'period', 10) over (partition by i order by ts) from tab"
-            );
+                            """);
 
             // Non-partitioned time-weighted mode
-            assertSql(
-                    """
+            assertQuery("explain select ts, val, avg(val, 'second', 1) over (order by ts) from tab")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Window
                               functions: [avg(val, 'second', 1.0) over (rows between unbounded preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, val, avg(val, 'second', 1) over (order by ts) from tab"
-            );
+                            """);
 
             // Partitioned time-weighted mode
-            assertSql(
-                    """
+            assertQuery("explain select ts, i, val, avg(val, 'minute', 5) over (partition by i order by ts) from tab")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Window
                               functions: [avg(val, 'minute', 5.0) over (partition by [i] rows between unbounded preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, i, val, avg(val, 'minute', 5) over (partition by i order by ts) from tab"
-            );
+                            """);
         });
     }
 
@@ -404,10 +400,9 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x%10, x::double from long_sequence(1000)");
 
             // Just verify it runs without error and returns expected row count
-            assertSql(
-                    "count\n1000\n",
-                    "select count(*) from (select ts, i, val, avg(val, 'alpha', 0.1) over (partition by i order by ts) from tab)"
-            );
+            assertQuery("select count(*) from (select ts, i, val, avg(val, 'alpha', 0.1) over (partition by i order by ts) from tab)")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1000\n");
         });
     }
 
@@ -1157,10 +1152,9 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                     "from long_sequence(100)");
 
             // Verify it runs and returns expected row count
-            assertSql(
-                    "count\n100\n",
-                    "select count(*) from (select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab)"
-            );
+            assertQuery("select count(*) from (select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab)")
+                    .noLeakCheck()
+                    .returnsOnce("count\n100\n");
         });
     }
 
