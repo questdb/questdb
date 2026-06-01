@@ -83,30 +83,24 @@ public class TruncateTest extends AbstractCairoTest {
                             ") timestamp (timestamp)"
             );
 
-            String sql = "select * from tab where symbol != 'c' limit 6";
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        assertCursor("""
-                                        timestamp\tsymbol
-                                        1970-01-01T00:00:00.000000Z\ta
-                                        1970-01-01T00:16:40.000000Z\ta
-                                        1970-01-01T00:33:20.000000Z\tb
-                                        1970-01-01T00:50:00.000000Z\tb
-                                        1970-01-01T01:06:40.000000Z\tb
-                                        1970-01-01T01:23:20.000000Z\tb
-                                        """,
-                                true, true, true, cursor, factory.getMetadata(), false);
-                    }
-
-                    execute("truncate table tab");
-
-                    drainWalQueue();
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        assertCursor("timestamp\tsymbol\n", true, true, true, cursor, factory.getMetadata(), false);
-                    }
-                }
-            }
+            assertQuery("select * from tab where symbol != 'c' limit 6")
+                    .noLeakCheck()
+                    .expectSize()
+                    .sizeMayVary()
+                    .timestamp("timestamp")
+                    .mutateWith("truncate table tab")
+                    .returns(
+                            """
+                                    timestamp\tsymbol
+                                    1970-01-01T00:00:00.000000Z\ta
+                                    1970-01-01T00:16:40.000000Z\ta
+                                    1970-01-01T00:33:20.000000Z\tb
+                                    1970-01-01T00:50:00.000000Z\tb
+                                    1970-01-01T01:06:40.000000Z\tb
+                                    1970-01-01T01:23:20.000000Z\tb
+                                    """,
+                            "timestamp\tsymbol\n"
+                    );
         });
     }
 
