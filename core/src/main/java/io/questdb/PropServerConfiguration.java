@@ -2463,26 +2463,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         };
     }
 
-    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
-        final String jitMode = getString(properties, env, PropertyKey.CAIRO_SQL_JIT_MODE, "on");
-
-        assert jitMode != null;
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
-            return SqlJitMode.JIT_MODE_ENABLED;
-        }
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "off")) {
-            return SqlJitMode.JIT_MODE_DISABLED;
-        }
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
-            return SqlJitMode.JIT_MODE_FORCE_SCALAR;
-        }
-
-        return SqlJitMode.JIT_MODE_ENABLED;
-    }
-
     private int getSampleByFillSortStrategy(Properties properties, @Nullable Map<String, String> env) throws ServerConfigurationException {
         final ConfigPropertyKey key = PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY;
         final String strategy = getString(properties, env, key, "light_encoded");
@@ -2513,6 +2493,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), strategy);
+    }
+
+    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
+        final String jitMode = getString(properties, env, PropertyKey.CAIRO_SQL_JIT_MODE, "on");
+
+        assert jitMode != null;
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
+            return SqlJitMode.JIT_MODE_ENABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "off")) {
+            return SqlJitMode.JIT_MODE_DISABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
+            return SqlJitMode.JIT_MODE_FORCE_SCALAR;
+        }
+
+        return SqlJitMode.JIT_MODE_ENABLED;
     }
 
     private int getWalWriterMadviseMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) throws ServerConfigurationException {
@@ -4237,8 +4237,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getPostingIndexerSpillBytesMax() {
-            return postingIndexerSpillBytesMax;
+        public int getPostingIndexAdaptiveDeltaAtOrAbove() {
+            return postingIndexAdaptiveDeltaAtOrAbove;
         }
 
         @Override
@@ -4247,8 +4247,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getPostingIndexAdaptiveDeltaAtOrAbove() {
-            return postingIndexAdaptiveDeltaAtOrAbove;
+        public long getPostingIndexerSpillBytesMax() {
+            return postingIndexerSpillBytesMax;
         }
 
         @Override
