@@ -575,55 +575,54 @@ public class AggregateTest extends AbstractCairoTest {
             execute("alter table tab add column s2 symbol cache");
             execute("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
 
-            try (RecordCursorFactory factory = select("select s2, sum(val) from tab order by s2")) {
-                Record[] expected = new Record[]{
-                        new Record() {
-                            @Override
-                            public double getDouble(int col) {
-                                return 520447.6629968713;
-                            }
+            Record[] expected = new Record[]{
+                    new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            return 520447.6629968713;
+                        }
 
-                            @Override
-                            public CharSequence getSymA(int col) {
-                                return null;
-                            }
-                        },
-                        new Record() {
-                            @Override
-                            public double getDouble(int col) {
-                                return 104308.65839619507;
-                            }
+                        @Override
+                        public CharSequence getSymA(int col) {
+                            return null;
+                        }
+                    },
+                    new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            return 104308.65839619507;
+                        }
 
-                            @Override
-                            public CharSequence getSymA(int col) {
-                                return "a1";
-                            }
-                        },
-                        new Record() {
-                            @Override
-                            public double getDouble(int col) {
-                                return 104559.2867475151;
-                            }
+                        @Override
+                        public CharSequence getSymA(int col) {
+                            return "a1";
+                        }
+                    },
+                    new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            return 104559.2867475151;
+                        }
 
-                            @Override
-                            public CharSequence getSymA(int col) {
-                                return "a2";
-                            }
-                        },
-                        new Record() {
-                            @Override
-                            public double getDouble(int col) {
-                                return 104044.11326997809;
-                            }
+                        @Override
+                        public CharSequence getSymA(int col) {
+                            return "a2";
+                        }
+                    },
+                    new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            return 104044.11326997809;
+                        }
 
-                            @Override
-                            public CharSequence getSymA(int col) {
-                                return "a3";
-                            }
-                        },
-                };
-                assertCursorRawRecords(expected, factory, false);
-            }
+                        @Override
+                        public CharSequence getSymA(int col) {
+                            return "a3";
+                        }
+                    },
+            };
+            assertQuery("select s2, sum(val) from tab order by s2")
+                    .returnsRecords(expected);
         });
     }
 
@@ -1082,73 +1081,71 @@ public class AggregateTest extends AbstractCairoTest {
             execute("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
 
             // test with key falling within null columns
-            try (RecordCursorFactory factory = select("select s2, sum(val) from tab where t >= '1970-01-04T12:01' and t < '1970-01-07T11:00' order by s2")) {
-                Record[] expected = new Record[]{
-                        new Record() {
-                            @Override
-                            public double getDouble(int col) {
-                                return 106413.99769604905;
-                            }
+            Record[] expected = new Record[]{
+                    new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            return 106413.99769604905;
+                        }
 
-                            @Override
-                            public CharSequence getSymA(int col) {
-                                return null;
-                            }
-                        },
-                };
-                assertCursorRawRecords(expected, factory, false);
-            }
+                        @Override
+                        public CharSequence getSymA(int col) {
+                            return null;
+                        }
+                    },
+            };
+            assertQuery("select s2, sum(val) from tab where t >= '1970-01-04T12:01' and t < '1970-01-07T11:00' order by s2")
+                    .returnsRecords(expected);
 
             // test key on overlap
-            try (RecordCursorFactory factory = select("select s2, sum(val) from tab where t >= '1970-01-12T12:01' and t < '1970-01-14T11:00' order by s2")) {
-                Record[] expected = new Record[]{
-                        new Record() {
-                            @Override
-                            public double getDouble(int col) {
-                                return 15636.977658744854;
-                            }
+            Record[] expectedOverlap = new Record[]{
+                    new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            return 15636.977658744854;
+                        }
 
-                            @Override
-                            public CharSequence getSymA(int col) {
-                                return null;
-                            }
-                        },
-                        new Record() {
-                            @Override
-                            public double getDouble(int col) {
-                                return 13073.816187889399;
-                            }
+                        @Override
+                        public CharSequence getSymA(int col) {
+                            return null;
+                        }
+                    },
+                    new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            return 13073.816187889399;
+                        }
 
-                            @Override
-                            public CharSequence getSymA(int col) {
-                                return "a1";
-                            }
-                        },
-                        new Record() {
-                            @Override
-                            public double getDouble(int col) {
-                                return 13240.269899560482;
-                            }
+                        @Override
+                        public CharSequence getSymA(int col) {
+                            return "a1";
+                        }
+                    },
+                    new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            return 13240.269899560482;
+                        }
 
-                            @Override
-                            public CharSequence getSymA(int col) {
-                                return "a2";
-                            }
-                        },
-                        new Record() {
-                            @Override
-                            public double getDouble(int col) {
-                                return 13223.021189180576;
-                            }
+                        @Override
+                        public CharSequence getSymA(int col) {
+                            return "a2";
+                        }
+                    },
+                    new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            return 13223.021189180576;
+                        }
 
-                            @Override
-                            public CharSequence getSymA(int col) {
-                                return "a3";
-                            }
-                        },
-                };
-                assertCursorRawRecords(expected, factory, false);
-            }
+                        @Override
+                        public CharSequence getSymA(int col) {
+                            return "a3";
+                        }
+                    },
+            };
+            assertQuery("select s2, sum(val) from tab where t >= '1970-01-12T12:01' and t < '1970-01-14T11:00' order by s2")
+                    .returnsRecords(expectedOverlap);
         });
     }
 
@@ -1192,55 +1189,54 @@ public class AggregateTest extends AbstractCairoTest {
             execute("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)");
 
             // test with key falling within null columns
-            try (RecordCursorFactory factory = select("select s2, sum(val) from tab order by s2")) {
-                Record[] expected = new Record[]{
-                        new Record() {
-                            @Override
-                            public double getDouble(int col) {
-                                return 520447.6629968692;
-                            }
+            Record[] expected = new Record[]{
+                    new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            return 520447.6629968692;
+                        }
 
-                            @Override
-                            public CharSequence getSymA(int col) {
-                                return null;
-                            }
-                        },
-                        new Record() {
-                            @Override
-                            public double getDouble(int col) {
-                                return 104308.65839619662;
-                            }
+                        @Override
+                        public CharSequence getSymA(int col) {
+                            return null;
+                        }
+                    },
+                    new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            return 104308.65839619662;
+                        }
 
-                            @Override
-                            public CharSequence getSymA(int col) {
-                                return "a1";
-                            }
-                        },
-                        new Record() {
-                            @Override
-                            public double getDouble(int col) {
-                                return 104559.28674751727;
-                            }
+                        @Override
+                        public CharSequence getSymA(int col) {
+                            return "a1";
+                        }
+                    },
+                    new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            return 104559.28674751727;
+                        }
 
-                            @Override
-                            public CharSequence getSymA(int col) {
-                                return "a2";
-                            }
-                        },
-                        new Record() {
-                            @Override
-                            public double getDouble(int col) {
-                                return 104044.11326997768;
-                            }
+                        @Override
+                        public CharSequence getSymA(int col) {
+                            return "a2";
+                        }
+                    },
+                    new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            return 104044.11326997768;
+                        }
 
-                            @Override
-                            public CharSequence getSymA(int col) {
-                                return "a3";
-                            }
-                        },
-                };
-                assertCursorRawRecords(expected, factory, false);
-            }
+                        @Override
+                        public CharSequence getSymA(int col) {
+                            return "a3";
+                        }
+                    },
+            };
+            assertQuery("select s2, sum(val) from tab order by s2")
+                    .returnsRecords(expected);
         });
     }
 
