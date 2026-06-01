@@ -270,9 +270,4 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
         return confWalApplyPool;
     }
-
-    @Override
-    public boolean isMemoryUsageLogEnabled() {
-        return false;
-    }
 }

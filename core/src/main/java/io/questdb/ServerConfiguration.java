@@ -75,10 +75,6 @@ public interface ServerConfiguration {
 
     MemoryConfiguration getMemoryConfiguration();
 
-    default long getMemoryUsageLogInterval() {
-        return 60_000;
-    }
-
     Metrics getMetrics();
 
     MetricsConfiguration getMetricsConfiguration();
@@ -111,9 +107,5 @@ public interface ServerConfiguration {
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 
     default void init(CairoEngine engine, FreeOnExit freeOnExit) {
-    }
-
-    default boolean isMemoryUsageLogEnabled() {
-        return true;
     }
 }

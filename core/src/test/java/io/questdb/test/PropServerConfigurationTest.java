@@ -431,8 +431,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
-        Assert.assertTrue(configuration.isMemoryUsageLogEnabled());
-        Assert.assertEquals(60_000, configuration.getMemoryUsageLogInterval());
+        Assert.assertTrue(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
+        Assert.assertEquals(60_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
         Assert.assertFalse(configuration.getCairoConfiguration().isQueryTracingEnabled());
 
         Assert.assertEquals(4, configuration.getCairoConfiguration().getQueryCacheEventQueueCapacity());
@@ -1735,8 +1735,8 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "5s");
 
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertFalse(configuration.isMemoryUsageLogEnabled());
-        Assert.assertEquals(5_000, configuration.getMemoryUsageLogInterval());
+        Assert.assertFalse(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
+        Assert.assertEquals(5_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
     }
 
     @Test
@@ -1745,7 +1745,7 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "86_400_000");
 
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(86_400_000, configuration.getMemoryUsageLogInterval());
+        Assert.assertEquals(86_400_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
     }
 
     @Test

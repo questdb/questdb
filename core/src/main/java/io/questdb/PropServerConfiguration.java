@@ -365,8 +365,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxSwapFileCount;
     private final int maxUncommittedRows;
     private final MemoryConfiguration memoryConfiguration;
-    private final boolean memoryUsageLogEnabled;
-    private final long memoryUsageLogInterval;
     private final int metadataStringPoolCapacity;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
@@ -875,8 +873,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.dynamicProperties = dynamicProperties;
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
-        this.memoryUsageLogEnabled = getBoolean(properties, env, PropertyKey.MEMORY_USAGE_LOG_ENABLED, true);
-        this.memoryUsageLogInterval = getMillis(properties, env, PropertyKey.MEMORY_USAGE_LOG_INTERVAL, 60_000);
+        final boolean memoryUsageLogEnabled = getBoolean(properties, env, PropertyKey.MEMORY_USAGE_LOG_ENABLED, true);
+        final long memoryUsageLogInterval = getMillis(properties, env, PropertyKey.MEMORY_USAGE_LOG_INTERVAL, 60_000);
         if (memoryUsageLogInterval <= 0 || memoryUsageLogInterval > MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS) {
             throw ServerConfigurationException.forInvalidKey(
                     PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(),
@@ -886,7 +884,9 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.memoryConfiguration = new MemoryConfigurationImpl(
                 getLongSize(properties, env, PropertyKey.RAM_USAGE_LIMIT_BYTES, 0),
-                getIntPercentage(properties, env, PropertyKey.RAM_USAGE_LIMIT_PERCENT, 90)
+                getIntPercentage(properties, env, PropertyKey.RAM_USAGE_LIMIT_PERCENT, 90),
+                memoryUsageLogEnabled,
+                memoryUsageLogInterval
         );
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.isQueryTracingEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, false);
@@ -2356,11 +2356,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public long getMemoryUsageLogInterval() {
-        return memoryUsageLogInterval;
-    }
-
-    @Override
     public Metrics getMetrics() {
         return metrics;
     }
@@ -2421,11 +2416,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     public boolean isConfigReloadEnabled() {
         return configReloadEnabled;
-    }
-
-    @Override
-    public boolean isMemoryUsageLogEnabled() {
-        return memoryUsageLogEnabled;
     }
 
     // Used by dynamic configuration to reuse the already created factory provider.
