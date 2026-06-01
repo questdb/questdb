@@ -239,9 +239,10 @@ public class CopyExportTest extends AbstractCairoTest {
                     sink.clear();
                     sink.put("COPY '").put(copyIDStr).put("' CANCEL;");
                     try {
-                        assertSql("id\tstatus\n" +
-                                copyIDStr + "\tcancelled\n", sink);
-                    } catch (SqlException e) {
+                        assertQuery(sink)
+                                .noLeakCheck()
+                                .returnsOnce("id\tstatus\n" + copyIDStr + "\tcancelled\n");
+                    } catch (Exception e) {
                         throw new RuntimeException(e);
                     }
                     // wait cancel finish

@@ -1769,6 +1769,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertSegmentLocked(tableToken, walId, segmentId);
     }
 
+    // todo: delete
     protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected);

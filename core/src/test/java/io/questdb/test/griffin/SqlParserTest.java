@@ -12088,20 +12088,29 @@ public class SqlParserTest extends AbstractSqlParserTest {
         engine.releaseInactive();
 
         assertQuery("select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;")
+                .timestamp("ts1")
+                .noRandomAccess()
+                .expectSize()
                 .noLeakCheck()
-                .returnsOnce("""
+                .returns("""
                         TS\tts1\tx\tts11
                         1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
                         """);
         assertQuery("select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
                 .noLeakCheck()
-                .returnsOnce("""
+                .returns("""
                         ts\tx\tts1\tx1\tTS11
                         1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000001Z
                         """);
         assertQuery("select t1.*, t2.ts from t1 asof join (select * from t2) t2;")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
                 .noLeakCheck()
-                .returnsOnce("""
+                .returns("""
                         ts\tx\tts1
                         1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
                         """);
