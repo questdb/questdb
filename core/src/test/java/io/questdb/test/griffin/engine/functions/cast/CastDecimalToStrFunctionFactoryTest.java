@@ -155,24 +155,24 @@ public class CastDecimalToStrFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     // Constant folding test
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("select cast(123.45m as string) from long_sequence(1)")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: ['123.45']
                                         long_sequence count: 1
-                                    """,
-                            "EXPLAIN select cast(123.45m as string) from long_sequence(1)");
+                                    """);
 
                     // Runtime value test
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT 123.45m AS value) SELECT cast(value as string) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::string]
                                         VirtualRecord
                                           functions: [123.45]
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT 123.45m AS value) SELECT cast(value as string) FROM data");
+                                    """);
                 }
         );
     }
