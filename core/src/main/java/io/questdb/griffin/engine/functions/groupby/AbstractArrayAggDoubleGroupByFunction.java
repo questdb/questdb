@@ -57,11 +57,17 @@ import org.jetbrains.annotations.NotNull;
  * {@link SparklineGroupByFunction}. Each per-slot function instance accumulates
  * observations into a native buffer through its own {@link GroupByAllocator}.
  * A single {@code computeNext} loop processes one page frame in rowId order,
- * producing one sorted run per frame. Under parallel GROUP BY a slot can
- * accumulate frames in non-monotonic order, so the buffer is modelled as a
- * concatenation of disjoint sorted runs keyed on rowId. See
- * {@link SortedRunsMerge} for the run-permutation compaction applied at
- * merge and read time.
+ * appending one key-sorted batch. The slot a frame lands on is chosen by lock
+ * acquisition in {@link io.questdb.griffin.engine.PerWorkerLocks}, not by worker
+ * identity, so under cross-query work-stealing a single slot's buffer can
+ * accumulate batches in non-monotonic order. {@code computeNext} therefore
+ * records per-frame batch boundaries (see {@link SortedRunsMerge}): a new batch
+ * starts at a gap or an out-of-order frame, while consecutive in-order frames
+ * extend the current batch (the page frame is read from the row id,
+ * {@code rowId >>> 44}). The boundaries let merge and read time sort the buffer
+ * by permuting whole batches, with no element-wise merge. A group whose frames
+ * arrive as a single consecutive run keeps its descriptor buffer unallocated
+ * ({@code descPtr == 0}).
  * <p>
  * For the array variant, all elements from the same source row share the same
  * rowId; intra-row element order is preserved because the compaction copies
@@ -88,15 +94,31 @@ import org.jetbrains.annotations.NotNull;
  * render serves all readers of a given group on that consumer thread.
  * Concurrent reads of the same {@link MapValue} are not supported.
  * <p>
- * A single LONG slot in the map value stores the build buffer pointer
- * (0 = null/empty group).
+ * <b>MapValue layout</b> (5 slots):
+ * <pre>
+ *   +0  LONG  build buffer pointer (0 = null/empty group)
+ *   +1  LONG  descriptor buffer pointer (0 = single batch)
+ *   +2  LONG  descriptor count
+ *   +3  LONG  descriptor buffer capacity in 8-byte entries
+ *   +4  LONG  frame index of the most recently appended entry
+ * </pre>
+ * The entry {@code count} and {@code capacity} live in the build buffer header
+ * (see above), not in MapValue slots; only the batch-descriptor state does.
  */
 public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunction implements GroupByFunction, UnaryFunction {
     protected static final int BYTE_SAFE_ELEMENT_LIMIT = Integer.MAX_VALUE / Double.BYTES;
     protected static final int CAPACITY_OFFSET = Integer.BYTES;
+    // MapValue slot offsets, relative to valueIndex, of the per-frame batch
+    // descriptor state handed to SortedRunsMerge. The descriptor pointer, count
+    // and capacity occupy three consecutive slots as appendBatchStart requires.
+    // See the class javadoc for the full MapValue layout.
+    protected static final int DESC_CAPACITY_SLOT = 3;
+    protected static final int DESC_COUNT_SLOT = 2;
+    protected static final int DESC_PTR_SLOT = 1;
     protected static final long ENTRY_SIZE = 16L;
     protected static final int HEADER_SIZE = 2 * Integer.BYTES;
     protected static final int INITIAL_CAPACITY = 16;
+    protected static final int LAST_FRAME_SLOT = 4;
     protected static final int VALUE_OFFSET = Long.BYTES;
     protected GroupByAllocator allocator;
     protected final Function arg;
@@ -174,16 +196,19 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         AbstractArrayAggDoubleGroupByFunction owner = (primary != null) ? primary : this;
         if (ptr != owner.cachedSrcPtr) {
             // Under parallel GROUP BY the entries buffer may be a
-            // concatenation of disjoint sorted runs in non-monotonic order.
-            // Compact in place to a single sorted run before rendering so
-            // the output array reflects rowId order, not slot-acquisition
+            // concatenation of disjoint per-frame batches in non-monotonic
+            // order. Compact in place to a single sorted run before rendering
+            // so the output array reflects rowId order, not slot-acquisition
             // order. The buffer pointer is preserved across compaction, so
-            // owner.cachedSrcPtr stays a valid cache key.
+            // owner.cachedSrcPtr stays a valid cache key. The batch boundaries
+            // come from the descriptor buffer recorded during accumulation.
             SortedRunsMerge.compactInPlace(
                     owner.allocator,
                     owner.runScratch,
                     ptr + HEADER_SIZE,
                     count,
+                    rec.getLong(valueIndex + DESC_PTR_SLOT),
+                    rec.getLong(valueIndex + DESC_COUNT_SLOT),
                     ENTRY_SIZE
             );
             owner.scratch.setDimLen(0, count);
@@ -235,7 +260,11 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG); // buffer pointer
+        columnTypes.add(ColumnType.LONG); // +0 build buffer pointer
+        columnTypes.add(ColumnType.LONG); // +1 descriptor buffer pointer
+        columnTypes.add(ColumnType.LONG); // +2 descriptor count
+        columnTypes.add(ColumnType.LONG); // +3 descriptor buffer capacity
+        columnTypes.add(ColumnType.LONG); // +4 last frame index
     }
 
     @Override
@@ -262,13 +291,14 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
     /**
      * Combines the source slot's entries with the destination's into a
      * single sorted buffer allocated in the destination's allocator. Both
-     * inputs are treated as concatenations of disjoint sorted runs (one
-     * run per page frame); the combined run set still satisfies the
-     * disjointness invariant because different frames cover disjoint rowId
-     * ranges, including the array variant where multiple entries from one
-     * row share its rowId but all live inside that frame's run.
+     * inputs are treated as concatenations of disjoint per-frame batches; the
+     * combined batch set still satisfies the disjointness invariant because
+     * different frames cover disjoint rowId ranges, including the array variant
+     * where multiple entries from one row share its rowId but all live inside
+     * that frame's batch. The merged buffer carries its own descriptor buffer
+     * so a higher-level merge can interleave it with another partial result.
      * <p>
-     * See {@link SortedRunsMerge} for the algorithm. Intra-run order is
+     * See {@link SortedRunsMerge} for the algorithm. Intra-batch order is
      * preserved by bulk {@code memcpy}, which keeps the array variant's
      * intra-row element order intact.
      */
@@ -283,23 +313,50 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         if (srcCount == 0) {
             return;
         }
+        long srcDescPtr = srcValue.getLong(valueIndex + DESC_PTR_SLOT);
+        long srcDescCount = srcValue.getLong(valueIndex + DESC_COUNT_SLOT);
 
         long destPtr = destValue.getLong(valueIndex);
         int destCount = (destPtr == 0) ? 0 : Unsafe.getInt(destPtr);
+        long destDescPtr = destCount > 0 ? destValue.getLong(valueIndex + DESC_PTR_SLOT) : 0;
+        long destDescCount = destCount > 0 ? destValue.getLong(valueIndex + DESC_COUNT_SLOT) : 0;
+
         int mergedCount = destCount + srcCount;
         checkCapacityLimit(mergedCount);
-        long mergedPtr = allocator.malloc(HEADER_SIZE + (long) mergedCount * ENTRY_SIZE);
+
+        // Count the batches each side contributes (descPtr == 0 is one implicit
+        // batch) so the merged descriptor buffer is sized exactly.
+        long destBatches = destCount <= 0 ? 0 : (destDescPtr == 0 ? 1 : destDescCount);
+        long srcBatches = srcDescPtr == 0 ? 1 : srcDescCount;
+        long mergedBatches = destBatches + srcBatches;
+
+        // Fold the entry buffer (with its header) and the optional descriptor
+        // buffer into a single allocator request, mirroring TwapGroupByFunction:
+        // one larger block keeps the entry/descriptor pair contiguous and
+        // halves the allocator's chunk-grow rate on the high-cardinality merge
+        // path.
+        long entryBytes = (long) mergedCount * ENTRY_SIZE;
+        long descBytes = mergedBatches > 1 ? mergedBatches * Long.BYTES : 0;
+        long mergedPtr = allocator.malloc(HEADER_SIZE + entryBytes + descBytes);
+        long mergedDescPtr = descBytes > 0 ? mergedPtr + HEADER_SIZE + entryBytes : 0;
         SortedRunsMerge.compactInto(
-                allocator,
                 runScratch,
-                mergedPtr + HEADER_SIZE,
-                (destCount > 0) ? destPtr + HEADER_SIZE : 0, destCount,
-                srcPtr + HEADER_SIZE, srcCount,
+                mergedPtr + HEADER_SIZE, mergedDescPtr,
+                (destCount > 0) ? destPtr + HEADER_SIZE : 0, destCount, destDescPtr, destDescCount,
+                srcPtr + HEADER_SIZE, srcCount, srcDescPtr, srcDescCount,
                 ENTRY_SIZE
         );
         Unsafe.putInt(mergedPtr, mergedCount);
         Unsafe.putInt(mergedPtr + CAPACITY_OFFSET, mergedCount);
         destValue.putLong(valueIndex, mergedPtr);
+        destValue.putLong(valueIndex + DESC_PTR_SLOT, mergedDescPtr);
+        destValue.putLong(valueIndex + DESC_COUNT_SLOT, mergedDescPtr != 0 ? mergedBatches : 0);
+        destValue.putLong(valueIndex + DESC_CAPACITY_SLOT, mergedDescPtr != 0 ? mergedBatches : 0);
+        // The descriptor buffer is sized exactly to the merge result, so a
+        // post-merge appendBatchStart would silently realloc. No path appends
+        // after merge; stamp a negative sentinel that appendFrameIfNeeded
+        // asserts on.
+        destValue.putLong(valueIndex + LAST_FRAME_SLOT, -1L);
     }
 
     @Override
@@ -311,6 +368,10 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0);
+        mapValue.putLong(valueIndex + DESC_PTR_SLOT, 0);
+        mapValue.putLong(valueIndex + DESC_COUNT_SLOT, 0);
+        mapValue.putLong(valueIndex + DESC_CAPACITY_SLOT, 0);
+        mapValue.putLong(valueIndex + LAST_FRAME_SLOT, 0);
     }
 
     @Override
@@ -323,6 +384,28 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         sink.val("array_agg(").val(arg).val(')');
     }
 
+    /**
+     * Records a per-frame batch boundary before {@code count} more entries are
+     * appended for {@code rowId}. Frames map to slots by lock acquisition, so a
+     * slot can observe frames out of rowId order. A consecutive frame
+     * ({@code lastFrameId + 1}) continues the current batch: its keys follow on
+     * contiguously, so the batch stays key-disjoint from every other batch. A
+     * gap or an out-of-order frame starts a new batch at the current entry
+     * offset. The array variant passes the same {@code rowId} for every element
+     * of one row, so all of a row's elements land in a single batch.
+     */
+    protected void appendFrameIfNeeded(MapValue mapValue, long rowId, long count) {
+        long frameId = rowId >>> 44;
+        long lastFrameId = mapValue.getLong(valueIndex + LAST_FRAME_SLOT);
+        assert lastFrameId >= 0 : "computeNext on a post-merge MapValue";
+        if (frameId != lastFrameId) {
+            if (frameId != lastFrameId + 1) {
+                SortedRunsMerge.appendBatchStart(allocator, mapValue, valueIndex + DESC_PTR_SLOT, count);
+            }
+            mapValue.putLong(valueIndex + LAST_FRAME_SLOT, frameId);
+        }
+    }
+
     protected void checkCapacityLimit(int count) {
         if (count > maxArrayElementCount) {
             throw CairoException.nonCritical()
@@ -330,5 +413,17 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
                     .put(maxArrayElementCount)
                     .put(']');
         }
+    }
+
+    /**
+     * Initializes the batch-descriptor state for a freshly started group: a
+     * single implicit batch ({@code descPtr == 0}), with the first out-of-order
+     * frame allocating the descriptor buffer lazily via {@link #appendFrameIfNeeded}.
+     */
+    protected void initRunState(MapValue mapValue, long rowId) {
+        mapValue.putLong(valueIndex + DESC_PTR_SLOT, 0);
+        mapValue.putLong(valueIndex + DESC_COUNT_SLOT, 0);
+        mapValue.putLong(valueIndex + DESC_CAPACITY_SLOT, 0);
+        mapValue.putLong(valueIndex + LAST_FRAME_SLOT, rowId >>> 44);
     }
 }

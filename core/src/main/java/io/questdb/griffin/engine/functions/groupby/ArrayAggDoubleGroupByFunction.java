@@ -52,6 +52,7 @@ public class ArrayAggDoubleGroupByFunction extends AbstractArrayAggDoubleGroupBy
         Unsafe.putLong(ptr + HEADER_SIZE, rowId);
         Unsafe.putDouble(ptr + HEADER_SIZE + VALUE_OFFSET, arg.getDouble(record));
         mapValue.putLong(valueIndex, ptr);
+        initRunState(mapValue, rowId);
     }
 
     @Override
@@ -60,6 +61,7 @@ public class ArrayAggDoubleGroupByFunction extends AbstractArrayAggDoubleGroupBy
         long ptr = mapValue.getLong(valueIndex);
         int count = Unsafe.getInt(ptr);
         checkCapacityLimit(count + 1);
+        appendFrameIfNeeded(mapValue, rowId, count);
         int capacity = Unsafe.getInt(ptr + CAPACITY_OFFSET);
         if (count == capacity) {
             int newCapacity = capacity << 1;

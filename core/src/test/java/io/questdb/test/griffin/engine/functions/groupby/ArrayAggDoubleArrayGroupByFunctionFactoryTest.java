@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
@@ -373,17 +374,23 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
         // only hits the destPtr==0 branch probabilistically.
         assertMemoryLeak(() -> {
             try (
-                    OrderedMap destMap = new OrderedMap(4 * 1024, new SingleColumnType(ColumnType.INT),
-                            new SingleColumnType(ColumnType.LONG), 16, 0.8, 24);
-                    OrderedMap srcMap = new OrderedMap(4 * 1024, new SingleColumnType(ColumnType.INT),
-                            new SingleColumnType(ColumnType.LONG), 16, 0.8, 24);
+                    ArrayAggDoubleArrayGroupByFunction fn = new ArrayAggDoubleArrayGroupByFunction(
+                            DoubleConstant.NULL, configuration);
                     FastGroupByAllocator allocator = new FastGroupByAllocator(1024, 1024 * 1024)
             ) {
-                try (ArrayAggDoubleArrayGroupByFunction fn = new ArrayAggDoubleArrayGroupByFunction(
-                        DoubleConstant.NULL, configuration)) {
-                    fn.initValueIndex(0);
-                    fn.setAllocator(allocator);
+                // Derive the value-slot layout (buffer pointer + per-frame batch
+                // descriptor state) from the function itself so the maps carry
+                // every slot the merge path reads and writes.
+                ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+                fn.initValueTypes(valueTypes);
+                fn.setAllocator(allocator);
 
+                try (
+                        OrderedMap destMap = new OrderedMap(4 * 1024, new SingleColumnType(ColumnType.INT),
+                                valueTypes, 16, 0.8, 24);
+                        OrderedMap srcMap = new OrderedMap(4 * 1024, new SingleColumnType(ColumnType.INT),
+                                valueTypes, 16, 0.8, 24)
+                ) {
                     // Source buffer layout: |count:INT|capacity:INT|(rowId:LONG, value:DOUBLE) x N|
                     final int srcCount = 3;
                     final long headerSize = 8L;
@@ -400,11 +407,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     MapKey destKey = destMap.withKey();
                     destKey.putInt(1);
                     MapValue destValue = destKey.createValue();
-                    destValue.putLong(0, 0L);
+                    fn.setNull(destValue); // empty dest: null pointer and zeroed descriptor slots
 
                     MapKey srcKey = srcMap.withKey();
                     srcKey.putInt(2);
                     MapValue srcValue = srcKey.createValue();
+                    fn.setNull(srcValue);
+                    // The three entries ascend in rowId, so the source is a
+                    // single implicit batch and its descriptor pointer stays 0.
                     srcValue.putLong(0, srcPtr);
 
                     fn.merge(destValue, srcValue);
