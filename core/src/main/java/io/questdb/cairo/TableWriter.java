@@ -12521,7 +12521,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         for (int i = deferredPostingSealPurges.size() - 1; i >= 0; i--) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
-            if (currentTableTxn < 0 || task.getToTableTxn() == Long.MAX_VALUE || task.getToTableTxn() <= currentTableTxn) {
+            if (currentTableTxn < 0 || task.getToTableTxn() <= currentTableTxn) {
                 LOG.critical()
                         .$("posting seal-purge deferred entry dropped on writer close [table=").$(tableToken)
                         .$(", indexName=").$(task.getIndexColumnName())
@@ -12538,7 +12538,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int writePos = 0;
         for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(readPos);
-            if (task.getToTableTxn() != Long.MAX_VALUE && task.getToTableTxn() > currentTableTxn) {
+            if (task.getToTableTxn() > currentTableTxn) {
                 releaseDeferredPostingSealPurgeTask(task);
             } else {
                 deferredPostingSealPurges.setQuick(writePos++, task);
@@ -12607,21 +12607,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             long deferredToTxn = deferredTask.getToTableTxn();
-            long toTableTxn;
-            if (deferredToTxn == Long.MAX_VALUE) {
-                toTableTxn = currentTableTxn;
-            } else if (deferredToTxn > currentTableTxn) {
+            if (deferredToTxn > currentTableTxn) {
                 deferredPostingSealPurges.setQuick(writePos++, deferredTask);
                 continue;
-            } else {
-                toTableTxn = deferredToTxn;
             }
 
             long cursor = pubSeq.next();
             if (cursor < 0) {
-                if (persistOnQueueFull
-                        && deferredTask.getToTableTxn() != Long.MAX_VALUE
-                        && PostingSealPurgeJob.persistTaskDirect(engine, deferredTask)) {
+                if (persistOnQueueFull && PostingSealPurgeJob.persistTaskDirect(engine, deferredTask)) {
                     releaseDeferredPostingSealPurgeTask(deferredTask);
                     continue;
                 }
@@ -12640,7 +12633,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         deferredTask.getPartitionBy(),
                         deferredTask.getTimestampType(),
                         deferredTask.getFromTableTxn(),
-                        toTableTxn
+                        deferredToTxn
                 );
             } finally {
                 pubSeq.done(cursor);
@@ -12657,7 +12650,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(readPos);
             long toTxn = task.getToTableTxn();
-            if (toTxn != Long.MAX_VALUE && toTxn <= currentTableTxn && PostingSealPurgeJob.persistTaskDirect(engine, task)) {
+            if (toTxn <= currentTableTxn && PostingSealPurgeJob.persistTaskDirect(engine, task)) {
                 releaseDeferredPostingSealPurgeTask(task);
             } else {
                 deferredPostingSealPurges.setQuick(writePos++, task);

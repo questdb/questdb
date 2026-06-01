@@ -1137,6 +1137,7 @@ public class PostingIndexWriter implements IndexWriter {
                         entry.fromTableTxn,
                         entry.toTableTxn
                 );
+                assert task.getToTableTxn() != Long.MAX_VALUE && task.getToTableTxn() > currentTableTxn;
                 sink.add(task);
                 entry.of(0L, 0L, 0L, 0L, Long.MIN_VALUE, -1L);
                 pendingPurgePool.add(entry);
