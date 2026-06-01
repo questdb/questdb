@@ -150,10 +150,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    1\tab\t2022-02-24T23:00:00.000000Z\tef
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            1\tab\t2022-02-24T23:00:00.000000Z\tef
+                            """);
         });
     }
 
@@ -214,10 +214,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    1\tab\t2022-02-24T23:00:00.000000Z\tef
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            1\tab\t2022-02-24T23:00:00.000000Z\tef
+                            """);
         });
     }
 
@@ -261,9 +261,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            """);
 
             drainWalQueue();
 
@@ -273,10 +273,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    1\tab\t2022-02-25T00:00:00.000000Z\tef
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            1\tab\t2022-02-25T00:00:00.000000Z\tef
+                            """);
         });
     }
 
@@ -452,10 +452,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x2\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    3\tab\t2022-02-25T00:00:00.000000Z\tabcd
-                    """);
+                            x2\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            3\tab\t2022-02-25T00:00:00.000000Z\tabcd
+                            """);
         });
     }
 
@@ -515,10 +515,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    1\tab\t2022-02-24T23:00:00.000000Z\tef
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            1\tab\t2022-02-24T23:00:00.000000Z\tef
+                            """);
         });
     }
 
@@ -580,10 +580,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    1\tab\t2022-02-24T23:00:00.000000Z\tef
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            1\tab\t2022-02-24T23:00:00.000000Z\tef
+                            """);
         });
     }
 
@@ -733,7 +733,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("select count(), min(ts), max(ts) from " + tableToken.getTableName() +
-                            " where ts not in '2022-03-04' and ts not in '2022-03-02'")
+                    " where ts not in '2022-03-04' and ts not in '2022-03-02'")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
@@ -993,10 +993,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    1\tab\t2022-02-24T23:00:00.000000Z\tef
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            1\tab\t2022-02-24T23:00:00.000000Z\tef
+                            """);
         });
     }
 
@@ -1057,10 +1057,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    1\tab\t2022-02-24T23:00:00.000000Z\tef
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            1\tab\t2022-02-24T23:00:00.000000Z\tef
+                            """);
         });
     }
 
@@ -1116,9 +1116,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2\tnew_column
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tnull
-                    """);
+                            x\tsym\tts\tsym2\tnew_column
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tnull
+                            """);
 
             fail.set(false);
             execute("insert into " + tableName +
@@ -1129,10 +1129,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2\tnew_column
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tnull
-                    102\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t123
-                    """);
+                            x\tsym\tts\tsym2\tnew_column
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tnull
+                            102\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t123
+                            """);
         });
     }
 
@@ -1163,9 +1163,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            """);
 
             fail.set(false);
 
@@ -1176,9 +1176,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            """);
         });
     }
 
@@ -1205,9 +1205,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tac\t2022-02-24T23:00:00.000000Z\tef
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tac\t2022-02-24T23:00:00.000000Z\tef
+                            """);
         });
     }
 
@@ -1229,10 +1229,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    1\tab\t2022-02-24T23:00:00.000000Z\tef
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            1\tab\t2022-02-24T23:00:00.000000Z\tef
+                            """);
         });
     }
 
@@ -1259,10 +1259,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    1\tab\t2022-02-24T23:00:00.000000Z\tef
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            1\tab\t2022-02-24T23:00:00.000000Z\tef
+                            """);
         });
     }
 
@@ -1487,9 +1487,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2\tabcd
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tnull
-                    """);
+                            x\tsym\tts\tsym2\tabcd
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tnull
+                            """);
         });
     }
 
@@ -1517,11 +1517,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ts\tsym2
-                    2022-02-24T00:00:00.000000Z\tEF
-                    2022-02-25T00:00:00.000000Z\tabcde
-                    2022-02-25T00:00:00.000000Z\tabcdr
-                    """);
+                            ts\tsym2
+                            2022-02-24T00:00:00.000000Z\tEF
+                            2022-02-25T00:00:00.000000Z\tabcde
+                            2022-02-25T00:00:00.000000Z\tabcdr
+                            """);
         });
     }
 
@@ -1587,9 +1587,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x0\ty1\tts\tx\ty
-                    aa\tbb\t2022-02-24T01:00:00.000000Z\ta\tb
-                    """);
+                            x0\ty1\tts\tx\ty
+                            aa\tbb\t2022-02-24T01:00:00.000000Z\ta\tb
+                            """);
         });
     }
 
@@ -1654,10 +1654,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    1\tab\t2022-02-24T23:00:00.000000Z\tef
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            1\tab\t2022-02-24T23:00:00.000000Z\tef
+                            """);
         });
     }
 
@@ -1731,11 +1731,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    101\tdfd\t2022-02-24T01:00:00.000000Z\tasd
-                    101\tdfd\t2022-02-24T01:00:00.000000Z\tasd
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            101\tdfd\t2022-02-24T01:00:00.000000Z\tasd
+                            101\tdfd\t2022-02-24T01:00:00.000000Z\tasd
+                            """);
 
         });
     }
@@ -1807,16 +1807,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1111\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    1\tAB\t2022-02-24T01:00:00.000000Z\tEF
-                    2\tAB\t2022-02-24T02:00:00.000000Z\tEF
-                    """);
+                            x\tsym\tts\tsym2
+                            1111\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            1\tAB\t2022-02-24T01:00:00.000000Z\tEF
+                            2\tAB\t2022-02-24T02:00:00.000000Z\tEF
+                            """);
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                    tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\n");
+                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\n");
         });
     }
 
@@ -2141,11 +2141,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tstr\tts\tsym2\tnew_column
-                    101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull
-                    101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull
-                    103\tdfd\tstr-2\t2022-02-24T02:00:00.000000Z\tasdd\t1234
-                    """);
+                            x\tsym\tstr\tts\tsym2\tnew_column
+                            101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull
+                            101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull
+                            103\tdfd\tstr-2\t2022-02-24T02:00:00.000000Z\tasdd\t1234
+                            """);
         });
     }
 
@@ -2166,10 +2166,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 .expectSize()
                 .timestamp("ts")
                 .returns("""
-                x\tsym\tts\tsym2
-                1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                101\tdfd\t2022-02-25T01:00:00.000000Z\tasd
-                """);
+                        x\tsym\tts\tsym2
+                        1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                        101\tdfd\t2022-02-25T01:00:00.000000Z\tasd
+                        """);
     }
 
     private void runCheckTableSuspended(String tableName, String query, FilesFacade ff) throws Exception {
@@ -2193,9 +2193,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            """);
 
         });
     }
@@ -2244,11 +2244,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tsym\tts\tsym2
-                    1\tAB\t2022-02-24T00:00:00.000000Z\tEF
-                    3\tab\t2022-02-25T00:00:00.000000Z\tabcd
-                    3\tab\t2022-02-25T00:00:00.000000Z\tabcd
-                    """);
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            3\tab\t2022-02-25T00:00:00.000000Z\tabcd
+                            3\tab\t2022-02-25T00:00:00.000000Z\tabcd
+                            """);
         });
     }
 
@@ -2315,7 +2315,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                    tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\n");
+                            tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\n");
 
             execute("drop table " + tableToken.getTableName());
         });

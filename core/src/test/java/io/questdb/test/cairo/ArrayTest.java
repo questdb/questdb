@@ -680,23 +680,57 @@ public class ArrayTest extends AbstractCairoTest {
     public void testAddColumnUnsupportedType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (n LONG)");
-            assertException("ALTER TABLE tango ADD COLUMN arr BYTE[]", 33, "unsupported array element type [type=BYTE]");
-            assertException("ALTER TABLE tango ADD COLUMN arr SHORT[]", 33, "unsupported array element type [type=SHORT]");
-            assertException("ALTER TABLE tango ADD COLUMN arr INT[]", 33, "unsupported array element type [type=INT]");
-            assertException("ALTER TABLE tango ADD COLUMN arr LONG[]", 33, "unsupported array element type [type=LONG]");
-            assertException("ALTER TABLE tango ADD COLUMN arr FLOAT[]", 33, "unsupported array element type [type=FLOAT]");
-            assertException("ALTER TABLE tango ADD COLUMN arr BOOLEAN[]", 33, "unsupported array element type [type=BOOLEAN]");
-            assertException("ALTER TABLE tango ADD COLUMN arr CHAR[]", 33, "unsupported array element type [type=CHAR]");
-            assertException("ALTER TABLE tango ADD COLUMN arr STRING[]", 33, "unsupported array element type [type=STRING]");
-            assertException("ALTER TABLE tango ADD COLUMN arr VARCHAR[]", 33, "unsupported array element type [type=VARCHAR]");
-            assertException("ALTER TABLE tango ADD COLUMN arr ARRAY[]", 33, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
-            assertException("ALTER TABLE tango ADD COLUMN arr BINARY[]", 33, "unsupported array element type [type=BINARY]");
-            assertException("ALTER TABLE tango ADD COLUMN arr DATE[]", 33, "unsupported array element type [type=DATE]");
-            assertException("ALTER TABLE tango ADD COLUMN arr TIMESTAMP[]", 33, "unsupported array element type [type=TIMESTAMP]");
-            assertException("ALTER TABLE tango ADD COLUMN arr UUID[]", 33, "unsupported array element type [type=UUID]");
-            assertException("ALTER TABLE tango ADD COLUMN arr LONG128[]", 33, "unsupported array element type [type=LONG128]");
-            assertException("ALTER TABLE tango ADD COLUMN arr GEOHASH[]", 33, "unsupported array element type [type=GEOHASH]");
-            assertException("ALTER TABLE tango ADD COLUMN arr DECIMAL[]", 33, "unsupported array element type [type=DECIMAL]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr BYTE[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=BYTE]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr SHORT[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=SHORT]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr INT[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=INT]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr LONG[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=LONG]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr FLOAT[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=FLOAT]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr BOOLEAN[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=BOOLEAN]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr CHAR[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=CHAR]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr STRING[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=STRING]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr VARCHAR[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=VARCHAR]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr ARRAY[]")
+                    .noLeakCheck()
+                    .fails(33, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr BINARY[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=BINARY]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr DATE[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=DATE]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr TIMESTAMP[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=TIMESTAMP]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr UUID[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=UUID]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr LONG128[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=LONG128]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr GEOHASH[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=GEOHASH]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr DECIMAL[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=DECIMAL]");
         });
     }
 
@@ -712,29 +746,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [7.0,null]\t[[5.0,7.0],[9.0,11.0]]\t[11.0,16.0]\t[[41.0,51.0]]
-                    [19.0,22.0]\t[[17.0,19.0]]\t[41.0,46.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [7.0,null]\t[[5.0,7.0],[9.0,11.0]]\t[11.0,16.0]\t[[41.0,51.0]]
+                            [19.0,22.0]\t[[17.0,19.0]]\t[41.0,46.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT transpose(a) + 3.0, transpose(b) + 2.0 FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [5.0,null]\t[[4.0,6.0],[5.0,7.0]]
-                    [9.0,10.0]\t[[10.0],[11.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [5.0,null]\t[[4.0,6.0],[5.0,7.0]]
+                            [9.0,10.0]\t[[10.0],[11.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT 3.0 + a, 2.0 + b, 5.0 + b[1], 10.0 + b[2:] FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [5.0,null]\t[[4.0,5.0],[6.0,7.0]]\t[7.0,8.0]\t[[14.0,15.0]]
-                    [9.0,10.0]\t[[10.0,11.0]]\t[13.0,14.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [5.0,null]\t[[4.0,5.0],[6.0,7.0]]\t[7.0,8.0]\t[[14.0,15.0]]
+                            [9.0,10.0]\t[[10.0,11.0]]\t[13.0,14.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
         });
     }
 
@@ -904,29 +938,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [12.0,null]\t[[8.0,12.0],[16.0,20.0]]\t[20.0,30.0]\t[[80.0,100.0]]
-                    [36.0,42.0]\t[[32.0,36.0]]\t[80.0,90.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [12.0,null]\t[[8.0,12.0],[16.0,20.0]]\t[20.0,30.0]\t[[80.0,100.0]]
+                            [36.0,42.0]\t[[32.0,36.0]]\t[80.0,90.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT transpose(a)/0.5, transpose(b)/0.5 FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [4.0,null]\t[[4.0,8.0],[6.0,10.0]]
-                    [12.0,14.0]\t[[16.0],[18.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [4.0,null]\t[[4.0,8.0],[6.0,10.0]]
+                            [12.0,14.0]\t[[16.0],[18.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT a/0.0, a/null::double FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [null,null]\t[null,null]
-                    [null,null]\t[null,null]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [null,null]\t[null,null]
+                            [null,null]\t[null,null]
+                            null\tnull
+                            """);
         });
     }
 
@@ -941,18 +975,18 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    product
-                    40.0
-                    5.0
-                    """);
+                            product
+                            40.0
+                            5.0
+                            """);
             assertQuery("SELECT dot_product(transpose(left), transpose(right)) AS product FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    product
-                    40.0
-                    5.0
-                    """);
+                            product
+                            40.0
+                            5.0
+                            """);
             assertExceptionNoLeakCheck("SELECT dot_product(Array[1.0], Array[[1.0]]) AS product FROM tango",
                     24, "arrays have different number of dimensions [dimsLeft=1, dimsRight=2]");
             assertExceptionNoLeakCheck("SELECT dot_product(Array[1.0], Array[1.0, 2.0]) AS product FROM tango",
@@ -971,18 +1005,18 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    dot_product\tdot_product1\tdot_product2
-                    11.0\t30.0\tnull
-                    2.0\t10.0\tnull
-                    """);
+                            dot_product\tdot_product1\tdot_product2
+                            11.0\t30.0\tnull
+                            2.0\t10.0\tnull
+                            """);
             assertQuery("SELECT dot_product(transpose(left), 1.0), dot_product(transpose(right), 2.0), dot_product(2.0, transpose(right)) FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    dot_product\tdot_product1\tdot_product2
-                    11.0\t30.0\t30.0
-                    2.0\t10.0\t10.0
-                    """);
+                            dot_product\tdot_product1\tdot_product2
+                            11.0\t30.0\t30.0
+                            2.0\t10.0\t10.0
+                            """);
         });
     }
 
@@ -1195,29 +1229,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]
-                    [18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]
+                            [18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT transpose(a) * 3.0, transpose(b) * 2.0 FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [6.0,null]\t[[4.0,8.0],[6.0,10.0]]
-                    [18.0,21.0]\t[[16.0],[18.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [6.0,null]\t[[4.0,8.0],[6.0,10.0]]
+                            [18.0,21.0]\t[[16.0],[18.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT 3.0 * a, 2.0 * b, 5.0 * b[1], 10.0 * b[2:] FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]
-                    [18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]
+                            [18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
         });
     }
 
@@ -1231,11 +1265,11 @@ public class ArrayTest extends AbstractCairoTest {
                     "(null, null)"
             );
             assertQuery("SELECT " +
-                            "array_position(arr1, 8), " +
-                            "array_position(arr1, null), " +
-                            "array_position(arr1, 11), " +
-                            "array_position(arr1[2:], 9) " +
-                            "FROM tango")
+                    "array_position(arr1, 8), " +
+                    "array_position(arr1, null), " +
+                    "array_position(arr1, 11), " +
+                    "array_position(arr1[2:], 9) " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1246,11 +1280,11 @@ public class ArrayTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT " +
-                            "array_position(arr2[1], 8), " +
-                            "array_position(arr2[1], null), " +
-                            "array_position(arr2[1], 11), " +
-                            "array_position(arr2[1][2:], 9) " +
-                            "FROM tango")
+                    "array_position(arr2[1], 8), " +
+                    "array_position(arr2[1], null), " +
+                    "array_position(arr2[1], 11), " +
+                    "array_position(arr2[1][2:], 9) " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1261,11 +1295,11 @@ public class ArrayTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT " +
-                            "array_position(arr1, arr1[1]), " +
-                            "array_position(arr1, arr1[2]), " +
-                            "array_position(arr1, arr1[3]), " +
-                            "array_position(arr1[2:], arr1[2]) " +
-                            "FROM tango")
+                    "array_position(arr1, arr1[1]), " +
+                    "array_position(arr1, arr1[2]), " +
+                    "array_position(arr1, arr1[3]), " +
+                    "array_position(arr1[2:], arr1[2]) " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1287,11 +1321,11 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[[1.0], [9], [10], [12], [8], [null], [20], [12]]) "
             );
             assertQuery("SELECT " +
-                            "array_position(transpose(arr)[1], 8), " +
-                            "array_position(transpose(arr)[1], null), " +
-                            "array_position(transpose(arr)[1], 11), " +
-                            "array_position(transpose(arr)[1, 2:], 9) " +
-                            "FROM tango")
+                    "array_position(transpose(arr)[1], 8), " +
+                    "array_position(transpose(arr)[1], null), " +
+                    "array_position(transpose(arr)[1], 11), " +
+                    "array_position(transpose(arr)[1, 2:], 9) " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1333,29 +1367,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [5.0,null]\t[[3.0,5.0],[7.0,9.0]]\t[9.0,14.0]\t[[39.0,49.0]]
-                    [17.0,20.0]\t[[15.0,17.0]]\t[39.0,44.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [5.0,null]\t[[3.0,5.0],[7.0,9.0]]\t[9.0,14.0]\t[[39.0,49.0]]
+                            [17.0,20.0]\t[[15.0,17.0]]\t[39.0,44.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT transpose(a) - 3.0, transpose(b) - 2.0 FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [-1.0,null]\t[[0.0,2.0],[1.0,3.0]]
-                    [3.0,4.0]\t[[6.0],[7.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [-1.0,null]\t[[0.0,2.0],[1.0,3.0]]
+                            [3.0,4.0]\t[[6.0],[7.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT a - null::double FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column
-                    [null,null]
-                    [null,null]
-                    null
-                    """);
+                            column
+                            [null,null]
+                            [null,null]
+                            null
+                            """);
         });
     }
 
@@ -1547,9 +1581,9 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango1 (a DOUBLE[][], b DOUBLE[])");
             execute("INSERT INTO tango1 VALUES " +
                     "(ARRAY[[1.0, 2.0]], ARRAY[0, 1, 2])");
-            assertException("select a + b from tango1",
-                    7,
-                    "arrays have incompatible shapes [leftShape=[1,2], rightShape=[3]]");
+            assertQuery("select a + b from tango1")
+                    .noLeakCheck()
+                    .fails(7, "arrays have incompatible shapes [leftShape=[1,2], rightShape=[3]]");
         });
     }
 
@@ -1569,16 +1603,16 @@ public class ArrayTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("""
-                            select\s
-                              case\s
-                                when ts in '2020' then array[]::double[]
-                                when ts in '2021' then array[1.0]\s
-                                when ts in '2022' then '{1.0, 2.0}'::double[]\s
-                                when ts in '2023' then array[1.0, 2.0, 3.0]\s
-                                when ts in '2024' then array[1.0, 2.0, 3.0, 4.0]\s
-                                else a\s
-                              end, *
-                            from tango;""")
+                    select\s
+                      case\s
+                        when ts in '2020' then array[]::double[]
+                        when ts in '2021' then array[1.0]\s
+                        when ts in '2022' then '{1.0, 2.0}'::double[]\s
+                        when ts in '2023' then array[1.0, 2.0, 3.0]\s
+                        when ts in '2024' then array[1.0, 2.0, 3.0, 4.0]\s
+                        else a\s
+                      end, *
+                    from tango;""")
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
@@ -1593,15 +1627,15 @@ public class ArrayTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            select\s
-                              case\s
-                                when a = ARRAY[-1.0] then 'literal'
-                                when a = '{-1,-2}'::double[] then 'casting'
-                                when a = ARRAY[[1.0],[2.0]] then 'never'
-                                when a = ARRAY[]::double[] then 'empty'
-                                else 'whatever'
-                              end, *
-                            from tango;""")
+                    select\s
+                      case\s
+                        when a = ARRAY[-1.0] then 'literal'
+                        when a = '{-1,-2}'::double[] then 'casting'
+                        when a = ARRAY[[1.0],[2.0]] then 'never'
+                        when a = ARRAY[]::double[] then 'empty'
+                        else 'whatever'
+                      end, *
+                    from tango;""")
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
@@ -1615,16 +1649,16 @@ public class ArrayTest extends AbstractCairoTest {
                             whatever\t2025-01-01T00:00:00.000000Z\t5\t[-1.0,-2.0,-3.0,-4.0,-5.0]
                             """);
 
-            assertException("""
+            assertQuery("""
                             select\s
                               case\s
                                 when ts in '2021' then array[1.0]\s
                                 when ts in '2024' then 1\s
                                 else a\s
                               end, *
-                            from tango;""",
-                    82,
-                    "inconvertible types: INT -> DOUBLE[]");
+                            from tango;""")
+                    .noLeakCheck()
+                    .fails(82, "inconvertible types: INT -> DOUBLE[]");
         });
     }
 
@@ -1632,23 +1666,57 @@ public class ArrayTest extends AbstractCairoTest {
     public void testChangeColumnToUnsupportedType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (n LONG)");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE BYTE[]", 38, "unsupported array element type [type=BYTE]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE SHORT[]", 38, "unsupported array element type [type=SHORT]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE INT[]", 38, "unsupported array element type [type=INT]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE LONG[]", 38, "unsupported array element type [type=LONG]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE FLOAT[]", 38, "unsupported array element type [type=FLOAT]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE BOOLEAN[]", 38, "unsupported array element type [type=BOOLEAN]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE CHAR[]", 38, "unsupported array element type [type=CHAR]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE STRING[]", 38, "unsupported array element type [type=STRING]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE VARCHAR[]", 38, "unsupported array element type [type=VARCHAR]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE ARRAY[]", 38, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE BINARY[]", 38, "unsupported array element type [type=BINARY]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE DATE[]", 38, "unsupported array element type [type=DATE]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE TIMESTAMP[]", 38, "unsupported array element type [type=TIMESTAMP]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE UUID[]", 38, "unsupported array element type [type=UUID]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE LONG128[]", 38, "unsupported array element type [type=LONG128]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE GEOHASH[]", 38, "unsupported array element type [type=GEOHASH]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE DECIMAL[]", 38, "unsupported array element type [type=DECIMAL]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE BYTE[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=BYTE]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE SHORT[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=SHORT]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE INT[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=INT]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE LONG[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=LONG]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE FLOAT[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=FLOAT]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE BOOLEAN[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=BOOLEAN]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE CHAR[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=CHAR]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE STRING[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=STRING]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE VARCHAR[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=VARCHAR]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE ARRAY[]")
+                    .noLeakCheck()
+                    .fails(38, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE BINARY[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=BINARY]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE DATE[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=DATE]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE TIMESTAMP[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=TIMESTAMP]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE UUID[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=UUID]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE LONG128[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=LONG128]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE GEOHASH[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=GEOHASH]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE DECIMAL[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=DECIMAL]");
         });
     }
 
@@ -1701,11 +1769,8 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testConcatFailsGracefully() throws Exception {
-        assertMemoryLeak(() -> assertException(
-                "SELECT ARRAY[1.0] || ARRAY[2.0, 3.0] FROM long_sequence(1)",
-                12,
-                "unsupported type: DOUBLE[]"
-        ));
+        assertQuery("SELECT ARRAY[1.0] || ARRAY[2.0, 3.0] FROM long_sequence(1)")
+                .fails(12, "unsupported type: DOUBLE[]");
     }
 
     @Test
@@ -1784,23 +1849,57 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testCreateTableWithUnsupportedColumnType() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("CREATE TABLE tango (arr BYTE[])", 24, "unsupported array element type [type=BYTE]");
-            assertException("CREATE TABLE tango (arr SHORT[])", 24, "unsupported array element type [type=SHORT]");
-            assertException("CREATE TABLE tango (arr INT[])", 24, "unsupported array element type [type=INT]");
-            assertException("CREATE TABLE tango (arr LONG[])", 24, "unsupported array element type [type=LONG]");
-            assertException("CREATE TABLE tango (arr FLOAT[])", 24, "unsupported array element type [type=FLOAT]");
-            assertException("CREATE TABLE tango (arr BOOLEAN[])", 24, "unsupported array element type [type=BOOLEAN]");
-            assertException("CREATE TABLE tango (arr CHAR[])", 24, "unsupported array element type [type=CHAR]");
-            assertException("CREATE TABLE tango (arr STRING[])", 24, "unsupported array element type [type=STRING]");
-            assertException("CREATE TABLE tango (arr VARCHAR[])", 24, "unsupported array element type [type=VARCHAR]");
-            assertException("CREATE TABLE tango (arr ARRAY[])", 24, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
-            assertException("CREATE TABLE tango (arr BINARY[])", 24, "unsupported array element type [type=BINARY]");
-            assertException("CREATE TABLE tango (arr DATE[])", 24, "unsupported array element type [type=DATE]");
-            assertException("CREATE TABLE tango (arr TIMESTAMP[])", 24, "unsupported array element type [type=TIMESTAMP]");
-            assertException("CREATE TABLE tango (arr UUID[])", 24, "unsupported array element type [type=UUID]");
-            assertException("CREATE TABLE tango (arr LONG128[])", 24, "unsupported array element type [type=LONG128]");
-            assertException("CREATE TABLE tango (arr GEOHASH[])", 24, "unsupported array element type [type=GEOHASH]");
-            assertException("CREATE TABLE tango (arr DECIMAL[])", 24, "unsupported array element type [type=DECIMAL]");
+            assertQuery("CREATE TABLE tango (arr BYTE[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=BYTE]");
+            assertQuery("CREATE TABLE tango (arr SHORT[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=SHORT]");
+            assertQuery("CREATE TABLE tango (arr INT[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=INT]");
+            assertQuery("CREATE TABLE tango (arr LONG[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=LONG]");
+            assertQuery("CREATE TABLE tango (arr FLOAT[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=FLOAT]");
+            assertQuery("CREATE TABLE tango (arr BOOLEAN[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=BOOLEAN]");
+            assertQuery("CREATE TABLE tango (arr CHAR[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=CHAR]");
+            assertQuery("CREATE TABLE tango (arr STRING[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=STRING]");
+            assertQuery("CREATE TABLE tango (arr VARCHAR[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=VARCHAR]");
+            assertQuery("CREATE TABLE tango (arr ARRAY[])")
+                    .noLeakCheck()
+                    .fails(24, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
+            assertQuery("CREATE TABLE tango (arr BINARY[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=BINARY]");
+            assertQuery("CREATE TABLE tango (arr DATE[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=DATE]");
+            assertQuery("CREATE TABLE tango (arr TIMESTAMP[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=TIMESTAMP]");
+            assertQuery("CREATE TABLE tango (arr UUID[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=UUID]");
+            assertQuery("CREATE TABLE tango (arr LONG128[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=LONG128]");
+            assertQuery("CREATE TABLE tango (arr GEOHASH[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=GEOHASH]");
+            assertQuery("CREATE TABLE tango (arr DECIMAL[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=DECIMAL]");
         });
     }
 
@@ -1915,12 +2014,10 @@ public class ArrayTest extends AbstractCairoTest {
     public void testDudupArrayAsKey() throws Exception {
         // when an array is part of the dedup key
         // it fails gracefully and with an informative error message
-        assertException("CREATE TABLE tango (ts TIMESTAMP, arr DOUBLE[])" +
+        assertQuery("CREATE TABLE tango (ts TIMESTAMP, arr DOUBLE[])" +
                         " TIMESTAMP(ts) PARTITION BY HOUR WAL" +
-                        " DEDUP UPSERT KEYS (ts, arr)",
-                107,
-                "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"
-        );
+                        " DEDUP UPSERT KEYS (ts, arr)")
+                .fails(107, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]");
     }
 
     @Test
@@ -2103,11 +2200,10 @@ public class ArrayTest extends AbstractCairoTest {
                     .returns("cast\n[]\n");
 
             // casting to fewer dimensions is not allowed
-            assertException("SELECT ARRAY[[1.0], [2.0]]::double[]",
-                    26,
-                    "cannot cast array to lower dimension [from=DOUBLE[][] (2D), to=DOUBLE[] (1D)]. " +
-                            "Use array flattening operation (e.g. 'flatten(arr)') instead"
-            );
+            assertQuery("SELECT ARRAY[[1.0], [2.0]]::double[]")
+                    .noLeakCheck()
+                    .fails(26, "cannot cast array to lower dimension [from=DOUBLE[][] (2D), to=DOUBLE[] (1D)]. " +
+                            "Use array flattening operation (e.g. 'flatten(arr)') instead");
         });
     }
 
@@ -2252,105 +2348,105 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    [1.0,2.0]
-                    """);
+                            cast
+                            [1.0,2.0]
+                            """);
 
             // quoted elements
             assertQuery("SELECT '{\"1\", \"2\"}'::double[] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    [1.0,2.0]
-                    """);
+                            cast
+                            [1.0,2.0]
+                            """);
 
             // quoted elements with spaces, 2D array
             assertQuery("SELECT '{{\"1\", \"2\"}, {\"3\", \"4\"}}'::double[][] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    [[1.0,2.0],[3.0,4.0]]
-                    """);
+                            cast
+                            [[1.0,2.0],[3.0,4.0]]
+                            """);
 
             // 2D array
             assertQuery("SELECT '{{1,2}, {3, 4}}'::double[][] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    [[1.0,2.0],[3.0,4.0]]
-                    """);
+                            cast
+                            [[1.0,2.0],[3.0,4.0]]
+                            """);
 
             // 2D array with null - nulls are not allowed, casting fails and explicit casting produces NULL on the output
             assertQuery("SELECT '{{1,2}, {3, NULL}}'::double[][] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    null
-                    """);
+                            cast
+                            null
+                            """);
 
             // empty arrays are always printed as [], regardless of dimensionality. at least of now. this may change.
             assertQuery("SELECT '{{}, {}}'::double[][] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    []
-                    """);
+                            cast
+                            []
+                            """);
 
             // empty array can be cast to higher dimensionality -> empty array
             assertQuery("SELECT '{}'::double[][] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    []
-                    """);
+                            cast
+                            []
+                            """);
 
             // but empty array cannot cast to lower dimensionality -> NULL
             assertQuery("SELECT '{{},{}}'::double[] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    null
-                    """);
+                            cast
+                            null
+                            """);
 
             assertQuery("SELECT NULL::double[] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    null
-                    """);
+                            cast
+                            null
+                            """);
 
             assertQuery("SELECT 'not an array'::double[] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    null
-                    """);
+                            cast
+                            null
+                            """);
 
             // 2D array explicitly cast to 1D array -> null
             assertQuery("SELECT '{{1,2}, {3, 4}}'::double[] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    null
-                    """);
+                            cast
+                            null
+                            """);
 
             assertQuery("SELECT '{nonsense, 2}'::double[] FROM long_sequence(1)")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast
-                    null
-                    """);
+                            cast
+                            null
+                            """);
 
         });
     }
@@ -2401,9 +2497,9 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES (null, 0)");
 
             assertQuery("""
-                            select arr, count(*)
-                            from tango
-                            group by arr;""")
+                    select arr, count(*)
+                    from tango
+                    group by arr;""")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2425,9 +2521,9 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES (ARRAY[[2.0, 3.0], [1.0, 4.0]], 5)");
 
             assertQuery("""
-                            select arr[1:2], sum(i)
-                            from tango
-                            """)
+                    select arr[1:2], sum(i)
+                    from tango
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2554,14 +2650,14 @@ public class ArrayTest extends AbstractCairoTest {
                     "(null, null)"
             );
             assertQuery("SELECT " +
-                            "insertion_point(arr1, 8, false) i1, " +
-                            "insertion_point(arr1, 2000, false) i2, " +
-                            "insertion_point(arr1, 9, false) i3, " +
-                            "insertion_point(arr1, 1001, false) i4, " +
-                            "insertion_point(arr1, 18, false) i5, " +
-                            "insertion_point(arr1, 22, false) i6, " +
-                            "insertion_point(arr1[1:], 1000, false) i7, " +
-                            "FROM tango")
+                    "insertion_point(arr1, 8, false) i1, " +
+                    "insertion_point(arr1, 2000, false) i2, " +
+                    "insertion_point(arr1, 9, false) i3, " +
+                    "insertion_point(arr1, 1001, false) i4, " +
+                    "insertion_point(arr1, 18, false) i5, " +
+                    "insertion_point(arr1, 22, false) i6, " +
+                    "insertion_point(arr1[1:], 1000, false) i7, " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2571,14 +2667,14 @@ public class ArrayTest extends AbstractCairoTest {
                             null\tnull\tnull\tnull\tnull\tnull\tnull
                             """);
             assertQuery("SELECT " +
-                            "insertion_point(arr1, 8, true) i1, " +
-                            "insertion_point(arr1, 2000, true) i2, " +
-                            "insertion_point(arr1, 9, true) i3, " +
-                            "insertion_point(arr1, 1001, true) i4, " +
-                            "insertion_point(arr1, 18, true) i5, " +
-                            "insertion_point(arr1, 22, true) i6, " +
-                            "insertion_point(arr1[1:], 1000, true) i7, " +
-                            "FROM tango")
+                    "insertion_point(arr1, 8, true) i1, " +
+                    "insertion_point(arr1, 2000, true) i2, " +
+                    "insertion_point(arr1, 9, true) i3, " +
+                    "insertion_point(arr1, 1001, true) i4, " +
+                    "insertion_point(arr1, 18, true) i5, " +
+                    "insertion_point(arr1, 22, true) i6, " +
+                    "insertion_point(arr1[1:], 1000, true) i7, " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2588,14 +2684,14 @@ public class ArrayTest extends AbstractCairoTest {
                             null\tnull\tnull\tnull\tnull\tnull\tnull
                             """);
             assertQuery("SELECT " +
-                            "insertion_point(arr2[1], 8) i1, " +
-                            "insertion_point(arr2[1], 2000) i2, " +
-                            "insertion_point(arr2[1], 9) i3, " +
-                            "insertion_point(arr2[1], 1001) i4, " +
-                            "insertion_point(arr2[1], 18) i5, " +
-                            "insertion_point(arr2[1], 22) i6, " +
-                            "insertion_point(arr2[1, 1:], 1000) i7, " +
-                            "FROM tango")
+                    "insertion_point(arr2[1], 8) i1, " +
+                    "insertion_point(arr2[1], 2000) i2, " +
+                    "insertion_point(arr2[1], 9) i3, " +
+                    "insertion_point(arr2[1], 1001) i4, " +
+                    "insertion_point(arr2[1], 18) i5, " +
+                    "insertion_point(arr2[1], 22) i6, " +
+                    "insertion_point(arr2[1, 1:], 1000) i7, " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2620,14 +2716,14 @@ public class ArrayTest extends AbstractCairoTest {
                     "(null)"
             );
             assertQuery("SELECT " +
-                            "insertion_point(transpose(arr)[1], 8, false) i1, " +
-                            "insertion_point(transpose(arr)[1], 2000, false) i2, " +
-                            "insertion_point(transpose(arr)[1], 9, false) i3, " +
-                            "insertion_point(transpose(arr)[1], 1001, false) i4, " +
-                            "insertion_point(transpose(arr)[1], 18, false) i5, " +
-                            "insertion_point(transpose(arr)[1], 22, false) i6, " +
-                            "insertion_point(transpose(arr)[1, 1:], 1000, false) i7, " +
-                            "FROM tango")
+                    "insertion_point(transpose(arr)[1], 8, false) i1, " +
+                    "insertion_point(transpose(arr)[1], 2000, false) i2, " +
+                    "insertion_point(transpose(arr)[1], 9, false) i3, " +
+                    "insertion_point(transpose(arr)[1], 1001, false) i4, " +
+                    "insertion_point(transpose(arr)[1], 18, false) i5, " +
+                    "insertion_point(transpose(arr)[1], 22, false) i6, " +
+                    "insertion_point(transpose(arr)[1, 1:], 1000, false) i7, " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2637,14 +2733,14 @@ public class ArrayTest extends AbstractCairoTest {
                             null\tnull\tnull\tnull\tnull\tnull\tnull
                             """);
             assertQuery("SELECT " +
-                            "insertion_point(transpose(arr)[1], 8, true) i1, " +
-                            "insertion_point(transpose(arr)[1], 2000, true) i2, " +
-                            "insertion_point(transpose(arr)[1], 9, true) i3, " +
-                            "insertion_point(transpose(arr)[1], 1001, true) i4, " +
-                            "insertion_point(transpose(arr)[1], 18, true) i5, " +
-                            "insertion_point(transpose(arr)[1], 22, true) i6, " +
-                            "insertion_point(transpose(arr)[1][1:], 1000, true) i7, " +
-                            "FROM tango")
+                    "insertion_point(transpose(arr)[1], 8, true) i1, " +
+                    "insertion_point(transpose(arr)[1], 2000, true) i2, " +
+                    "insertion_point(transpose(arr)[1], 9, true) i3, " +
+                    "insertion_point(transpose(arr)[1], 1001, true) i4, " +
+                    "insertion_point(transpose(arr)[1], 18, true) i5, " +
+                    "insertion_point(transpose(arr)[1], 22, true) i6, " +
+                    "insertion_point(transpose(arr)[1][1:], 1000, true) i7, " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2654,14 +2750,14 @@ public class ArrayTest extends AbstractCairoTest {
                             null\tnull\tnull\tnull\tnull\tnull\tnull
                             """);
             assertQuery("SELECT " +
-                            "insertion_point(transpose(arr)[1], 8) i1, " +
-                            "insertion_point(transpose(arr)[1], 2000) i2, " +
-                            "insertion_point(transpose(arr)[1], 9) i3, " +
-                            "insertion_point(transpose(arr)[1], 1001) i4, " +
-                            "insertion_point(transpose(arr)[1], 18) i5, " +
-                            "insertion_point(transpose(arr)[1], 22) i6, " +
-                            "insertion_point(transpose(arr)[1, 1:], 1000) i7, " +
-                            "FROM tango")
+                    "insertion_point(transpose(arr)[1], 8) i1, " +
+                    "insertion_point(transpose(arr)[1], 2000) i2, " +
+                    "insertion_point(transpose(arr)[1], 9) i3, " +
+                    "insertion_point(transpose(arr)[1], 1001) i4, " +
+                    "insertion_point(transpose(arr)[1], 18) i5, " +
+                    "insertion_point(transpose(arr)[1], 22) i6, " +
+                    "insertion_point(transpose(arr)[1, 1:], 1000) i7, " +
+                    "FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2802,9 +2898,9 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    product
-                    [[8.0],[14.0],[20.0]]
-                    """);
+                            product
+                            [[8.0],[14.0],[20.0]]
+                            """);
         });
     }
 
@@ -2922,29 +3018,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [6.0,null]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]
-                    [-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [6.0,null]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]
+                            [-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT - transpose(a) + 16.0, - transpose(b) + 16.0 FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [14.0,null]\t[[14.0,12.0],[12.0,8.0]]
-                    [0.0,16.0]\t[[8.0],[12.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [14.0,null]\t[[14.0,12.0],[12.0,8.0]]
+                            [0.0,16.0]\t[[8.0],[12.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT - a + 0.0, - a + null::double FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [-2.0,null]\t[null,null]
-                    [-16.0,0.0]\t[null,null]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [-2.0,null]\t[null,null]
+                            [-16.0,0.0]\t[null,null]
+                            null\tnull
+                            """);
         });
     }
 
@@ -3135,11 +3231,9 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByArrayColFailsGracefully() throws Exception {
-        assertException("select * from tab order by arr",
-                "create table tab as (select rnd_double_array(2, 1) arr from long_sequence(10))",
-                27,
-                "DOUBLE[][] is not a supported type in ORDER BY clause"
-        );
+        assertQuery("select * from tab order by arr")
+                .ddl("create table tab as (select rnd_double_array(2, 1) arr from long_sequence(10))")
+                .fails(27, "DOUBLE[][] is not a supported type in ORDER BY clause");
     }
 
     @Test
@@ -3306,9 +3400,9 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             assertSql("""
-                            rnd_double_array
-                            [[null,0.9856290845874263],[null,0.5093827001617407]]
-                            """, "select rnd_double_array(2, 2, 0, 2, 2)");
+                    rnd_double_array
+                    [[null,0.9856290845874263],[null,0.5093827001617407]]
+                    """, "select rnd_double_array(2, 2, 0, 2, 2)");
 
             assertSql("""
                             QUERY PLAN
@@ -3340,29 +3434,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [4.0,null]\t[[4.0,2.0],[2.0,1.0]]\t[0.5,0.25]\t[[5.0,2.5]]
-                    [0.5,null]\t[[1.0,2.0]]\t[0.125,0.25]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [4.0,null]\t[[4.0,2.0],[2.0,1.0]]\t[0.5,0.25]\t[[5.0,2.5]]
+                            [0.5,null]\t[[1.0,2.0]]\t[0.125,0.25]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT 16.0 / transpose(a), 16.0 / transpose(b)FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [8.0,null]\t[[8.0,4.0],[4.0,2.0]]
-                    [1.0,null]\t[[2.0],[4.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [8.0,null]\t[[8.0,4.0],[4.0,2.0]]
+                            [1.0,null]\t[[2.0],[4.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT 0.0 / a, null::double / a FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [0.0,null]\t[null,null]
-                    [0.0,null]\t[null,null]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [0.0,null]\t[null,null]
+                            [0.0,null]\t[null,null]
+                            null\tnull
+                            """);
         });
     }
 
@@ -3378,29 +3472,29 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1\tcolumn2\tcolumn3
-                    [6.0,null]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]
-                    [-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]
-                    null\tnull\tnull\tnull
-                    """);
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [6.0,null]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]
+                            [-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]
+                            null\tnull\tnull\tnull
+                            """);
             assertQuery("SELECT 16.0 - transpose(a), 16.0 - transpose(b)FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [14.0,null]\t[[14.0,12.0],[12.0,8.0]]
-                    [0.0,16.0]\t[[8.0],[12.0]]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [14.0,null]\t[[14.0,12.0],[12.0,8.0]]
+                            [0.0,16.0]\t[[8.0],[12.0]]
+                            null\tnull
+                            """);
             assertQuery("SELECT 0.0 - a, null::double - a FROM tango")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    column\tcolumn1
-                    [-2.0,null]\t[null,null]
-                    [-16.0,0.0]\t[null,null]
-                    null\tnull
-                    """);
+                            column\tcolumn1
+                            [-2.0,null]\t[null,null]
+                            [-16.0,0.0]\t[null,null]
+                            null\tnull
+                            """);
         });
     }
 
@@ -3534,18 +3628,18 @@ public class ArrayTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("""
-                            SELECT * FROM (DECLARE
-                            \t@price := 1,
-                            \t@size := 2,
-                            \t@avg_price := avg(l2price(0.1, asks[@size], asks[@price])),
-                            \t@best_price := asks[@price, 1]
-                            \tSELECT\s
-                            \t\ttimestamp,
-                            \t\t@avg_price as avg_price,
-                            \t\t@best_price as best_price,
-                            \t\t@avg_price - @best_price as drift
-                            \tFROM AAPL_orderbook
-                            \tSAMPLE BY 1m) LIMIT 5;""")
+                    SELECT * FROM (DECLARE
+                    \t@price := 1,
+                    \t@size := 2,
+                    \t@avg_price := avg(l2price(0.1, asks[@size], asks[@price])),
+                    \t@best_price := asks[@price, 1]
+                    \tSELECT\s
+                    \t\ttimestamp,
+                    \t\t@avg_price as avg_price,
+                    \t\t@best_price as best_price,
+                    \t\t@avg_price - @best_price as drift
+                    \tFROM AAPL_orderbook
+                    \tSAMPLE BY 1m) LIMIT 5;""")
                     .noLeakCheck()
                     .timestamp("timestamp")
                     .returns("""

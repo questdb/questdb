@@ -89,7 +89,7 @@ public class SimpleTableTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWhereIsColumnNameInsensitive() throws Exception{
+    public void testWhereIsColumnNameInsensitive() throws Exception {
         TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
         tm.timestamp("ts").col("ID", ColumnType.INT);
         createPopulateTable(tm, 2, "2020-01-01", 1);

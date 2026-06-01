@@ -1648,16 +1648,16 @@ public class CopyExportTest extends AbstractCairoTest {
                                         .noLeakCheck()
                                         .expectSize()
                                         .returns("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output3.parquet" + "\t1\tfinished\n");
+                                                exportRoot + File.separator + "output3.parquet" + "\t1\tfinished\n");
                                 // Verify only filtered data was exported
                                 assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output3" + ".parquet') order by id")
                                         .noLeakCheck()
                                         .expectSize()
                                         .returns("""
-                                        id\tvalue
-                                        2\t2.5
-                                        3\t3.5
-                                        """);
+                                                id\tvalue
+                                                2\t2.5
+                                                3\t3.5
+                                                """);
                             }
                     );
 
@@ -2365,15 +2365,15 @@ public class CopyExportTest extends AbstractCairoTest {
                                         .noLeakCheck()
                                         .expectSize()
                                         .returns("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "pivot_output.parquet" + "\t1\tfinished\n");
+                                                exportRoot + File.separator + "pivot_output.parquet" + "\t1\tfinished\n");
                                 assertQuery("select * from read_parquet('" + exportRoot + File.separator + "pivot_output" + ".parquet') order by empid")
                                         .noLeakCheck()
                                         .expectSize()
                                         .returns("""
-                                        empid\tJAN\tFEB\tMAR
-                                        1\t10400\t8000\t11000
-                                        2\t39500\t90700\t12000
-                                        """);
+                                                empid\tJAN\tFEB\tMAR
+                                                1\t10400\t8000\t11000
+                                                2\t39500\t90700\t12000
+                                                """);
                             }
                     );
 
@@ -3882,11 +3882,11 @@ public class CopyExportTest extends AbstractCairoTest {
                                         exportRoot + File.separator + "output1.parquet" + "\t1\tfinished\n");
                         // Verify exported data can be read back and matches original
                         assertSql("""
-                                        x
-                                        1970-01-01T00:00:00.000005Z
-                                        1970-01-01T00:00:00.000002Z
-                                        1970-01-01T00:00:00.000000Z
-                                        """, "select * from read_parquet('" + exportRoot + File.separator + "output1" + ".parquet')");
+                                x
+                                1970-01-01T00:00:00.000005Z
+                                1970-01-01T00:00:00.000002Z
+                                1970-01-01T00:00:00.000000Z
+                                """, "select * from read_parquet('" + exportRoot + File.separator + "output1" + ".parquet')");
                     });
 
             testCopyExport(stmt, test);

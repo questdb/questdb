@@ -387,25 +387,25 @@ public class HashJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    i\tlocale_name\ti1\tstate\tcity
-                    1\tpl\t1\ta\tpl
-                    """);
+                            i\tlocale_name\ti1\tstate\tcity
+                            1\tpl\t1\ta\tpl
+                            """);
             assertQuery("select * from taba right join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    i\tlocale_name\ti1\tstate\tcity
-                    1\tpl\t1\ta\tpl
-                    null\t\t1\tb\tb
-                    """);
+                            i\tlocale_name\ti1\tstate\tcity
+                            1\tpl\t1\ta\tpl
+                            null\t\t1\tb\tb
+                            """);
             assertQuery("select * from taba full join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    i\tlocale_name\ti1\tstate\tcity
-                    1\tpl\t1\ta\tpl
-                    null\t\t1\tb\tb
-                    """);
+                            i\tlocale_name\ti1\tstate\tcity
+                            1\tpl\t1\ta\tpl
+                            null\t\t1\tb\tb
+                            """);
         });
     }
 

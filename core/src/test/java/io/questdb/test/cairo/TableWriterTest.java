@@ -3508,10 +3508,10 @@ public class TableWriterTest extends AbstractCairoTest {
                 .expectSize()
                 .timestamp("ts")
                 .returns(replaceTimestampSuffix("""
-                ts
-                1970-01-01T00:00:00.000001Z
-                1970-01-01T01:00:00.000001Z
-                """, ColumnType.nameOf(timestampType)));
+                        ts
+                        1970-01-01T00:00:00.000001Z
+                        1970-01-01T01:00:00.000001Z
+                        """, ColumnType.nameOf(timestampType)));
         try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
             writer.newRow(timestampDriver.fromHours(2) + 1).append();
             writer.enforceTtl();
@@ -3522,10 +3522,10 @@ public class TableWriterTest extends AbstractCairoTest {
                 .expectSize()
                 .timestamp("ts")
                 .returns(replaceTimestampSuffix("""
-                ts
-                1970-01-01T01:00:00.000001Z
-                1970-01-01T02:00:00.000001Z
-                """, ColumnType.nameOf(timestampType)));
+                        ts
+                        1970-01-01T01:00:00.000001Z
+                        1970-01-01T02:00:00.000001Z
+                        """, ColumnType.nameOf(timestampType)));
     }
 
     @Test

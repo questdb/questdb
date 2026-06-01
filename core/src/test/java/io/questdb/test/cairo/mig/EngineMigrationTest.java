@@ -556,29 +556,29 @@ public class EngineMigrationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tm\tts\tдень\tstr
-                    1\t\t1970-01-01T01:27:00.000000Z\ta\tTLQZSLQ
-                    6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
-                    12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB
-                    14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN
-                    16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL
-                    19\tb\t1970-01-01T19:27:00.000000Z\ta\tTZODWKOCPF
-                    21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM
-                    24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB
-                    31\ta\t1970-01-02T07:27:00.000000Z\ta\tGFI
-                    32\ta\t1970-01-02T08:27:00.000000Z\ta\tVZWEV
-                    33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD
-                    34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI
-                    35\t\t1970-01-02T11:27:00.000000Z\ta\tPTYXYGYFUX
-                    1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN
-                    4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
-                    5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB
-                    7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH
-                    9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
-                    8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE
-                    10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV
-                    9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG
-                    """);
+                            x\tm\tts\tдень\tstr
+                            1\t\t1970-01-01T01:27:00.000000Z\ta\tTLQZSLQ
+                            6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
+                            12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB
+                            14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN
+                            16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL
+                            19\tb\t1970-01-01T19:27:00.000000Z\ta\tTZODWKOCPF
+                            21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM
+                            24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB
+                            31\ta\t1970-01-02T07:27:00.000000Z\ta\tGFI
+                            32\ta\t1970-01-02T08:27:00.000000Z\ta\tVZWEV
+                            33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD
+                            34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI
+                            35\t\t1970-01-02T11:27:00.000000Z\ta\tPTYXYGYFUX
+                            1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN
+                            4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
+                            5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB
+                            7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH
+                            9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
+                            8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE
+                            10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV
+                            9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG
+                            """);
         }
 
         if (withWalTxn) {
@@ -586,25 +586,25 @@ public class EngineMigrationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tm\tts\tдень\tstr
-                    3\tc\t1970-01-05T04:30:00.000000Z\ta\tBLJTFSDQIE
-                    2\ta\t1970-01-05T05:25:00.000000Z\tc\tXHFVWSWSR
-                    4\t\t1970-01-05T05:30:00.000000Z\ta\tNEL
-                    3\tc\t1970-01-05T06:25:00.000000Z\t\tFCLTJC
-                    5\tc\t1970-01-05T06:30:00.000000Z\t\tGOFBJEB
-                    4\tc\t1970-01-05T07:25:00.000000Z\tb\tNTO
-                    6\tc\t1970-01-05T07:30:00.000000Z\tb\tKPXZEW
-                    5\tb\t1970-01-05T08:25:00.000000Z\tc\tKLGMXS
-                    7\ta\t1970-01-05T08:30:00.000000Z\ta\tFWMLBWUYKD
-                    6\tb\t1970-01-05T09:25:00.000000Z\t\tYOPHNIMYFF
-                    8\tb\t1970-01-05T09:30:00.000000Z\ta\tYQZ
-                    7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH
-                    9\tb\t1970-01-05T10:30:00.000000Z\tb\tOQMEYOJYZ
-                    8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE
-                    10\tc\t1970-01-05T11:30:00.000000Z\tb\tGQY
-                    9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG
-                    10\ta\t1970-01-05T13:25:00.000000Z\t\tRZLCBDMIGQ
-                    """);
+                            x\tm\tts\tдень\tstr
+                            3\tc\t1970-01-05T04:30:00.000000Z\ta\tBLJTFSDQIE
+                            2\ta\t1970-01-05T05:25:00.000000Z\tc\tXHFVWSWSR
+                            4\t\t1970-01-05T05:30:00.000000Z\ta\tNEL
+                            3\tc\t1970-01-05T06:25:00.000000Z\t\tFCLTJC
+                            5\tc\t1970-01-05T06:30:00.000000Z\t\tGOFBJEB
+                            4\tc\t1970-01-05T07:25:00.000000Z\tb\tNTO
+                            6\tc\t1970-01-05T07:30:00.000000Z\tb\tKPXZEW
+                            5\tb\t1970-01-05T08:25:00.000000Z\tc\tKLGMXS
+                            7\ta\t1970-01-05T08:30:00.000000Z\ta\tFWMLBWUYKD
+                            6\tb\t1970-01-05T09:25:00.000000Z\t\tYOPHNIMYFF
+                            8\tb\t1970-01-05T09:30:00.000000Z\ta\tYQZ
+                            7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH
+                            9\tb\t1970-01-05T10:30:00.000000Z\tb\tOQMEYOJYZ
+                            8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE
+                            10\tc\t1970-01-05T11:30:00.000000Z\tb\tGQY
+                            9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG
+                            10\ta\t1970-01-05T13:25:00.000000Z\t\tRZLCBDMIGQ
+                            """);
         }
     }
 
@@ -669,45 +669,45 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                x\tm\tts\tдень
-                1\tc\t1970-01-01T00:33:20.000000Z\tnull
-                2\tb\t1970-01-01T06:06:40.000000Z\tnull
-                3\tb\t1970-01-01T11:40:00.000000Z\tnull
-                4\tc\t1970-01-01T17:13:20.000000Z\tnull
-                5\tc\t1970-01-01T22:46:40.000000Z\tnull
-                6\tc\t1970-01-02T04:20:00.000000Z\tnull
-                7\tb\t1970-01-02T09:53:20.000000Z\tnull
-                8\t\t1970-01-02T15:26:40.000000Z\tnull
-                9\t\t1970-01-02T21:00:00.000000Z\tnull
-                10\tc\t1970-01-03T02:33:20.000000Z\tnull
-                11\tb\t1970-01-03T08:06:40.000000Z\tnull
-                12\tb\t1970-01-03T13:40:00.000000Z\tnull
-                13\tb\t1970-01-03T19:13:20.000000Z\tnull
-                14\tb\t1970-01-04T00:46:40.000000Z\tnull
-                15\t\t1970-01-04T06:20:00.000000Z\tnull
-                """);
+                        x\tm\tts\tдень
+                        1\tc\t1970-01-01T00:33:20.000000Z\tnull
+                        2\tb\t1970-01-01T06:06:40.000000Z\tnull
+                        3\tb\t1970-01-01T11:40:00.000000Z\tnull
+                        4\tc\t1970-01-01T17:13:20.000000Z\tnull
+                        5\tc\t1970-01-01T22:46:40.000000Z\tnull
+                        6\tc\t1970-01-02T04:20:00.000000Z\tnull
+                        7\tb\t1970-01-02T09:53:20.000000Z\tnull
+                        8\t\t1970-01-02T15:26:40.000000Z\tnull
+                        9\t\t1970-01-02T21:00:00.000000Z\tnull
+                        10\tc\t1970-01-03T02:33:20.000000Z\tnull
+                        11\tb\t1970-01-03T08:06:40.000000Z\tnull
+                        12\tb\t1970-01-03T13:40:00.000000Z\tnull
+                        13\tb\t1970-01-03T19:13:20.000000Z\tnull
+                        14\tb\t1970-01-04T00:46:40.000000Z\tnull
+                        15\t\t1970-01-04T06:20:00.000000Z\tnull
+                        """);
 
         assertQuery("t_col_top_день where день != null")
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                x\tm\tts\tдень
-                16\te\t1970-01-03T07:36:40.000000Z\t16
-                17\tf\t1970-01-03T08:10:00.000000Z\t17
-                18\te\t1970-01-03T08:43:20.000000Z\t18
-                19\t\t1970-01-03T09:16:40.000000Z\t19
-                20\te\t1970-01-03T09:50:00.000000Z\t20
-                21\td\t1970-01-03T10:23:20.000000Z\t21
-                22\td\t1970-01-03T10:56:40.000000Z\t22
-                23\tf\t1970-01-03T11:30:00.000000Z\t23
-                24\t\t1970-01-03T12:03:20.000000Z\t24
-                25\td\t1970-01-03T12:36:40.000000Z\t25
-                26\te\t1970-01-03T13:10:00.000000Z\t26
-                27\te\t1970-01-03T13:43:20.000000Z\t27
-                28\tf\t1970-01-03T14:16:40.000000Z\t28
-                29\te\t1970-01-03T14:50:00.000000Z\t29
-                30\td\t1970-01-03T15:23:20.000000Z\t30
-                """);
+                        x\tm\tts\tдень
+                        16\te\t1970-01-03T07:36:40.000000Z\t16
+                        17\tf\t1970-01-03T08:10:00.000000Z\t17
+                        18\te\t1970-01-03T08:43:20.000000Z\t18
+                        19\t\t1970-01-03T09:16:40.000000Z\t19
+                        20\te\t1970-01-03T09:50:00.000000Z\t20
+                        21\td\t1970-01-03T10:23:20.000000Z\t21
+                        22\td\t1970-01-03T10:56:40.000000Z\t22
+                        23\tf\t1970-01-03T11:30:00.000000Z\t23
+                        24\t\t1970-01-03T12:03:20.000000Z\t24
+                        25\td\t1970-01-03T12:36:40.000000Z\t25
+                        26\te\t1970-01-03T13:10:00.000000Z\t26
+                        27\te\t1970-01-03T13:43:20.000000Z\t27
+                        28\tf\t1970-01-03T14:16:40.000000Z\t28
+                        29\te\t1970-01-03T14:50:00.000000Z\t29
+                        30\td\t1970-01-03T15:23:20.000000Z\t30
+                        """);
     }
 
     private void assertColTopsO3() throws Exception {
@@ -715,85 +715,85 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                x\tm\tts\tдень\tstr
-                6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
-                4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
-                9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
-                """);
+                        x\tm\tts\tдень\tstr
+                        6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
+                        4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
+                        9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
+                        """);
 
         assertQuery("t_col_top_ooo_day where m != null limit -20")
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                x\tm\tts\tдень\tstr
-                81\tc\t1970-01-04T09:00:00.000000Z\t\t
-                82\tc\t1970-01-04T10:00:00.000000Z\t\t
-                84\ta\t1970-01-04T12:00:00.000000Z\t\t
-                85\tb\t1970-01-04T13:00:00.000000Z\t\t
-                86\tb\t1970-01-04T14:00:00.000000Z\t\t
-                87\tb\t1970-01-04T15:00:00.000000Z\t\t
-                88\tc\t1970-01-04T16:00:00.000000Z\t\t
-                89\tc\t1970-01-04T17:00:00.000000Z\t\t
-                90\ta\t1970-01-04T18:00:00.000000Z\t\t
-                92\ta\t1970-01-04T20:00:00.000000Z\t\t
-                93\tb\t1970-01-04T21:00:00.000000Z\t\t
-                94\ta\t1970-01-04T22:00:00.000000Z\t\t
-                96\ta\t1970-01-05T00:00:00.000000Z\t\t
-                2\ta\t1970-01-05T03:30:00.000000Z\tc\tWTBBMMDB
-                3\tb\t1970-01-05T04:30:00.000000Z\tc\tGXIID
-                4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
-                6\ta\t1970-01-05T07:30:00.000000Z\tc\tQYDQVLY
-                7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR
-                8\tb\t1970-01-05T09:30:00.000000Z\tc\tMLMGICUW
-                9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
-                """);
+                        x\tm\tts\tдень\tstr
+                        81\tc\t1970-01-04T09:00:00.000000Z\t\t
+                        82\tc\t1970-01-04T10:00:00.000000Z\t\t
+                        84\ta\t1970-01-04T12:00:00.000000Z\t\t
+                        85\tb\t1970-01-04T13:00:00.000000Z\t\t
+                        86\tb\t1970-01-04T14:00:00.000000Z\t\t
+                        87\tb\t1970-01-04T15:00:00.000000Z\t\t
+                        88\tc\t1970-01-04T16:00:00.000000Z\t\t
+                        89\tc\t1970-01-04T17:00:00.000000Z\t\t
+                        90\ta\t1970-01-04T18:00:00.000000Z\t\t
+                        92\ta\t1970-01-04T20:00:00.000000Z\t\t
+                        93\tb\t1970-01-04T21:00:00.000000Z\t\t
+                        94\ta\t1970-01-04T22:00:00.000000Z\t\t
+                        96\ta\t1970-01-05T00:00:00.000000Z\t\t
+                        2\ta\t1970-01-05T03:30:00.000000Z\tc\tWTBBMMDB
+                        3\tb\t1970-01-05T04:30:00.000000Z\tc\tGXIID
+                        4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
+                        6\ta\t1970-01-05T07:30:00.000000Z\tc\tQYDQVLY
+                        7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR
+                        8\tb\t1970-01-05T09:30:00.000000Z\tc\tMLMGICUW
+                        9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
+                        """);
 
         assertQuery("t_col_top_ooo_day where день = null and m != null limit -20")
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                x\tm\tts\tдень\tstr
-                71\tc\t1970-01-03T23:00:00.000000Z\t\t
-                72\tb\t1970-01-04T00:00:00.000000Z\t\t
-                76\tc\t1970-01-04T04:00:00.000000Z\t\t
-                77\tc\t1970-01-04T05:00:00.000000Z\t\t
-                78\tb\t1970-01-04T06:00:00.000000Z\t\t
-                79\ta\t1970-01-04T07:00:00.000000Z\t\t
-                81\tc\t1970-01-04T09:00:00.000000Z\t\t
-                82\tc\t1970-01-04T10:00:00.000000Z\t\t
-                84\ta\t1970-01-04T12:00:00.000000Z\t\t
-                85\tb\t1970-01-04T13:00:00.000000Z\t\t
-                86\tb\t1970-01-04T14:00:00.000000Z\t\t
-                87\tb\t1970-01-04T15:00:00.000000Z\t\t
-                88\tc\t1970-01-04T16:00:00.000000Z\t\t
-                89\tc\t1970-01-04T17:00:00.000000Z\t\t
-                90\ta\t1970-01-04T18:00:00.000000Z\t\t
-                92\ta\t1970-01-04T20:00:00.000000Z\t\t
-                93\tb\t1970-01-04T21:00:00.000000Z\t\t
-                94\ta\t1970-01-04T22:00:00.000000Z\t\t
-                96\ta\t1970-01-05T00:00:00.000000Z\t\t
-                7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR
-                """);
+                        x\tm\tts\tдень\tstr
+                        71\tc\t1970-01-03T23:00:00.000000Z\t\t
+                        72\tb\t1970-01-04T00:00:00.000000Z\t\t
+                        76\tc\t1970-01-04T04:00:00.000000Z\t\t
+                        77\tc\t1970-01-04T05:00:00.000000Z\t\t
+                        78\tb\t1970-01-04T06:00:00.000000Z\t\t
+                        79\ta\t1970-01-04T07:00:00.000000Z\t\t
+                        81\tc\t1970-01-04T09:00:00.000000Z\t\t
+                        82\tc\t1970-01-04T10:00:00.000000Z\t\t
+                        84\ta\t1970-01-04T12:00:00.000000Z\t\t
+                        85\tb\t1970-01-04T13:00:00.000000Z\t\t
+                        86\tb\t1970-01-04T14:00:00.000000Z\t\t
+                        87\tb\t1970-01-04T15:00:00.000000Z\t\t
+                        88\tc\t1970-01-04T16:00:00.000000Z\t\t
+                        89\tc\t1970-01-04T17:00:00.000000Z\t\t
+                        90\ta\t1970-01-04T18:00:00.000000Z\t\t
+                        92\ta\t1970-01-04T20:00:00.000000Z\t\t
+                        93\tb\t1970-01-04T21:00:00.000000Z\t\t
+                        94\ta\t1970-01-04T22:00:00.000000Z\t\t
+                        96\ta\t1970-01-05T00:00:00.000000Z\t\t
+                        7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR
+                        """);
 
         assertQuery("t_col_top_ooo_day where день = 'a'")
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                x\tm\tts\tдень\tstr
-                6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
-                12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB
-                14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN
-                16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL
-                21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM
-                24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB
-                33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD
-                34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI
-                1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN
-                4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
-                5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB
-                9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
-                10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV
-                """);
+                        x\tm\tts\tдень\tstr
+                        6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI
+                        12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB
+                        14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN
+                        16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL
+                        21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM
+                        24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB
+                        33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD
+                        34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI
+                        1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN
+                        4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH
+                        5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB
+                        9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD
+                        10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV
+                        """);
     }
 
     private void assertData(boolean withO3, boolean withColTops, boolean withColTopO3, boolean withWalTxn) throws Exception {

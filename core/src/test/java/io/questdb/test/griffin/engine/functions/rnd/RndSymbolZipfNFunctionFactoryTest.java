@@ -42,8 +42,8 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
 
         // Should return all 5 symbols, but with different frequencies (sym0 most common)
         assertQuery("""
-                        select testCol, count() as cnt from abc order by 1
-                        """)
+                select testCol, count() as cnt from abc order by 1
+                """)
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
@@ -126,10 +126,10 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                testCol\tcnt
-                sym0\t98
-                sym1\t2
-                """);
+                        testCol\tcnt
+                        sym0\t98
+                        sym1\t2
+                        """);
     }
 
     @Test
@@ -150,8 +150,8 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
 
         // Verify we get multiple distinct symbols and first symbol is most common
         assertQuery("""
-                        select testCol, count() as cnt from abc order by 2 desc limit 1
-                        """)
+                select testCol, count() as cnt from abc order by 2 desc limit 1
+                """)
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
@@ -174,13 +174,13 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                testCol\tcnt
-                sym0\t26
-                sym1\t22
-                sym2\t20
-                sym3\t14
-                sym4\t18
-                """);
+                        testCol\tcnt
+                        sym0\t26
+                        sym1\t22
+                        sym2\t20
+                        sym3\t14
+                        sym4\t18
+                        """);
     }
 
     @Test
@@ -214,10 +214,10 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                testCol\tcnt
-                sym0\t63
-                sym1\t37
-                """);
+                        testCol\tcnt
+                        sym0\t63
+                        sym1\t37
+                        """);
     }
 
     @Test

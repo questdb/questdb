@@ -32,51 +32,51 @@ public class DBeaverTest extends AbstractCairoTest {
     @Test
     public void testDotNetGetTypes() throws Exception {
         assertQuery("""
-                        SELECT ns.nspname, typ_and_elem_type.*,
-                           CASE
-                               WHEN typtype IN ('b', 'e', 'p') THEN 0           -- First base types, enums, pseudo-types
-                               WHEN typtype = 'r' THEN 1                        -- Ranges after
-                               WHEN typtype = 'c' THEN 2                        -- Composites after
-                               WHEN typtype = 'd' AND elemtyptype <> 'a' THEN 3 -- Domains over non-arrays after
-                               WHEN typtype = 'a' THEN 4                        -- Arrays before
-                               WHEN typtype = 'd' AND elemtyptype = 'a' THEN 5  -- Domains over arrays last
-                            END AS ord
-                        FROM (
-                            -- Arrays have typtype=b - this subquery identifies them by their typreceive and converts their typtype to a
-                            -- We first do this for the type (innermost subquery), and then for its element type
-                            -- This also returns the array element, range subtype and domain base type as elemtypoid
-                            SELECT
-                                typ.oid, typ.typnamespace, typ.typname, typ.typtype, typ.typrelid, typ.typnotnull, typ.relkind,
-                                elemtyp.oid AS elemtypoid, elemtyp.typname AS elemtypname, elemcls.relkind AS elemrelkind,
-                                CASE WHEN elemproc.proname='array_recv' THEN 'a' ELSE elemtyp.typtype END AS elemtyptype
-                            FROM (
-                                SELECT typ.oid, typnamespace, typname, typrelid, typnotnull, relkind, typelem AS elemoid,
-                                    CASE WHEN proc.proname='array_recv' THEN 'a' ELSE typ.typtype END AS typtype,
-                                    CASE
-                                        WHEN proc.proname='array_recv' THEN typ.typelem
-                                        WHEN typ.typtype='r' THEN rngsubtype
-                                        WHEN typ.typtype='d' THEN typ.typbasetype
-                                    END AS elemtypoid
-                                FROM pg_type AS typ
-                                LEFT JOIN pg_class AS cls ON (cls.oid = typ.typrelid)
-                                LEFT JOIN pg_proc AS proc ON proc.oid = typ.typreceive
-                                LEFT JOIN pg_range ON (pg_range.rngtypid = typ.oid)
-                            ) AS typ
-                            LEFT JOIN pg_type AS elemtyp ON elemtyp.oid = elemtypoid
-                            LEFT JOIN pg_class AS elemcls ON (elemcls.oid = elemtyp.typrelid)
-                            LEFT JOIN pg_proc AS elemproc ON elemproc.oid = elemtyp.typreceive
-                        ) AS typ_and_elem_type
-                        JOIN pg_namespace AS ns ON (ns.oid = typnamespace)
-                        WHERE
-                            typtype IN ('b', 'r', 'e', 'd') OR -- Base, range, enum, domain
-                            (typtype = 'c' AND relkind='c') OR -- User-defined free-standing composites (not table composites) by default
-                            (typtype = 'p' AND typname IN ('record', 'void')) OR -- Some special supported pseudo-types
-                            (typtype = 'a' AND (  -- Array of...
-                                elemtyptype IN ('b', 'r', 'e', 'd') OR -- Array of base, range, enum, domain
-                                (elemtyptype = 'p' AND elemtypname IN ('record', 'void')) OR -- Arrays of special supported pseudo-types
-                                (elemtyptype = 'c' AND elemrelkind='c') -- Array of user-defined free-standing composites (not table composites) by default
-                            ))
-                        ORDER BY ord""")
+                SELECT ns.nspname, typ_and_elem_type.*,
+                   CASE
+                       WHEN typtype IN ('b', 'e', 'p') THEN 0           -- First base types, enums, pseudo-types
+                       WHEN typtype = 'r' THEN 1                        -- Ranges after
+                       WHEN typtype = 'c' THEN 2                        -- Composites after
+                       WHEN typtype = 'd' AND elemtyptype <> 'a' THEN 3 -- Domains over non-arrays after
+                       WHEN typtype = 'a' THEN 4                        -- Arrays before
+                       WHEN typtype = 'd' AND elemtyptype = 'a' THEN 5  -- Domains over arrays last
+                    END AS ord
+                FROM (
+                    -- Arrays have typtype=b - this subquery identifies them by their typreceive and converts their typtype to a
+                    -- We first do this for the type (innermost subquery), and then for its element type
+                    -- This also returns the array element, range subtype and domain base type as elemtypoid
+                    SELECT
+                        typ.oid, typ.typnamespace, typ.typname, typ.typtype, typ.typrelid, typ.typnotnull, typ.relkind,
+                        elemtyp.oid AS elemtypoid, elemtyp.typname AS elemtypname, elemcls.relkind AS elemrelkind,
+                        CASE WHEN elemproc.proname='array_recv' THEN 'a' ELSE elemtyp.typtype END AS elemtyptype
+                    FROM (
+                        SELECT typ.oid, typnamespace, typname, typrelid, typnotnull, relkind, typelem AS elemoid,
+                            CASE WHEN proc.proname='array_recv' THEN 'a' ELSE typ.typtype END AS typtype,
+                            CASE
+                                WHEN proc.proname='array_recv' THEN typ.typelem
+                                WHEN typ.typtype='r' THEN rngsubtype
+                                WHEN typ.typtype='d' THEN typ.typbasetype
+                            END AS elemtypoid
+                        FROM pg_type AS typ
+                        LEFT JOIN pg_class AS cls ON (cls.oid = typ.typrelid)
+                        LEFT JOIN pg_proc AS proc ON proc.oid = typ.typreceive
+                        LEFT JOIN pg_range ON (pg_range.rngtypid = typ.oid)
+                    ) AS typ
+                    LEFT JOIN pg_type AS elemtyp ON elemtyp.oid = elemtypoid
+                    LEFT JOIN pg_class AS elemcls ON (elemcls.oid = elemtyp.typrelid)
+                    LEFT JOIN pg_proc AS elemproc ON elemproc.oid = elemtyp.typreceive
+                ) AS typ_and_elem_type
+                JOIN pg_namespace AS ns ON (ns.oid = typnamespace)
+                WHERE
+                    typtype IN ('b', 'r', 'e', 'd') OR -- Base, range, enum, domain
+                    (typtype = 'c' AND relkind='c') OR -- User-defined free-standing composites (not table composites) by default
+                    (typtype = 'p' AND typname IN ('record', 'void')) OR -- Some special supported pseudo-types
+                    (typtype = 'a' AND (  -- Array of...
+                        elemtyptype IN ('b', 'r', 'e', 'd') OR -- Array of base, range, enum, domain
+                        (elemtyptype = 'p' AND elemtypname IN ('record', 'void')) OR -- Arrays of special supported pseudo-types
+                        (elemtyptype = 'c' AND elemrelkind='c') -- Array of user-defined free-standing composites (not table composites) by default
+                    ))
+                ORDER BY ord""")
                 .expectSize()
                 .returns("""
                         nspname\toid\ttypnamespace\ttypname\ttyptype\ttyprelid\ttypnotnull\trelkind\telemtypoid\telemtypname\telemrelkind\telemtyptype\tord
@@ -117,16 +117,16 @@ public class DBeaverTest extends AbstractCairoTest {
             execute("create table tab2(b long, z binary)");
 
             assertQuery("""
-                            SELECT\s
-                                c.relname,
-                                a.*,
-                                pg_catalog.pg_get_expr(ad.adbin, ad.adrelid, true) as def_value,
-                                dsc.description
-                            FROM pg_catalog.pg_attribute a
-                            INNER JOIN pg_catalog.pg_class c ON (a.attrelid=c.oid)
-                            LEFT OUTER JOIN pg_catalog.pg_attrdef ad ON (a.attrelid=ad.adrelid AND a.attnum = ad.adnum)
-                            LEFT OUTER JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)
-                            WHERE NOT a.attisdropped AND c.oid=1 ORDER BY a.attnum""")
+                    SELECT\s
+                        c.relname,
+                        a.*,
+                        pg_catalog.pg_get_expr(ad.adbin, ad.adrelid, true) as def_value,
+                        dsc.description
+                    FROM pg_catalog.pg_attribute a
+                    INNER JOIN pg_catalog.pg_class c ON (a.attrelid=c.oid)
+                    LEFT OUTER JOIN pg_catalog.pg_attrdef ad ON (a.attrelid=ad.adrelid AND a.attnum = ad.adnum)
+                    LEFT OUTER JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)
+                    WHERE NOT a.attisdropped AND c.oid=1 ORDER BY a.attnum""")
                     .noLeakCheck()
                     .returns("""
                             relname\tattrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\tdef_value\tdescription
@@ -142,10 +142,10 @@ public class DBeaverTest extends AbstractCairoTest {
             execute("create table xyz(a int)");
             execute("create table tab2(b long)");
             assertQuery("""
-                            SELECT c.oid "oid tral",c.*,d.description,pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_expr,  pg_catalog.pg_get_partkeydef(c.oid) as partition_key\s
-                            FROM pg_catalog.pg_class c
-                            LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=c.oid AND d.objsubid=0 AND d.classoid='pg_class'::regclass
-                            WHERE c.relnamespace=2200 AND c.relkind not in ('i','I','c') order by relname""")
+                    SELECT c.oid "oid tral",c.*,d.description,pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_expr,  pg_catalog.pg_get_partkeydef(c.oid) as partition_key\s
+                    FROM pg_catalog.pg_class c
+                    LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=c.oid AND d.objsubid=0 AND d.classoid='pg_class'::regclass
+                    WHERE c.relnamespace=2200 AND c.relkind not in ('i','I','c') order by relname""")
                     .noLeakCheck()
                     .returns("""
                             oid tral\toid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\tdescription\tpartition_expr\tpartition_key
@@ -158,12 +158,12 @@ public class DBeaverTest extends AbstractCairoTest {
     @Test
     public void testListTypes() throws Exception {
         assertQuery("""
-                        SELECT t.oid as oid1,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description
-                        FROM pg_catalog.pg_type t
-                        LEFT OUTER JOIN pg_catalog.pg_class c ON c.oid=t.typrelid
-                        LEFT OUTER JOIN pg_catalog.pg_description d ON t.oid=d.objoid
-                        WHERE typnamespace=11
-                        ORDER by t.oid""")
+                SELECT t.oid as oid1,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description
+                FROM pg_catalog.pg_type t
+                LEFT OUTER JOIN pg_catalog.pg_class c ON c.oid=t.typrelid
+                LEFT OUTER JOIN pg_catalog.pg_description d ON t.oid=d.objoid
+                WHERE typnamespace=11
+                ORDER by t.oid""")
                 .returns("""
                         oid1\toid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttypcategory\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\ttypowner\ttyplen\ttypbyval\ttypispreferred\ttypisdefined\ttypalign\ttypstorage\ttypndims\ttypcollation\ttypdefault\trelkind\tbase_type_name\tdescription
                         16\t16\tbool\t0\t1000\t11\tfalse\t0\tb\tB\tnull\t0\t0\t0\t0\t0\t1\tfalse\tfalse\ttrue\tc\tp\t0\t0\tfalse\t\t\t
@@ -189,9 +189,9 @@ public class DBeaverTest extends AbstractCairoTest {
     @Test
     public void testNamespaceListSql() throws Exception {
         assertQuery("""
-                        SELECT n.oid "n_oid",n.*,d.description FROM pg_catalog.pg_namespace n
-                        LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=n.oid AND d.objsubid=0 AND d.classoid='pg_namespace'::regclass
-                         ORDER BY nspname""")
+                SELECT n.oid "n_oid",n.*,d.description FROM pg_catalog.pg_namespace n
+                LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=n.oid AND d.objsubid=0 AND d.classoid='pg_namespace'::regclass
+                 ORDER BY nspname""")
                 .returns("""
                         n_oid\tnspname\toid\txmin\tnspowner\tdescription
                         11\tpg_catalog\t11\t0\t1\t

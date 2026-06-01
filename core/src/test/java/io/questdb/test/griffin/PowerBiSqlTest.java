@@ -41,7 +41,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCheckConstraints1() throws Exception{
+    public void testCheckConstraints1() throws Exception {
         execute("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
         assertQuery("""
                 select
@@ -68,7 +68,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCheckConstraints2() throws Exception{
+    public void testCheckConstraints2() throws Exception {
         execute("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
         assertQuery("""
                 select i.CONSTRAINT_SCHEMA || '_' || i.CONSTRAINT_NAME as INDEX_NAME, ii.COLUMN_NAME, ii.ORDINAL_POSITION, case when i.CONSTRAINT_TYPE = 'PRIMARY KEY' then 'Y' else 'N' end as PRIMARY_KEY
@@ -81,7 +81,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEnum() throws Exception{
+    public void testEnum() throws Exception {
         assertQuery("""
                 /*** Load enum fields ***/
                 SELECT pg_type.oid, enumlabel
@@ -93,7 +93,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParanoidTableSelect() throws Exception{
+    public void testParanoidTableSelect() throws Exception {
         execute("create table trades as (select rnd_int() a, rnd_double() b, 0::timestamp t from long_sequence(10)) timestamp(t) partition by hour");
         assertQuery("""
                 select "$Table"."a" as "a",
@@ -119,7 +119,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectParanoidEnvelope() throws Exception{
+    public void testSelectParanoidEnvelope() throws Exception {
         execute("create table trades as (select rnd_int() a, rnd_double() b, 0::timestamp t from long_sequence(10)) timestamp(t) partition by hour");
         assertQuery("""
                 select "$Table"."a" as "a",
@@ -149,7 +149,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTableColumns() throws Exception{
+    public void testTableColumns() throws Exception {
         execute("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
         assertQuery("""
                 select COLUMN_NAME, ORDINAL_POSITION, IS_NULLABLE, case when (data_type like '%unsigned%') then DATA_TYPE || ' unsigned' else DATA_TYPE end as DATA_TYPE
@@ -166,7 +166,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTableListing() throws Exception{
+    public void testTableListing() throws Exception {
         execute("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
         assertQuery("""
                 select TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE

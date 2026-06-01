@@ -755,15 +755,13 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             preparePartitionPerRowTableWithLongNames();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                assertQueryNoLeakCheck(
-                        compiler,
-                        "record_Type\tcre_on\n" + DATA,
-                        "select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5",
-                        "cre_on###DESC",
-                        true,
-                        sqlExecutionContext,
-                        true
-                );
+                assertQuery("select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5")
+                        .noLeakCheck()
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .timestampDesc("cre_on")
+                        .expectSize()
+                        .returns("record_Type\tcre_on\n" + DATA);
             }
         });
     }
@@ -788,7 +786,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
             preparePartitionPerRowTableWithLongNames();
 
             assertQuery("select rectype, creaton from " +
-                            "( select record_Type as rectype, CREATED_ON creaton from trips order by created_on desc limit 5)")
+                    "( select record_Type as rectype, CREATED_ON creaton from trips order by created_on desc limit 5)")
                     .ddl(null)
                     .timestampDesc("creaton")
                     .expectSize()
@@ -802,10 +800,10 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
             preparePartitionPerRowTableWithLongNames();
 
             assertQuery("select rectype, creaton from " +
-                            "( select record_Type as rectype, CREATED_ON creaton " +
-                            "from trips " +
-                            "order by created_on desc) " +
-                            "limit 5")
+                    "( select record_Type as rectype, CREATED_ON creaton " +
+                    "from trips " +
+                    "order by created_on desc) " +
+                    "limit 5")
                     .ddl(null)
                     .timestampDesc("creaton")
                     .expectSize()
@@ -819,8 +817,8 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
             preparePartitionPerRowTableWithLongNames();
             // order by advice is not available in the sub-query ... sort performed by limitRecordCursor
             assertQuery("select rectype, creaton from " +
-                            "( select record_Type as rectype, CREATED_ON creaton from trips) " +
-                            "order by creaton desc limit 5")
+                    "( select record_Type as rectype, CREATED_ON creaton from trips) " +
+                    "order by creaton desc limit 5")
                     .noLeakCheck()
                     .ddl(null)
                     .timestampDesc("creaton")

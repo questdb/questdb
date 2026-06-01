@@ -228,7 +228,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCoalesceIPv4StringLiteral() throws Exception {
         assertQuery("select coalesce(x, '127.0.0.1') as c1, coalesce('127.0.0.1', x) as c2, x \n" +
-                        "from t")
+                "from t")
                 .ddl("create table t as (" +
                         "select CASE WHEN x % 2 = 0 THEN rnd_ipv4('1.1.1.1/16', 2) ELSE NULL END as x " +
                         " from long_sequence(5)" +
@@ -247,7 +247,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCoalesceIPv4VarcharLiteral() throws Exception {
         assertQuery("select coalesce(x, '127.0.0.1'::varchar) as c1, coalesce('127.0.0.1'::varchar, x) as c2, x \n" +
-                        "from t")
+                "from t")
                 .ddl("create table t as (" +
                         "select CASE WHEN x % 2 = 0 THEN rnd_ipv4('1.1.1.1/16', 2) ELSE NULL END as x " +
                         " from long_sequence(5)" +
@@ -266,7 +266,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCoalesceLong256() throws Exception {
         assertQuery("select coalesce(a, b, x) as c1, coalesce(a, b) c2, a, b, x \n" +
-                        "from alex")
+                "from alex")
                 .ddl("create table alex as (" +
                         "select CASE WHEN x % 2 = 0 THEN rnd_long256(1000) ELSE CAST(NULL as LONG256) END as x," +
                         " CASE WHEN x % 4 = 0 THEN rnd_long256(10) ELSE CAST(NULL as LONG256) END as a," +
@@ -287,7 +287,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCoalesceUuid() throws Exception {
         assertQuery("select coalesce(a, b, x) as c1, coalesce(a, b) c2, a, b, x \n" +
-                        "from t")
+                "from t")
                 .ddl("create table t as (" +
                         "select CASE WHEN x % 2 = 0 THEN rnd_uuid4() ELSE NULL END as x," +
                         " CASE WHEN x % 4 = 0 THEN rnd_uuid4() ELSE NULL END as a," +
@@ -320,7 +320,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCoalesceUuidNull() throws Exception {
         assertQuery("select coalesce(x, null) as c1, coalesce(null, x) c2, x \n" +
-                        "from t")
+                "from t")
                 .ddl("create table t as (" +
                         "select CASE WHEN x % 2 = 0 THEN rnd_uuid4() ELSE NULL END as x " +
                         " from long_sequence(5)" +
@@ -339,7 +339,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCoalesceUuidStringLiteral() throws Exception {
         assertQuery("select coalesce(x, '00000000-0000-0000-0000-000000000000') as c1, coalesce('00000000-0000-0000-0000-000000000000', x) as c2, x \n" +
-                        "from t")
+                "from t")
                 .ddl("create table t as (" +
                         "select CASE WHEN x % 2 = 0 THEN rnd_uuid4() ELSE NULL END as x " +
                         " from long_sequence(5)" +
@@ -358,7 +358,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCoalesceUuidVarcharLiteral() throws Exception {
         assertQuery("select coalesce(x, '00000000-0000-0000-0000-000000000000'::varchar) as c1, coalesce('00000000-0000-0000-0000-000000000000'::varchar, x) as c2, x \n" +
-                        "from t")
+                "from t")
                 .ddl("create table t as (" +
                         "select CASE WHEN x % 2 = 0 THEN rnd_uuid4() ELSE NULL END as x " +
                         " from long_sequence(5)" +
@@ -377,7 +377,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCoalesceVarchar() throws Exception {
         assertQuery("select coalesce(a, b, x) as c1, coalesce(a, b) c2, a, b, x \n" +
-                        "from t")
+                "from t")
                 .ddl("create table t as (" +
                         "select CASE WHEN x % 2 = 0 THEN rnd_varchar() ELSE CAST(NULL as VARCHAR) END as x," +
                         " CASE WHEN x % 4 = 0 THEN rnd_varchar() ELSE CAST(NULL as VARCHAR) END as a," +
@@ -398,7 +398,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDateCoalesce() throws Exception {
         assertQuery("select coalesce(a, b, x) as c1, coalesce(a, b) c2, a, x \n" +
-                        "from alex")
+                "from alex")
                 .ddl("""
                         create table alex as (\
                         WITH tx as (
@@ -426,7 +426,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDouble3Args() throws Exception {
         assertQuery("select coalesce(b, a, x) " +
-                        "from alex")
+                "from alex")
                 .ddl("create table alex as (" +
                         "select CASE WHEN x % 3 = 0 THEN x / 10.0 ELSE CAST(NULL as double) END as x," +
                         " CASE WHEN x % 3 = 0 THEN 0.5 ELSE CAST(NULL as double) END as a," +
@@ -448,7 +448,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDoubleAndLongMixed3Args() throws Exception {
         assertQuery("select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
-                        "from alex")
+                "from alex")
                 .ddl("create table alex as (" +
                         "select x / 10.0 as x," +
                         " CASE WHEN x % 3 = 0 THEN 100L ELSE CAST(NULL as long) END as a," +
@@ -504,7 +504,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFloat3Args() throws Exception {
         assertQuery("select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
-                        "from alex")
+                "from alex")
                 .ddl("create table alex as (" +
                         "select " +
                         " CASE WHEN x > 3 THEN CAST(x as float) ELSE CAST(NULL as float) END as x," +
@@ -526,7 +526,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testIPv4Args() throws Exception {
         assertQuery("select coalesce(a, b, x) c1, coalesce(a, b) c2, a, b, x\n" +
-                        "from test")
+                "from test")
                 .ddl("create table test as (" +
                         "select " +
                         " rnd_ipv4('1.1.1.1/16', 2) x," +
@@ -548,7 +548,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testIntArgs() throws Exception {
         assertQuery("select coalesce(a, b, x) c1, coalesce(a, b) c2, a, b, x\n" +
-                        "from alex")
+                "from alex")
                 .ddl("create table alex as (" +
                         "select " +
                         " CASE WHEN x > 3 THEN CAST(x as INT)ELSE CAST(NULL as INT) END x," +
@@ -570,7 +570,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLong2Args() throws Exception {
         assertQuery("select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
-                        "from alex")
+                "from alex")
                 .ddl("create table alex as (" +
                         "select CASE WHEN x % 2 = 0 THEN CAST(NULL as long) ELSE x END as x," +
                         " CASE WHEN x % 3 = 0 THEN x * 2 ELSE CAST(NULL as long) END as a," +
@@ -592,7 +592,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLong2ArgsWithNulls() throws Exception {
         assertQuery("select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
-                        "from alex")
+                "from alex")
                 .ddl("create table alex as (" +
                         "select CASE WHEN x % 2 = 0 THEN NULL ELSE x END as x," +
                         " CASE WHEN x % 3 = 0 THEN x * 2 ELSE NULL END as a," +
@@ -620,7 +620,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStr3Args() throws Exception {
         assertQuery("select coalesce(x, a, b) c1, coalesce(x, a) c2, x, a, b\n" +
-                        "from alex")
+                "from alex")
                 .ddl("""
                         create table alex as (\
                         SELECT rnd_str('X',NULL,NULL) as x
@@ -665,7 +665,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSymbol3Args() throws Exception {
         assertQuery("select coalesce(x, a, b) c1, coalesce(x, a) c2, x, a, b " +
-                        "from alex")
+                "from alex")
                 .ddl("""
                         create table alex as (\
                         SELECT rnd_symbol('X',NULL,NULL) as x
@@ -756,7 +756,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSymbolCoalesceStr2() throws Exception {
         assertQuery("select coalesce(x, a) as coalesce, x, a " +
-                        "from alex")
+                "from alex")
                 .ddl("""
                         create table alex as (\
                         SELECT rnd_str('X',NULL) as x
@@ -800,7 +800,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSymbolCoalesceVarchar2() throws Exception {
         assertQuery("select coalesce(x, a) as coalesce, x, a " +
-                        "from alex")
+                "from alex")
                 .ddl("""
                         create table alex as (\
                         SELECT rnd_varchar('X',NULL) as x
@@ -844,8 +844,8 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSymbolNocache3ArgsSorted() throws Exception {
         assertQuery("select coalesce(x, a, b) coalesce, x, a, b " +
-                        "from t\n" +
-                        "order by 1")
+                "from t\n" +
+                "order by 1")
                 .ddl("create table t (x symbol nocache, a symbol nocache, b symbol nocache)")
                 .mutateWith("""
                         insert into t select \
@@ -948,7 +948,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTimestampCoalesce() throws Exception {
         assertQuery("select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
-                        "from alex")
+                "from alex")
                 .ddl("create table alex as (" +
                         "select " +
                         "  CASE WHEN x % 2 = 0 THEN CAST(x as Timestamp) ELSE CAST(NULL as Timestamp) END as x" +
@@ -970,7 +970,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTimestampMixedCoalesce() throws Exception {
         assertQuery("select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
-                        "from alex")
+                "from alex")
                 .ddl("create table alex as (" +
                         "select " +
                         "  CASE WHEN x % 2 = 0 THEN CAST(x as Timestamp_NS) ELSE CAST(NULL as Timestamp_NS) END as x" +
@@ -1006,7 +1006,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTimestampNsCoalesce() throws Exception {
         assertQuery("select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
-                        "from alex")
+                "from alex")
                 .ddl("create table alex as (" +
                         "select " +
                         "  CASE WHEN x % 2 = 0 THEN CAST(x as Timestamp_NS) ELSE CAST(NULL as Timestamp) END as x" +
@@ -1035,7 +1035,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarchar3Args() throws Exception {
         assertQuery("select coalesce(x, a, b) c1, coalesce(x, a) c2, x, a, b\n" +
-                        "from alex")
+                "from alex")
                 .ddl("""
                         create table alex as (\
                         SELECT rnd_varchar('X',NULL,NULL) as x

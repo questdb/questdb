@@ -48,14 +48,14 @@ public class ModeIntegrationTest extends AbstractCairoTest {
     @Test
     public void testModeWithCTE() throws Exception {
         assertQuery("with regional_sales as (" +
-                        "select region, category, count(*) as sale_count " +
-                        "from sales " +
-                        "group by region, category" +
-                        ") " +
-                        "select s.region, mode(s.category) as most_frequent_category " +
-                        "from sales s " +
-                        "group by s.region " +
-                        "order by s.region")
+                "select region, category, count(*) as sale_count " +
+                "from sales " +
+                "group by region, category" +
+                ") " +
+                "select s.region, mode(s.category) as most_frequent_category " +
+                "from sales s " +
+                "group by s.region " +
+                "order by s.region")
                 .ddl("create table sales as (" +
                         "select 'EAST' as region, 'Electronics' as category, 100.0 as amount from long_sequence(3) " +
                         "union all " +
@@ -76,11 +76,11 @@ public class ModeIntegrationTest extends AbstractCairoTest {
     @Test
     public void testModeWithCaseWhen() throws Exception {
         assertQuery("select " +
-                        "case when grade >= 85 then 'HIGH' else 'LOW' end as grade_category, " +
-                        "mode(subject) as mode_subject " +
-                        "from student_grades " +
-                        "group by case when grade >= 85 then 'HIGH' else 'LOW' end " +
-                        "order by grade_category")
+                "case when grade >= 85 then 'HIGH' else 'LOW' end as grade_category, " +
+                "mode(subject) as mode_subject " +
+                "from student_grades " +
+                "group by case when grade >= 85 then 'HIGH' else 'LOW' end " +
+                "order by grade_category")
                 .ddl("create table student_grades as (" +
                         "select 'Alice' as student, 'Math' as subject, 90L as grade from long_sequence(1) " +
                         "union all " +
@@ -105,14 +105,14 @@ public class ModeIntegrationTest extends AbstractCairoTest {
     @Test
     public void testModeWithComplexSubquery() throws Exception {
         assertQuery("select department, avg(mode_performance) as avg_mode_performance " +
-                        "from (" +
-                        "  select department, mode(performance_rating) as mode_performance " +
-                        "  from employee_reviews " +
-                        "  where review_date >= '2023-01-01' " +
-                        "  group by department, quarter " +
-                        ") " +
-                        "group by department " +
-                        "order by department")
+                "from (" +
+                "  select department, mode(performance_rating) as mode_performance " +
+                "  from employee_reviews " +
+                "  where review_date >= '2023-01-01' " +
+                "  group by department, quarter " +
+                ") " +
+                "group by department " +
+                "order by department")
                 .ddl("create table employee_reviews as (" +
                         "select 'Engineering' as department, 'Q1' as quarter, 9L as performance_rating, '2023-03-15'::date as review_date from long_sequence(2) " +
                         "union all " +
@@ -159,12 +159,12 @@ public class ModeIntegrationTest extends AbstractCairoTest {
     @Test
     public void testModeWithMultipleAggregates() throws Exception {
         assertQuery("select category, mode(brand) as mode_brand, " +
-                        "round(avg(price), 2) as avg_price, " +
-                        "max(price) as max_price, " +
-                        "count(*) as count " +
-                        "from products " +
-                        "group by category " +
-                        "order by category")
+                "round(avg(price), 2) as avg_price, " +
+                "max(price) as max_price, " +
+                "count(*) as count " +
+                "from products " +
+                "group by category " +
+                "order by category")
                 .ddl("create table products as (" +
                         "select 'Electronics' as category, 'Apple' as brand, 300.0 as price from long_sequence(1) " +
                         "union all " +
@@ -189,9 +189,9 @@ public class ModeIntegrationTest extends AbstractCairoTest {
     @Test
     public void testModeWithTimestampSampleByAndFill() throws Exception {
         assertQuery("select ts, mode(status) as mode_status " +
-                        "from system_logs " +
-                        "sample by 1h fill(prev) " +
-                        "order by ts")
+                "from system_logs " +
+                "sample by 1h fill(prev) " +
+                "order by ts")
                 .ddl("create table system_logs as (" +
                         "select 'ACTIVE' as status, cast(0 as timestamp) as ts from long_sequence(1) " +
                         "union all " +
@@ -229,10 +229,10 @@ public class ModeIntegrationTest extends AbstractCairoTest {
                     "select 'BUY' as side from long_sequence(1)" +
                     ")");
             assertQuery("select source, mode(side) as mode_value from (" +
-                            "select 'orders' as source, side from orders " +
-                            "union all " +
-                            "select 'trades' as source, side from trades" +
-                            ") group by source order by source")
+                    "select 'orders' as source, side from orders " +
+                    "union all " +
+                    "select 'trades' as source, side from trades" +
+                    ") group by source order by source")
                     .noLeakCheck()
                     .ddl(null)
                     .expectSize()

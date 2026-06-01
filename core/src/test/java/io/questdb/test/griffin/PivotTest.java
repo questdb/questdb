@@ -193,15 +193,15 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testBasicPivot() throws Exception {
         assertQuery("""
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country
-                        );
-                        """)
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country
+                );
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -227,12 +227,12 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotDefaultNamingRules() throws Exception {
         assertQuery("""
-                        trades PIVOT (
-                        first(price),
-                        first(price)
-                        FOR symbol IN ('BTC-USD')
-                        GROUP BY side
-                        ) order by side;""")
+                trades PIVOT (
+                first(price),
+                first(price)
+                FOR symbol IN ('BTC-USD')
+                GROUP BY side
+                ) order by side;""")
                 .ddl(ddlTrades)
                 .mutateWith(dmlTrades)
                 .expectSize()
@@ -262,12 +262,12 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotDefaultNamingRules2() throws Exception {
         assertQuery("""
-                        trades PIVOT (
-                        first(price),
-                        first(amount)
-                        FOR symbol IN ('BTC-USD')
-                        GROUP BY side
-                        ) order by side;""")
+                trades PIVOT (
+                first(price),
+                first(amount)
+                FOR symbol IN ('BTC-USD')
+                GROUP BY side
+                ) order by side;""")
                 .ddl(ddlTrades)
                 .mutateWith(dmlTrades)
                 .expectSize()
@@ -295,14 +295,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotImplicitGroupBy() throws Exception {
         assertQuery("""
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                        );
-                        """)
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                );
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .noRandomAccess()
@@ -330,14 +330,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotImplicitGroupByWithAlias() throws Exception {
         assertQuery("""
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population) as sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                        );
-                        """)
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population) as sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                );
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .noRandomAccess()
@@ -365,14 +365,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotImplicitGroupByWithAliasNoAs() throws Exception {
         assertQuery("""
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population) sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                        );
-                        """)
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population) sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                );
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .noRandomAccess()
@@ -400,14 +400,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotImplicitGroupByWithOrderBy() throws Exception {
         assertQuery("""
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                        ) ORDER BY "2000";
-                        """)
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                ) ORDER BY "2000";
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -440,20 +440,20 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(dmlCities);
 
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (2000, 2010)
-                                GROUP BY country
-                            )
-                            UNION ALL
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (2000, 2010)
-                                GROUP BY country
-                            )
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (2000, 2010)
+                        GROUP BY country
+                    )
+                    UNION ALL
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (2000, 2010)
+                        GROUP BY country
+                    )
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -510,19 +510,19 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(dmlCities);
 
             assertQuery("""
-                            SELECT * FROM (
-                                SELECT * FROM cities
-                                PIVOT (
-                                    SUM(population)
-                                    FOR year IN (2000, 2010, 2020)
-                                    GROUP BY country
-                                )
-                            ) PIVOT (
-                                SUM("2000" + "2010" + "2020")
-                                FOR country IN ('NL', 'US')
-                                GROUP BY country
-                            ) order by country
-                            """)
+                    SELECT * FROM (
+                        SELECT * FROM cities
+                        PIVOT (
+                            SUM(population)
+                            FOR year IN (2000, 2010, 2020)
+                            GROUP BY country
+                        )
+                    ) PIVOT (
+                        SUM("2000" + "2010" + "2020")
+                        FOR country IN ('NL', 'US')
+                        GROUP BY country
+                    ) order by country
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -584,13 +584,13 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(dmlCities);
 
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY 1
-                            )
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY 1
+                    )
+                    """)
                     .fails(97, "cannot use positional group by inside `PIVOT`");
         });
     }
@@ -602,13 +602,13 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(dmlCities);
 
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (SELECT year FROM cities WHERE year > 9999)
-                                GROUP BY country
-                            )
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (SELECT year FROM cities WHERE year > 9999)
+                        GROUP BY country
+                    )
+                    """)
                     .fails(66, "PIVOT IN subquery returned empty result set");
         });
     }
@@ -620,13 +620,13 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(dmlCities);
 
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (SELECT year, country FROM cities)
-                                GROUP BY country
-                            )
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (SELECT year, country FROM cities)
+                        GROUP BY country
+                    )
+                    """)
                     .fails(66, "PIVOT IN subquery must return exactly one column, got 2");
         });
     }
@@ -714,13 +714,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -746,13 +746,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -778,13 +778,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -966,13 +966,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -997,13 +997,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1029,13 +1029,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1087,13 +1087,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1113,13 +1113,13 @@ public class PivotTest extends AbstractSqlParserTest {
             execute("INSERT INTO years VALUES (2000), (2010);");
 
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (SELECT y FROM years)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (SELECT y FROM years)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1145,13 +1145,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .fails(48, "there is no matching operator `IN` with the argument type: LONG128");
         });
     }
@@ -1173,13 +1173,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .fails(56, "unsupported PIVOT FOR column type: LONG256");
         });
     }
@@ -1199,13 +1199,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1252,14 +1252,14 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM sales
-                            PIVOT (
-                                SUM(amount)
-                                FOR product IN (SELECT p FROM products)
-                                    quarter IN (SELECT q FROM quarters)
-                                GROUP BY region
-                            ) ORDER BY region
-                            """)
+                    SELECT * FROM sales
+                    PIVOT (
+                        SUM(amount)
+                        FOR product IN (SELECT p FROM products)
+                            quarter IN (SELECT q FROM quarters)
+                        GROUP BY region
+                    ) ORDER BY region
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1285,13 +1285,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1317,13 +1317,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1349,13 +1349,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1381,13 +1381,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1413,13 +1413,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1445,13 +1445,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1477,13 +1477,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(val)
-                                FOR cat IN (SELECT c FROM cats)
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR cat IN (SELECT c FROM cats)
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1497,14 +1497,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithAliasedAggregate() throws Exception {
         assertQuery("""
-                        cities
-                        PIVOT (
-                            SUM(population) as total
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country
-                        ) order by country;
-                        """)
+                cities
+                PIVOT (
+                    SUM(population) as total
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country
+                ) order by country;
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -1542,13 +1542,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM sparse
-                            PIVOT (
-                                SUM(val), count(val)
-                                FOR cat IN ('A', 'B')
-                                GROUP BY grp
-                            ) ORDER BY grp
-                            """)
+                    SELECT * FROM sparse
+                    PIVOT (
+                        SUM(val), count(val)
+                        FOR cat IN ('A', 'B')
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1639,20 +1639,20 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithCTEInsideDynamicSubQuery() throws Exception {
         assertQuery("""
-                        WITH CPB AS (
-                        SELECT 'C1' AS CPDH, 2022 AS NF, 10 AS JG
-                        UNION ALL
-                        SELECT 'C1',2018,20
-                        UNION ALL
-                        SELECT 'C1',2017,0
-                        UNION ALL
-                        SELECT 'C2',2022,10
-                        UNION ALL
-                        SELECT 'C2',2010,30
-                        UNION ALL
-                        SELECT 'C3',2010,80
-                        )
-                        SELECT * FROM CPB PIVOT (sum(jg) FOR nf IN (SELECT NF FROM CPB ORDER BY NF) GROUP BY CPDH) ORDER BY CPDH;""")
+                WITH CPB AS (
+                SELECT 'C1' AS CPDH, 2022 AS NF, 10 AS JG
+                UNION ALL
+                SELECT 'C1',2018,20
+                UNION ALL
+                SELECT 'C1',2017,0
+                UNION ALL
+                SELECT 'C2',2022,10
+                UNION ALL
+                SELECT 'C2',2010,30
+                UNION ALL
+                SELECT 'C3',2010,80
+                )
+                SELECT * FROM CPB PIVOT (sum(jg) FOR nf IN (SELECT NF FROM CPB ORDER BY NF) GROUP BY CPDH) ORDER BY CPDH;""")
                 .expectSize()
                 .withPlan("""
                         Sort light
@@ -1699,15 +1699,15 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithCast() throws Exception {
         assertQuery("""
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, '2010'::int, '2020'::long)
-                            GROUP BY country
-                        ) order by country;
-                        """)
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, '2010'::int, '2020'::long)
+                    GROUP BY country
+                ) order by country;
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -1743,13 +1743,13 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(dmlCities);
 
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                coalesce(NULL, NULL, SUM(population))
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        coalesce(NULL, NULL, SUM(population))
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1772,13 +1772,13 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(dmlCities);
 
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                coalesce(0, SUM(population))
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        coalesce(0, SUM(population))
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1792,14 +1792,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithComplexInitialStatement() throws Exception {
         assertQuery("""
-                        (cities
-                        WHERE (population % 2) = 0)
-                        PIVOT (
-                            SUM(population) as sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country, name
-                        ) order by country;""")
+                (cities
+                WHERE (population % 2) = 0)
+                PIVOT (
+                    SUM(population) as sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country, name
+                ) order by country;""")
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -1832,14 +1832,14 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(dmlCities);
 
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                COUNT(*),
-                                last(population)
-                                FOR year IN (2000, 2010, 2020, null, 2030)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        COUNT(*),
+                        last(population)
+                        FOR year IN (2000, 2010, 2020, null, 2030)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1863,13 +1863,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM measurements
-                            PIVOT (
-                                avg(value) / 2
-                                FOR metric IN ('temp', 'humidity')
-                                GROUP BY sensor
-                            ) ORDER BY sensor
-                            """)
+                    SELECT * FROM measurements
+                    PIVOT (
+                        avg(value) / 2
+                        FOR metric IN ('temp', 'humidity')
+                        GROUP BY sensor
+                    ) ORDER BY sensor
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2024,13 +2024,13 @@ public class PivotTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(ddlCities);
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY country
-                            )
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY country
+                    )
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2046,13 +2046,13 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(dmlCities);
 
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year - 2000 IN (0, 10)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year - 2000 IN (0, 10)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2066,14 +2066,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithForAliases() throws Exception {
         assertQuery("""
-                        cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000 as D1, 2010 D2, 2020 as D3)
-                            GROUP BY country
-                        );
-                        """)
+                cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000 as D1, 2010 D2, 2020 as D3)
+                    GROUP BY country
+                );
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -2099,13 +2099,13 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithGroupByAndLimit() throws Exception {
         assertQuery("""
-                        cities
-                        PIVOT (
-                            SUM(population) as sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country, name
-                        ) order by country, name LIMIT 1 ;""")
+                cities
+                PIVOT (
+                    SUM(population) as sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country, name
+                ) order by country, name LIMIT 1 ;""")
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -2132,14 +2132,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithGroupByAndOrderBy() throws Exception {
         assertQuery("""
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population) as sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country, name
-                        )  ORDER BY "2000_sum";""")
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population) as sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country, name
+                )  ORDER BY "2000_sum";""")
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -2168,14 +2168,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithGroupByAndOrderByAndLimit() throws Exception {
         assertQuery("""
-                        SELECT *
-                        FROM cities
-                        PIVOT (
-                            SUM(population) as sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country, name
-                        ) ORDER BY "2000_sum" LIMIT 1;""")
+                SELECT *
+                FROM cities
+                PIVOT (
+                    SUM(population) as sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country, name
+                ) ORDER BY "2000_sum" LIMIT 1;""")
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -2212,17 +2212,17 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT continent, "2000", "2010", "2020" FROM (
-                                SELECT ci.continent, c.year, c.population
-                                FROM cities c
-                                JOIN country_info ci ON c.country = ci.code
-                            )
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY continent
-                            ) ORDER BY continent
-                            """)
+                    SELECT continent, "2000", "2010", "2020" FROM (
+                        SELECT ci.continent, c.year, c.population
+                        FROM cities c
+                        JOIN country_info ci ON c.country = ci.code
+                    )
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY continent
+                    ) ORDER BY continent
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2236,12 +2236,12 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithLatestOnGroupBy() throws Exception {
         assertQuery("""
-                        (select side, symbol, last(price) as price from trades group by side, symbol)
-                          pivot (
-                            last(price)
-                            FOR "symbol" IN ('ETH-USDT', 'BTC-USDT', 'DOGE-USDT')
-                            GROUP BY side
-                          ) ORDER BY side;""")
+                (select side, symbol, last(price) as price from trades group by side, symbol)
+                  pivot (
+                    last(price)
+                    FOR "symbol" IN ('ETH-USDT', 'BTC-USDT', 'DOGE-USDT')
+                    GROUP BY side
+                  ) ORDER BY side;""")
                 .ddl(ddlTrades)
                 .mutateWith(dmlTrades)
                 .expectSize()
@@ -2276,13 +2276,13 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(dmlCities);
 
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                MIN(population) AS min, MAX(population) AS max
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        MIN(population) AS min, MAX(population) AS max
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2296,15 +2296,15 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithMultipleAggregates() throws Exception {
         assertQuery("""
-                        cities
-                        PIVOT (
-                            SUM(population),
-                            AVG(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country
-                        ) order by country;
-                        """)
+                cities
+                PIVOT (
+                    SUM(population),
+                    AVG(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country
+                ) order by country;
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -2332,17 +2332,17 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithMultipleAliasedAggregatesExplicitGroupBy() throws Exception {
         assertQuery("""
-                        cities
-                        PIVOT (
-                            SUM(population) as total,
-                            COUNT(population) as count,
-                            COUNT(distinct population) as count_dis
-                            FOR
-                                year IN (2000, 2010)
-                                country IN ('NL', 'US')
-                            GROUP BY name
-                        ) order by name;
-                        """)
+                cities
+                PIVOT (
+                    SUM(population) as total,
+                    COUNT(population) as count,
+                    COUNT(distinct population) as count_dis
+                    FOR
+                        year IN (2000, 2010)
+                        country IN ('NL', 'US')
+                    GROUP BY name
+                ) order by name;
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -2371,16 +2371,16 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithMultipleAliasedAggregatesExplicitGroupByWithForAliases() throws Exception {
         assertQuery("""
-                        cities
-                        PIVOT (
-                            SUM(population) as total,
-                            COUNT(population) as count
-                            FOR
-                                year IN (2000 AS '2K00', 2010 AS '2K10')
-                                country IN ('NL' AS Netherlands, 'US' AS 'United States')
-                            GROUP BY name
-                        ) order by name;
-                        """)
+                cities
+                PIVOT (
+                    SUM(population) as total,
+                    COUNT(population) as count
+                    FOR
+                        year IN (2000 AS '2K00', 2010 AS '2K10')
+                        country IN ('NL' AS Netherlands, 'US' AS 'United States')
+                    GROUP BY name
+                ) order by name;
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -2409,15 +2409,15 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithMultipleAliasedAggregatesImplicitGroupBy() throws Exception {
         assertQuery("""
-                        cities
-                        PIVOT (
-                            SUM(population) as total,
-                            COUNT(population) as count
-                            FOR
-                                year IN (2000, 2010)
-                                country IN ('NL', 'US')
-                        );
-                        """)
+                cities
+                PIVOT (
+                    SUM(population) as total,
+                    COUNT(population) as count
+                    FOR
+                        year IN (2000, 2010)
+                        country IN ('NL', 'US')
+                );
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .noRandomAccess()
@@ -2445,15 +2445,15 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithMultipleFor() throws Exception {
         assertQuery("""
-                        cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000)
-                                country IN ('NL')
-                            GROUP BY country
-                        ) order by country;
-                        """)
+                cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000)
+                        country IN ('NL')
+                    GROUP BY country
+                ) order by country;
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -2481,16 +2481,16 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithMultipleForAndAggregatesOrderedAndLimited() throws Exception {
         assertQuery("""
-                        cities
-                        PIVOT (
-                            SUM(population),
-                            AVG(population)
-                            FOR
-                                year IN (2000)
-                                country IN ('NL')
-                            GROUP BY country
-                        ) ORDER BY country DESC LIMIT 1;
-                        """)
+                cities
+                PIVOT (
+                    SUM(population),
+                    AVG(population)
+                    FOR
+                        year IN (2000)
+                        country IN ('NL')
+                    GROUP BY country
+                ) ORDER BY country DESC LIMIT 1;
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -2518,14 +2518,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithMultipleForExprs() throws Exception {
         assertQuery("""
-                        cities PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                                country in ('NL', 'US')
-                            GROUP BY name
-                        );
-                        """)
+                cities PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                        country in ('NL', 'US')
+                    GROUP BY name
+                );
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -2552,16 +2552,16 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithMultipleForExprsAndMultipleAggregates() throws Exception {
         assertQuery("""
-                        cities
-                        PIVOT (
-                            SUM(population),
-                            COUNT(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                                name IN ( 'Amsterdam', 'Seattle', 'New York City')
-                                country in ('NL', 'US')
-                        );
-                        """)
+                cities
+                PIVOT (
+                    SUM(population),
+                    COUNT(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                        name IN ( 'Amsterdam', 'Seattle', 'New York City')
+                        country in ('NL', 'US')
+                );
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .noRandomAccess()
@@ -2589,14 +2589,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithMultipleGroupBy() throws Exception {
         assertQuery("""
-                        cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                                GROUP BY country, name
-                        ) order by country, name;
-                        """)
+                cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                        GROUP BY country, name
+                ) order by country, name;
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -2642,13 +2642,13 @@ public class PivotTest extends AbstractSqlParserTest {
             // exist in the data (e.g., year IN (1990, 1995) filters out all rows).
             // This behavior is kept for performance reasons.
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (1990, 1995)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (1990, 1995)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2735,13 +2735,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM data
-                            PIVOT (
-                                SUM(value + 1) + 10
-                                FOR type IN (select distinct type from data order by type)
-                                GROUP BY category
-                            ) ORDER BY category
-                            """)
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(value + 1) + 10
+                        FOR type IN (select distinct type from data order by type)
+                        GROUP BY category
+                    ) ORDER BY category
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2758,14 +2758,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithOrderBy() throws Exception {
         assertQuery("""
-                        cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country
-                        )   ORDER BY "2000";
-                        """)
+                cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country
+                )   ORDER BY "2000";
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -2797,20 +2797,20 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(dmlMonthlySales);
 
             assertQuery("""
-                            monthly_sales\s
-                            PIVOT (
-                              SUM(amount)\s
-                              FOR MONTH IN ('JAN', 'FEB', 'MAR')\s
-                            )ORDER BY EMPID;""")
+                    monthly_sales\s
+                    PIVOT (
+                      SUM(amount)\s
+                      FOR MONTH IN ('JAN', 'FEB', 'MAR')\s
+                    )ORDER BY EMPID;""")
                     .fails(86, "Invalid column: EMPID");
 
             assertQuery("""
-                            monthly_sales\s
-                            PIVOT (
-                              SUM(amount)\s
-                              FOR MONTH IN ('JAN', 'FEB', 'MAR')\s
-                              GROUP BY EMPID
-                            ) ORDER BY EMPID;""")
+                    monthly_sales\s
+                    PIVOT (
+                      SUM(amount)\s
+                      FOR MONTH IN ('JAN', 'FEB', 'MAR')\s
+                      GROUP BY EMPID
+                    ) ORDER BY EMPID;""")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2824,16 +2824,16 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithSampleBy() throws Exception {
         assertQuery("""
-                        (
-                          SELECT timestamp, symbol, side, last(price)
-                          FROM trades
-                          SAMPLE BY 1d
-                        ) PIVOT (
-                          sum(last) as price
-                          FOR side in ('buy', 'sell')
-                          GROUP BY symbol
-                        ) order by symbol;
-                        """)
+                (
+                  SELECT timestamp, symbol, side, last(price)
+                  FROM trades
+                  SAMPLE BY 1d
+                ) PIVOT (
+                  sum(last) as price
+                  FOR side in ('buy', 'sell')
+                  GROUP BY symbol
+                ) order by symbol;
+                """)
                 .ddl(ddlTrades)
                 .mutateWith(dmlTrades)
                 .expectSize()
@@ -2887,13 +2887,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM logs
-                            PIVOT (
-                                last(message)
-                                FOR status IN ('critical', 'warning')
-                                GROUP BY category
-                            ) ORDER BY category
-                            """)
+                    SELECT * FROM logs
+                    PIVOT (
+                        last(message)
+                        FOR status IN ('critical', 'warning')
+                        GROUP BY category
+                    ) ORDER BY category
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2913,13 +2913,13 @@ public class PivotTest extends AbstractSqlParserTest {
             execute("INSERT INTO years VALUES (2000), (2000), (2010);");
 
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                SUM(population)
-                                FOR year IN (SELECT y FROM years)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        SUM(population)
+                        FOR year IN (SELECT y FROM years)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2943,13 +2943,13 @@ public class PivotTest extends AbstractSqlParserTest {
                     """);
 
             assertQuery("""
-                            SELECT * FROM events
-                            PIVOT (
-                                SUM(value)
-                                FOR category IN ('A', 'B')
-                                GROUP BY ts
-                            ) ORDER BY ts
-                            """)
+                    SELECT * FROM events
+                    PIVOT (
+                        SUM(value)
+                        FOR category IN ('A', 'B')
+                        GROUP BY ts
+                    ) ORDER BY ts
+                    """)
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
@@ -2964,13 +2964,13 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithTimestampGrouping() throws Exception {
         assertQuery("""
-                        cities
-                        PIVOT (
-                            SUM(population)
-                            FOR
-                                year IN (2000, 2010, 2020)
-                        );
-                        """)
+                cities
+                PIVOT (
+                    SUM(population)
+                    FOR
+                        year IN (2000, 2010, 2020)
+                );
+                """)
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .noRandomAccess()
@@ -2998,13 +2998,13 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithTradesData() throws Exception {
         assertQuery("""
-                        (select * from trades where symbol in 'ETH-USDT')
-                          pivot (
-                            sum(price)
-                            FOR "symbol" IN ('ETH-USDT')
-                                side in ('buy', 'sell')
-                            GROUP BY timestamp
-                          ) order by timestamp;""")
+                (select * from trades where symbol in 'ETH-USDT')
+                  pivot (
+                    sum(price)
+                    FOR "symbol" IN ('ETH-USDT')
+                        side in ('buy', 'sell')
+                    GROUP BY timestamp
+                  ) order by timestamp;""")
                 .ddl(ddlTrades)
                 .timestamp("timestamp")
                 .mutateWith(dmlTrades)
@@ -3037,13 +3037,13 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithTradesDataAndLimit() throws Exception {
         assertQuery("""
-                        trades
-                          PIVOT (
-                            sum(price)
-                            FOR "symbol" IN ('ETH-USDT')
-                                side in ('buy', 'sell')
-                            GROUP BY timestamp
-                          ) order by timestamp LIMIT 3;""")
+                trades
+                  PIVOT (
+                    sum(price)
+                    FOR "symbol" IN ('ETH-USDT')
+                        side in ('buy', 'sell')
+                    GROUP BY timestamp
+                  ) order by timestamp LIMIT 3;""")
                 .ddl(ddlTrades)
                 .timestamp("timestamp")
                 .mutateWith(dmlTrades)
@@ -3073,13 +3073,13 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithTradesDataAndOrderByAsc() throws Exception {
         assertQuery("""
-                        trades
-                          PIVOT (
-                            sum(price)
-                            FOR "symbol" IN ('ETH-USDT')
-                                side in ('buy', 'sell')
-                            GROUP BY timestamp
-                          ) ORDER BY timestamp ASC;""")
+                trades
+                  PIVOT (
+                    sum(price)
+                    FOR "symbol" IN ('ETH-USDT')
+                        side in ('buy', 'sell')
+                    GROUP BY timestamp
+                  ) ORDER BY timestamp ASC;""")
                 .ddl(ddlTrades)
                 .timestamp("timestamp###ASC")
                 .mutateWith(dmlTrades)
@@ -3112,13 +3112,13 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithTradesDataAndOrderByDesc() throws Exception {
         assertQuery("""
-                        trades
-                          PIVOT (
-                            sum(price)
-                            FOR "symbol" IN ('ETH-USDT')
-                                side in ('buy', 'sell')
-                            GROUP BY timestamp
-                          ) ORDER BY timestamp DESC;""")
+                trades
+                  PIVOT (
+                    sum(price)
+                    FOR "symbol" IN ('ETH-USDT')
+                        side in ('buy', 'sell')
+                    GROUP BY timestamp
+                  ) ORDER BY timestamp DESC;""")
                 .ddl(ddlTrades)
                 .timestamp("timestamp###DESC")
                 .mutateWith(dmlTrades)
@@ -3187,17 +3187,17 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithTradesDataAndSubquery() throws Exception {
         assertQuery("""
-                        SELECT * FROM (
-                        SELECT * FROM (
-                             SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'
-                        )
-                        PIVOT (
-                            sum(price)
-                            FOR symbol IN ('BTC-USD')
-                                side IN ('buy', 'sell')
-                            GROUP BY timestamp
-                        )
-                        );""")
+                SELECT * FROM (
+                SELECT * FROM (
+                     SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'
+                )
+                PIVOT (
+                    sum(price)
+                    FOR symbol IN ('BTC-USD')
+                        side IN ('buy', 'sell')
+                    GROUP BY timestamp
+                )
+                );""")
                 .ddl(ddlTrades)
                 .mutateWith(dmlTrades)
                 .expectSize()
@@ -3239,20 +3239,20 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithTradesDataAndWithClause() throws Exception {
         assertQuery("""
-                        WITH p AS\s
-                        (WITH t AS
-                        (
-                        
-                            SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'
-                            SAMPLE BY 1m
-                        )
-                        SELECT * FROM t
-                        PIVOT (
-                            sum(price)
-                            FOR symbol IN ('BTC-USD')   \s
-                            side IN ('buy', 'sell')  \s
-                            GROUP BY timestamp
-                        ) ) SELECT * from p where `BTC-USD_buy` > 25780 or `BTC-USD_sell` > 25780;""")
+                WITH p AS\s
+                (WITH t AS
+                (
+                
+                    SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'
+                    SAMPLE BY 1m
+                )
+                SELECT * FROM t
+                PIVOT (
+                    sum(price)
+                    FOR symbol IN ('BTC-USD')   \s
+                    side IN ('buy', 'sell')  \s
+                    GROUP BY timestamp
+                ) ) SELECT * from p where `BTC-USD_buy` > 25780 or `BTC-USD_sell` > 25780;""")
                 .ddl(ddlTrades)
                 .mutateWith(dmlTrades)
                 .withPlan("""
@@ -3283,21 +3283,21 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithTradesDataAndWithClause2() throws Exception {
         assertQuery("""
-                        WITH t AS
-                                (
-                        
-                                        SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount\s
-                        FROM trades WHERE symbol IN 'BTC-USD'
-                        SAMPLE BY 1m
-                        ), P AS (
-                                SELECT * FROM t
-                                PIVOT (
-                                sum(price)
-                        FOR symbol IN ('BTC-USD')
-                        side IN ('buy', 'sell')
-                        GROUP BY timestamp
-                        ) )
-                        SELECT * FROM P;""")
+                WITH t AS
+                        (
+                
+                                SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount\s
+                FROM trades WHERE symbol IN 'BTC-USD'
+                SAMPLE BY 1m
+                ), P AS (
+                        SELECT * FROM t
+                        PIVOT (
+                        sum(price)
+                FOR symbol IN ('BTC-USD')
+                side IN ('buy', 'sell')
+                GROUP BY timestamp
+                ) )
+                SELECT * FROM P;""")
                 .ddl(ddlTrades)
                 .mutateWith(dmlTrades)
                 .expectSize()
@@ -3328,14 +3328,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithTradesOHLC() throws Exception {
         assertQuery("""
-                        trades PIVOT (
-                        first_not_null(price) as open,
-                        max(price) as high,
-                        min(price) as low,
-                        last_not_null(price) as close
-                        FOR symbol IN ('ETH-USD', 'BTC-USD')
-                        GROUP BY side
-                        );""")
+                trades PIVOT (
+                first_not_null(price) as open,
+                max(price) as high,
+                min(price) as low,
+                last_not_null(price) as close
+                FOR symbol IN ('ETH-USD', 'BTC-USD')
+                GROUP BY side
+                );""")
                 .ddl(ddlTrades)
                 .mutateWith(dmlTrades)
                 .expectSize()
@@ -3448,14 +3448,14 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithWhere() throws Exception {
         assertQuery("""
-                        cities
-                        WHERE (population % 2) = 0
-                        PIVOT (
-                            SUM(population) as sum
-                            FOR
-                                year IN (2000, 2010, 2020)
-                            GROUP BY country, name
-                        ) order by country;""")
+                cities
+                WHERE (population % 2) = 0
+                PIVOT (
+                    SUM(population) as sum
+                    FOR
+                        year IN (2000, 2010, 2020)
+                    GROUP BY country, name
+                ) order by country;""")
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
@@ -3493,13 +3493,13 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(dmlCities);
 
             assertQuery("""
-                            SELECT * FROM cities
-                            PIVOT (
-                                abs(SUM(population))
-                                FOR year IN (2000, 2010, 2020)
-                                GROUP BY country
-                            ) ORDER BY country
-                            """)
+                    SELECT * FROM cities
+                    PIVOT (
+                        abs(SUM(population))
+                        FOR year IN (2000, 2010, 2020)
+                        GROUP BY country
+                    ) ORDER BY country
+                    """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""

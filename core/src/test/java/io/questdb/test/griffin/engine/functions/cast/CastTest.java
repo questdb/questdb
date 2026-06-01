@@ -4597,26 +4597,26 @@ public class CastTest extends AbstractCairoTest {
             );
 
             assertQuery("select" +
-                            " timestamp::timestamp ts," +
-                            " int::int i," +
-                            " short::short sh," +
-                            " byte::byte b," +
-                            " double::double d," +
-                            " float::float f," +
-                            " long::long l," +
-                            " str::string str," +
-                            " sym::symbol sym," +
-                            " bool::boolean bool," +
-                            " bin::binary bin," +
-                            " date::date dat," +
-                            " long256::long256 l256," +
-                            " chr::char c," +
-                            " uuid::uuid u," +
-                            " ipv4::ipv4 ip," +
-                            " varchar::varchar v," +
-                            " count() " +
-                            "from all2 " +
-                            "order by ts")
+                    " timestamp::timestamp ts," +
+                    " int::int i," +
+                    " short::short sh," +
+                    " byte::byte b," +
+                    " double::double d," +
+                    " float::float f," +
+                    " long::long l," +
+                    " str::string str," +
+                    " sym::symbol sym," +
+                    " bool::boolean bool," +
+                    " bin::binary bin," +
+                    " date::date dat," +
+                    " long256::long256 l256," +
+                    " chr::char c," +
+                    " uuid::uuid u," +
+                    " ipv4::ipv4 ip," +
+                    " varchar::varchar v," +
+                    " count() " +
+                    "from all2 " +
+                    "order by ts")
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
@@ -5601,8 +5601,8 @@ public class CastTest extends AbstractCairoTest {
     @Test
     public void testSymbolColumnToSymbolInGroupBy1() throws Exception {
         assertQuery("SELECT cast(timestamp as LONG) AS timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
-                        "FROM 'trades'" +
-                        "ORDER BY 1")
+                "FROM 'trades'" +
+                "ORDER BY 1")
                 .ddl("create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)")
                 .mutateWith("insert into trades select x::timestamp, x::string, x from long_sequence(10)")
                 .expectSize()
@@ -5624,8 +5624,8 @@ public class CastTest extends AbstractCairoTest {
     @Test
     public void testSymbolColumnToSymbolInGroupBy2() throws Exception {
         assertQuery("SELECT cast(symbol as SYMBOL), avg(price) " +
-                        "FROM 'trades' " +
-                        "ORDER BY avg(price)")
+                "FROM 'trades' " +
+                "ORDER BY avg(price)")
                 .ddl("create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)")
                 .mutateWith("insert into trades select x::timestamp, x::string, x from long_sequence(10)")
                 .expectSize()
@@ -5647,8 +5647,8 @@ public class CastTest extends AbstractCairoTest {
     @Test
     public void testSymbolColumnToSymbolInGroupBy3() throws Exception {
         assertQuery("SELECT coalesce(cast(symbol as SYMBOL), 'foobar'), avg(price)" +
-                        "FROM 'trades' " +
-                        "ORDER BY coalesce(cast(symbol as SYMBOL), 'foobar')")
+                "FROM 'trades' " +
+                "ORDER BY coalesce(cast(symbol as SYMBOL), 'foobar')")
                 .ddl("create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)")
                 .mutateWith("insert into trades select x::timestamp, x::string, x from long_sequence(10)")
                 .expectSize()
@@ -5670,8 +5670,8 @@ public class CastTest extends AbstractCairoTest {
     @Test
     public void testSymbolColumnToSymbolInGroupBy4() throws Exception {
         assertQuery("SELECT i::int i, symbol::symbol s, max(price)" +
-                        "FROM 'trades'" +
-                        "ORDER BY 1")
+                "FROM 'trades'" +
+                "ORDER BY 1")
                 .ddl("create table trades (timestamp timestamp, i int, symbol symbol, price double) timestamp(timestamp)")
                 .mutateWith("insert into trades select x::timestamp, x, x::string, x from long_sequence(10)")
                 .expectSize()
@@ -5693,8 +5693,8 @@ public class CastTest extends AbstractCairoTest {
     @Test
     public void testSymbolColumnToSymbolInSampleBy() throws Exception {
         assertQuery("SELECT timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
-                        "FROM 'trades'" +
-                        "SAMPLE BY 1h")
+                "FROM 'trades'" +
+                "SAMPLE BY 1h")
                 .ddl("create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)")
                 .timestamp("timestamp")
                 .mutateWith("insert into trades select x::timestamp, x::string, x from long_sequence(10)")

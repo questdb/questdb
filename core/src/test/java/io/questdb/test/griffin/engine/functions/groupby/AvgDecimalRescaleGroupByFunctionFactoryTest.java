@@ -85,9 +85,9 @@ public class AvgDecimalRescaleGroupByFunctionFactoryTest extends AbstractCairoTe
     @Test
     public void testAvgDecimalNoRescale() throws Exception {
         assertQuery("select id%5 key, avg(d8,0) a8, avg(d16,0) a16, avg(d32,0) a32, " +
-                        "avg(d64,0) a64, avg(d128,0) a128, avg(d256,0) a256 " +
-                        "from x " +
-                        "order by key desc")
+                "avg(d64,0) a64, avg(d128,0) a128, avg(d256,0) a256 " +
+                "from x " +
+                "order by key desc")
                 .ddl("create table x as (" +
                         "select" +
                         " x id," +
@@ -160,9 +160,9 @@ public class AvgDecimalRescaleGroupByFunctionFactoryTest extends AbstractCairoTe
     @Test
     public void testAvgDecimalWithRescaleKeyed() throws Exception {
         assertQuery("select id%5 key, avg(d8,1) a8, avg(d16,2) a16, avg(d32,2) a32, " +
-                        "avg(d64,3) a64, avg(d128,4) a128, avg(d256,8) a256 " +
-                        "from x " +
-                        "order by key desc")
+                "avg(d64,3) a64, avg(d128,4) a128, avg(d256,8) a256 " +
+                "from x " +
+                "order by key desc")
                 .ddl("create table x as (" +
                         "select" +
                         " x id," +

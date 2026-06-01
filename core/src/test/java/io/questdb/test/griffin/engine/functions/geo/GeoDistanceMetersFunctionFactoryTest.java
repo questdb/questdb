@@ -378,9 +378,9 @@ public class GeoDistanceMetersFunctionFactoryTest extends AbstractCairoTest {
             // Join orders with warehouses where distance < max_delivery (converted to meters)
             // o1 should only match w1, o2 should only match w2, o3 matches nothing
             assertQuery("select o.order_id, w.warehouse_id " +
-                            "from orders o " +
-                            "join warehouses w on geo_distance_meters(o.lat, o.lon, w.lat, w.lon) < w.max_delivery_km * 1000.0 " +
-                            "order by o.order_id, w.warehouse_id")
+                    "from orders o " +
+                    "join warehouses w on geo_distance_meters(o.lat, o.lon, w.lat, w.lon) < w.max_delivery_km * 1000.0 " +
+                    "order by o.order_id, w.warehouse_id")
                     .noLeakCheck()
                     .returns("""
                             order_id\twarehouse_id
@@ -406,12 +406,12 @@ public class GeoDistanceMetersFunctionFactoryTest extends AbstractCairoTest {
             // Cross join to get distance matrix - verify distances are in expected ranges
             // Bryant Park is ~500-650m from both, Central Park is ~3000-4300m
             assertQuery("select l.name, p.poi_name, " +
-                            "case " +
-                            "  when p.poi_name = 'bryant_park' then geo_distance_meters(l.lat, l.lon, p.lat, p.lon) >= 500.0 and geo_distance_meters(l.lat, l.lon, p.lat, p.lon) <= 650.0 " +
-                            "  else geo_distance_meters(l.lat, l.lon, p.lat, p.lon) >= 3000.0 and geo_distance_meters(l.lat, l.lon, p.lat, p.lon) <= 4300.0 " +
-                            "end as in_range " +
-                            "from locations l, pois p " +
-                            "order by l.name, p.poi_name")
+                    "case " +
+                    "  when p.poi_name = 'bryant_park' then geo_distance_meters(l.lat, l.lon, p.lat, p.lon) >= 500.0 and geo_distance_meters(l.lat, l.lon, p.lat, p.lon) <= 650.0 " +
+                    "  else geo_distance_meters(l.lat, l.lon, p.lat, p.lon) >= 3000.0 and geo_distance_meters(l.lat, l.lon, p.lat, p.lon) <= 4300.0 " +
+                    "end as in_range " +
+                    "from locations l, pois p " +
+                    "order by l.name, p.poi_name")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -439,9 +439,9 @@ public class GeoDistanceMetersFunctionFactoryTest extends AbstractCairoTest {
 
             // Find closest candidate to each reference point
             assertQuery("select r.ref_id, c.candidate_id " +
-                            "from refs r " +
-                            "join candidates c on geo_distance_meters(r.lat, r.lon, c.lat, c.lon) < 150.0 " +
-                            "order by r.ref_id, c.candidate_id")
+                    "from refs r " +
+                    "join candidates c on geo_distance_meters(r.lat, r.lon, c.lat, c.lon) < 150.0 " +
+                    "order by r.ref_id, c.candidate_id")
                     .noLeakCheck()
                     .returns("""
                             ref_id\tcandidate_id

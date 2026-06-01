@@ -281,10 +281,10 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 512);
         }
         assertQuery("select (id%5)" + (cast != null ? ("::" + cast) : "") + " key, " +
-                        "sum(d8) s8, sum(d16) s16, sum(d32) s32, " +
-                        "sum(d64) s64, sum(d128) s128, sum(d256) s256 " +
-                        "from x " +
-                        "order by key desc")
+                "sum(d8) s8, sum(d16) s16, sum(d32) s32, " +
+                "sum(d64) s64, sum(d128) s128, sum(d256) s256 " +
+                "from x " +
+                "order by key desc")
                 .ddl("create table x as (" +
                         "select" +
                         " x id," +

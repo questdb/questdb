@@ -91,6 +91,50 @@ public class QueryAssertion {
     }
 
     /**
+     * Terminal: assert ONLY the query's execution plan (EXPLAIN output) matches {@code expectedPlan}
+     * exactly, without running the query for a result. Use for EXPLAIN/plan-routing tests that have no
+     * row result to assert. Supports only {@link #ddl}, {@link #noLeakCheck}, {@link #withContext} and
+     * {@link #withEngine}.
+     */
+    public void assertsPlan(CharSequence expectedPlan) throws Exception {
+        requirePlanOnlyCompatible();
+        prepareHook.run();
+        if (leakCheck) {
+            assertMemoryLeak(() -> {
+                runDdl();
+                assertExactPlan(expectedPlan);
+            });
+        } else {
+            runDdl();
+            assertExactPlan(expectedPlan);
+        }
+    }
+
+    /**
+     * Terminal: assert ONLY the query's execution plan (EXPLAIN output) contains every one of
+     * {@code fragments}, without running the query for a result. The plan-only counterpart of
+     * {@link #withPlanContaining}. Supports only {@link #ddl}, {@link #noLeakCheck},
+     * {@link #withContext} and {@link #withEngine}.
+     */
+    public void assertsPlanContaining(CharSequence... fragments) throws Exception {
+        requirePlanOnlyCompatible();
+        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
+        for (CharSequence fragment : fragments) {
+            list.add(fragment);
+        }
+        prepareHook.run();
+        if (leakCheck) {
+            assertMemoryLeak(() -> {
+                runDdl();
+                assertPlanContains(list);
+            });
+        } else {
+            runDdl();
+            assertPlanContains(list);
+        }
+    }
+
+    /**
      * SQL to execute before the query (typically a CREATE TABLE / INSERT). Drains the WAL queue
      * afterwards when WAL is enabled by default, exactly as the legacy helpers do.
      */
@@ -474,7 +518,11 @@ public class QueryAssertion {
     private void assertThrows(int errorPos, CharSequence contains, boolean fullFat) throws Exception {
         Assert.assertNotNull(contains);
         try {
-            TestUtils.assertException(engine, context, fullFat, query, sink);
+            if (compiler != null) {
+                assertThrowsViaCompiler(fullFat);
+            } else {
+                TestUtils.assertException(engine, context, fullFat, query, sink);
+            }
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer container) {
                 if (contains.isEmpty()) {
@@ -488,6 +536,25 @@ public class QueryAssertion {
                 throw e;
             }
         }
+    }
+
+    private void assertThrowsViaCompiler(boolean fullFat) throws SqlException {
+        if (fullFat) {
+            compiler.setFullFatJoins(true);
+        }
+        try (
+                RecordCursorFactory factory = CairoEngine.select(compiler, query, context);
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            sink.clear();
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                // ignore the output, we're looking for an error
+                TestUtils.println(record, factory.getMetadata(), sink);
+                sink.clear();
+            }
+        }
+        Assert.fail("SQL statement should have failed");
     }
 
     private void assertViaFactoryCursor(CharSequence expected) throws SqlException {
@@ -558,6 +625,7 @@ public class QueryAssertion {
     }
 
     private void failsNoLeak(int errorPos, CharSequence contains) throws Exception {
+        prepareHook.run();
         if (ddl != null) {
             try {
                 engine.execute(ddl, context);
@@ -570,6 +638,13 @@ public class QueryAssertion {
             return;
         }
         assertThrows(errorPos, contains, fullFatJoins);
+    }
+
+    private void requirePlanOnlyCompatible() {
+        if (expectSize || expectedTimestamp != null || ddl2 != null || fullFatJoins || compiler != null
+                || !supportsRandomAccess || sizeCanBeVariable || expectedPlan != null || planFragments != null) {
+            throw new IllegalStateException("assertsPlan(...)/assertsPlanContaining(...) supports only ddl()/noLeakCheck()/withContext()/withEngine()");
+        }
     }
 
     private void requireRecordPathCompatible() {

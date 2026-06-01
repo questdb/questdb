@@ -246,41 +246,41 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             assertQuery("""
-                            SELECT * FROM (
-                                SELECT\s
-                                    n.nspname,
-                                    c.relname,
-                                    a.attname,
-                                    a.atttypid,
-                                    a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull,
-                                    a.atttypmod,
-                                    a.attlen,
-                                    t.typtypmod,
-                                    row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum,\s
-                                    nullif(a.attidentity, '') as attidentity,
-                                    pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc,
-                                    dsc.description,
-                                    t.typbasetype,
-                                    t.typtype \s
-                                FROM pg_catalog.pg_namespace n \s
-                                    JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid) \s
-                                    JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid) \s
-                                    JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid) \s
-                                    LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum) \s
-                                    LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid) \s
-                                    LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class') \s
-                                    LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog') \s
-                                WHERE\s
-                                    c.relkind in ('r','p','v','f','m')\s
-                                    and a.attnum > 0\s
-                                    AND NOT a.attisdropped \s
-                                    AND c.relname LIKE E'y'
-                                ) c\s
-                            WHERE true \s
-                            ORDER BY\s
-                                nspname,
-                                c.relname,
-                                attnum""")
+                    SELECT * FROM (
+                        SELECT\s
+                            n.nspname,
+                            c.relname,
+                            a.attname,
+                            a.atttypid,
+                            a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull,
+                            a.atttypmod,
+                            a.attlen,
+                            t.typtypmod,
+                            row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum,\s
+                            nullif(a.attidentity, '') as attidentity,
+                            pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc,
+                            dsc.description,
+                            t.typbasetype,
+                            t.typtype \s
+                        FROM pg_catalog.pg_namespace n \s
+                            JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid) \s
+                            JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid) \s
+                            JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid) \s
+                            LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum) \s
+                            LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid) \s
+                            LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class') \s
+                            LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog') \s
+                        WHERE\s
+                            c.relkind in ('r','p','v','f','m')\s
+                            and a.attnum > 0\s
+                            AND NOT a.attisdropped \s
+                            AND c.relname LIKE E'y'
+                        ) c\s
+                    WHERE true \s
+                    ORDER BY\s
+                        nspname,
+                        c.relname,
+                        attnum""")
                     .noLeakCheck()
                     .ddl("create table x(a int)")
                     .expectSize()
@@ -309,38 +309,38 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             assertQuery("""
-                            SELECT * FROM (
-                                SELECT\s
-                                    n.nspname,
-                                    c.relname,
-                                    a.attname,
-                                    a.atttypid,
-                                    a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull,
-                                    a.atttypmod,
-                                    a.attlen,
-                                    t.typtypmod,
-                                    row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum,\s
-                                    nullif(a.attidentity, '') as attidentity,
-                                    pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc,
-                                    dsc.description,
-                                    t.typbasetype,
-                                    t.typtype \s
-                                FROM pg_catalog.pg_namespace n \s
-                                    JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid) \s
-                                    JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid) \s
-                                    JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid) \s
-                                    LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum) \s
-                                    LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid) \s
-                                    LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class') \s
-                                    LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog') \s
-                                WHERE\s
-                                    c.relkind in ('r','p','v','f','m')\s
-                                    and a.attnum > 0\s
-                                    AND NOT a.attisdropped \s
-                                    AND c.relname LIKE E'y'
-                                order by a.attnum\
-                                ) c\s
-                            """)
+                    SELECT * FROM (
+                        SELECT\s
+                            n.nspname,
+                            c.relname,
+                            a.attname,
+                            a.atttypid,
+                            a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull,
+                            a.atttypmod,
+                            a.attlen,
+                            t.typtypmod,
+                            row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum,\s
+                            nullif(a.attidentity, '') as attidentity,
+                            pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc,
+                            dsc.description,
+                            t.typbasetype,
+                            t.typtype \s
+                        FROM pg_catalog.pg_namespace n \s
+                            JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid) \s
+                            JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid) \s
+                            JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid) \s
+                            LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum) \s
+                            LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid) \s
+                            LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class') \s
+                            LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog') \s
+                        WHERE\s
+                            c.relkind in ('r','p','v','f','m')\s
+                            and a.attnum > 0\s
+                            AND NOT a.attisdropped \s
+                            AND c.relname LIKE E'y'
+                        order by a.attnum\
+                        ) c\s
+                    """)
                     .noLeakCheck()
                     .ddl("create table x(a int)")
                     .expectSize()
@@ -411,12 +411,12 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                 .ddl("create table x(a int)")
                 .mutateWith("create table y(a double, b string)")
                 .returns("""
-                attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
-                1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
-                """, """
-                attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
-                1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
-                """);
+                        attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
+                        1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
+                        """, """
+                        attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
+                        1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue
+                        """);
     }
 
     @Test

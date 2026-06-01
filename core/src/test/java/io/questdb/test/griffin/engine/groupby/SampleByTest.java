@@ -193,13 +193,13 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT " +
-                            "  ts, symbol, " +
-                            "  CASE " +
-                            "    WHEN symbol = 'BTC-USD' THEN first(price) " +
-                            "    ELSE last(price) " +
-                            "  END " +
-                            "FROM trades " +
-                            "SAMPLE BY 1h")
+                    "  ts, symbol, " +
+                    "  CASE " +
+                    "    WHEN symbol = 'BTC-USD' THEN first(price) " +
+                    "    ELSE last(price) " +
+                    "  END " +
+                    "FROM trades " +
+                    "SAMPLE BY 1h")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -217,15 +217,15 @@ public class SampleByTest extends AbstractCairoTest {
 
             // Same query, but with additionally SELECTed aggregates
             assertQuery("SELECT " +
-                            "  ts, symbol, " +
-                            "  first(price) as first_price, " +
-                            "  last(price) as last_price, " +
-                            "  CASE " +
-                            "    WHEN symbol = 'BTC-USD' THEN first(price) " +
-                            "    ELSE last(price) " +
-                            "  END " +
-                            "FROM trades " +
-                            "SAMPLE BY 1h ALIGN TO CALENDAR")
+                    "  ts, symbol, " +
+                    "  first(price) as first_price, " +
+                    "  last(price) as last_price, " +
+                    "  CASE " +
+                    "    WHEN symbol = 'BTC-USD' THEN first(price) " +
+                    "    ELSE last(price) " +
+                    "  END " +
+                    "FROM trades " +
+                    "SAMPLE BY 1h ALIGN TO CALENDAR")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -249,13 +249,13 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select s, k, " +
-                        "first(dec8), " +
-                        "first(dec16), " +
-                        "first(dec32), " +
-                        "first(dec64), " +
-                        "first(dec128), " +
-                        "first(dec256) " +
-                        "from x sample by 30m fill(NULL)")
+                "first(dec8), " +
+                "first(dec16), " +
+                "first(dec32), " +
+                "first(dec64), " +
+                "first(dec128), " +
+                "first(dec256) " +
+                "from x sample by 30m fill(NULL)")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -286,13 +286,13 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select s, k, " +
-                        "first(dec8), " +
-                        "first(dec16), " +
-                        "first(dec32), " +
-                        "first(dec64), " +
-                        "first(dec128), " +
-                        "first(dec256) " +
-                        "from x sample by 30m fill(prev)")
+                "first(dec8), " +
+                "first(dec16), " +
+                "first(dec32), " +
+                "first(dec64), " +
+                "first(dec128), " +
+                "first(dec256) " +
+                "from x sample by 30m fill(prev)")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -400,12 +400,12 @@ public class SampleByTest extends AbstractCairoTest {
             // todo: return values for "prev" function are incorrect. This is a bug.
             // [nwoolmer] I think I've fixed this now, dirty state in SimpleMapValuePeeker
             assertQuery("""
-                            select created, avg(latency) avg, last(latency) latency
-                              from telem
-                              sample by 2s
-                              FROM timestamp_floor('2s', '2025-01-20T13:56:50Z')
-                              TO timestamp_floor('2s', '2025-01-20T14:01:52Z')
-                              fill(0,prev);""")
+                    select created, avg(latency) avg, last(latency) latency
+                      from telem
+                      sample by 2s
+                      FROM timestamp_floor('2s', '2025-01-20T13:56:50Z')
+                      TO timestamp_floor('2s', '2025-01-20T14:01:52Z')
+                      fill(0,prev);""")
                     .timestamp("created")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -637,12 +637,12 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("""
-                            select created, approx_percentile(latency, 0.9, 3) latency
-                              from telem
-                              sample by 2s
-                              FROM timestamp_floor('2s', '2025-01-20T13:56:50Z')
-                              TO timestamp_floor('2s', '2025-01-20T14:01:52Z')
-                              fill(0);""")
+                    select created, approx_percentile(latency, 0.9, 3) latency
+                      from telem
+                      sample by 2s
+                      FROM timestamp_floor('2s', '2025-01-20T13:56:50Z')
+                      TO timestamp_floor('2s', '2025-01-20T14:01:52Z')
+                      fill(0);""")
                     .timestamp("created")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -809,11 +809,11 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select s, k, " +
-                        "first(g1), " +
-                        "first(g2), " +
-                        "first(g4), " +
-                        "first(g8) " +
-                        "from x sample by 30m fill(NULL)")
+                "first(g1), " +
+                "first(g2), " +
+                "first(g4), " +
+                "first(g8) " +
+                "from x sample by 30m fill(NULL)")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -845,11 +845,11 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select s, k, " +
-                        "first(g1), " +
-                        "first(g2), " +
-                        "first(g4), " +
-                        "first(g8) " +
-                        "from x sample by 30m fill(PREV)")
+                "first(g1), " +
+                "first(g2), " +
+                "first(g4), " +
+                "first(g8) " +
+                "from x sample by 30m fill(PREV)")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -948,33 +948,33 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testGroupByAllTypesAndInvalidTimestampColumn() throws Exception {
         assertQuery("""
+                select\s
+                    LastUpdate,\s
+                    CountryRegion,\s
+                    last(Confirmed) Confirmed,\s
+                    last(Recovered) Recovered,\s
+                    last(Deaths) Deaths\s
+                    from (
                         select\s
                             LastUpdate,\s
                             CountryRegion,\s
-                            last(Confirmed) Confirmed,\s
-                            last(Recovered) Recovered,\s
-                            last(Deaths) Deaths\s
-                            from (
-                                select\s
-                                    LastUpdate,\s
-                                    CountryRegion,\s
-                                    sum(Confirmed) Confirmed,\s
-                                    sum(Recovered) Recovered,\s
-                                    sum(Deaths) Deaths
-                                from (
-                                    select\s
-                                        LastUpdate,\s
-                                        ProvinceState,\s
-                                        CountryRegion,\s
-                                        last(Confirmed) Confirmed,\s
-                                        last(Recovered) Recovered,\s
-                                        last(Deaths) Deaths
-                                    from (covid where CountryRegion in ('China', 'Mainland China'))
-                                    sample by 1d fill(prev)
-                                ) timestamp(xy)
-                            ) sample by 1M
-                        ;
-                        """)
+                            sum(Confirmed) Confirmed,\s
+                            sum(Recovered) Recovered,\s
+                            sum(Deaths) Deaths
+                        from (
+                            select\s
+                                LastUpdate,\s
+                                ProvinceState,\s
+                                CountryRegion,\s
+                                last(Confirmed) Confirmed,\s
+                                last(Recovered) Recovered,\s
+                                last(Deaths) Deaths
+                            from (covid where CountryRegion in ('China', 'Mainland China'))
+                            sample by 1d fill(prev)
+                        ) timestamp(xy)
+                    ) sample by 1M
+                ;
+                """)
                 .ddl("create table covid as " +
                         "(" +
                         "select" +
@@ -993,32 +993,32 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testGroupByAllTypesAndInvalidTimestampType() throws Exception {
         assertQuery("""
+                select\s
+                    LastUpdate,\s
+                    CountryRegion,\s
+                    last(Confirmed) Confirmed,\s
+                    last(Recovered) Recovered,\s
+                    last(Deaths) Deaths\s
+                from (
+                    select\s
+                        LastUpdate,\s
+                        CountryRegion,\s
+                        sum(Confirmed) Confirmed,\s
+                        sum(Recovered) Recovered,\s
+                        sum(Deaths) Deaths
+                    from (
                         select\s
                             LastUpdate,\s
+                            ProvinceState,\s
                             CountryRegion,\s
                             last(Confirmed) Confirmed,\s
                             last(Recovered) Recovered,\s
-                            last(Deaths) Deaths\s
-                        from (
-                            select\s
-                                LastUpdate,\s
-                                CountryRegion,\s
-                                sum(Confirmed) Confirmed,\s
-                                sum(Recovered) Recovered,\s
-                                sum(Deaths) Deaths
-                            from (
-                                select\s
-                                    LastUpdate,\s
-                                    ProvinceState,\s
-                                    CountryRegion,\s
-                                    last(Confirmed) Confirmed,\s
-                                    last(Recovered) Recovered,\s
-                                    last(Deaths) Deaths
-                                from (covid where CountryRegion in ('China', 'Mainland China'))
-                                sample by 1d fill(prev)
-                            ) timestamp(ProvinceState)
-                        ) sample by 1M;
-                        """)
+                            last(Deaths) Deaths
+                        from (covid where CountryRegion in ('China', 'Mainland China'))
+                        sample by 1d fill(prev)
+                    ) timestamp(ProvinceState)
+                ) sample by 1M;
+                """)
                 .ddl("create table covid as " +
                         "(" +
                         "select" +
@@ -1360,10 +1360,10 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("select symbol, sum(amount) + 2 * vwap(price, amount), " +
-                            "cast(to_timezone(dateadd('h', 2, timestamp),'EST') as double) + sum(amount)" +
-                            "from (" +
-                            "   select symbol, amount, price, timestamp_floor('5m', timestamp) as timestamp from trades" +
-                            ")\n")
+                    "cast(to_timezone(dateadd('h', 2, timestamp),'EST') as double) + sum(amount)" +
+                    "from (" +
+                    "   select symbol, amount, price, timestamp_floor('5m', timestamp) as timestamp from trades" +
+                    ")\n")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -1376,7 +1376,7 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select symbol, sum(amount), timestamp_floor('1d', timestamp), last(timestamp) last_timestamp " +
-                            "from trades\n")
+                    "from trades\n")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -1387,7 +1387,7 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select symbol, sum(amount), timestamp_floor('1d', timestamp) timestamp, last(timestamp) last_timestamp " +
-                            "from trades\n")
+                    "from trades\n")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -1405,9 +1405,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from x " +
-                        "where k > '1970-01-04' and s in ('a') " +
-                        "sample by 1h align to first observation")
+                "from x " +
+                "where k > '1970-01-04' and s in ('a') " +
+                "sample by 1h align to first observation")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -1428,9 +1428,9 @@ public class SampleByTest extends AbstractCairoTest {
                         1970-01-04T03:26:40.000000Z\ta\t99.02039650915859\t128.42101395467057
                         """);
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from x " +
-                        "where k > '1970-01-04' and s in ('a') " +
-                        "sample by 1h")
+                "from x " +
+                "where k > '1970-01-04' and s in ('a') " +
+                "sample by 1h")
                 .timestamp("k")
                 .expectSize()
                 .returns("""
@@ -1440,9 +1440,9 @@ public class SampleByTest extends AbstractCairoTest {
                         1970-01-04T03:00:00.000000Z\ta\t117.11888283070247\t128.42101395467057
                         """);
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from x " +
-                        "where k > '1970-01-04' and s in ('a') " +
-                        "sample by 1h align to calendar")
+                "from x " +
+                "where k > '1970-01-04' and s in ('a') " +
+                "sample by 1h align to calendar")
                 .timestamp("k")
                 .expectSize()
                 .returns("""
@@ -1459,9 +1459,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -1470,9 +1470,9 @@ public class SampleByTest extends AbstractCairoTest {
                 .returns("k\ts\tlat\tlon\n");
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to calendar")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to calendar")
                 .timestamp("k")
                 .expectSize()
                 .returns("k\ts\tlat\tlon\n");
@@ -1484,9 +1484,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -1545,9 +1545,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -1608,9 +1608,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -1693,9 +1693,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to calendar")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to calendar")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -1781,9 +1781,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -1792,9 +1792,9 @@ public class SampleByTest extends AbstractCairoTest {
                 .returns("k\ts\tlat\tlon\n");
 
         assertQuery("select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to calendar")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to calendar")
                 .timestamp("k")
                 .expectSize()
                 .returns("k\ts\tlat\tlon\n");
@@ -1806,9 +1806,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -1847,9 +1847,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -1890,9 +1890,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -1948,9 +1948,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to calendar")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to calendar")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -2187,9 +2187,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select to_timezone(k, 'Europe/Berlin') k, s, lat, lon from (select k, s, first(lat) lat, last(lon) lon " +
-                        "from x " +
-                        "where s in ('a') " +
-                        "sample by 1h align to calendar time zone 'Europe/Berlin')")
+                "from x " +
+                "where s in ('a') " +
+                "sample by 1h align to calendar time zone 'Europe/Berlin')")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -2215,9 +2215,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select to_timezone(k, 'Europe/Berlin') k, s, lat, lon from (select k, s, first(lat) lat, last(lon) lon " +
-                        "from x " +
-                        "where s in ('a') " +
-                        "sample by 1h align to calendar time zone 'Europe/Berlin')")
+                "from x " +
+                "where s in ('a') " +
+                "sample by 1h align to calendar time zone 'Europe/Berlin')")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -2242,9 +2242,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select to_timezone(k, 'Europe/Berlin') k, s, lat, lon from (select k, s, first(lat) lat, last(lon) lon " +
-                        "from x " +
-                        "where s in ('a') " +
-                        "sample by 1h align to calendar time zone 'Europe/Berlin')")
+                "from x " +
+                "where s in ('a') " +
+                "sample by 1h align to calendar time zone 'Europe/Berlin')")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -2270,9 +2270,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from x " +
-                        "where s in ('a') " +
-                        "sample by 1h align to calendar time zone 'Europe/Berlin'")
+                "from x " +
+                "where s in ('a') " +
+                "sample by 1h align to calendar time zone 'Europe/Berlin'")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -2524,12 +2524,12 @@ public class SampleByTest extends AbstractCairoTest {
                     "   long_sequence(365 * 7)" +
                     "),index(s) timestamp(k)");
             assertQuery("SELECT k, " +
-                            "timestamp_floor_utc('1d', k, null, '00:00', 'Europe/London') bucket_no_offset, " +
-                            "timestamp_floor_utc('1d', k, null, '00:51', 'Europe/London') bucket, " +
-                            "to_timezone(timestamp_floor_utc('1d', k, null, '00:51', 'Europe/London'), 'Europe/London') bucket_local, " +
-                            "lat, lon " +
-                            "FROM x " +
-                            "WHERE s IN ('a') AND k IN '2020-01-01T00:00:00.000000Z;2d;45d;48'")
+                    "timestamp_floor_utc('1d', k, null, '00:00', 'Europe/London') bucket_no_offset, " +
+                    "timestamp_floor_utc('1d', k, null, '00:51', 'Europe/London') bucket, " +
+                    "to_timezone(timestamp_floor_utc('1d', k, null, '00:51', 'Europe/London'), 'Europe/London') bucket_local, " +
+                    "lat, lon " +
+                    "FROM x " +
+                    "WHERE s IN ('a') AND k IN '2020-01-01T00:00:00.000000Z;2d;45d;48'")
                     .timestamp("k")
                     .noLeakCheck()
                     .returns("""
@@ -2716,9 +2716,9 @@ public class SampleByTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 16);
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where s in ('a')" +
-                        "sample by 60s align to first observation")
+                "from xx " +
+                "where s in ('a')" +
+                "sample by 60s align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 4096) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -2780,9 +2780,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k > '2000-01-04' and s in ('a') " +
-                        "sample by 1h align to first observation")
+                "from xx " +
+                "where k > '2000-01-04' and s in ('a') " +
+                "sample by 1h align to first observation")
                 .ddl("create table xx as " +
                         "(" +
                         "select" +
@@ -2812,9 +2812,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-02' and s in ('b')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-02' and s in ('b')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 10) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -2876,9 +2876,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -2938,9 +2938,9 @@ public class SampleByTest extends AbstractCairoTest {
                     ", index(s capacity 256) timestamp(k) partition by DAY");
 
             assertQuery("select s, first(lat) lat, first(lon) lon " +
-                            "from xx " +
-                            "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                            "sample by 2h align to first observation")
+                    "from xx " +
+                    "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                    "sample by 2h align to first observation")
                     .ddl("""
                             insert into xx \
                             select -x lat,
@@ -3034,9 +3034,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 10) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -3090,9 +3090,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-02' and s in ('b')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-02' and s in ('b')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 10) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -3265,11 +3265,11 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, last(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where s = 'b' " +
-                        "  and k >= cast(1388534400 * 1000000L as timestamp) " +
-                        "  and k <= cast(1655742718 * 1000000L as timestamp)" +
-                        "sample by 1M align to first observation ")
+                "from xx " +
+                "where s = 'b' " +
+                "  and k >= cast(1388534400 * 1000000L as timestamp) " +
+                "  and k <= cast(1655742718 * 1000000L as timestamp)" +
+                "sample by 1M align to first observation ")
                 .ddl("create table xx (k timestamp, s symbol, lat double, lon double)" +
                         ", index(s capacity 10) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -3303,9 +3303,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, last(lat) lon " +
-                        "from x " +
-                        "where k between '1970-01-01' and '1970-01-01T04:00' and s in ('a') " +
-                        "sample by 1h align to first observation")
+                "from x " +
+                "where k between '1970-01-01' and '1970-01-01T04:00' and s in ('a') " +
+                "sample by 1h align to first observation")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -3334,9 +3334,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-02' and s in ('a')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-02' and s in ('a')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat long, lon long, s symbol, k timestamp)" +
                         ", index(s capacity 10) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -3381,9 +3381,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) + 1 lat, last(lon) * 2 lon, 1 as const " +
-                        "from x " +
-                        "where k > '1970-01-04' and s in ('a') " +
-                        "sample by 1h align to first observation")
+                "from x " +
+                "where k > '1970-01-04' and s in ('a') " +
+                "sample by 1h align to first observation")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -3411,9 +3411,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-02' and s in ('b')" +
-                        "sample by 2h align to first observation")
+                "from xx " +
+                "where k in '1970-02' and s in ('b')" +
+                "sample by 2h align to first observation")
                 .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 10) timestamp(k) partition by DAY")
                 .timestamp("k")
@@ -3815,15 +3815,15 @@ public class SampleByTest extends AbstractCairoTest {
     public void testIntervalAllVirtual() throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor("2023-01-01T11:22:33.000000Z"));
         assertMemoryLeak(() -> assertQuery("select first(today), count(x), ts " +
-                        "from ( " +
-                        "  select today('UTC-06:00') today, x, timestamp_sequence('2022-02-24', 60*1000*1000) ts " +
-                        "  from long_sequence(500) " +
-                        ") timestamp(ts) " +
-                        "SAMPLE by 1h;")
-        .timestamp("ts")
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                "from ( " +
+                "  select today('UTC-06:00') today, x, timestamp_sequence('2022-02-24', 60*1000*1000) ts " +
+                "  from long_sequence(500) " +
+                ") timestamp(ts) " +
+                "SAMPLE by 1h;")
+                .timestamp("ts")
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         first\tcount\tts
                         ('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t60\t2022-02-24T00:00:00.000000Z
                         ('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t60\t2022-02-24T01:00:00.000000Z
@@ -3840,12 +3840,12 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testKeyedFromTo() throws Exception {
         assertQuery("SELECT" +
-                        "  day(ts) AS day, " +
-                        "  sym2, " +
-                        "  COUNT(*) AS c " +
-                        "FROM x " +
-                        "WHERE sym = 'abc' " +
-                        "SAMPLE BY 1d FROM dateadd('d', -31, now()) to now() FILL(NULL);")
+                "  day(ts) AS day, " +
+                "  sym2, " +
+                "  COUNT(*) AS c " +
+                "FROM x " +
+                "WHERE sym = 'abc' " +
+                "SAMPLE BY 1d FROM dateadd('d', -31, now()) to now() FILL(NULL);")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -3860,29 +3860,29 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testNegativeOffsets() throws Exception {
         assertMemoryLeak(() -> assertQuery("""
-                        SELECT\s
-                            date,
-                            COUNT(*) AS row_count,
-                            SUM(value) AS total_value
-                        FROM (
-                            SELECT cast('2024-01-15T12:00:00.000000Z' as timestamp) as date, 100.0 as value FROM long_sequence(1)
-                            UNION ALL
-                            SELECT cast('2024-02-15T12:00:00.000000Z' as timestamp), 200.0 FROM long_sequence(1)
-                            UNION ALL
-                            SELECT cast('2024-03-15T12:00:00.000000Z' as timestamp), 300.0 FROM long_sequence(1)
-                            UNION ALL
-                            SELECT cast('2024-04-15T12:00:00.000000Z' as timestamp), 400.0 FROM long_sequence(1)
-                            UNION ALL
-                            SELECT cast('2024-05-15T12:00:00.000000Z' as timestamp), 500.0 FROM long_sequence(1)
-                            UNION ALL
-                            SELECT cast('2024-06-15T12:00:00.000000Z' as timestamp), 600.0 FROM long_sequence(1)
-                            ORDER BY date
-                        )
-                        SAMPLE BY 1M ALIGN TO CALENDAR WITH OFFSET '-00:05';""")
-        .timestamp("date")
-        .noRandomAccess()
-        .noLeakCheck()
-        .returns("""
+                SELECT\s
+                    date,
+                    COUNT(*) AS row_count,
+                    SUM(value) AS total_value
+                FROM (
+                    SELECT cast('2024-01-15T12:00:00.000000Z' as timestamp) as date, 100.0 as value FROM long_sequence(1)
+                    UNION ALL
+                    SELECT cast('2024-02-15T12:00:00.000000Z' as timestamp), 200.0 FROM long_sequence(1)
+                    UNION ALL
+                    SELECT cast('2024-03-15T12:00:00.000000Z' as timestamp), 300.0 FROM long_sequence(1)
+                    UNION ALL
+                    SELECT cast('2024-04-15T12:00:00.000000Z' as timestamp), 400.0 FROM long_sequence(1)
+                    UNION ALL
+                    SELECT cast('2024-05-15T12:00:00.000000Z' as timestamp), 500.0 FROM long_sequence(1)
+                    UNION ALL
+                    SELECT cast('2024-06-15T12:00:00.000000Z' as timestamp), 600.0 FROM long_sequence(1)
+                    ORDER BY date
+                )
+                SAMPLE BY 1M ALIGN TO CALENDAR WITH OFFSET '-00:05';""")
+                .timestamp("date")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("""
                         date\trow_count\ttotal_value
                         2023-12-31T23:55:00.000000Z\t1\t100.0
                         2024-01-31T23:55:00.000000Z\t1\t200.0
@@ -3919,9 +3919,9 @@ public class SampleByTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sum
-                    75.42541658721542
-                    """);
+                            sum
+                            75.42541658721542
+                            """);
         });
     }
 
@@ -3944,19 +3944,19 @@ public class SampleByTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    created\tcommit_rate
-                    2024-12-08T00:00:00.000000Z\t0
-                    2024-12-08T08:00:00.000000Z\t0
-                    2024-12-08T16:00:00.000000Z\t0
-                    """);
+                            created\tcommit_rate
+                            2024-12-08T00:00:00.000000Z\t0
+                            2024-12-08T08:00:00.000000Z\t0
+                            2024-12-08T16:00:00.000000Z\t0
+                            """);
             assertQuery("""
-                            select created, count() commit_rate
-                            from "sys.telemetry_wal"
-                            where tableId = 1017 and event = 103
-                            and "sys.telemetry_wal".created >= '2024-12-08' and created < '2024-12-09'
-                            sample by 8h from
-                            '2024-12-08' to '2024-12-09'
-                            fill(0)""")
+                    select created, count() commit_rate
+                    from "sys.telemetry_wal"
+                    where tableId = 1017 and event = 103
+                    and "sys.telemetry_wal".created >= '2024-12-08' and created < '2024-12-09'
+                    sample by 8h from
+                    '2024-12-08' to '2024-12-09'
+                    fill(0)""")
                     .timestamp("created")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -3978,31 +3978,31 @@ public class SampleByTest extends AbstractCairoTest {
             execute(SYS_TELEMETRY_WAL_DDL);
             drainWalQueue();
             assertQuery("""
-                            select\s
-                              created,
-                              -- coars, actual write amplification bucketed in 1s buckets
-                              phy_row_count/row_count writeAmplification
-                            from ( \s
-                              select\s
-                                created,\s
-                                sum(phy_row_count) over (order by created rows between 59 PRECEDING and CURRENT row) phy_row_count,
-                                sum(row_count) over (order by created rows between 59 PRECEDING and CURRENT row) row_count
-                                from (
-                                  select\s
-                                    created,\s
-                                    sum(rowcount) row_count,
-                                    sum(physicalRowCount) phy_row_count,
-                                  from sys.telemetry_wal
-                                  where tableId = 10 and\s
-                                     event = 105
-                                     and rowCount > 0 -- this is fixed clause, we have rows with - rowCount logged
-                                  sample by 1h
-                                  FROM '2024-12-11T00:31:02+01:00' TO '2024-12-11T12:31:02+01:00'
-                                  -- fill with null to avoid spurious values and division by 0
-                                  fill(null)
-                                 \s
-                              )
-                            );""")
+                    select\s
+                      created,
+                      -- coars, actual write amplification bucketed in 1s buckets
+                      phy_row_count/row_count writeAmplification
+                    from ( \s
+                      select\s
+                        created,\s
+                        sum(phy_row_count) over (order by created rows between 59 PRECEDING and CURRENT row) phy_row_count,
+                        sum(row_count) over (order by created rows between 59 PRECEDING and CURRENT row) row_count
+                        from (
+                          select\s
+                            created,\s
+                            sum(rowcount) row_count,
+                            sum(physicalRowCount) phy_row_count,
+                          from sys.telemetry_wal
+                          where tableId = 10 and\s
+                             event = 105
+                             and rowCount > 0 -- this is fixed clause, we have rows with - rowCount logged
+                          sample by 1h
+                          FROM '2024-12-11T00:31:02+01:00' TO '2024-12-11T12:31:02+01:00'
+                          -- fill with null to avoid spurious values and division by 0
+                          fill(null)
+                         \s
+                      )
+                    );""")
                     .timestamp("created")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -4027,13 +4027,13 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testRedundantGroupByInKeyedFromTo1() throws Exception {
         assertQuery("SELECT" +
-                        "  day(ts) AS day, " +
-                        "  sym2, " +
-                        "  COUNT(*) AS c " +
-                        "FROM x " +
-                        "WHERE sym = 'abc' " +
-                        "SAMPLE BY 1d " +
-                        "GROUP BY day, sym2 ")
+                "  day(ts) AS day, " +
+                "  sym2, " +
+                "  COUNT(*) AS c " +
+                "FROM x " +
+                "WHERE sym = 'abc' " +
+                "SAMPLE BY 1d " +
+                "GROUP BY day, sym2 ")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -4048,14 +4048,14 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testRedundantGroupByInKeyedFromTo2() throws Exception {
         assertQuery("SELECT" +
-                        "  day(ts) AS day, " +
-                        "  sym2, " +
-                        "  COUNT(*) AS c " +
-                        "FROM x " +
-                        "WHERE sym = 'abc' " +
-                        "SAMPLE BY 1d FROM dateadd('d', -31, now()) to now() FILL(NULL) " +
-                        "GROUP BY day, sym2 " +
-                        "ORDER BY day(ts) DESC, sym2;")
+                "  day(ts) AS day, " +
+                "  sym2, " +
+                "  COUNT(*) AS c " +
+                "FROM x " +
+                "WHERE sym = 'abc' " +
+                "SAMPLE BY 1d FROM dateadd('d', -31, now()) to now() FILL(NULL) " +
+                "GROUP BY day, sym2 " +
+                "ORDER BY day(ts) DESC, sym2;")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -4114,7 +4114,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             for (String tzClause : new String[]{"", "TIME ZONE 'UTC'", "TIME ZONE 'America/New_York'", "TIME ZONE 'Asia/Bangkok'"}) {
                 assertQuery("SELECT sum(c)::LONG total FROM (" +
-                                "SELECT ts, count() c FROM x SAMPLE BY 17m ALIGN TO CALENDAR " + tzClause + ")")
+                        "SELECT ts, count() c FROM x SAMPLE BY 17m ALIGN TO CALENDAR " + tzClause + ")")
                         .noRandomAccess()
                         .expectSize()
                         .noLeakCheck()
@@ -4134,7 +4134,7 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT min(i), max(i), count(), ts FROM x " +
-                            "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';")
+                    "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4177,7 +4177,7 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT min(i), max(i), count(), ts FROM x " +
-                            "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';")
+                    "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4262,8 +4262,8 @@ public class SampleByTest extends AbstractCairoTest {
             // The timestamps in the second query must not be before the ones from the first query.
             // If we wouldn't be doing DST gap hour check when flooring the timestamps, that would not hold.
             assertQuery("select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
-                            "sample by 17m align to calendar time zone 'Europe/Berlin';")
+                    "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
+                    "sample by 17m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4310,8 +4310,8 @@ public class SampleByTest extends AbstractCairoTest {
 
             // 5m
             assertQuery("select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
-                            "sample by 5m align to calendar time zone 'Europe/Berlin';")
+                    "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
+                    "sample by 5m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4353,8 +4353,8 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
-                            "sample by 5m align to calendar time zone 'Europe/Berlin';")
+                    "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
+                    "sample by 5m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4488,8 +4488,8 @@ public class SampleByTest extends AbstractCairoTest {
 
             // 15m
             assertQuery("select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
-                            "sample by 15m align to calendar time zone 'Europe/Berlin';")
+                    "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
+                    "sample by 15m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4509,8 +4509,8 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
-                            "sample by 15m align to calendar time zone 'Europe/Berlin';")
+                    "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
+                    "sample by 15m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4562,8 +4562,8 @@ public class SampleByTest extends AbstractCairoTest {
 
             // 30m
             assertQuery("select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
-                            "sample by 30m align to calendar time zone 'Europe/Berlin';")
+                    "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
+                    "sample by 30m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4578,8 +4578,8 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
-                            "sample by 30m align to calendar time zone 'Europe/Berlin';")
+                    "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
+                    "sample by 30m align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4624,9 +4624,9 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("select min(i), max(i), count(), ts from  x " +
-                            "where ts between '2021-03-28T00:45:00.000000Z' and '2021-03-28T06:59:59.999999Z' " +
-                            "sample by 29m align to calendar time zone 'Europe/Berlin' " +
-                            "with offset '00:15';")
+                    "where ts between '2021-03-28T00:45:00.000000Z' and '2021-03-28T06:59:59.999999Z' " +
+                    "sample by 29m align to calendar time zone 'Europe/Berlin' " +
+                    "with offset '00:15';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4648,9 +4648,9 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select min(i), max(i), count(), ts from  x " +
-                            "where ts between '2021-03-27T21:17:00' and '2021-03-28T04:42:59.999999' " +
-                            "sample by 253m align to calendar time zone 'Europe/Berlin' " +
-                            "with offset '00:15';")
+                    "where ts between '2021-03-27T21:17:00' and '2021-03-28T04:42:59.999999' " +
+                    "sample by 253m align to calendar time zone 'Europe/Berlin' " +
+                    "with offset '00:15';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4676,8 +4676,8 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
-                            "sample by 17m from '2021-03-27' align to calendar time zone 'Europe/Berlin';")
+                    "where ts between '2021-03-27T23:00:00.000000Z' and '2021-03-28T01:42:59.999999Z' " +
+                    "sample by 17m from '2021-03-27' align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4699,8 +4699,8 @@ public class SampleByTest extends AbstractCairoTest {
             // Verify no backward timestamp jumps within each query.
             // With sub-day strides, to_utc converts FROM to UTC and bucketing is pure UTC.
             assertQuery("select min(i), max(i), ts from x " +
-                            "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
-                            "sample by 17m from '2021-03-28' align to calendar time zone 'Europe/Berlin';")
+                    "where ts between '2021-03-28T01:43:00.000000Z' and '2021-03-28T11:55:00.000000Z' " +
+                    "sample by 17m from '2021-03-28' align to calendar time zone 'Europe/Berlin';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4753,10 +4753,10 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select * from (" +
-                        "select ts, first(val), avg(val), last(val), max(val)" +
-                        "from x " +
-                        "sample by 1m align to first observation)" +
-                        "where ts > '2022-12-01T00:00:30.000000Z' ")
+                "select ts, first(val), avg(val), last(val), max(val)" +
+                "from x " +
+                "sample by 1m align to first observation)" +
+                "where ts > '2022-12-01T00:00:30.000000Z' ")
                 .ddl("create table x as " +
                         "(" +
                         "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 1 as val union all " +
@@ -4777,10 +4777,10 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select * from (" +
-                        "select ts, first(val), avg(val), last(val), max(val)" +
-                        "from x " +
-                        "sample by 1m align to first observation)" +
-                        "where ts < '2022-12-01T00:01:31.000000Z' ")
+                "select ts, first(val), avg(val), last(val), max(val)" +
+                "from x " +
+                "sample by 1m align to first observation)" +
+                "where ts < '2022-12-01T00:01:31.000000Z' ")
                 .ddl("create table x as " +
                         "(" +
                         "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 1 as val union all " +
@@ -4805,10 +4805,10 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select * from (" +
-                        "select ts, s, first(val), avg(val), last(val), max(val)" +
-                        "from x " +
-                        "sample by 1m fill(null) align to calendar  )" +
-                        "where s != 's1' ")
+                "select ts, s, first(val), avg(val), last(val), max(val)" +
+                "from x " +
+                "sample by 1m fill(null) align to calendar  )" +
+                "where s != 's1' ")
                 .ddl("create table x as " +
                         "(" +
                         "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 's1' as s, 1 as val union all " +
@@ -4834,10 +4834,10 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select * from (" +
-                        "select ts, s, first(val), avg(val), last(val), max(val)" +
-                        "from x " +
-                        "sample by 1m fill(null) align to calendar  )" +
-                        "where s != 's2' ")
+                "select ts, s, first(val), avg(val), last(val), max(val)" +
+                "from x " +
+                "sample by 1m fill(null) align to calendar  )" +
+                "where s != 's2' ")
                 .ddl("create table x as " +
                         "(" +
                         "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 's1' as s, 1 as val union all " +
@@ -4882,10 +4882,10 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select * from (" +
-                        "select ts, s, first(val), avg(val), last(val), max(val)" +
-                        "from x " +
-                        "sample by 1m align to first observation)" +
-                        "where s != 's1' ")
+                "select ts, s, first(val), avg(val), last(val), max(val)" +
+                "from x " +
+                "sample by 1m align to first observation)" +
+                "where s != 's1' ")
                 .ddl("create table x as " +
                         "(" +
                         "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 's1' as s, 1 as val union all " +
@@ -4906,10 +4906,10 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select * from (" +
-                        "select ts, first(val), avg(val), last(val), max(val)" +
-                        "from x " +
-                        "sample by 1m align to first observation)" +
-                        "where ts > '2022-12-01T00:00:30.000000Z' ")
+                "select ts, first(val), avg(val), last(val), max(val)" +
+                "from x " +
+                "sample by 1m align to first observation)" +
+                "where ts > '2022-12-01T00:00:30.000000Z' ")
                 .ddl("create table x as " +
                         "(" +
                         "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 1 as val union all " +
@@ -4976,33 +4976,33 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByAllTypesAndInvalidTimestampColumn() throws Exception {
         assertQuery("""
+                select\s
+                    LastUpdate,\s
+                    CountryRegion,\s
+                    last(Confirmed) Confirmed,\s
+                    last(Recovered) Recovered,\s
+                    last(Deaths) Deaths\s
+                    from (
                         select\s
                             LastUpdate,\s
                             CountryRegion,\s
-                            last(Confirmed) Confirmed,\s
-                            last(Recovered) Recovered,\s
-                            last(Deaths) Deaths\s
-                            from (
-                                select\s
-                                    LastUpdate,\s
-                                    CountryRegion,\s
-                                    sum(Confirmed) Confirmed,\s
-                                    sum(Recovered) Recovered,\s
-                                    sum(Deaths) Deaths
-                                from (
-                                    select\s
-                                        LastUpdate,\s
-                                        ProvinceState,\s
-                                        CountryRegion,\s
-                                        last(Confirmed) Confirmed,\s
-                                        last(Recovered) Recovered,\s
-                                        last(Deaths) Deaths
-                                    from (covid where CountryRegion in ('China', 'Mainland China'))
-                                    sample by 1d fill(prev)
-                                )
-                            ) timestamp(xy) sample by 1M
-                        ;
-                        """)
+                            sum(Confirmed) Confirmed,\s
+                            sum(Recovered) Recovered,\s
+                            sum(Deaths) Deaths
+                        from (
+                            select\s
+                                LastUpdate,\s
+                                ProvinceState,\s
+                                CountryRegion,\s
+                                last(Confirmed) Confirmed,\s
+                                last(Recovered) Recovered,\s
+                                last(Deaths) Deaths
+                            from (covid where CountryRegion in ('China', 'Mainland China'))
+                            sample by 1d fill(prev)
+                        )
+                    ) timestamp(xy) sample by 1M
+                ;
+                """)
                 .ddl("create table covid as " +
                         "(" +
                         "select" +
@@ -5021,33 +5021,33 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByAllTypesAndInvalidTimestampType() throws Exception {
         assertQuery("""
+                select\s
+                    LastUpdate,\s
+                    CountryRegion,\s
+                    last(Confirmed) Confirmed,\s
+                    last(Recovered) Recovered,\s
+                    last(Deaths) Deaths\s
+                    from (
                         select\s
                             LastUpdate,\s
                             CountryRegion,\s
-                            last(Confirmed) Confirmed,\s
-                            last(Recovered) Recovered,\s
-                            last(Deaths) Deaths\s
-                            from (
-                                select\s
-                                    LastUpdate,\s
-                                    CountryRegion,\s
-                                    sum(Confirmed) Confirmed,\s
-                                    sum(Recovered) Recovered,\s
-                                    sum(Deaths) Deaths
-                                from (
-                                    select\s
-                                        LastUpdate,\s
-                                        ProvinceState,\s
-                                        CountryRegion,\s
-                                        last(Confirmed) Confirmed,\s
-                                        last(Recovered) Recovered,\s
-                                        last(Deaths) Deaths
-                                    from (covid where CountryRegion in ('China', 'Mainland China'))
-                                    sample by 1d fill(prev) align to first observation
-                                )
-                            ) timestamp(CountryRegion) sample by 1M align to first observation
-                        ;
-                        """)
+                            sum(Confirmed) Confirmed,\s
+                            sum(Recovered) Recovered,\s
+                            sum(Deaths) Deaths
+                        from (
+                            select\s
+                                LastUpdate,\s
+                                ProvinceState,\s
+                                CountryRegion,\s
+                                last(Confirmed) Confirmed,\s
+                                last(Recovered) Recovered,\s
+                                last(Deaths) Deaths
+                            from (covid where CountryRegion in ('China', 'Mainland China'))
+                            sample by 1d fill(prev) align to first observation
+                        )
+                    ) timestamp(CountryRegion) sample by 1M align to first observation
+                ;
+                """)
                 .ddl("create table covid as " +
                         "(" +
                         "select" +
@@ -5061,7 +5061,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(1000)" +
                         ") timestamp(LastUpdate) partition by NONE")
                 .fails(740, // this is the correct position of the "timestamp(CountryRegion)" column reference
-                "not a TIMESTAMP");
+                        "not a TIMESTAMP");
     }
 
     @Test
@@ -5131,13 +5131,13 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT " +
-                            "    min(price) AS min_ltp, " +
-                            "    max(price) AS max_ltp, " +
-                            "    timestamp(timestamp) AS hour " +
-                            "FROM trades " +
-                            "WHERE timestamp > '2021-03-21' and symbol='ETH-USD' " +
-                            "SAMPLE BY 1h " +
-                            "ORDER BY hour ASC;")
+                    "    min(price) AS min_ltp, " +
+                    "    max(price) AS max_ltp, " +
+                    "    timestamp(timestamp) AS hour " +
+                    "FROM trades " +
+                    "WHERE timestamp > '2021-03-21' and symbol='ETH-USD' " +
+                    "SAMPLE BY 1h " +
+                    "ORDER BY hour ASC;")
                     .noLeakCheck()
                     .fails(65, "unknown function name: timestamp(TIMESTAMP)");
         });
@@ -5187,7 +5187,7 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-10-30' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
+                    "SAMPLE BY 1d FROM '2021-10-30' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5223,7 +5223,7 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
+                    "SAMPLE BY 1d FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5259,7 +5259,7 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-04-03' ALIGN TO CALENDAR TIME ZONE 'Pacific/Chatham';")
+                    "SAMPLE BY 1d FROM '2021-04-03' ALIGN TO CALENDAR TIME ZONE 'Pacific/Chatham';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5297,7 +5297,7 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-09-24' ALIGN TO CALENDAR TIME ZONE 'Pacific/Chatham';")
+                    "SAMPLE BY 1d FROM '2021-09-24' ALIGN TO CALENDAR TIME ZONE 'Pacific/Chatham';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5324,7 +5324,7 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT min(i), max(i), count(), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';")
+                    "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5355,7 +5355,7 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT min(i), max(i), count(), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';")
+                    "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5377,9 +5377,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
-                        "from x " +
-                        "where s in ('a') " +
-                        "sample by 1d align to calendar time zone 'Europe/London')")
+                "from x " +
+                "where s in ('a') " +
+                "sample by 1d align to calendar time zone 'Europe/London')")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -5457,9 +5457,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select to_timezone(k, 'Europe/London'), lat, lon from (select k, first(lat) lat, last(k) lon " +
-                        "from x " +
-                        "where s in ('a') " +
-                        "sample by 1d align to calendar time zone 'Europe/London')")
+                "from x " +
+                "where s in ('a') " +
+                "sample by 1d align to calendar time zone 'Europe/London')")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -5509,10 +5509,10 @@ public class SampleByTest extends AbstractCairoTest {
                         ('2024-03-10T10:00:00.000000Z', 8.0),
                         ('2024-03-11T10:00:00.000000Z', 16.0)""");
             assertQuery("SELECT timestamp, sum(amount) FROM (" +
-                            " SELECT timestamp, amount FROM trades" +
-                            " WHERE timestamp IN '2024-03-08'" +
-                            " OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')" +
-                            ") SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
+                    " SELECT timestamp, amount FROM trades" +
+                    " WHERE timestamp IN '2024-03-08'" +
+                    " OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')" +
+                    ") SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'")
                     .timestamp("timestamp")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -5650,9 +5650,9 @@ public class SampleByTest extends AbstractCairoTest {
         // function used in sample by rewrite should assign them to the previous bucket, so
         // that there are no duplicate timestamps returned after backward conversion to UTC.
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
-                        "from x " +
-                        "where s in ('a') " +
-                        "sample by 1h align to calendar time zone 'Europe/Prague' with offset '00:15'")
+                "from x " +
+                "where s in ('a') " +
+                "sample by 1h align to calendar time zone 'Europe/Prague' with offset '00:15'")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -5688,7 +5688,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "), index(s) timestamp(k) partition by DAY");
             // dump raw data with bucket assignments around the DST transition
             assertQuery("SELECT k, timestamp_floor_utc('1h', k, null, '00:00', 'Europe/Prague') bucket_no_shift, timestamp_floor_utc('1h', k, null, '00:15', 'Europe/Prague') bucket, lat, lon " +
-                            "FROM x WHERE s IN ('a')")
+                    "FROM x WHERE s IN ('a')")
                     .timestamp("k")
                     .noLeakCheck()
                     .returns("""
@@ -5828,40 +5828,40 @@ public class SampleByTest extends AbstractCairoTest {
                     "('2025-07-30 22:59:00', 0.00132, 0.00134, 0.00131, 0.00136, 0.00134, 2500, 75, 335.00, 'system', now(), 'LSKBTC');");
             drainWalQueue();
             assertQuery("""
-                            with sq as (
-                              select
-                                candle_start_time,
-                                candle_symbol,
-                                first(candle_open_price) as open,
-                                last(candle_close_price) as close,
-                                min(candle_low_price) as low,
-                                max(candle_high_price) as high,
-                                sum(candle_volume) as candle_volume,
-                                sum(candle_usd_volume) as candle_usd_volume,
-                                sum(candle_trades_count) as cnt
-                              from
-                                candles_market_spot_4_1m
-                              where
-                                candle_start_time >= '2025-07-30 20:00:00'
-                                and candle_start_time <= '2025-07-30 23:00:00'
-                                and candle_symbol = 'LSKBTC' sample by 1h fill(PREV, PREV, PREV, PREV, 0, 0, 0)
-                              order by
-                                candle_start_time desc
-                            )
-                            select
-                              candle_start_time,
-                              candle_symbol,
-                              open,
-                              close,
-                              low,
-                              case
-                                when cnt = 0 then close
-                                else high
-                              end as high,
-                              candle_volume,
-                              candle_usd_volume,
-                              cnt
-                            from sq;""")
+                    with sq as (
+                      select
+                        candle_start_time,
+                        candle_symbol,
+                        first(candle_open_price) as open,
+                        last(candle_close_price) as close,
+                        min(candle_low_price) as low,
+                        max(candle_high_price) as high,
+                        sum(candle_volume) as candle_volume,
+                        sum(candle_usd_volume) as candle_usd_volume,
+                        sum(candle_trades_count) as cnt
+                      from
+                        candles_market_spot_4_1m
+                      where
+                        candle_start_time >= '2025-07-30 20:00:00'
+                        and candle_start_time <= '2025-07-30 23:00:00'
+                        and candle_symbol = 'LSKBTC' sample by 1h fill(PREV, PREV, PREV, PREV, 0, 0, 0)
+                      order by
+                        candle_start_time desc
+                    )
+                    select
+                      candle_start_time,
+                      candle_symbol,
+                      open,
+                      close,
+                      low,
+                      case
+                        when cnt = 0 then close
+                        else high
+                      end as high,
+                      candle_volume,
+                      candle_usd_volume,
+                      cnt
+                    from sq;""")
                     .timestampDesc("candle_start_time")
                     .returns("""
                             candle_start_time\tcandle_symbol\topen\tclose\tlow\thigh\tcandle_volume\tcandle_usd_volume\tcnt
@@ -5871,25 +5871,25 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            with sq as (
-                              select
-                                candle_start_time,
-                                candle_symbol,
-                                first(candle_open_price) as open,  \s
-                                sum(candle_trades_count) as cnt  \s
-                              from
-                                candles_market_spot_4_1m\s
-                              where\s
-                                candle_start_time >= '2025-07-30 20:00:00' \s
-                                and candle_start_time <= '2025-07-30 23:00:00'
-                                and candle_symbol = 'LSKBTC' sample by 1h fill(PREV,  0)
-                              order by\s
-                                candle_start_time desc
-                            )
-                            select
-                              candle_start_time,
-                              cnt
-                            from sq;""")
+                    with sq as (
+                      select
+                        candle_start_time,
+                        candle_symbol,
+                        first(candle_open_price) as open,  \s
+                        sum(candle_trades_count) as cnt  \s
+                      from
+                        candles_market_spot_4_1m\s
+                      where\s
+                        candle_start_time >= '2025-07-30 20:00:00' \s
+                        and candle_start_time <= '2025-07-30 23:00:00'
+                        and candle_symbol = 'LSKBTC' sample by 1h fill(PREV,  0)
+                      order by\s
+                        candle_start_time desc
+                    )
+                    select
+                      candle_start_time,
+                      cnt
+                    from sq;""")
                     .timestampDesc("candle_start_time")
                     .returns("""
                             candle_start_time\tcnt
@@ -5902,40 +5902,40 @@ public class SampleByTest extends AbstractCairoTest {
             // aggregate count, the query must be rejected at the first fill
             // expression with "not enough fill values".
             assertQuery("""
-                            with sq as (
-                              select
-                                candle_start_time,
-                                candle_symbol,
-                                first(candle_open_price) as open,
-                                last(candle_close_price) as close,
-                                min(candle_low_price) as low,
-                                max(candle_high_price) as high,
-                                sum(candle_volume) as candle_volume,
-                                sum(candle_usd_volume) as candle_usd_volume,
-                                sum(candle_trades_count) as cnt
-                              from
-                                candles_market_spot_4_1m
-                              where
-                                candle_start_time >= '2025-07-30 20:00:00'
-                                and candle_start_time <= '2025-07-30 23:00:00'
-                                and candle_symbol = 'LSKBTC' sample by 1h fill(PREV, PREV, PREV, PREV, 0)
-                              order by
-                                candle_start_time desc
-                            )
-                            select
-                              candle_start_time,
-                              candle_symbol,
-                              open,
-                              close,
-                              low,
-                              case
-                                when cnt = 0 then close
-                                else high
-                              end as high,
-                              candle_volume,
-                              candle_usd_volume,
-                              cnt
-                            from sq;""")
+                    with sq as (
+                      select
+                        candle_start_time,
+                        candle_symbol,
+                        first(candle_open_price) as open,
+                        last(candle_close_price) as close,
+                        min(candle_low_price) as low,
+                        max(candle_high_price) as high,
+                        sum(candle_volume) as candle_volume,
+                        sum(candle_usd_volume) as candle_usd_volume,
+                        sum(candle_trades_count) as cnt
+                      from
+                        candles_market_spot_4_1m
+                      where
+                        candle_start_time >= '2025-07-30 20:00:00'
+                        and candle_start_time <= '2025-07-30 23:00:00'
+                        and candle_symbol = 'LSKBTC' sample by 1h fill(PREV, PREV, PREV, PREV, 0)
+                      order by
+                        candle_start_time desc
+                    )
+                    select
+                      candle_start_time,
+                      candle_symbol,
+                      open,
+                      close,
+                      low,
+                      case
+                        when cnt = 0 then close
+                        else high
+                      end as high,
+                      candle_volume,
+                      candle_usd_volume,
+                      cnt
+                    from sq;""")
                     .fails(530, "not enough fill values");
         });
     }
@@ -5962,14 +5962,14 @@ public class SampleByTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            select ts, sym, last_dec8, last_dec16, last_dec32, last_dec64, last_dec128, last_dec256
-                            from (
-                              select ts, sym, last(dec8) last_dec8, last(dec16) last_dec16, last(dec32) last_dec32, last(dec64) last_dec64, last(dec128) last_dec128, last(dec256) last_dec256
-                              from test
-                              sample by 1d fill(null)
-                            )
-                            where last_dec8 is null
-                            """)
+                    select ts, sym, last_dec8, last_dec16, last_dec32, last_dec64, last_dec128, last_dec256
+                    from (
+                      select ts, sym, last(dec8) last_dec8, last(dec16) last_dec16, last(dec32) last_dec32, last(dec64) last_dec64, last(dec128) last_dec128, last(dec256) last_dec256
+                      from test
+                      sample by 1d fill(null)
+                    )
+                    where last_dec8 is null
+                    """)
                     .timestamp("ts")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -5991,13 +5991,13 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            select ts, last_dec8, last_dec16, last_dec32, last_dec64, last_dec128, last_dec256
-                            from (
-                              select ts, last(dec8) last_dec8, last(dec16) last_dec16, last(dec32) last_dec32, last(dec64) last_dec64, last(dec128) last_dec128, last(dec256) last_dec256
-                              from test
-                              sample by 1d fill(null)
-                            )
-                            """)
+                    select ts, last_dec8, last_dec16, last_dec32, last_dec64, last_dec128, last_dec256
+                    from (
+                      select ts, last(dec8) last_dec8, last(dec16) last_dec16, last(dec32) last_dec32, last(dec64) last_dec64, last(dec128) last_dec128, last(dec256) last_dec256
+                      from test
+                      sample by 1d fill(null)
+                    )
+                    """)
                     .timestamp("ts")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -6022,10 +6022,10 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("SELECT last(ts) as time, s1, last(d1) as dd " +
-                        "FROM x " +
-                        "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
-                        "AND s2 = ('foo') " +
-                        "SAMPLE BY 5m ALIGN TO FIRST OBSERVATION;")
+                "FROM x " +
+                "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
+                "AND s2 = ('foo') " +
+                "SAMPLE BY 5m ALIGN TO FIRST OBSERVATION;")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -6046,10 +6046,10 @@ public class SampleByTest extends AbstractCairoTest {
                         """);
 
         assertQuery("SELECT last(ts) as time, s1, last(d1) as dd " +
-                        "FROM x " +
-                        "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
-                        "AND s2 = ('foo') " +
-                        "SAMPLE BY 5m ALIGN TO CALENDAR;")
+                "FROM x " +
+                "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
+                "AND s2 = ('foo') " +
+                "SAMPLE BY 5m ALIGN TO CALENDAR;")
                 .expectSize()
                 .returns("""
                         time\ts1\tdd
@@ -6339,9 +6339,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select   id, time, geo6, last(lat) lat, last(lon) lon " +
-                        "from pos " +
-                        "where id = 'A' sample by 15m ALIGN to CALENDAR " +
-                        "order by time, id")
+                "from pos " +
+                "where id = 'A' sample by 15m ALIGN to CALENDAR " +
+                "order by time, id")
                 .ddl("CREATE TABLE pos (" +
                         "  time TIMESTAMP," +
                         "  id SYMBOL INDEX," +
@@ -6425,10 +6425,10 @@ public class SampleByTest extends AbstractCairoTest {
 
             // Without FILL: bucket starts at FROM, single bucket covers the 60s range
             assertQuery("""
-                            SELECT sum(double_value), value_time FROM ignition
-                            SAMPLE BY 60000T
-                            FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
-                            """)
+                    SELECT sum(double_value), value_time FROM ignition
+                    SAMPLE BY 60000T
+                    FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
+                    """)
                     .timestamp("value_time")
                     .expectSize()
                     .noLeakCheck()
@@ -6439,11 +6439,11 @@ public class SampleByTest extends AbstractCairoTest {
 
             // With FILL(LINEAR): should produce the same bucket alignment as without FILL
             assertQuery("""
-                            SELECT sum(double_value), value_time FROM ignition
-                            SAMPLE BY 60000T
-                            FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
-                            FILL(LINEAR)
-                            """)
+                    SELECT sum(double_value), value_time FROM ignition
+                    SAMPLE BY 60000T
+                    FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
+                    FILL(LINEAR)
+                    """)
                     .timestamp("value_time")
                     .expectSize()
                     .noLeakCheck()
@@ -6454,12 +6454,12 @@ public class SampleByTest extends AbstractCairoTest {
 
             // With explicit WHERE clause, FILL(LINEAR) should still align to FROM
             assertQuery("""
-                            SELECT sum(double_value), value_time FROM ignition
-                            WHERE value_time BETWEEN '2026-02-11T20:06:26.916' AND '2026-02-11T20:07:26.916'
-                            SAMPLE BY 60000T
-                            FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
-                            FILL(LINEAR)
-                            """)
+                    SELECT sum(double_value), value_time FROM ignition
+                    WHERE value_time BETWEEN '2026-02-11T20:06:26.916' AND '2026-02-11T20:07:26.916'
+                    SAMPLE BY 60000T
+                    FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
+                    FILL(LINEAR)
+                    """)
                     .timestamp("value_time")
                     .expectSize()
                     .noLeakCheck()
@@ -6478,10 +6478,10 @@ public class SampleByTest extends AbstractCairoTest {
 
             // Multiple buckets with FILL(LINEAR) and FROM-TO should align to FROM
             assertQuery("""
-                            SELECT ts, avg(x) FROM fromto
-                            SAMPLE BY 5d FROM '2018-01-01' TO '2018-01-31'
-                            FILL(LINEAR)
-                            """)
+                    SELECT ts, avg(x) FROM fromto
+                    SAMPLE BY 5d FROM '2018-01-01' TO '2018-01-31'
+                    FILL(LINEAR)
+                    """)
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6493,9 +6493,9 @@ public class SampleByTest extends AbstractCairoTest {
 
             // Verify same result without FILL
             assertQuery("""
-                            SELECT ts, avg(x) FROM fromto
-                            SAMPLE BY 5d FROM '2018-01-01' TO '2018-01-31'
-                            """)
+                    SELECT ts, avg(x) FROM fromto
+                    SAMPLE BY 5d FROM '2018-01-01' TO '2018-01-31'
+                    """)
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6528,11 +6528,11 @@ public class SampleByTest extends AbstractCairoTest {
 
             // 10s buckets FROM :00 TO :40 — bucket at :20 is a gap and should be interpolated
             assertQuery("""
-                            SELECT ts, sum(val) FROM gaps
-                            SAMPLE BY 10s
-                            FROM '2026-01-01T00:00:00' TO '2026-01-01T00:00:40'
-                            FILL(LINEAR)
-                            """)
+                    SELECT ts, sum(val) FROM gaps
+                    SAMPLE BY 10s
+                    FROM '2026-01-01T00:00:00' TO '2026-01-01T00:00:40'
+                    FILL(LINEAR)
+                    """)
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6546,11 +6546,11 @@ public class SampleByTest extends AbstractCairoTest {
 
             // Same query with non-aligned FROM — buckets shift
             assertQuery("""
-                            SELECT ts, sum(val) FROM gaps
-                            SAMPLE BY 10s
-                            FROM '2025-12-31T23:59:55' TO '2026-01-01T00:00:35'
-                            FILL(LINEAR)
-                            """)
+                    SELECT ts, sum(val) FROM gaps
+                    SAMPLE BY 10s
+                    FROM '2025-12-31T23:59:55' TO '2026-01-01T00:00:35'
+                    FILL(LINEAR)
+                    """)
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6584,12 +6584,12 @@ public class SampleByTest extends AbstractCairoTest {
             // ALIGN TO CALENDAR WITH OFFSET + FROM-TO + FILL(LINEAR)
             // The FROM should anchor the buckets, the offset should not override it
             assertQuery("""
-                            SELECT ts, sum(val) FROM gaps
-                            SAMPLE BY 10s
-                            FROM '2026-01-01T00:00:00' TO '2026-01-01T00:00:40'
-                            FILL(LINEAR)
-                            ALIGN TO CALENDAR WITH OFFSET '00:05'
-                            """)
+                    SELECT ts, sum(val) FROM gaps
+                    SAMPLE BY 10s
+                    FROM '2026-01-01T00:00:00' TO '2026-01-01T00:00:40'
+                    FILL(LINEAR)
+                    ALIGN TO CALENDAR WITH OFFSET '00:05'
+                    """)
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6603,12 +6603,12 @@ public class SampleByTest extends AbstractCairoTest {
 
             // Non-aligned FROM with offset — FROM should still control alignment
             assertQuery("""
-                            SELECT ts, sum(val) FROM gaps
-                            SAMPLE BY 10s
-                            FROM '2025-12-31T23:59:55' TO '2026-01-01T00:00:35'
-                            FILL(LINEAR)
-                            ALIGN TO CALENDAR WITH OFFSET '00:05'
-                            """)
+                    SELECT ts, sum(val) FROM gaps
+                    SAMPLE BY 10s
+                    FROM '2025-12-31T23:59:55' TO '2026-01-01T00:00:35'
+                    FILL(LINEAR)
+                    ALIGN TO CALENDAR WITH OFFSET '00:05'
+                    """)
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6643,12 +6643,12 @@ public class SampleByTest extends AbstractCairoTest {
             // FROM/TO are interpreted as Berlin local time (UTC+1 in January).
             // Data is at 00:00:00Z–00:00:30Z = 01:00:00–01:00:30 Berlin.
             assertQuery("""
-                            SELECT ts, sum(val) FROM gaps
-                            SAMPLE BY 10s
-                            FROM '2026-01-01T01:00:00' TO '2026-01-01T01:00:40'
-                            FILL(LINEAR)
-                            ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
-                            """)
+                    SELECT ts, sum(val) FROM gaps
+                    SAMPLE BY 10s
+                    FROM '2026-01-01T01:00:00' TO '2026-01-01T01:00:40'
+                    FILL(LINEAR)
+                    ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
+                    """)
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6664,12 +6664,12 @@ public class SampleByTest extends AbstractCairoTest {
             // FROM/TO are Berlin local time (UTC+1 in January).
             // '00:59:55' Berlin = '23:59:55Z', '01:00:35' Berlin = '00:00:35Z'.
             assertQuery("""
-                            SELECT ts, sum(val) FROM gaps
-                            SAMPLE BY 10s
-                            FROM '2026-01-01T00:59:55' TO '2026-01-01T01:00:35'
-                            FILL(LINEAR)
-                            ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
-                            """)
+                    SELECT ts, sum(val) FROM gaps
+                    SAMPLE BY 10s
+                    FROM '2026-01-01T00:59:55' TO '2026-01-01T01:00:35'
+                    FILL(LINEAR)
+                    ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
+                    """)
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6708,12 +6708,12 @@ public class SampleByTest extends AbstractCairoTest {
             // This differs from streaming cursors (FILL(NULL), FILL(PREV))
             // which adjust for DST and would skip the non-existent local hour.
             assertQuery("""
-                            SELECT ts, sum(val) FROM dst_data
-                            SAMPLE BY 1h
-                            FROM '2026-03-28T23:00:00' TO '2026-03-29T06:00:00'
-                            FILL(LINEAR)
-                            ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
-                            """)
+                    SELECT ts, sum(val) FROM dst_data
+                    SAMPLE BY 1h
+                    FROM '2026-03-28T23:00:00' TO '2026-03-29T06:00:00'
+                    FILL(LINEAR)
+                    ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
+                    """)
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6738,7 +6738,7 @@ public class SampleByTest extends AbstractCairoTest {
             execute(FROM_TO_DDL);
             drainWalQueue();
             assertQuery("select ts, avg(x) from fromto\n" +
-                            "sample by 5d")
+                    "sample by 5d")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6749,7 +6749,7 @@ public class SampleByTest extends AbstractCairoTest {
                             2018-01-09T00:00:00.000000Z\t432.5
                             """);
             assertQuery("select ts, avg(x) from fromto\n" +
-                            "sample by 5d from '2017-12-20' fill(null)")
+                    "sample by 5d from '2017-12-20' fill(null)")
                     .timestamp("ts")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -6762,7 +6762,7 @@ public class SampleByTest extends AbstractCairoTest {
                             2018-01-09T00:00:00.000000Z\t432.5
                             """);
             assertQuery("select ts, avg(x) from fromto\n" +
-                            "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)")
+                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)")
                     .timestamp("ts")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -6799,11 +6799,11 @@ public class SampleByTest extends AbstractCairoTest {
 
             // FILL(PREV) with FROM-TO should align to FROM, same as no-fill
             assertQuery("""
-                            SELECT sum(double_value), value_time FROM ignition
-                            SAMPLE BY 60000T
-                            FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
-                            FILL(PREV)
-                            """)
+                    SELECT sum(double_value), value_time FROM ignition
+                    SAMPLE BY 60000T
+                    FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
+                    FILL(PREV)
+                    """)
                     .timestamp("value_time")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -6826,13 +6826,13 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
             assertQuery("""
-                            SELECT ts, count(*) rows, count_distinct(x) keys FROM (
-                                SELECT ts, avg(x), first(x), last(x), x FROM fromto
-                                WHERE s != '5'
-                                SAMPLE BY 5d FROM '2017-12-20' TO '2018-01-31' FILL(42, 42, 42)
-                            )
-                            GROUP BY ts
-                            ORDER BY ts""")
+                    SELECT ts, count(*) rows, count_distinct(x) keys FROM (
+                        SELECT ts, avg(x), first(x), last(x), x FROM fromto
+                        WHERE s != '5'
+                        SAMPLE BY 5d FROM '2017-12-20' TO '2018-01-31' FILL(42, 42, 42)
+                    )
+                    GROUP BY ts
+                    ORDER BY ts""")
                     .timestamp("ts")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -6860,7 +6860,7 @@ public class SampleByTest extends AbstractCairoTest {
             execute(FROM_TO_DDL);
             drainWalQueue();
             assertQuery("select ts, avg(x) from fromto\n" +
-                            "sample by 5d")
+                    "sample by 5d")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6871,7 +6871,7 @@ public class SampleByTest extends AbstractCairoTest {
                             2018-01-09T00:00:00.000000Z\t432.5
                             """);
             assertQuery("select ts, avg(x) from fromto\n" +
-                            "sample by 5d from '2017-12-20'")
+                    "sample by 5d from '2017-12-20'")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6882,7 +6882,7 @@ public class SampleByTest extends AbstractCairoTest {
                             2018-01-09T00:00:00.000000Z\t432.5
                             """);
             assertQuery("select ts, avg(x) from fromto\n" +
-                            "sample by 5d from '2018-01-01'")
+                    "sample by 5d from '2018-01-01'")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6892,7 +6892,7 @@ public class SampleByTest extends AbstractCairoTest {
                             2018-01-06T00:00:00.000000Z\t360.5
                             """);
             assertQuery("select ts, avg(x) from fromto\n" +
-                            "sample by 5d from '2018-01-01' to '2018-01-31'")
+                    "sample by 5d from '2018-01-01' to '2018-01-31'")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -6996,7 +6996,7 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
             assertQuery("select ts, avg(x) from fromto\n" +
-                            "sample by 4M from '2017-01-01' to '2019-01-01' fill(null)")
+                    "sample by 4M from '2017-01-01' to '2019-01-01' fill(null)")
                     .timestamp("ts")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -7020,7 +7020,7 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
             assertQuery("select ts, avg(x) from fromto\n" +
-                            "sample by 4y from '2000-01-01' to '2050-01-01' fill(null)")
+                    "sample by 4y from '2000-01-01' to '2050-01-01' fill(null)")
                     .timestamp("ts")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -7057,7 +7057,7 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1h FROM '2021-10-30' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
+                    "SAMPLE BY 1h FROM '2021-10-30' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -7097,7 +7097,7 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1h FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
+                    "SAMPLE BY 1h FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin';")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -7395,7 +7395,7 @@ public class SampleByTest extends AbstractCairoTest {
                         1968-10-04T00:00:00.000000Z\t20.0
                         """);
         assertQuery("SELECT ts, avg(value) FROM(select ts, value from test order by ts asc)" +
-                        " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';")
+                " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';")
                 .timestamp("ts")
                 .noRandomAccess()
                 .noLeakCheck()
@@ -7428,7 +7428,7 @@ public class SampleByTest extends AbstractCairoTest {
                         1970-01-01T00:00:00.000000Z\t17.5
                         """);
         assertQuery("SELECT ts, avg(value) FROM(select ts, value from test order by ts asc)" +
-                        " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';")
+                " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';")
                 .timestamp("ts")
                 .noRandomAccess()
                 .noLeakCheck()
@@ -7824,18 +7824,18 @@ public class SampleByTest extends AbstractCairoTest {
                     """;
             // sample-by rewrite
             assertQuery("""
-                            select timestamp, count()
-                            from (
-                                (
-                                    select timestamp, symbol, count(bids[1][1]) as total
-                                    from eq_equities_market_data
-                                    where symbol = 'HSBC'
-                                    sample by 10s
-                                )
-                                order by timestamp
-                            )
-                            sample by 10m
-                            """)
+                    select timestamp, count()
+                    from (
+                        (
+                            select timestamp, symbol, count(bids[1][1]) as total
+                            from eq_equities_market_data
+                            where symbol = 'HSBC'
+                            sample by 10s
+                        )
+                        order by timestamp
+                    )
+                    sample by 10m
+                    """)
                     .noLeakCheck()
                     .timestamp("timestamp")
                     .noRandomAccess()
@@ -7843,18 +7843,18 @@ public class SampleByTest extends AbstractCairoTest {
 
             // sample by fill
             assertQuery("""
-                            select timestamp, count()
-                            from (
-                                (
-                                    select timestamp, symbol, count(bids[1][1]) as total
-                                    from eq_equities_market_data
-                                    where symbol = 'HSBC'
-                                    sample by 10s fill(prev)
-                                )
-                                order by timestamp
-                            )
-                            sample by 10m
-                            """)
+                    select timestamp, count()
+                    from (
+                        (
+                            select timestamp, symbol, count(bids[1][1]) as total
+                            from eq_equities_market_data
+                            where symbol = 'HSBC'
+                            sample by 10s fill(prev)
+                        )
+                        order by timestamp
+                    )
+                    sample by 10m
+                    """)
                     .noLeakCheck()
                     .timestamp("timestamp")
                     .noRandomAccess()
@@ -8615,11 +8615,11 @@ public class SampleByTest extends AbstractCairoTest {
                     "('2025-02-11T10:00:00.000Z', 11.0, 'point');");
             drainWalQueue();
             assertQuery("""
-                            SELECT timestamp, first(value)
-                            FROM points
-                            WHERE name = 'point'
-                            SAMPLE BY 1w
-                            ALIGN TO CALENDAR""")
+                    SELECT timestamp, first(value)
+                    FROM points
+                    WHERE name = 'point'
+                    SAMPLE BY 1w
+                    ALIGN TO CALENDAR""")
                     .timestamp("timestamp")
                     .expectSize()
                     .noLeakCheck()
@@ -8719,29 +8719,29 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("""
-                        with srctbl as (
-                          select
-                              period_start_time,
-                              cal_timestamp_time nas_timestamp,
-                              'SIP' as feed_table,
-                              device_name,
-                              application_name,
-                              application_group,
-                              min(controlplane_response_time_usec) min_response_time_usec,
-                              max(controlplane_response_time_usec) max_response_time_usec,
-                              sum(controlplane_response_time_usec) total_response_time_usec,
-                              count(controlplane_response_time_usec) count_response_time,
-                              count() events
-                          from (
-                            select * from (
-                            select controlplane_transaction_start_time as period_start_time, *
-                            from nAS_ControlPlane_SIP
-                            where not controlplane_transaction_start_time is null
-                            order by 1 asc
-                            ) timestamp(period_start_time)
-                          ) sample by 5m align to calendar
-                        )
-                        select * from srctbl limit 10;""")
+                with srctbl as (
+                  select
+                      period_start_time,
+                      cal_timestamp_time nas_timestamp,
+                      'SIP' as feed_table,
+                      device_name,
+                      application_name,
+                      application_group,
+                      min(controlplane_response_time_usec) min_response_time_usec,
+                      max(controlplane_response_time_usec) max_response_time_usec,
+                      sum(controlplane_response_time_usec) total_response_time_usec,
+                      count(controlplane_response_time_usec) count_response_time,
+                      count() events
+                  from (
+                    select * from (
+                    select controlplane_transaction_start_time as period_start_time, *
+                    from nAS_ControlPlane_SIP
+                    where not controlplane_transaction_start_time is null
+                    order by 1 asc
+                    ) timestamp(period_start_time)
+                  ) sample by 5m align to calendar
+                )
+                select * from srctbl limit 10;""")
                 .ddl("create table 'nAS_ControlPlane_SIP' as " +
                         "(" +
                         "select" +
@@ -8776,9 +8776,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
-                        "from x " +
-                        "where s in ('d') " +
-                        "sample by 1d align to calendar time zone 'Europe/London')")
+                "from x " +
+                "where s in ('d') " +
+                "sample by 1d align to calendar time zone 'Europe/London')")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -8799,18 +8799,18 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select * from (" +
-                        "  select" +
-                        "    first(price) AS open," +
-                        "    max(price) AS high," +
-                        "    min(price) AS low," +
-                        "    last(price) AS close," +
-                        "    sum(amount) AS volume," +
-                        "    created_at as timestamp" +
-                        "  from trades" +
-                        "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
-                        "  sample by 60m" +
-                        "  fill(null, null, null, null, 0) align to calendar" +
-                        ") order by timestamp desc limit 0, 1")
+                "  select" +
+                "    first(price) AS open," +
+                "    max(price) AS high," +
+                "    min(price) AS low," +
+                "    last(price) AS close," +
+                "    sum(amount) AS volume," +
+                "    created_at as timestamp" +
+                "  from trades" +
+                "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
+                "  sample by 60m" +
+                "  fill(null, null, null, null, 0) align to calendar" +
+                ") order by timestamp desc limit 0, 1")
                 .ddl("create table trades as " +
                         "(" +
                         "select" +
@@ -8827,18 +8827,18 @@ public class SampleByTest extends AbstractCairoTest {
                         """);
 
         assertQuery("select * from (" +
-                        "  select" +
-                        "    first(price) AS open," +
-                        "    max(price) AS high," +
-                        "    min(price) AS low," +
-                        "    last(price) AS close," +
-                        "    sum(amount) AS volume," +
-                        "    created_at as timestamp" +
-                        "  from trades_varchar" +
-                        "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
-                        "  sample by 60m" +
-                        "  fill(null, null, null, null, 0) align to calendar" +
-                        ") order by timestamp desc limit 0, 1")
+                "  select" +
+                "    first(price) AS open," +
+                "    max(price) AS high," +
+                "    min(price) AS low," +
+                "    last(price) AS close," +
+                "    sum(amount) AS volume," +
+                "    created_at as timestamp" +
+                "  from trades_varchar" +
+                "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
+                "  sample by 60m" +
+                "  fill(null, null, null, null, 0) align to calendar" +
+                ") order by timestamp desc limit 0, 1")
                 .ddl("create table trades_varchar as " +
                         "(" +
                         "select" +
@@ -8917,17 +8917,17 @@ public class SampleByTest extends AbstractCairoTest {
                     """
             );
             assertQuery("""
-                              WITH imputed AS ( \s
-                                SELECT \s
-                                    ts,
-                                    last(temperature) AS temperature,
-                                    last(humidity) As humidity\s
-                                FROM weather
-                                SAMPLE BY 1m FILL(PREV)
-                            )
-                            SELECT ts, humidity
-                            FROM imputed
-                            """)
+                      WITH imputed AS ( \s
+                        SELECT \s
+                            ts,
+                            last(temperature) AS temperature,
+                            last(humidity) As humidity\s
+                        FROM weather
+                        SAMPLE BY 1m FILL(PREV)
+                    )
+                    SELECT ts, humidity
+                    FROM imputed
+                    """)
                     .timestamp("ts")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -8944,17 +8944,17 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                              WITH imputed AS ( \s
-                                SELECT \s
-                                    ts,
-                                    last(temperature) AS temperature,
-                                    last(humidity) As humidity\s
-                                FROM weather
-                                SAMPLE BY 1m FILL(PREV)
-                            )
-                            SELECT ts, humidity, temperature
-                            FROM imputed
-                            """)
+                      WITH imputed AS ( \s
+                        SELECT \s
+                            ts,
+                            last(temperature) AS temperature,
+                            last(humidity) As humidity\s
+                        FROM weather
+                        SAMPLE BY 1m FILL(PREV)
+                    )
+                    SELECT ts, humidity, temperature
+                    FROM imputed
+                    """)
                     .timestamp("ts")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -8978,9 +8978,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select created_at, first(price)" +
-                        " from trades" +
-                        " sample by 2h align to first observation" +
-                        " order by created_at desc")
+                " from trades" +
+                " sample by 2h align to first observation" +
+                " order by created_at desc")
                 .ddl("create table trades as " +
                         "(" +
                         "select" +
@@ -9249,7 +9249,7 @@ public class SampleByTest extends AbstractCairoTest {
             execute(FROM_TO_DDL);
             drainWalQueue();
             assertQuery("select ts1, avg(x) from (select ts as ts1, x from fromto where x > 0)\n" +
-                            "sample by 5d from '2017-12-20'")
+                    "sample by 5d from '2017-12-20'")
                     .timestamp("ts1")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -9265,7 +9265,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByWithoutTimestamp() throws Exception {
         assertQuery("SELECT * FROM ( SELECT null as x) SAMPLE BY 1d FROM '2021-01-02T00:00:00' " +
-                        "TO dateadd('d', 1095, '2021-01-02T00:00:00');")
+                "TO dateadd('d', 1095, '2021-01-02T00:00:00');")
                 .fails(44, "Sample by requires a designated TIMESTAMP");
     }
 
@@ -9798,119 +9798,119 @@ public class SampleByTest extends AbstractCairoTest {
 
         assertQuery("select b, count(), k from x sample by 3h fill(linear) align to calendar time zone 'Europe/Berlin'with offset '00:45'")
                 .ddl("create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(cast('1970-01-03T02:00:00.000000Z' as timestamp), 360000000) k" +
-                " from" +
-                " long_sequence(100)" +
-                ") timestamp(k) partition by NONE")
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('1970-01-03T02:00:00.000000Z' as timestamp), 360000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE")
                 .timestamp("k")
                 .expectSize()
                 .mutateWith("insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(CAST('1970-01-03T13:10:00.000000Z' as timestamp), 360000000) k" +
-                " from" +
-                " long_sequence(35)" +
-                ") timestamp(k)")
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(CAST('1970-01-03T13:10:00.000000Z' as timestamp), 360000000) k" +
+                        " from" +
+                        " long_sequence(35)" +
+                        ") timestamp(k)")
                 .returns("""
-                b\tcount\tk
-                \t9\t1970-01-03T00:45:00.000000Z
-                VTJW\t2\t1970-01-03T00:45:00.000000Z
-                RXGZ\t1\t1970-01-03T00:45:00.000000Z
-                PEHN\t4\t1970-01-03T00:45:00.000000Z
-                HYRX\t2\t1970-01-03T00:45:00.000000Z
-                CPSW\t5\t1970-01-03T00:45:00.000000Z
-                \t15\t1970-01-03T03:45:00.000000Z
-                RXGZ\t2\t1970-01-03T03:45:00.000000Z
-                PEHN\t1\t1970-01-03T03:45:00.000000Z
-                VTJW\t5\t1970-01-03T03:45:00.000000Z
-                CPSW\t4\t1970-01-03T03:45:00.000000Z
-                HYRX\t3\t1970-01-03T03:45:00.000000Z
-                \t15\t1970-01-03T06:45:00.000000Z
-                CPSW\t3\t1970-01-03T06:45:00.000000Z
-                PEHN\t2\t1970-01-03T06:45:00.000000Z
-                HYRX\t4\t1970-01-03T06:45:00.000000Z
-                RXGZ\t3\t1970-01-03T06:45:00.000000Z
-                VTJW\t3\t1970-01-03T06:45:00.000000Z
-                \t11\t1970-01-03T09:45:00.000000Z
-                RXGZ\t5\t1970-01-03T09:45:00.000000Z
-                PEHN\t1\t1970-01-03T09:45:00.000000Z
-                HYRX\t1\t1970-01-03T09:45:00.000000Z
-                VTJW\t4\t1970-01-03T09:45:00.000000Z
-                CPSW\t2\t1970-01-03T09:45:00.000000Z
-                """, """
-                b\tcount\tk
-                \t9\t1970-01-03T00:45:00.000000Z
-                VTJW\t2\t1970-01-03T00:45:00.000000Z
-                RXGZ\t1\t1970-01-03T00:45:00.000000Z
-                PEHN\t4\t1970-01-03T00:45:00.000000Z
-                HYRX\t2\t1970-01-03T00:45:00.000000Z
-                CPSW\t5\t1970-01-03T00:45:00.000000Z
-                CGFN\tnull\t1970-01-03T00:45:00.000000Z
-                NPIW\tnull\t1970-01-03T00:45:00.000000Z
-                PEVM\t6\t1970-01-03T00:45:00.000000Z
-                WGRM\tnull\t1970-01-03T00:45:00.000000Z
-                ZNFK\t6\t1970-01-03T00:45:00.000000Z
-                \t15\t1970-01-03T03:45:00.000000Z
-                RXGZ\t2\t1970-01-03T03:45:00.000000Z
-                PEHN\t1\t1970-01-03T03:45:00.000000Z
-                VTJW\t5\t1970-01-03T03:45:00.000000Z
-                CPSW\t4\t1970-01-03T03:45:00.000000Z
-                HYRX\t3\t1970-01-03T03:45:00.000000Z
-                CGFN\tnull\t1970-01-03T03:45:00.000000Z
-                NPIW\tnull\t1970-01-03T03:45:00.000000Z
-                PEVM\t5\t1970-01-03T03:45:00.000000Z
-                WGRM\tnull\t1970-01-03T03:45:00.000000Z
-                ZNFK\t5\t1970-01-03T03:45:00.000000Z
-                \t15\t1970-01-03T06:45:00.000000Z
-                CPSW\t3\t1970-01-03T06:45:00.000000Z
-                PEHN\t2\t1970-01-03T06:45:00.000000Z
-                HYRX\t4\t1970-01-03T06:45:00.000000Z
-                RXGZ\t3\t1970-01-03T06:45:00.000000Z
-                VTJW\t3\t1970-01-03T06:45:00.000000Z
-                CGFN\tnull\t1970-01-03T06:45:00.000000Z
-                NPIW\tnull\t1970-01-03T06:45:00.000000Z
-                PEVM\t4\t1970-01-03T06:45:00.000000Z
-                WGRM\tnull\t1970-01-03T06:45:00.000000Z
-                ZNFK\t4\t1970-01-03T06:45:00.000000Z
-                \t11\t1970-01-03T09:45:00.000000Z
-                RXGZ\t5\t1970-01-03T09:45:00.000000Z
-                PEHN\t1\t1970-01-03T09:45:00.000000Z
-                HYRX\t1\t1970-01-03T09:45:00.000000Z
-                VTJW\t4\t1970-01-03T09:45:00.000000Z
-                CPSW\t2\t1970-01-03T09:45:00.000000Z
-                CGFN\tnull\t1970-01-03T09:45:00.000000Z
-                NPIW\tnull\t1970-01-03T09:45:00.000000Z
-                PEVM\t3\t1970-01-03T09:45:00.000000Z
-                WGRM\tnull\t1970-01-03T09:45:00.000000Z
-                ZNFK\t3\t1970-01-03T09:45:00.000000Z
-                \t14\t1970-01-03T12:45:00.000000Z
-                CGFN\t3\t1970-01-03T12:45:00.000000Z
-                NPIW\t2\t1970-01-03T12:45:00.000000Z
-                PEVM\t2\t1970-01-03T12:45:00.000000Z
-                WGRM\t3\t1970-01-03T12:45:00.000000Z
-                ZNFK\t2\t1970-01-03T12:45:00.000000Z
-                VTJW\t5\t1970-01-03T12:45:00.000000Z
-                RXGZ\t7\t1970-01-03T12:45:00.000000Z
-                PEHN\t0\t1970-01-03T12:45:00.000000Z
-                HYRX\t-2\t1970-01-03T12:45:00.000000Z
-                CPSW\t1\t1970-01-03T12:45:00.000000Z
-                \t7\t1970-01-03T15:45:00.000000Z
-                ZNFK\t1\t1970-01-03T15:45:00.000000Z
-                PEVM\t1\t1970-01-03T15:45:00.000000Z
-                VTJW\t6\t1970-01-03T15:45:00.000000Z
-                RXGZ\t9\t1970-01-03T15:45:00.000000Z
-                PEHN\t-1\t1970-01-03T15:45:00.000000Z
-                HYRX\t-5\t1970-01-03T15:45:00.000000Z
-                CPSW\t0\t1970-01-03T15:45:00.000000Z
-                CGFN\tnull\t1970-01-03T15:45:00.000000Z
-                NPIW\tnull\t1970-01-03T15:45:00.000000Z
-                WGRM\tnull\t1970-01-03T15:45:00.000000Z
-                """);
+                        b\tcount\tk
+                        \t9\t1970-01-03T00:45:00.000000Z
+                        VTJW\t2\t1970-01-03T00:45:00.000000Z
+                        RXGZ\t1\t1970-01-03T00:45:00.000000Z
+                        PEHN\t4\t1970-01-03T00:45:00.000000Z
+                        HYRX\t2\t1970-01-03T00:45:00.000000Z
+                        CPSW\t5\t1970-01-03T00:45:00.000000Z
+                        \t15\t1970-01-03T03:45:00.000000Z
+                        RXGZ\t2\t1970-01-03T03:45:00.000000Z
+                        PEHN\t1\t1970-01-03T03:45:00.000000Z
+                        VTJW\t5\t1970-01-03T03:45:00.000000Z
+                        CPSW\t4\t1970-01-03T03:45:00.000000Z
+                        HYRX\t3\t1970-01-03T03:45:00.000000Z
+                        \t15\t1970-01-03T06:45:00.000000Z
+                        CPSW\t3\t1970-01-03T06:45:00.000000Z
+                        PEHN\t2\t1970-01-03T06:45:00.000000Z
+                        HYRX\t4\t1970-01-03T06:45:00.000000Z
+                        RXGZ\t3\t1970-01-03T06:45:00.000000Z
+                        VTJW\t3\t1970-01-03T06:45:00.000000Z
+                        \t11\t1970-01-03T09:45:00.000000Z
+                        RXGZ\t5\t1970-01-03T09:45:00.000000Z
+                        PEHN\t1\t1970-01-03T09:45:00.000000Z
+                        HYRX\t1\t1970-01-03T09:45:00.000000Z
+                        VTJW\t4\t1970-01-03T09:45:00.000000Z
+                        CPSW\t2\t1970-01-03T09:45:00.000000Z
+                        """, """
+                        b\tcount\tk
+                        \t9\t1970-01-03T00:45:00.000000Z
+                        VTJW\t2\t1970-01-03T00:45:00.000000Z
+                        RXGZ\t1\t1970-01-03T00:45:00.000000Z
+                        PEHN\t4\t1970-01-03T00:45:00.000000Z
+                        HYRX\t2\t1970-01-03T00:45:00.000000Z
+                        CPSW\t5\t1970-01-03T00:45:00.000000Z
+                        CGFN\tnull\t1970-01-03T00:45:00.000000Z
+                        NPIW\tnull\t1970-01-03T00:45:00.000000Z
+                        PEVM\t6\t1970-01-03T00:45:00.000000Z
+                        WGRM\tnull\t1970-01-03T00:45:00.000000Z
+                        ZNFK\t6\t1970-01-03T00:45:00.000000Z
+                        \t15\t1970-01-03T03:45:00.000000Z
+                        RXGZ\t2\t1970-01-03T03:45:00.000000Z
+                        PEHN\t1\t1970-01-03T03:45:00.000000Z
+                        VTJW\t5\t1970-01-03T03:45:00.000000Z
+                        CPSW\t4\t1970-01-03T03:45:00.000000Z
+                        HYRX\t3\t1970-01-03T03:45:00.000000Z
+                        CGFN\tnull\t1970-01-03T03:45:00.000000Z
+                        NPIW\tnull\t1970-01-03T03:45:00.000000Z
+                        PEVM\t5\t1970-01-03T03:45:00.000000Z
+                        WGRM\tnull\t1970-01-03T03:45:00.000000Z
+                        ZNFK\t5\t1970-01-03T03:45:00.000000Z
+                        \t15\t1970-01-03T06:45:00.000000Z
+                        CPSW\t3\t1970-01-03T06:45:00.000000Z
+                        PEHN\t2\t1970-01-03T06:45:00.000000Z
+                        HYRX\t4\t1970-01-03T06:45:00.000000Z
+                        RXGZ\t3\t1970-01-03T06:45:00.000000Z
+                        VTJW\t3\t1970-01-03T06:45:00.000000Z
+                        CGFN\tnull\t1970-01-03T06:45:00.000000Z
+                        NPIW\tnull\t1970-01-03T06:45:00.000000Z
+                        PEVM\t4\t1970-01-03T06:45:00.000000Z
+                        WGRM\tnull\t1970-01-03T06:45:00.000000Z
+                        ZNFK\t4\t1970-01-03T06:45:00.000000Z
+                        \t11\t1970-01-03T09:45:00.000000Z
+                        RXGZ\t5\t1970-01-03T09:45:00.000000Z
+                        PEHN\t1\t1970-01-03T09:45:00.000000Z
+                        HYRX\t1\t1970-01-03T09:45:00.000000Z
+                        VTJW\t4\t1970-01-03T09:45:00.000000Z
+                        CPSW\t2\t1970-01-03T09:45:00.000000Z
+                        CGFN\tnull\t1970-01-03T09:45:00.000000Z
+                        NPIW\tnull\t1970-01-03T09:45:00.000000Z
+                        PEVM\t3\t1970-01-03T09:45:00.000000Z
+                        WGRM\tnull\t1970-01-03T09:45:00.000000Z
+                        ZNFK\t3\t1970-01-03T09:45:00.000000Z
+                        \t14\t1970-01-03T12:45:00.000000Z
+                        CGFN\t3\t1970-01-03T12:45:00.000000Z
+                        NPIW\t2\t1970-01-03T12:45:00.000000Z
+                        PEVM\t2\t1970-01-03T12:45:00.000000Z
+                        WGRM\t3\t1970-01-03T12:45:00.000000Z
+                        ZNFK\t2\t1970-01-03T12:45:00.000000Z
+                        VTJW\t5\t1970-01-03T12:45:00.000000Z
+                        RXGZ\t7\t1970-01-03T12:45:00.000000Z
+                        PEHN\t0\t1970-01-03T12:45:00.000000Z
+                        HYRX\t-2\t1970-01-03T12:45:00.000000Z
+                        CPSW\t1\t1970-01-03T12:45:00.000000Z
+                        \t7\t1970-01-03T15:45:00.000000Z
+                        ZNFK\t1\t1970-01-03T15:45:00.000000Z
+                        PEVM\t1\t1970-01-03T15:45:00.000000Z
+                        VTJW\t6\t1970-01-03T15:45:00.000000Z
+                        RXGZ\t9\t1970-01-03T15:45:00.000000Z
+                        PEHN\t-1\t1970-01-03T15:45:00.000000Z
+                        HYRX\t-5\t1970-01-03T15:45:00.000000Z
+                        CPSW\t0\t1970-01-03T15:45:00.000000Z
+                        CGFN\tnull\t1970-01-03T15:45:00.000000Z
+                        NPIW\tnull\t1970-01-03T15:45:00.000000Z
+                        WGRM\tnull\t1970-01-03T15:45:00.000000Z
+                        """);
     }
 
     @Test
@@ -15377,80 +15377,63 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " rnd_float(0)*100 c," +
-                            " abs(rnd_int()) d," +
-                            " rnd_short() e," +
-                            " rnd_byte(3,10) f," +
-                            " rnd_long() g," +
-                            " timestamp_sequence(172800000000, 3600000000) k" +
-                            " from" +
-                            " long_sequence(20)" +
-                            ") timestamp(k) partition by NONE"
-            );
-
-            snapshotMemoryUsage();
-
-            try (final RecordCursorFactory factory = select("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)")) {
-                assertTimestamp("k", factory);
-                String expected = """
-                        b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk
-                        \t74.19752505948932\t113.12129\t2557447177\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z
-                        CPSW\t0.35983672154330515\t76.75673\t113506296\t27809\t9\t-8889930662239044040\t1970-01-03T00:00:00.000000Z
-                        PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
-                        RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
-                        HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
-                        PEHN\t15.786635599554755\t12.50304\t264240638\t-7976\t6\t-8480005421611953360\t1970-01-03T03:00:00.000000Z
-                        CPSW\t13.450170570900255\t34.35685\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z
-                        \t76.64256753596138\t55.224937\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z
-                        RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
-                        HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
-                        \t85.05940141744613\t92.16078\t301655269\t-14676\t12\t-2937111954994403426\t1970-01-03T06:00:00.000000Z
-                        PEHN\t86.64158914718531\t88.374214\t1566901076\t-3017\t3\t-5028301966399563827\t1970-01-03T06:00:00.000000Z
-                        CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
-                        RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
-                        HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
-                        \t106.78118249687527\t103.1198\t3029605432\t-2372\t12\t-1162868573414266742\t1970-01-03T09:00:00.000000Z
-                        RXGZ\t3.831785863680992\t42.02044\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z
-                        CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
-                        PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
-                        HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
-                        \t117.60937843256664\t189.81728\t3717804370\t-27064\t17\t2215137494070785317\t1970-01-03T12:00:00.000000Z
-                        HYRX\t24.008362859107102\t76.57837\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z
-                        CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
-                        PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
-                        RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
-                        HYRX\t2.6836863013701473\t10.643042\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z
-                        \t28.087836621126815\t139.30695\t2587989045\t11751\t17\t-8594661640328306402\t1970-01-03T15:00:00.000000Z
-                        CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
-                        PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
-                        RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
-                        \t75.17160551750754\t120.51888\t2362241402\t514\t11\t-2863260545700031392\t1970-01-03T18:00:00.000000Z
-                        CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z
-                        PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z
-                        RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z
-                        HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z
-                        """;
-
-                assertCursor(expected, factory, false, false, false);
-                // make sure we get the same outcome when we get factory to create new cursor
-                assertCursor(expected, factory, false, false, false);
-                // make sure strings, binary fields and symbols are compliant with expected record behaviour
-                assertVariableColumns(factory, sqlExecutionContext);
-
-                execute("truncate table x");
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    println(factory, cursor);
-                    assertEquals("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n", sink);
-                }
-            }
-        });
+        String expected = """
+                b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk
+                \t74.19752505948932\t113.12129\t2557447177\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z
+                CPSW\t0.35983672154330515\t76.75673\t113506296\t27809\t9\t-8889930662239044040\t1970-01-03T00:00:00.000000Z
+                PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
+                RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
+                HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
+                PEHN\t15.786635599554755\t12.50304\t264240638\t-7976\t6\t-8480005421611953360\t1970-01-03T03:00:00.000000Z
+                CPSW\t13.450170570900255\t34.35685\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z
+                \t76.64256753596138\t55.224937\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z
+                RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
+                HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
+                \t85.05940141744613\t92.16078\t301655269\t-14676\t12\t-2937111954994403426\t1970-01-03T06:00:00.000000Z
+                PEHN\t86.64158914718531\t88.374214\t1566901076\t-3017\t3\t-5028301966399563827\t1970-01-03T06:00:00.000000Z
+                CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
+                RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
+                HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
+                \t106.78118249687527\t103.1198\t3029605432\t-2372\t12\t-1162868573414266742\t1970-01-03T09:00:00.000000Z
+                RXGZ\t3.831785863680992\t42.02044\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z
+                CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
+                PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
+                HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
+                \t117.60937843256664\t189.81728\t3717804370\t-27064\t17\t2215137494070785317\t1970-01-03T12:00:00.000000Z
+                HYRX\t24.008362859107102\t76.57837\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z
+                CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
+                PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
+                RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
+                HYRX\t2.6836863013701473\t10.643042\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z
+                \t28.087836621126815\t139.30695\t2587989045\t11751\t17\t-8594661640328306402\t1970-01-03T15:00:00.000000Z
+                CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
+                PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
+                RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
+                \t75.17160551750754\t120.51888\t2362241402\t514\t11\t-2863260545700031392\t1970-01-03T18:00:00.000000Z
+                CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z
+                PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z
+                RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z
+                HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z
+                """;
+        assertQuery("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)")
+                .ddl("create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_float(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_short() e," +
+                        " rnd_byte(3,10) f," +
+                        " rnd_long() g," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE")
+                .timestamp("k")
+                .noRandomAccess()
+                .mutateWith("truncate table x")
+                .returns(expected, "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n");
     }
 
     @Test
@@ -15660,7 +15643,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select first(a),first(c),min(d),max(e),first(f),sum(j),first(l),first(p), k " +
-                        "from x sample by 15m fill(linear,linear,linear,linear,linear,linear,linear,linear)")
+                "from x sample by 15m fill(linear,linear,linear,linear,linear,linear,linear,linear)")
                 .ddl("create table x " +
                         "(" +
                         "a int," +
@@ -15813,7 +15796,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select sum(a),count(),min(d),max(e),sum(f),max(g),count(),sum(j),sum(l),sum(o), k " +
-                        "from x sample by 15m fill(123,null,prev,linear,null,prev,prev,556,linear,prev)")
+                "from x sample by 15m fill(123,null,prev,linear,null,prev,prev,556,linear,prev)")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -16923,11 +16906,11 @@ public class SampleByTest extends AbstractCairoTest {
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery("""
-                            SELECT a.ts as time, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
-                            FROM 'eloverblik' as a, 'ap_systems' as b
-                            WHERE a.ts = b.ts
-                            SAMPLE BY 1h align to first observation
-                            """)
+                    SELECT a.ts as time, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
+                    FROM 'eloverblik' as a, 'ap_systems' as b
+                    WHERE a.ts = b.ts
+                    SAMPLE BY 1h align to first observation
+                    """)
                     .timestamp("time")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -16938,11 +16921,11 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            SELECT a.ts as time, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
-                            FROM 'eloverblik' as a, 'ap_systems' as b
-                            WHERE a.ts = b.ts
-                            SAMPLE BY 1h align to calendar
-                            """)
+                    SELECT a.ts as time, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
+                    FROM 'eloverblik' as a, 'ap_systems' as b
+                    WHERE a.ts = b.ts
+                    SAMPLE BY 1h align to calendar
+                    """)
                     .timestamp("time")
                     .expectSize()
                     .noLeakCheck()
@@ -16964,11 +16947,11 @@ public class SampleByTest extends AbstractCairoTest {
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery("""
-                            SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time
-                            FROM 'eloverblik' as a, 'ap_systems' as b
-                            WHERE a.ts = b.ts
-                            SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
-                            """)
+                    SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time
+                    FROM 'eloverblik' as a, 'ap_systems' as b
+                    WHERE a.ts = b.ts
+                    SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
+                    """)
                     .timestamp("time")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -16979,11 +16962,11 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time
-                            FROM 'eloverblik' as a, 'ap_systems' as b
-                            WHERE a.ts = b.ts
-                            SAMPLE BY 1h ALIGN TO CALENDAR
-                            """)
+                    SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time
+                    FROM 'eloverblik' as a, 'ap_systems' as b
+                    WHERE a.ts = b.ts
+                    SAMPLE BY 1h ALIGN TO CALENDAR
+                    """)
                     .timestamp("time")
                     .expectSize()
                     .noLeakCheck()
@@ -17005,11 +16988,11 @@ public class SampleByTest extends AbstractCairoTest {
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery("""
-                            SELECT sum(a.to_grid), a.ts as time, sum(a.from_grid), sum(b.hourly_production)
-                            FROM 'eloverblik' as a, 'ap_systems' as b
-                            WHERE a.ts = b.ts
-                            SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
-                            """)
+                    SELECT sum(a.to_grid), a.ts as time, sum(a.from_grid), sum(b.hourly_production)
+                    FROM 'eloverblik' as a, 'ap_systems' as b
+                    WHERE a.ts = b.ts
+                    SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
+                    """)
                     .timestamp("time")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -17020,11 +17003,11 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            SELECT sum(a.to_grid), a.ts as time, sum(a.from_grid), sum(b.hourly_production)
-                            FROM 'eloverblik' as a, 'ap_systems' as b
-                            WHERE a.ts = b.ts
-                            SAMPLE BY 1h ALIGN TO CALENDAR
-                            """)
+                    SELECT sum(a.to_grid), a.ts as time, sum(a.from_grid), sum(b.hourly_production)
+                    FROM 'eloverblik' as a, 'ap_systems' as b
+                    WHERE a.ts = b.ts
+                    SAMPLE BY 1h ALIGN TO CALENDAR
+                    """)
                     .timestamp("time")
                     .expectSize()
                     .noLeakCheck()
@@ -17046,11 +17029,11 @@ public class SampleByTest extends AbstractCairoTest {
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery("""
-                            SELECT a.ts, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
-                            FROM 'eloverblik' as a, 'ap_systems' as b
-                            WHERE a.ts = b.ts
-                            SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
-                            """)
+                    SELECT a.ts, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
+                    FROM 'eloverblik' as a, 'ap_systems' as b
+                    WHERE a.ts = b.ts
+                    SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
+                    """)
                     .timestamp("ts")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -17061,11 +17044,11 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            SELECT a.ts, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
-                            FROM 'eloverblik' as a, 'ap_systems' as b
-                            WHERE a.ts = b.ts
-                            SAMPLE BY 1h ALIGN TO CALENDAR
-                            """)
+                    SELECT a.ts, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
+                    FROM 'eloverblik' as a, 'ap_systems' as b
+                    WHERE a.ts = b.ts
+                    SAMPLE BY 1h ALIGN TO CALENDAR
+                    """)
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -17087,11 +17070,11 @@ public class SampleByTest extends AbstractCairoTest {
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery("""
-                            SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts
-                            FROM 'eloverblik' as a, 'ap_systems' as b
-                            WHERE a.ts = b.ts
-                            SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
-                            """)
+                    SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts
+                    FROM 'eloverblik' as a, 'ap_systems' as b
+                    WHERE a.ts = b.ts
+                    SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
+                    """)
                     .timestamp("ts")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -17102,11 +17085,11 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts
-                            FROM 'eloverblik' as a, 'ap_systems' as b
-                            WHERE a.ts = b.ts
-                            SAMPLE BY 1h ALIGN TO CALENDAR
-                            """)
+                    SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts
+                    FROM 'eloverblik' as a, 'ap_systems' as b
+                    WHERE a.ts = b.ts
+                    SAMPLE BY 1h ALIGN TO CALENDAR
+                    """)
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -17128,11 +17111,11 @@ public class SampleByTest extends AbstractCairoTest {
             execute("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery("""
-                            SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time
-                            FROM 'eloverblik' as a, 'ap_systems' as b
-                            WHERE a.ts = b.ts
-                            SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
-                            """)
+                    SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time
+                    FROM 'eloverblik' as a, 'ap_systems' as b
+                    WHERE a.ts = b.ts
+                    SAMPLE BY 1h ALIGN TO FIRST OBSERVATION
+                    """)
                     .timestamp("time")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -17143,11 +17126,11 @@ public class SampleByTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time
-                            FROM 'eloverblik' as a, 'ap_systems' as b
-                            WHERE a.ts = b.ts
-                            SAMPLE BY 1h ALIGN TO CALENDAR
-                            """)
+                    SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time
+                    FROM 'eloverblik' as a, 'ap_systems' as b
+                    WHERE a.ts = b.ts
+                    SAMPLE BY 1h ALIGN TO CALENDAR
+                    """)
                     .timestamp("time")
                     .expectSize()
                     .noLeakCheck()
@@ -17165,13 +17148,13 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("""
-                        select ts, first(ts), last(ts)
-                        from trade
-                        sample by 1d fill(null, '2019-02-03T12:23:34.123456Z') align to CALENDAR;""")
+                select ts, first(ts), last(ts)
+                from trade
+                sample by 1d fill(null, '2019-02-03T12:23:34.123456Z') align to CALENDAR;""")
                 .ddl(// oddly specific date to make sure it's parsed correctly up to microseconds
-                "create table trade as (" +
-                        "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
-                        ") timestamp(ts)")
+                        "create table trade as (" +
+                                "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
+                                ") timestamp(ts)")
                 .timestamp("ts")
                 .noRandomAccess()
                 .returns("""
@@ -17212,22 +17195,22 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("""
-                        WITH  all_rows    AS (
-                            SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value
-                            union all
-                            SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value
-                        ), just_foobar as (
-                            select * from all_rows where address in ('foobar')
-                        ), ordered as (
-                            select * from just_foobar order by ts asc
-                        ), timed as (
-                            select * from ordered timestamp(ts)
-                        ), sampled as (
-                            SELECT ts, sum(value) as value
-                            FROM timed
-                            SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR\s
-                        )
-                        select * from sampled;""")
+                WITH  all_rows    AS (
+                    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value
+                    union all
+                    SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value
+                ), just_foobar as (
+                    select * from all_rows where address in ('foobar')
+                ), ordered as (
+                    select * from just_foobar order by ts asc
+                ), timed as (
+                    select * from ordered timestamp(ts)
+                ), sampled as (
+                    SELECT ts, sum(value) as value
+                    FROM timed
+                    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR\s
+                )
+                select * from sampled;""")
                 .timestamp("ts")
                 .noRandomAccess()
                 .returns("""
@@ -17252,23 +17235,23 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("WITH  all_rows    AS (\n" +
-                        "    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value\n" +
-                        "    union all\n" +
-                        "    SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value\n" +
-                        "), just_foobar as (\n" +
-                        "    select * from all_rows where address in ('foobar')\n" +
-                        "), ordered as (\n" +
-                        "    select * from just_foobar order by ts asc\n" +
-                        "), timed as (\n" +
-                        "    select * from ordered timestamp(ts)\n" +
-                        "), intermediate as (\n" + // the distance between sample by and model with explicit ts is bigger
-                        "    select * from timed where ts > 0::timestamp \n" +
-                        "), sampled as (\n" +
-                        "    SELECT ts, sum(value) as value\n" +
-                        "    FROM intermediate\n" +
-                        "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
-                        ")\n" +
-                        "select * from sampled;")
+                "    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value\n" +
+                "    union all\n" +
+                "    SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value\n" +
+                "), just_foobar as (\n" +
+                "    select * from all_rows where address in ('foobar')\n" +
+                "), ordered as (\n" +
+                "    select * from just_foobar order by ts asc\n" +
+                "), timed as (\n" +
+                "    select * from ordered timestamp(ts)\n" +
+                "), intermediate as (\n" + // the distance between sample by and model with explicit ts is bigger
+                "    select * from timed where ts > 0::timestamp \n" +
+                "), sampled as (\n" +
+                "    SELECT ts, sum(value) as value\n" +
+                "    FROM intermediate\n" +
+                "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
+                ")\n" +
+                "select * from sampled;")
                 .timestamp("ts")
                 .noRandomAccess()
                 .returns("""
@@ -17293,21 +17276,21 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("WITH  all_rows    AS (\n" +
-                        "    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value\n" +
-                        "    union all\n" +
-                        "    SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value\n" +
-                        "), just_foobar as (\n" +
-                        "    select * from all_rows where address in ('foobar')\n " +
-                        "), ordered as (\n" +
-                        "    select * from just_foobar order by ts asc\n" +
-                        "), timed as (\n" +
-                        "    select * from ordered timestamp(ts)\n" +
-                        "), sampled as (\n" +
-                        "    SELECT sum(value) as value\n" + // no ts in select list
-                        "    FROM timed\n" +
-                        "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
-                        ")\n" +
-                        "select * from sampled;")
+                "    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value\n" +
+                "    union all\n" +
+                "    SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value\n" +
+                "), just_foobar as (\n" +
+                "    select * from all_rows where address in ('foobar')\n " +
+                "), ordered as (\n" +
+                "    select * from just_foobar order by ts asc\n" +
+                "), timed as (\n" +
+                "    select * from ordered timestamp(ts)\n" +
+                "), sampled as (\n" +
+                "    SELECT sum(value) as value\n" + // no ts in select list
+                "    FROM timed\n" +
+                "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
+                ")\n" +
+                "select * from sampled;")
                 .noRandomAccess()
                 .returns("""
                         value
@@ -17329,10 +17312,10 @@ public class SampleByTest extends AbstractCairoTest {
     public void testTimestampIsNotRequiredInFilterSubQuery() throws Exception {
         // (x union x) is used in sub-query to make sure that the base doesn't have designated timestamp
         assertQuery("""
-                        select sym, last(value) v
-                        from x
-                        where sym in (select sym from (x union x) where sym in ('baz'))
-                        sample by 1d align to first observation\s""")
+                select sym, last(value) v
+                from x
+                where sym in (select sym from (x union x) where sym in ('baz'))
+                sample by 1d align to first observation\s""")
                 .ddl("""
                         create table x as (
                           select x as value,
@@ -17350,48 +17333,48 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testTimestampIsRequiredBeforeSubqueryWithExplicitTs1() throws Exception {
         assertQuery("""
-                        WITH  all_rows    AS (
-                            SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value
-                            union all
-                            SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value
-                        ), just_foobar as (
-                            select * from all_rows where address in ('foobar')
-                        ), ordered as (
-                            select * from just_foobar order by ts asc
-                        ), intermediate as (
-                            select * from ordered timestamp(ts) \
-                            union all \
-                            select '2023-02-01T00:00:00.000000Z'::timestamp, 'f', 2\s
-                        ), sampled as (
-                            SELECT ts, sum(value) as value
-                            FROM intermediate
-                            SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR\s
-                        )
-                        select * from sampled;""")
+                WITH  all_rows    AS (
+                    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value
+                    union all
+                    SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value
+                ), just_foobar as (
+                    select * from all_rows where address in ('foobar')
+                ), ordered as (
+                    select * from just_foobar order by ts asc
+                ), intermediate as (
+                    select * from ordered timestamp(ts) \
+                    union all \
+                    select '2023-02-01T00:00:00.000000Z'::timestamp, 'f', 2\s
+                ), sampled as (
+                    SELECT ts, sum(value) as value
+                    FROM intermediate
+                    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR\s
+                )
+                select * from sampled;""")
                 .fails(507, "base query does not provide designated TIMESTAMP column");
     }
 
     @Test
     public void testTimestampIsRequiredBeforeSubqueryWithExplicitTs2() throws Exception {
         assertQuery("""
-                        WITH  all_rows    AS (
-                            SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value
-                            union all
-                            SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value
-                        ), just_foobar as (
-                            select * from all_rows where address in ('foobar')
-                        ), ordered as (
-                            select * from just_foobar order by ts asc
-                        ), with_ts as (
-                            select * from ordered timestamp(ts) \
-                        ), intermediate as (
-                            select * from with_ts order by value \
-                        ), sampled as (
-                            SELECT ts, sum(value) as value
-                            FROM intermediate
-                            SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR\s
-                        )
-                        select * from sampled;""")
+                WITH  all_rows    AS (
+                    SELECT '2023-02-19T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 0 as value
+                    union all
+                    SELECT '2023-03-01T00:00:00.000000Z'::timestamp as ts, 'foobar' as address, 1 as value
+                ), just_foobar as (
+                    select * from all_rows where address in ('foobar')
+                ), ordered as (
+                    select * from just_foobar order by ts asc
+                ), with_ts as (
+                    select * from ordered timestamp(ts) \
+                ), intermediate as (
+                    select * from with_ts order by value \
+                ), sampled as (
+                    SELECT ts, sum(value) as value
+                    FROM intermediate
+                    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR\s
+                )
+                select * from sampled;""")
                 .fails(489, "base query does not provide designated TIMESTAMP column");
     }
 
@@ -17401,14 +17384,14 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("""
-                        select ts, last(value) v
-                        from (
-                            select ts, value
-                            from x
-                            where sym is not null
-                            order by ts
-                        ) timestamp(ts)
-                        sample by 1d align to first observation""")
+                select ts, last(value) v
+                from (
+                    select ts, value
+                    from x
+                    where sym is not null
+                    order by ts
+                ) timestamp(ts)
+                sample by 1d align to first observation""")
                 .ddl("""
                         create table x as (
                           select x as value,
@@ -17430,9 +17413,9 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertQuery("select s, k, " +
-                        "first(u), " +
-                        "last(u) " +
-                        "from x sample by 30m fill(NULL)")
+                "first(u), " +
+                "last(u) " +
+                "from x sample by 30m fill(NULL)")
                 .ddl("create table x as " +
                         "(" +
                         "select" +

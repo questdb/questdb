@@ -656,8 +656,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
                 // Check that the view exists.
                 assertQuery("select count() " +
-                                "from materialized_views " +
-                                "where view_name = '" + mvName + "';")
+                        "from materialized_views " +
+                        "where view_name = '" + mvName + "';")
                         .noLeakCheck()
                         .expectSize()
                         .noRandomAccess()
@@ -667,8 +667,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                                 """);
                 if (expectValidMatViews) {
                     assertQuery("select count() " +
-                                    "from materialized_views " +
-                                    "where view_name = '" + mvName + "' and view_status <> 'invalid';")
+                            "from materialized_views " +
+                            "where view_name = '" + mvName + "' and view_status <> 'invalid';")
                             .noLeakCheck()
                             .expectSize()
                             .noRandomAccess()
@@ -751,8 +751,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 final String mvName = testTableName + "_" + i + "_mv";
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
                 assertQuery("select count() " +
-                                "from materialized_views " +
-                                "where view_name = '" + mvName + "' and view_status <> 'invalid';")
+                        "from materialized_views " +
+                        "where view_name = '" + mvName + "' and view_status <> 'invalid';")
                         .noLeakCheck()
                         .expectSize()
                         .noRandomAccess()
@@ -830,8 +830,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 final String mvName = testTableName + "_" + i + "_mv";
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
                 assertQuery("select count() " +
-                                "from materialized_views " +
-                                "where view_name = '" + mvName + "' and view_status <> 'invalid';")
+                        "from materialized_views " +
+                        "where view_name = '" + mvName + "' and view_status <> 'invalid';")
                         .noLeakCheck()
                         .expectSize()
                         .noRandomAccess()

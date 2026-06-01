@@ -88,14 +88,14 @@ public class PgTypeFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testWithCategory() throws Exception {
         assertQuery("SELECT oid," +
-                        "   CASE " +
-                        "    WHEN typcategory = 'E' THEN 'varchar' " +
-                        "    ELSE typname " +
-                        "  END " +
-                        "FROM " +
-                        "    pg_type " +
-                        "WHERE " +
-                        "    typcategory in ('U', 'E') ")
+                "   CASE " +
+                "    WHEN typcategory = 'E' THEN 'varchar' " +
+                "    ELSE typname " +
+                "  END " +
+                "FROM " +
+                "    pg_type " +
+                "WHERE " +
+                "    typcategory in ('U', 'E') ")
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("""

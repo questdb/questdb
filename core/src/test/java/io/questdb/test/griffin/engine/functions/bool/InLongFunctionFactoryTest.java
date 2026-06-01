@@ -70,13 +70,13 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    l
-                    69
-                    143
-                    280
-                    291
-                    683
-                    """);
+                            l
+                            69
+                            143
+                            280
+                            291
+                            683
+                            """);
 
             if (engine.getConfiguration().getSqlJitMode() == SqlJitMode.JIT_MODE_ENABLED) {
                 assertPlanNoLeakCheck(sink, """
@@ -129,13 +129,13 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    l
-                    2
-                    5
-                    9
-                    18
-                    20
-                    """);
+                            l
+                            2
+                            5
+                            9
+                            18
+                            20
+                            """);
 
             // should be the same, JIT or no JIT
             assertPlanNoLeakCheck(sink, """

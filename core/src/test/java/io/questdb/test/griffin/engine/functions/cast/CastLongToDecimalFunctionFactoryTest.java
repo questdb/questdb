@@ -738,7 +738,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal128() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT 92233720368547758L value UNION ALL SELECT -92233720368547758L UNION ALL SELECT 12345678901234567L UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(19,2)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(19,2)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -756,7 +756,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal16() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT 99L value UNION ALL SELECT -99L UNION ALL SELECT 12L UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(4,2)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(4,2)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -774,7 +774,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal256() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT 92233720368547758L value UNION ALL SELECT -92233720368547758L UNION ALL SELECT 12345678901234567L UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(40,10)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(40,10)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -792,7 +792,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal32() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT 999999L value UNION ALL SELECT -999999L UNION ALL SELECT 123456L UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(9,3)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(9,3)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -810,7 +810,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal64() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT 999999999999L value UNION ALL SELECT -999999999999L UNION ALL SELECT 123456789012L UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(18,6)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(18,6)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -828,7 +828,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastScaledDecimal8() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT 9L value UNION ALL SELECT -9L UNION ALL SELECT 0L UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(2,1)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(2,1)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -846,7 +846,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal128() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT 9223372036854775807L value UNION ALL SELECT -9223372036854775807L UNION ALL SELECT 1234567890123456789L UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(19)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(19)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -864,7 +864,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal16() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT 9999L value UNION ALL SELECT -9999L UNION ALL SELECT 1234L UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(4)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(4)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -882,7 +882,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal256() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT 9223372036854775807L value UNION ALL SELECT -9223372036854775807L UNION ALL SELECT 1234567890123456789L UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(40)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(40)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -900,7 +900,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal32() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT 999999999L value UNION ALL SELECT -999999999L UNION ALL SELECT 123456789L UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(9)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(9)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -918,7 +918,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCastUnscaledDecimal64() throws Exception {
         assertMemoryLeak(
                 () -> assertQuery("WITH data AS (SELECT 999999999999999999L value UNION ALL SELECT -999999999999999999L UNION ALL SELECT 123456789012345678L UNION ALL SELECT null) " +
-                                "SELECT value, cast(value as DECIMAL(18)) as decimal_value FROM data")
+                        "SELECT value, cast(value as DECIMAL(18)) as decimal_value FROM data")
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
@@ -938,7 +938,7 @@ public class CastLongToDecimalFunctionFactoryTest extends AbstractCairoTest {
                 () -> {
                     // Use WITH clause to create runtime values (non-constant)
                     assertQuery("WITH data AS (SELECT 99L value UNION ALL SELECT -99L UNION ALL SELECT 0L UNION ALL SELECT null) " +
-                                    "SELECT value, cast(value as DECIMAL(2)) as decimal_value FROM data")
+                            "SELECT value, cast(value as DECIMAL(2)) as decimal_value FROM data")
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()

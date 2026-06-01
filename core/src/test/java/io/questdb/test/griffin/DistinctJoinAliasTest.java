@@ -219,10 +219,10 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into profiles values (102, 2, 'Data Analyst');");
 
             assertQuery("select distinct name.name, email.email, bio.bio " +
-                            "from users as name " +
-                            "inner join users as email on name.user_id = email.user_id " +
-                            "inner join profiles as bio on email.user_id = bio.user_id " +
-                            "order by name.name")
+                    "from users as name " +
+                    "inner join users as email on name.user_id = email.user_id " +
+                    "inner join profiles as bio on email.user_id = bio.user_id " +
+                    "order by name.name")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -288,12 +288,12 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             final String fourthAlias = "role";
 
             assertQuery("select distinct employees.dept_name, projects.emp_name, assignments.proj_id, tasks.role " +
-                            "from departments as employees " +
-                            "inner join employees as projects on employees.dept_id = projects.dept_id " +
-                            "inner join projects as assignments on projects.dept_id = assignments.dept_id " +
-                            "inner join assignments as tasks on projects.emp_id = tasks.emp_id " +
-                            "inner join tasks as departments on tasks.assign_id = departments.assign_id " +
-                            "order by employees.dept_name")
+                    "from departments as employees " +
+                    "inner join employees as projects on employees.dept_id = projects.dept_id " +
+                    "inner join projects as assignments on projects.dept_id = assignments.dept_id " +
+                    "inner join assignments as tasks on projects.emp_id = tasks.emp_id " +
+                    "inner join tasks as departments on tasks.assign_id = departments.assign_id " +
+                    "order by employees.dept_name")
                     .noLeakCheck()
                     .expectSize()
                     .returns("dept_name\t" + secondAlias + "\t" + thirdAlias + "\t" + fourthAlias + "\n" +
@@ -336,10 +336,10 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
 
             final String secondAlias = columnAliasExprEnabled ? "z_value_2" : "z_value1";
             assertQuery("select distinct z.z_value, y.z_value, x.y_value " +
-                            "from x as z " +
-                            "inner join y as y on z.y_id = y.id " +
-                            "inner join z as x on z.id = x.x_id " +
-                            "order by z.z_value")
+                    "from x as z " +
+                    "inner join y as y on z.y_id = y.id " +
+                    "inner join z as x on z.id = x.x_id " +
+                    "order by z.z_value")
                     .noLeakCheck()
                     .expectSize()
                     .returns("z_value\t" + secondAlias + "\ty_value\n" +
@@ -376,10 +376,10 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into current values (1, 'cpu');");
 
             assertQuery("select distinct historical.account_id, metrics.metric " +
-                            "from historical " +
-                            "cross join metrics " +
-                            "left join current on historical.account_id = current.account_id and metrics.metric = current.metric " +
-                            "where current.account_id is null")
+                    "from historical " +
+                    "cross join metrics " +
+                    "left join current on historical.account_id = current.account_id and metrics.metric = current.metric " +
+                    "where current.account_id is null")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -411,9 +411,9 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into accounts values (2);");
 
             assertQuery("select distinct accounts.account_id, metrics.metric " +
-                            "from accounts " +
-                            "cross join metrics " +
-                            "order by account_id, metric")
+                    "from accounts " +
+                    "cross join metrics " +
+                    "order by account_id, metric")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -475,12 +475,12 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into categories values (1, 'Electronics');");
 
             assertQuery("select distinct customers.name, products.product_name, categories.category_name " +
-                            "from customers " +
-                            "inner join orders on customers.customer_id = orders.customer_id " +
-                            "inner join order_items on orders.order_id = order_items.order_id " +
-                            "inner join products on order_items.product_id = products.product_id " +
-                            "inner join categories on products.category_id = categories.category_id " +
-                            "order by name, product_name")
+                    "from customers " +
+                    "inner join orders on customers.customer_id = orders.customer_id " +
+                    "inner join order_items on orders.order_id = order_items.order_id " +
+                    "inner join products on order_items.product_id = products.product_id " +
+                    "inner join categories on products.category_id = categories.category_id " +
+                    "order by name, product_name")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -512,8 +512,8 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into samples values ('air', '1970-02-02T10:10:00');");
 
             assertQuery("select distinct samples_tbl.sensor_id, sensors_tbl.apptype " +
-                            "from samples as samples_tbl " +
-                            "inner join sensors as sensors_tbl on sensors_tbl.sensor_id = samples_tbl.sensor_id")
+                    "from samples as samples_tbl " +
+                    "inner join sensors as sensors_tbl on sensors_tbl.sensor_id = samples_tbl.sensor_id")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -544,8 +544,8 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into samples values ('air', '1970-02-02T10:10:00');");
 
             assertQuery("select distinct samples.sensor_id as sensor_name, sensors.apptype as application_type " +
-                            "from samples " +
-                            "inner join sensors on sensors.sensor_id = samples.sensor_id")
+                    "from samples " +
+                    "inner join sensors on sensors.sensor_id = samples.sensor_id")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -576,8 +576,8 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into samples values ('air', '1970-02-02T10:10:00');");
 
             assertQuery("select distinct sa.sensor_id, se.apptype " +
-                            "from samples sa " +
-                            "inner join sensors se on se.sensor_id = sa.sensor_id")
+                    "from samples sa " +
+                    "inner join sensors se on se.sensor_id = sa.sensor_id")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -610,8 +610,8 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into samples values ('air', '1970-02-02T10:10:01');");
 
             assertQuery("select distinct samples.sensor_id, sensors.apptype " +
-                            "from samples " +
-                            "inner join sensors on sensors.sensor_id = samples.sensor_id")
+                    "from samples " +
+                    "inner join sensors on sensors.sensor_id = samples.sensor_id")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -644,8 +644,8 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into samples values ('soil', '1970-02-02T10:10:02');");
 
             assertQuery("select distinct samples.sensor_id, sensors.apptype " +
-                            "from samples " +
-                            "left join sensors on sensors.sensor_id = samples.sensor_id")
+                    "from samples " +
+                    "left join sensors on sensors.sensor_id = samples.sensor_id")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -688,10 +688,10 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into products values (202, 'Mouse');");
 
             assertQuery("select distinct users.name, products.product_name " +
-                            "from users " +
-                            "inner join orders on users.user_id = orders.user_id " +
-                            "inner join products on orders.product_id = products.product_id " +
-                            "order by name, product_name")
+                    "from users " +
+                    "inner join orders on users.user_id = orders.user_id " +
+                    "inner join products on orders.product_id = products.product_id " +
+                    "order by name, product_name")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -737,9 +737,9 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             final String secondAlias = columnAliasExprEnabled ? "value_2" : "value1";
             final String thirdAlias = columnAliasExprEnabled ? "value_3" : "value2";
             assertQuery("select distinct a.value, b.value, c.value " +
-                            "from a " +
-                            "inner join b on a.id = b.a_id " +
-                            "inner join c on b.id = c.b_id")
+                    "from a " +
+                    "inner join b on a.id = b.a_id " +
+                    "inner join c on b.id = c.b_id")
                     .noLeakCheck()
                     .expectSize()
                     .returns("value\t" + secondAlias + "\t" + thirdAlias + "\n" +
@@ -765,8 +765,8 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into sensors values ('main', null, 2, '1970-02-02T10:10:02');");
 
             assertQuery("select distinct s1.sensor_id, s2.apptype " +
-                            "from sensors s1 " +
-                            "inner join sensors s2 on s1.parent_id = s2.sensor_id")
+                    "from sensors s1 " +
+                    "inner join sensors s2 on s1.parent_id = s2.sensor_id")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -801,9 +801,9 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute("insert into samples values (2, 'hum1', 60.0);");
 
             assertQuery("select distinct sensors.sensor_id, samples.type, sensors.value " +
-                            "from sensors as samples " +
-                            "inner join samples as sensors on samples.sensor_id = sensors.sensor_id " +
-                            "order by sensors.sensor_id")
+                    "from sensors as samples " +
+                    "inner join samples as sensors on samples.sensor_id = sensors.sensor_id " +
+                    "order by sensors.sensor_id")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -848,10 +848,10 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             final String secondAlias = columnAliasExprEnabled ? "value_2" : "value1";
             final String thirdAlias = columnAliasExprEnabled ? "value_3" : "value2";
             assertQuery("select distinct table2.value, table3.value, table1.value " +
-                            "from table1 as table2 " +
-                            "inner join table2 as table3 on table2.id = table3.table1_id " +
-                            "inner join table3 as table1 on table3.id = table1.table2_id " +
-                            "order by table2.value")
+                    "from table1 as table2 " +
+                    "inner join table2 as table3 on table2.id = table3.table1_id " +
+                    "inner join table3 as table1 on table3.id = table1.table2_id " +
+                    "order by table2.value")
                     .noLeakCheck()
                     .expectSize()
                     .returns("value\t" + secondAlias + "\t" + thirdAlias + "\n" +

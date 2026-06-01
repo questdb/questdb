@@ -67,7 +67,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("""
                             sparkline
-
+                            
                             """);
         });
     }
@@ -208,7 +208,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("""
                             sparkline
-
+                            
                             """);
         });
     }

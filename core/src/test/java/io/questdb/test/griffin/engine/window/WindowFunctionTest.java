@@ -145,12 +145,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testAggregateFunctionInPartitionByFails() throws Exception {
         assertQuery("""
-                        SELECT pickup_datetime, avg(total_amount) OVER (PARTITION BY avg(total_amount)
-                          ORDER BY pickup_datetime
-                          RANGE BETWEEN '7' PRECEDING AND CURRENT ROW) moving_average_1w
-                        FROM trips
-                        WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'
-                        SAMPLE BY 1d""")
+                SELECT pickup_datetime, avg(total_amount) OVER (PARTITION BY avg(total_amount)
+                  ORDER BY pickup_datetime
+                  RANGE BETWEEN '7' PRECEDING AND CURRENT ROW) moving_average_1w
+                FROM trips
+                WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'
+                SAMPLE BY 1d""")
                 .ddl("create table trips as " +
                         "(" +
                         "select" +
@@ -237,13 +237,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT ts, price AS p,
-                                CASE
-                                    WHEN price > lag(price) OVER (ORDER BY ts) THEN p
-                                    WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
-                                END
-                            FROM trades
-                            """)
+                    SELECT ts, price AS p,
+                        CASE
+                            WHEN price > lag(price) OVER (ORDER BY ts) THEN p
+                            WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
+                        END
+                    FROM trades
+                    """)
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -273,13 +273,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Both price and p should be usable in the CASE branches
             assertQuery("""
-                            SELECT ts, price AS p,
-                                CASE
-                                    WHEN price > lag(price) OVER (ORDER BY ts) THEN price
-                                    WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
-                                END
-                            FROM trades
-                            """)
+                    SELECT ts, price AS p,
+                        CASE
+                            WHEN price > lag(price) OVER (ORDER BY ts) THEN price
+                            WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
+                        END
+                    FROM trades
+                    """)
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -373,23 +373,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """, timestampType.getTypeName());
 
             assertQuery("SELECT T1.ts, T1.val, avg(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
-                            "count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
-                            "count(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts), count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
-                            "max(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
-                            "min(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts) " +
-                            "FROM nodts_tab AS T1 " +
-                            "CROSS JOIN nodts_tab AS T2")
+                    "count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
+                    "count(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts), count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
+                    "max(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
+                    "min(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts) " +
+                    "FROM nodts_tab AS T1 " +
+                    "CROSS JOIN nodts_tab AS T2")
                     .expectSize()
                     .noLeakCheck()
                     .returns(noDtsResult);
 
             assertQuery("SELECT T1.ts, T1.val, avg(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts desc), " +
-                            "count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
-                            "count(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts), count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
-                            "max(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts desc), " +
-                            "min(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts desc) " +
-                            "FROM nodts_tab AS T1 " +
-                            "CROSS JOIN nodts_tab AS T2")
+                    "count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
+                    "count(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts), count(*) OVER (PARTITION BY 1=1 ORDER BY T1.ts), " +
+                    "max(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts desc), " +
+                    "min(T1.val) OVER (PARTITION BY 1=1 ORDER BY T1.ts desc) " +
+                    "FROM nodts_tab AS T1 " +
+                    "CROSS JOIN nodts_tab AS T2")
                     .expectSize()
                     .noLeakCheck()
                     .returns(noDtsResult);
@@ -406,10 +406,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (0, 2)");
 
             assertQuery("SELECT ts, val, avg(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
-                            "count(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
-                            "max(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
-                            "min(val) OVER (PARTITION BY 1=1 ORDER BY ts) " +
-                            "FROM tab")
+                    "count(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
+                    "max(val) OVER (PARTITION BY 1=1 ORDER BY ts), " +
+                    "min(val) OVER (PARTITION BY 1=1 ORDER BY ts) " +
+                    "FROM tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -423,11 +423,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """, timestampType.getTypeName()));
 
             assertQuery("SELECT ts, val, avg(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
-                            "count(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
-                            "max(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
-                            "min(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC) " +
-                            "FROM tab " +
-                            "ORDER BY ts DESC")
+                    "count(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
+                    "max(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC), " +
+                    "min(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC) " +
+                    "FROM tab " +
+                    "ORDER BY ts DESC")
                     .timestamp("ts###desc")
                     .noRandomAccess()
                     .expectSize()
@@ -458,13 +458,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT ts,
-                                CASE
-                                    WHEN price > lag(price) OVER (ORDER BY ts) THEN price
-                                    WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
-                                END
-                            FROM trades
-                            """)
+                    SELECT ts,
+                        CASE
+                            WHEN price > lag(price) OVER (ORDER BY ts) THEN price
+                            WHEN price < lag(price) OVER (ORDER BY ts) THEN -price
+                        END
+                    FROM trades
+                    """)
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -505,13 +505,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
 
             assertQuery("select round(max(case when cr is null and cr_ref is null then 0.0 when cr is null or cr_ref is null then 1.0 else abs(cr - cr_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "corr(y, x) over (order by ts) cr, " +
-                            "case when stddev_pop(x) over (order by ts) = 0 or stddev_pop(y) over (order by ts) = 0 then null " +
-                            "else covar_pop(y, x) over (order by ts) / (stddev_pop(x) over (order by ts) * stddev_pop(y) over (order by ts)) end cr_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "corr(y, x) over (order by ts) cr, " +
+                    "case when stddev_pop(x) over (order by ts) = 0 or stddev_pop(y) over (order by ts) = 0 then null " +
+                    "else covar_pop(y, x) over (order by ts) / (stddev_pop(x) over (order by ts) * stddev_pop(y) over (order by ts)) end cr_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -529,16 +529,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 5.0), (5, 2, 20.0, 10.0), (6, 2, 30.0, 15.0)");
 
             assertQuery("select round(max(case when cr is null and cr_ref is null then 0.0 when cr is null or cr_ref is null then 1.0 else abs(cr - cr_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "corr(y, x) over (partition by i order by ts range between 2 microseconds preceding and current row) cr, " +
-                            "case when stddev_pop(x) over (partition by i order by ts range between 2 microseconds preceding and current row) = 0 " +
-                            "or stddev_pop(y) over (partition by i order by ts range between 2 microseconds preceding and current row) = 0 then null " +
-                            "else covar_pop(y, x) over (partition by i order by ts range between 2 microseconds preceding and current row) / " +
-                            "(stddev_pop(x) over (partition by i order by ts range between 2 microseconds preceding and current row) * " +
-                            "stddev_pop(y) over (partition by i order by ts range between 2 microseconds preceding and current row)) end cr_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "corr(y, x) over (partition by i order by ts range between 2 microseconds preceding and current row) cr, " +
+                    "case when stddev_pop(x) over (partition by i order by ts range between 2 microseconds preceding and current row) = 0 " +
+                    "or stddev_pop(y) over (partition by i order by ts range between 2 microseconds preceding and current row) = 0 then null " +
+                    "else covar_pop(y, x) over (partition by i order by ts range between 2 microseconds preceding and current row) / " +
+                    "(stddev_pop(x) over (partition by i order by ts range between 2 microseconds preceding and current row) * " +
+                    "stddev_pop(y) over (partition by i order by ts range between 2 microseconds preceding and current row)) end cr_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -606,12 +606,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // running frame (Welford path)
             assertQuery("select max(case when cr is null and cr_ref is null then 0.0 when cr is null or cr_ref is null then 1.0 else abs(cr - cr_ref) end) max_diff " +
-                            "from (" +
-                            "select " +
-                            "corr(y, x) over (partition by i order by ts) cr, " +
-                            "corr(y, x) over (partition by i) cr_ref " +
-                            "from tab WHERE i = 1" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "corr(y, x) over (partition by i order by ts) cr, " +
+                    "corr(y, x) over (partition by i) cr_ref " +
+                    "from tab WHERE i = 1" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -636,8 +636,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // non-partitioned: RANGE BETWEEN 2 second PRECEDING AND CURRENT ROW — evicts old rows
             assertQuery("select count(*) cnt from (" +
-                            "select covar_pop(y, x) over (order by ts range between 2 second preceding and current row) cv from tab" +
-                            ") where cv is not null")
+                    "select covar_pop(y, x) over (order by ts range between 2 second preceding and current row) cv from tab" +
+                    ") where cv is not null")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -648,8 +648,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // partitioned: same with partition by
             assertQuery("select count(*) cnt from (" +
-                            "select covar_pop(y, x) over (partition by i order by ts range between 2 second preceding and current row) cv from tab" +
-                            ") where cv is not null")
+                    "select covar_pop(y, x) over (partition by i order by ts range between 2 second preceding and current row) cv from tab" +
+                    ") where cv is not null")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -706,12 +706,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
 
             assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "covar_pop(y, x) over (order by ts) cv, " +
-                            "(avg(x * y) over (order by ts) - avg(x) over (order by ts) * avg(y) over (order by ts)) cv_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "covar_pop(y, x) over (order by ts) cv, " +
+                    "(avg(x * y) over (order by ts) - avg(x) over (order by ts) * avg(y) over (order by ts)) cv_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -729,14 +729,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
 
             assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "covar_pop(y, x) over (order by ts range between 10 microseconds preceding and current row) cv, " +
-                            "(avg(x * y) over (order by ts range between 10 microseconds preceding and current row) - " +
-                            "avg(x) over (order by ts range between 10 microseconds preceding and current row) * " +
-                            "avg(y) over (order by ts range between 10 microseconds preceding and current row)) cv_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "covar_pop(y, x) over (order by ts range between 10 microseconds preceding and current row) cv, " +
+                    "(avg(x * y) over (order by ts range between 10 microseconds preceding and current row) - " +
+                    "avg(x) over (order by ts range between 10 microseconds preceding and current row) * " +
+                    "avg(y) over (order by ts range between 10 microseconds preceding and current row)) cv_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -754,14 +754,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
 
             assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "covar_pop(y, x) over (order by ts rows between 2 preceding and current row) cv, " +
-                            "(avg(x * y) over (order by ts rows between 2 preceding and current row) - " +
-                            "avg(x) over (order by ts rows between 2 preceding and current row) * " +
-                            "avg(y) over (order by ts rows between 2 preceding and current row)) cv_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "covar_pop(y, x) over (order by ts rows between 2 preceding and current row) cv, " +
+                    "(avg(x * y) over (order by ts rows between 2 preceding and current row) - " +
+                    "avg(x) over (order by ts rows between 2 preceding and current row) * " +
+                    "avg(y) over (order by ts rows between 2 preceding and current row)) cv_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -800,12 +800,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0)");
 
             assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "covar_pop(y, x) over (partition by i order by ts) cv, " +
-                            "(avg(x * y) over (partition by i order by ts) - avg(x) over (partition by i order by ts) * avg(y) over (partition by i order by ts)) cv_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "covar_pop(y, x) over (partition by i order by ts) cv, " +
+                    "(avg(x * y) over (partition by i order by ts) - avg(x) over (partition by i order by ts) * avg(y) over (partition by i order by ts)) cv_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -823,12 +823,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 6.0)");
 
             assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "covar_pop(y, x) over () cv, " +
-                            "(avg(x * y) over () - avg(x) over () * avg(y) over ()) cv_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "covar_pop(y, x) over () cv, " +
+                    "(avg(x * y) over () - avg(x) over () * avg(y) over ()) cv_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -853,8 +853,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "('1970-01-01T00:00:06', 2, 12.0, 24.0)");
 
             assertQuery("select count(*) cnt from (" +
-                            "select covar_pop(y, x) over (partition by i order by ts range between unbounded preceding and 2 microseconds preceding) cv from tab" +
-                            ") where cv is not null")
+                    "select covar_pop(y, x) over (partition by i order by ts range between unbounded preceding and 2 microseconds preceding) cv from tab" +
+                    ") where cv is not null")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -877,8 +877,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 // non-partitioned: 30 rows > capacity 10 → inline buffer doubling
                 assertQuery("select count(*) cnt from (" +
-                                "select covar_pop(y, x) over (order by ts range between 100 second preceding and current row) cv from tab" +
-                                ") where cv is not null")
+                        "select covar_pop(y, x) over (order by ts range between 100 second preceding and current row) cv from tab" +
+                        ") where cv is not null")
                         .noRandomAccess()
                         .expectSize()
                         .noLeakCheck()
@@ -889,8 +889,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 // partitioned: 15 rows per partition > capacity 10 → expandRingBuffer
                 assertQuery("select count(*) cnt from (" +
-                                "select covar_pop(y, x) over (partition by i order by ts range between 100 second preceding and current row) cv from tab" +
-                                ") where cv is not null")
+                        "select covar_pop(y, x) over (partition by i order by ts range between 100 second preceding and current row) cv from tab" +
+                        ") where cv is not null")
                         .noRandomAccess()
                         .expectSize()
                         .noLeakCheck()
@@ -1037,13 +1037,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
 
             assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select covar_samp(y, x) over (order by ts range between 10 microseconds preceding and current row) cv, " +
-                            "(count(case when x is not null and y is not null then 1 end) over (order by ts range between 10 microseconds preceding and current row)::double / " +
-                            "(count(case when x is not null and y is not null then 1 end) over (order by ts range between 10 microseconds preceding and current row) - 1)) * " +
-                            "covar_pop(y, x) over (order by ts range between 10 microseconds preceding and current row) cv_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select covar_samp(y, x) over (order by ts range between 10 microseconds preceding and current row) cv, " +
+                    "(count(case when x is not null and y is not null then 1 end) over (order by ts range between 10 microseconds preceding and current row)::double / " +
+                    "(count(case when x is not null and y is not null then 1 end) over (order by ts range between 10 microseconds preceding and current row) - 1)) * " +
+                    "covar_pop(y, x) over (order by ts range between 10 microseconds preceding and current row) cv_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1061,13 +1061,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
 
             assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select covar_samp(y, x) over (order by ts rows between 2 preceding and current row) cv, " +
-                            "(count(case when x is not null and y is not null then 1 end) over (order by ts rows between 2 preceding and current row)::double / " +
-                            "(count(case when x is not null and y is not null then 1 end) over (order by ts rows between 2 preceding and current row) - 1)) * " +
-                            "covar_pop(y, x) over (order by ts rows between 2 preceding and current row) cv_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select covar_samp(y, x) over (order by ts rows between 2 preceding and current row) cv, " +
+                    "(count(case when x is not null and y is not null then 1 end) over (order by ts rows between 2 preceding and current row)::double / " +
+                    "(count(case when x is not null and y is not null then 1 end) over (order by ts rows between 2 preceding and current row) - 1)) * " +
+                    "covar_pop(y, x) over (order by ts rows between 2 preceding and current row) cv_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1085,13 +1085,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0)");
 
             assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select covar_samp(y, x) over (partition by i) cv, " +
-                            "(count(case when x is not null and y is not null then 1 end) over (partition by i)::double / " +
-                            "(count(case when x is not null and y is not null then 1 end) over (partition by i) - 1)) * " +
-                            "covar_pop(y, x) over (partition by i) cv_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select covar_samp(y, x) over (partition by i) cv, " +
+                    "(count(case when x is not null and y is not null then 1 end) over (partition by i)::double / " +
+                    "(count(case when x is not null and y is not null then 1 end) over (partition by i) - 1)) * " +
+                    "covar_pop(y, x) over (partition by i) cv_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1109,13 +1109,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0), (6, 2, 12.0, 24.0)");
 
             assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select covar_samp(y, x) over (partition by i order by ts range between 10 microseconds preceding and current row) cv, " +
-                            "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts range between 10 microseconds preceding and current row)::double / " +
-                            "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts range between 10 microseconds preceding and current row) - 1)) * " +
-                            "covar_pop(y, x) over (partition by i order by ts range between 10 microseconds preceding and current row) cv_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select covar_samp(y, x) over (partition by i order by ts range between 10 microseconds preceding and current row) cv, " +
+                    "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts range between 10 microseconds preceding and current row)::double / " +
+                    "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts range between 10 microseconds preceding and current row) - 1)) * " +
+                    "covar_pop(y, x) over (partition by i order by ts range between 10 microseconds preceding and current row) cv_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1133,14 +1133,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0)");
 
             assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "covar_samp(y, x) over (partition by i order by ts rows between 2 preceding and current row) cv, " +
-                            "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts rows between 2 preceding and current row)::double / " +
-                            "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts rows between 2 preceding and current row) - 1)) * " +
-                            "covar_pop(y, x) over (partition by i order by ts rows between 2 preceding and current row) cv_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "covar_samp(y, x) over (partition by i order by ts rows between 2 preceding and current row) cv, " +
+                    "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts rows between 2 preceding and current row)::double / " +
+                    "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts rows between 2 preceding and current row) - 1)) * " +
+                    "covar_pop(y, x) over (partition by i order by ts rows between 2 preceding and current row) cv_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1158,13 +1158,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0)");
 
             assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select covar_samp(y, x) over (partition by i order by ts) cv, " +
-                            "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts)::double / " +
-                            "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts) - 1)) * " +
-                            "covar_pop(y, x) over (partition by i order by ts) cv_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select covar_samp(y, x) over (partition by i order by ts) cv, " +
+                    "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts)::double / " +
+                    "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts) - 1)) * " +
+                    "covar_pop(y, x) over (partition by i order by ts) cv_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1182,13 +1182,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 6.0), (4, 4.0, 8.0)");
 
             assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select covar_samp(y, x) over () cv, " +
-                            "(count(case when x is not null and y is not null then 1 end) over ()::double / " +
-                            "(count(case when x is not null and y is not null then 1 end) over () - 1)) * " +
-                            "covar_pop(y, x) over () cv_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select covar_samp(y, x) over () cv, " +
+                    "(count(case when x is not null and y is not null then 1 end) over ()::double / " +
+                    "(count(case when x is not null and y is not null then 1 end) over () - 1)) * " +
+                    "covar_pop(y, x) over () cv_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1239,13 +1239,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 6.0), (4, 4.0, 8.0)");
 
             assertQuery("select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select covar_samp(y, x) over (order by ts) cv, " +
-                            "(count(case when x is not null and y is not null then 1 end) over (order by ts)::double / " +
-                            "(count(case when x is not null and y is not null then 1 end) over (order by ts) - 1)) * " +
-                            "covar_pop(y, x) over (order by ts) cv_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select covar_samp(y, x) over (order by ts) cv, " +
+                    "(count(case when x is not null and y is not null then 1 end) over (order by ts)::double / " +
+                    "(count(case when x is not null and y is not null then 1 end) over (order by ts) - 1)) * " +
+                    "covar_pop(y, x) over (order by ts) cv_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1284,13 +1284,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Test first_value(double) with window function over partitioned data with large frame
             // Test the last row of each partition to verify boundary conditions
             assertQuery("select i, ts, first_d_window from (" +
-                            "select i, ts, " +
-                            "first_value(d) over (partition by i order by ts range between 80000 preceding and current row) as first_d_window, " +
-                            "row_number() over (partition by i order by ts desc) as rn " +
-                            "from tab " +
-                            "where i < 4" +
-                            ") where rn = 1 " +
-                            "order by i")
+                    "select i, ts, " +
+                    "first_value(d) over (partition by i order by ts range between 80000 preceding and current row) as first_d_window, " +
+                    "row_number() over (partition by i order by ts desc) as rn " +
+                    "from tab " +
+                    "where i < 4" +
+                    ") where rn = 1 " +
+                    "order by i")
                     .noLeakCheck()
                     .returns("""
                             i\tts\tfirst_d_window
@@ -1302,13 +1302,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Test with ignore nulls - should handle null values properly in large datasets
             assertQuery("select i, ts, first_d_ignore_nulls from (" +
-                            "select i, ts, " +
-                            "first_value(d) ignore nulls over (partition by i order by ts range between 80000 preceding and current row) as first_d_ignore_nulls, " +
-                            "row_number() over (partition by i order by ts desc) as rn " +
-                            "from tab " +
-                            "where i < 4" +
-                            ") where rn = 1 " +
-                            "order by i")
+                    "select i, ts, " +
+                    "first_value(d) ignore nulls over (partition by i order by ts range between 80000 preceding and current row) as first_d_ignore_nulls, " +
+                    "row_number() over (partition by i order by ts desc) as rn " +
+                    "from tab " +
+                    "where i < 4" +
+                    ") where rn = 1 " +
+                    "order by i")
                     .noLeakCheck()
                     .returns("""
                             i\tts\tfirst_d_ignore_nulls
@@ -1320,25 +1320,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Cross-check: verify the first value in the window range
             assertQuery("""
-                             select main_data.i, min(main_data.d) as first_d
-                              from (
-                                select data.d, data.i, data.ts
-                                from (select i, max(ts) as max_ts from tab group by i) cnt
-                                join tab data on cnt.i = data.i and data.ts >= (cnt.max_ts - 80000)
-                              ) main_data
-                              join (
-                                select wd.i, min(wd.d) as min_d
-                                from (
-                                  select data.d, data.i
-                                  from (select i, max(ts) as max_ts from tab group by i) cnt
-                                  join tab data on cnt.i = data.i and data.ts >= (cnt.max_ts - 80000)
-                                ) wd
-                                group by wd.i
-                              ) min_values on main_data.i = min_values.i and main_data.d = min_values.min_d
-                              where main_data.i in (0,1,2,3)
-                              group by main_data.i
-                              order by main_data.i\
-                            """)
+                     select main_data.i, min(main_data.d) as first_d
+                      from (
+                        select data.d, data.i, data.ts
+                        from (select i, max(ts) as max_ts from tab group by i) cnt
+                        join tab data on cnt.i = data.i and data.ts >= (cnt.max_ts - 80000)
+                      ) main_data
+                      join (
+                        select wd.i, min(wd.d) as min_d
+                        from (
+                          select data.d, data.i
+                          from (select i, max(ts) as max_ts from tab group by i) cnt
+                          join tab data on cnt.i = data.i and data.ts >= (cnt.max_ts - 80000)
+                        ) wd
+                        group by wd.i
+                      ) min_values on main_data.i = min_values.i and main_data.d = min_values.min_d
+                      where main_data.i in (0,1,2,3)
+                      group by main_data.i
+                      order by main_data.i\
+                    """)
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -1380,22 +1380,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select (100000+x)::timestamp, x/4, case when x % 30 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(90000)");
 
             assertQuery("select * from (" +
-                            "select ts, i, j, " +
-                            "avg(j) over (order by ts range between 1 microsecond preceding and current row), " +
-                            "sum(j) over (order by ts range between 1 microsecond preceding and current row), " +
-                            "first_value(j) over (order by ts range between 1 microsecond preceding and current row), " +
-                            "last_value(j) over (order by ts range between 1 microsecond preceding and current row), " +
-                            "first_value(j) ignore nulls over (order by ts range between 1 microsecond preceding and current row), " +
-                            "last_value(j) ignore nulls over (order by ts range between 1 microsecond preceding and current row), " +
-                            "count(*) over (order by ts range between 1 microsecond preceding and current row), " +
-                            "count(j) over (order by ts range between 1 microsecond preceding and current row), " +
-                            "count(s) over (order by ts range between 1 microsecond preceding and current row), " +
-                            "count(d) over (order by ts range between 1 microsecond preceding and current row), " +
-                            "count(c) over (order by ts range between 1 microsecond preceding and current row), " +
-                            "max(j) over (order by ts range between 1 microsecond preceding and current row), " +
-                            "min(j) over (order by ts range between 1 microsecond preceding and current row) " +
-                            "from tab) " +
-                            " limit -5")
+                    "select ts, i, j, " +
+                    "avg(j) over (order by ts range between 1 microsecond preceding and current row), " +
+                    "sum(j) over (order by ts range between 1 microsecond preceding and current row), " +
+                    "first_value(j) over (order by ts range between 1 microsecond preceding and current row), " +
+                    "last_value(j) over (order by ts range between 1 microsecond preceding and current row), " +
+                    "first_value(j) ignore nulls over (order by ts range between 1 microsecond preceding and current row), " +
+                    "last_value(j) ignore nulls over (order by ts range between 1 microsecond preceding and current row), " +
+                    "count(*) over (order by ts range between 1 microsecond preceding and current row), " +
+                    "count(j) over (order by ts range between 1 microsecond preceding and current row), " +
+                    "count(s) over (order by ts range between 1 microsecond preceding and current row), " +
+                    "count(d) over (order by ts range between 1 microsecond preceding and current row), " +
+                    "count(c) over (order by ts range between 1 microsecond preceding and current row), " +
+                    "max(j) over (order by ts range between 1 microsecond preceding and current row), " +
+                    "min(j) over (order by ts range between 1 microsecond preceding and current row) " +
+                    "from tab) " +
+                    " limit -5")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -1410,22 +1410,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select * from (" +
-                            "select ts, i, j, " +
-                            "avg(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
-                            "sum(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
-                            "first_value(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
-                            "last_value(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
-                            "first_value(j) ignore nulls over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
-                            "last_value(j) ignore nulls over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
-                            "count(*) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
-                            "count(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
-                            "count(s) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
-                            "count(d) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
-                            "count(c) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
-                            "max(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
-                            "min(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding) " +
-                            "from tab) " +
-                            " limit -5")
+                    "select ts, i, j, " +
+                    "avg(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                    "sum(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                    "first_value(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                    "last_value(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                    "first_value(j) ignore nulls over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                    "last_value(j) ignore nulls over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                    "count(*) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                    "count(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                    "count(s) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                    "count(d) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                    "count(c) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                    "max(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
+                    "min(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding) " +
+                    "from tab) " +
+                    " limit -5")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -1440,22 +1440,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select * from (" +
-                            "select ts, i, j, " +
-                            "avg(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
-                            "sum(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
-                            "first_value(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
-                            "last_value(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
-                            "first_value(j) ignore nulls over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
-                            "last_value(j) ignore nulls over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
-                            "count(*) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
-                            "count(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
-                            "count(s) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
-                            "count(d) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
-                            "count(c) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
-                            "max(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
-                            "min(j) over (order by ts range between 1 day preceding and 100 millisecond preceding) " +
-                            "from tab) " +
-                            " limit -5")
+                    "select ts, i, j, " +
+                    "avg(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                    "sum(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                    "first_value(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                    "last_value(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                    "first_value(j) ignore nulls over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                    "last_value(j) ignore nulls over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                    "count(*) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                    "count(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                    "count(s) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                    "count(d) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                    "count(c) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                    "max(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
+                    "min(j) over (order by ts range between 1 day preceding and 100 millisecond preceding) " +
+                    "from tab) " +
+                    " limit -5")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -1474,22 +1474,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select (100000+x)::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(90000)");
 
             assertQuery("select * from (" +
-                            "select ts, i, j, " +
-                            "avg(j) over (order by ts range between 1 millisecond preceding and current row), " +
-                            "sum(j) over (order by ts range between 1 millisecond preceding and current row), " +
-                            "first_value(j) over (order by ts range between 1 millisecond preceding and current row), " +
-                            "last_value(j) over (order by ts range between 1 millisecond preceding and current row), " +
-                            "first_value(j) ignore nulls over (order by ts range between 1 millisecond preceding and current row), " +
-                            "last_value(j) ignore nulls over (order by ts range between 1 millisecond preceding and current row), " +
-                            "count(*) over (order by ts range between 1 millisecond preceding and current row), " +
-                            "count(j) over (order by ts range between 1 millisecond preceding and current row), " +
-                            "count(s) over (order by ts range between 1 millisecond preceding and current row), " +
-                            "count(d) over (order by ts range between 1 millisecond preceding and current row), " +
-                            "count(c) over (order by ts range between 1 millisecond preceding and current row), " +
-                            "max(j) over (order by ts range between 1 millisecond preceding and current row), " +
-                            "min(j) over (order by ts range between 1 millisecond preceding and current row) " +
-                            "from tab) " +
-                            " limit -5")
+                    "select ts, i, j, " +
+                    "avg(j) over (order by ts range between 1 millisecond preceding and current row), " +
+                    "sum(j) over (order by ts range between 1 millisecond preceding and current row), " +
+                    "first_value(j) over (order by ts range between 1 millisecond preceding and current row), " +
+                    "last_value(j) over (order by ts range between 1 millisecond preceding and current row), " +
+                    "first_value(j) ignore nulls over (order by ts range between 1 millisecond preceding and current row), " +
+                    "last_value(j) ignore nulls over (order by ts range between 1 millisecond preceding and current row), " +
+                    "count(*) over (order by ts range between 1 millisecond preceding and current row), " +
+                    "count(j) over (order by ts range between 1 millisecond preceding and current row), " +
+                    "count(s) over (order by ts range between 1 millisecond preceding and current row), " +
+                    "count(d) over (order by ts range between 1 millisecond preceding and current row), " +
+                    "count(c) over (order by ts range between 1 millisecond preceding and current row), " +
+                    "max(j) over (order by ts range between 1 millisecond preceding and current row), " +
+                    "min(j) over (order by ts range between 1 millisecond preceding and current row) " +
+                    "from tab) " +
+                    " limit -5")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -1519,27 +1519,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.460000Z\t419999.5\t2.2400253333E10\t380000.0\t380000.0\tnull\t459999.0\t80001\t53334\t80001\t80001\t80001\t459999.0\t380000.0
                     """);
             assertQuery(" select" +
-                            " max(ts) as ts," +
-                            " avg(j) as avg," +
-                            " sum(j::double) as sum," +
-                            " last(j::double) as first_value," +
-                            " last_not_null(j::double) as first_value_ignore_nulls," +
-                            " first(j::double) as last_value," +
-                            " first_not_null(j::double) as last_value_ignore_nulls," +
-                            " count(*) as count," +
-                            " count(j::double) as count1," +
-                            " count(s) as count2," +
-                            " count(d) as count3," +
-                            " count(c) as count4," +
-                            " max(j::double) as max," +
-                            " min(j::double) as min " +
-                            "from " +
-                            "(select" +
-                            " ts, i, j, s, d, c," +
-                            " row_number() over (order by ts desc) as rn" +
-                            " from tab order by ts desc" +
-                            ") " +
-                            "where rn between 1 and 80001 ")
+                    " max(ts) as ts," +
+                    " avg(j) as avg," +
+                    " sum(j::double) as sum," +
+                    " last(j::double) as first_value," +
+                    " last_not_null(j::double) as first_value_ignore_nulls," +
+                    " first(j::double) as last_value," +
+                    " first_not_null(j::double) as last_value_ignore_nulls," +
+                    " count(*) as count," +
+                    " count(j::double) as count1," +
+                    " count(s) as count2," +
+                    " count(d) as count3," +
+                    " count(c) as count4," +
+                    " max(j::double) as max," +
+                    " min(j::double) as min " +
+                    "from " +
+                    "(select" +
+                    " ts, i, j, s, d, c," +
+                    " row_number() over (order by ts desc) as rn" +
+                    " from tab order by ts desc" +
+                    ") " +
+                    "where rn between 1 and 80001 ")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1550,23 +1550,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.460000Z\t419999.5\t2.2400253333E10\t380000\t380000\tnull\t459999\t80001\t53334\t80001\t80001\t80001\t459999\t380000
                     """);
             assertQuery("select * from (" +
-                            "select * from " +
-                            "(select ts, " +
-                            "avg(j) over (order by ts rows between 80000 preceding and current row), " +
-                            "sum(j) over (order by ts rows between 80000 preceding and current row), " +
-                            "first_value(j) over (order by ts rows between 80000 preceding and current row), " +
-                            "first_value(j) ignore nulls over (order by ts rows between 80000 preceding and current row), " +
-                            "last_value(j) over (order by ts rows between 80000 preceding and current row), " +
-                            "last_value(j) ignore nulls over (order by ts rows between 80000 preceding and current row), " +
-                            "count(*) over (order by ts rows between 80000 preceding and current row), " +
-                            "count(j) over (order by ts rows between 80000 preceding and current row), " +
-                            "count(s) over (order by ts rows between 80000 preceding and current row), " +
-                            "count(d) over (order by ts rows between 80000 preceding and current row), " +
-                            "count(c) over (order by ts rows between 80000 preceding and current row), " +
-                            "max(j) over (order by ts rows between 80000 preceding and current row), " +
-                            "min(j) over (order by ts rows between 80000 preceding and current row) " +
-                            "from tab) " +
-                            "limit -1) ")
+                    "select * from " +
+                    "(select ts, " +
+                    "avg(j) over (order by ts rows between 80000 preceding and current row), " +
+                    "sum(j) over (order by ts rows between 80000 preceding and current row), " +
+                    "first_value(j) over (order by ts rows between 80000 preceding and current row), " +
+                    "first_value(j) ignore nulls over (order by ts rows between 80000 preceding and current row), " +
+                    "last_value(j) over (order by ts rows between 80000 preceding and current row), " +
+                    "last_value(j) ignore nulls over (order by ts rows between 80000 preceding and current row), " +
+                    "count(*) over (order by ts rows between 80000 preceding and current row), " +
+                    "count(j) over (order by ts rows between 80000 preceding and current row), " +
+                    "count(s) over (order by ts rows between 80000 preceding and current row), " +
+                    "count(d) over (order by ts rows between 80000 preceding and current row), " +
+                    "count(c) over (order by ts rows between 80000 preceding and current row), " +
+                    "max(j) over (order by ts rows between 80000 preceding and current row), " +
+                    "min(j) over (order by ts rows between 80000 preceding and current row) " +
+                    "from tab) " +
+                    "limit -1) ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -1589,13 +1589,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:01.100000Z\t49980.066958378644\t3.815028491E9\t2073.0\t2073.0\t46392.0\t46392.0\t80001\t76331\t80001\t80001\t80001\t100000.0\t3.0
                     """);
             assertQuery(" select max(ts) as ts, avg(j) as avg, sum(j::double) as sum, last(j::double) as first_value," +
-                            "last_not_null(j::double) as first_value_ignore_nulls, " +
-                            "first(j::double) as last_value, first_not_null(j::double) as last_value_ignore_nulls, " +
-                            "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
-                            "max(j::double) as max, min(j::double) as min " +
-                            "from " +
-                            "( select ts, i, j, s, d, c, row_number() over (order by ts desc) as rn from tab order by ts desc) " +
-                            "where rn between 1 and 80001 ")
+                    "last_not_null(j::double) as first_value_ignore_nulls, " +
+                    "first(j::double) as last_value, first_not_null(j::double) as last_value_ignore_nulls, " +
+                    "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
+                    "max(j::double) as max, min(j::double) as min " +
+                    "from " +
+                    "( select ts, i, j, s, d, c, row_number() over (order by ts desc) as rn from tab order by ts desc) " +
+                    "where rn between 1 and 80001 ")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1607,21 +1607,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("select * from (" +
-                            "select * from (select ts, " +
-                            "avg(j) over (order by ts rows between 80000 preceding and current row), " +
-                            "sum(j) over (order by ts rows between 80000 preceding and current row), " +
-                            "first_value(j) over (order by ts rows between 80000 preceding and current row), " +
-                            "first_value(j) ignore nulls over (order by ts rows between 80000 preceding and current row), " +
-                            "last_value(j) over (order by ts rows between 80000 preceding and current row), " +
-                            "last_value(j) ignore nulls over (order by ts rows between 80000 preceding and current row), " +
-                            "count(*) over (order by ts rows between 80000 preceding and current row), " +
-                            "count(j) over (order by ts rows between 80000 preceding and current row), " +
-                            "count(s) over (order by ts rows between 80000 preceding and current row), " +
-                            "count(d) over (order by ts rows between 80000 preceding and current row), " +
-                            "count(c) over (order by ts rows between 80000 preceding and current row), " +
-                            "max(j) over (order by ts rows between 80000 preceding and current row), " +
-                            "min(j) over (order by ts rows between 80000 preceding and current row) " +
-                            "from tab) limit -1)")
+                    "select * from (select ts, " +
+                    "avg(j) over (order by ts rows between 80000 preceding and current row), " +
+                    "sum(j) over (order by ts rows between 80000 preceding and current row), " +
+                    "first_value(j) over (order by ts rows between 80000 preceding and current row), " +
+                    "first_value(j) ignore nulls over (order by ts rows between 80000 preceding and current row), " +
+                    "last_value(j) over (order by ts rows between 80000 preceding and current row), " +
+                    "last_value(j) ignore nulls over (order by ts rows between 80000 preceding and current row), " +
+                    "count(*) over (order by ts rows between 80000 preceding and current row), " +
+                    "count(j) over (order by ts rows between 80000 preceding and current row), " +
+                    "count(s) over (order by ts rows between 80000 preceding and current row), " +
+                    "count(d) over (order by ts rows between 80000 preceding and current row), " +
+                    "count(c) over (order by ts rows between 80000 preceding and current row), " +
+                    "max(j) over (order by ts rows between 80000 preceding and current row), " +
+                    "min(j) over (order by ts rows between 80000 preceding and current row) " +
+                    "from tab) limit -1)")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -1649,18 +1649,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // cross-check with re-write using aggregate functions
             assertQuery("select max(ts) as ts, i, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value, " +
-                            "first_not_null(j::double) as first_value_ignore_nulls, " +
-                            "last(j::double) as last_value, last_not_null(j::double) as last_value_ignore_nulls, " +
-                            "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
-                            "max(j::double) as max, min(j::double) as min " +
-                            "from (" +
-                            "  select data.ts, data.i, data.j, data.s, data.d, data.c" +
-                            "  from ( select i, max(ts) as max from tab group by i) cnt " +
-                            (timestampType == TestTimestampType.MICRO ? "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " : "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000000) ") +
-                            "  order by data.i, ts " +
-                            ") " +
-                            "group by i " +
-                            "order by i")
+                    "first_not_null(j::double) as first_value_ignore_nulls, " +
+                    "last(j::double) as last_value, last_not_null(j::double) as last_value_ignore_nulls, " +
+                    "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
+                    "max(j::double) as max, min(j::double) as min " +
+                    "from (" +
+                    "  select data.ts, data.i, data.j, data.s, data.d, data.c" +
+                    "  from ( select i, max(ts) as max from tab group by i) cnt " +
+                    (timestampType == TestTimestampType.MICRO ? "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " : "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000000) ") +
+                    "  order by data.i, ts " +
+                    ") " +
+                    "group by i " +
+                    "order by i")
                     .expectSize()
                     .noLeakCheck()
                     .returns(expected);
@@ -1673,24 +1673,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.459999Z\t3\t420001.0\t5.600293334E9\tnull\t380003\t459999\t459999\t20001\t13334\t20001\t20001\t20001\t459999\t380003
                     """);
             assertQuery("select * from " +
-                            "(select * from (select ts, i, " +
-                            "avg(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
-                            "sum(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
-                            "count(*) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
-                            "count(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
-                            "count(s) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
-                            "count(d) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
-                            "count(c) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
-                            "max(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
-                            "min(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) " +
-                            "from tab" +
-                            ") " +
-                            "limit -4) " +
-                            "order by i")
+                    "(select * from (select ts, i, " +
+                    "avg(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
+                    "sum(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
+                    "count(*) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
+                    "count(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
+                    "count(s) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
+                    "count(d) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
+                    "count(c) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
+                    "max(j) over (partition by i order by ts range between 80000 microseconds preceding and current row), " +
+                    "min(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) " +
+                    "from tab" +
+                    ") " +
+                    "limit -4) " +
+                    "order by i")
                     .expectSize()
                     .noLeakCheck()
                     .returns(expected2);
@@ -1737,18 +1737,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // cross-check with re-write using aggregate functions
             assertQuery("select max(ts) as ts, i, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value, " +
-                            "first_not_null(j::double) as first_value_ignore_nulls, " +
-                            "last(j::double) as last_value, last_not_null(j::double) as last_value_ignore_nulls, " +
-                            "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
-                            "max(j::double) as max, min(j::double) as min " +
-                            "from (" +
-                            "  select data.ts, data.i, data.j, data.s, data.d, data.c" +
-                            "  from (select i, max(ts) as max from tab group by i) cnt " +
-                            (timestampType == TestTimestampType.MICRO ? "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " : "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000000) ") +
-                            "  order by data.i, ts " +
-                            ") " +
-                            "group by i " +
-                            "order by i ")
+                    "first_not_null(j::double) as first_value_ignore_nulls, " +
+                    "last(j::double) as last_value, last_not_null(j::double) as last_value_ignore_nulls, " +
+                    "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
+                    "max(j::double) as max, min(j::double) as min " +
+                    "from (" +
+                    "  select data.ts, data.i, data.j, data.s, data.d, data.c" +
+                    "  from (select i, max(ts) as max from tab group by i) cnt " +
+                    (timestampType == TestTimestampType.MICRO ? "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " : "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000000) ") +
+                    "  order by data.i, ts " +
+                    ") " +
+                    "group by i " +
+                    "order by i ")
                     .expectSize()
                     .noLeakCheck()
                     .returns(expected);
@@ -1779,39 +1779,39 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("select last(ts) as ts, " +
-                            "i, " +
-                            "last(avg) as avg, " +
-                            "last(sum) as sum, " +
-                            "last(first_value) as first_value, " +
-                            "last(first_value_ignore_nulls) as first_value_ignore_nulls, " +
-                            "last(last_value) as last_value, " +
-                            "last(last_value_ignore_nulls) as last_value_ignore_nulls, " +
-                            "last(count) as count, " +
-                            "last(count1) as count1, " +
-                            "last(count2) as count2, " +
-                            "last(count3) as count3, " +
-                            "last(count4) as count4, " +
-                            "last(max) as max, " +
-                            "last(min) as min " +
-                            "from (  " +
-                            "  select * from (" +
-                            "    select ts, i, " +
-                            "    avg(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) avg, " +
-                            "    sum(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) sum, " +
-                            "    first_value(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) first_value, " +
-                            "    first_value(j) ignore nulls over (partition by i order by ts range between 80000 microseconds preceding and current row) first_value_ignore_nulls, " +
-                            "    last_value(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) last_value, " +
-                            "    last_value(j) ignore nulls over (partition by i order by ts range between 80000 microseconds preceding and current row) last_value_ignore_nulls, " +
-                            "    count(*) over (partition by i order by ts range between 80000 microseconds preceding and current row) count, " +
-                            "    count(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) count1, " +
-                            "    count(s) over (partition by i order by ts range between 80000 microseconds preceding and current row) count2, " +
-                            "    count(d) over (partition by i order by ts range between 80000 microseconds preceding and current row) count3, " +
-                            "    count(c) over (partition by i order by ts range between 80000 microseconds preceding and current row) count4, " +
-                            "    max(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) max, " +
-                            "    min(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) min " +
-                            "    from tab ) " +
-                            "  limit -100 )" +
-                            "order by i")
+                    "i, " +
+                    "last(avg) as avg, " +
+                    "last(sum) as sum, " +
+                    "last(first_value) as first_value, " +
+                    "last(first_value_ignore_nulls) as first_value_ignore_nulls, " +
+                    "last(last_value) as last_value, " +
+                    "last(last_value_ignore_nulls) as last_value_ignore_nulls, " +
+                    "last(count) as count, " +
+                    "last(count1) as count1, " +
+                    "last(count2) as count2, " +
+                    "last(count3) as count3, " +
+                    "last(count4) as count4, " +
+                    "last(max) as max, " +
+                    "last(min) as min " +
+                    "from (  " +
+                    "  select * from (" +
+                    "    select ts, i, " +
+                    "    avg(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) avg, " +
+                    "    sum(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) sum, " +
+                    "    first_value(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) first_value, " +
+                    "    first_value(j) ignore nulls over (partition by i order by ts range between 80000 microseconds preceding and current row) first_value_ignore_nulls, " +
+                    "    last_value(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) last_value, " +
+                    "    last_value(j) ignore nulls over (partition by i order by ts range between 80000 microseconds preceding and current row) last_value_ignore_nulls, " +
+                    "    count(*) over (partition by i order by ts range between 80000 microseconds preceding and current row) count, " +
+                    "    count(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) count1, " +
+                    "    count(s) over (partition by i order by ts range between 80000 microseconds preceding and current row) count2, " +
+                    "    count(d) over (partition by i order by ts range between 80000 microseconds preceding and current row) count3, " +
+                    "    count(c) over (partition by i order by ts range between 80000 microseconds preceding and current row) count4, " +
+                    "    max(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) max, " +
+                    "    min(j) over (partition by i order by ts range between 80000 microseconds preceding and current row) min " +
+                    "    from tab ) " +
+                    "  limit -100 )" +
+                    "order by i")
                     .expectSize()
                     .noLeakCheck()
                     .returns(expected2);
@@ -1836,14 +1836,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // cross-check with re-write using aggregate functions
             assertQuery(" select max(ts) as ts, i, avg(j::double) as avg, sum(j::double) as sum, last(j::double) as first_value, " +
-                            "last_not_null(j::double) as first_value_ignore_nulls, first(j::double) as last_value, first_not_null(j::double) as last_value_ignore_nulls," +
-                            "count(*) as count, count(j::double) as count1, count(s) as count2, " +
-                            "count(d) as count3, count(c) as count4, max(j::double) as max, min(j::double) as min " +
-                            "from " +
-                            "( select ts, i, j, s, d, c, row_number() over (partition by i order by ts desc) as rn from tab order by ts desc) " +
-                            "where rn between 1 and 80001 " +
-                            "group by i " +
-                            "order by i")
+                    "last_not_null(j::double) as first_value_ignore_nulls, first(j::double) as last_value, first_not_null(j::double) as last_value_ignore_nulls," +
+                    "count(*) as count, count(j::double) as count1, count(s) as count2, " +
+                    "count(d) as count3, count(c) as count4, max(j::double) as max, min(j::double) as min " +
+                    "from " +
+                    "( select ts, i, j, s, d, c, row_number() over (partition by i order by ts desc) as rn from tab order by ts desc) " +
+                    "where rn between 1 and 80001 " +
+                    "group by i " +
+                    "order by i")
                     .expectSize()
                     .noLeakCheck()
                     .returns(expected);
@@ -1856,22 +1856,22 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.459999Z\t3\t300001.0\t1.6000253334E10\tnull\t140003\t459999\t459999\t80001\t53334\t80001\t80001\t80001\t459999\t140003
                     """);
             assertQuery("select * from (" +
-                            "select * from (select ts, i, " +
-                            "avg(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
-                            "sum(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 80000 preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 80000 preceding and current row), " +
-                            "count(*) over (partition by i order by ts rows between 80000 preceding and current row), " +
-                            "count(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
-                            "count(s) over (partition by i order by ts rows between 80000 preceding and current row), " +
-                            "count(d) over (partition by i order by ts rows between 80000 preceding and current row), " +
-                            "count(c) over (partition by i order by ts rows between 80000 preceding and current row), " +
-                            "max(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
-                            "min(j) over (partition by i order by ts rows between 80000 preceding and current row) " +
-                            "from tab) limit -4) " +
-                            "order by i")
+                    "select * from (select ts, i, " +
+                    "avg(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
+                    "sum(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 80000 preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 80000 preceding and current row), " +
+                    "count(*) over (partition by i order by ts rows between 80000 preceding and current row), " +
+                    "count(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
+                    "count(s) over (partition by i order by ts rows between 80000 preceding and current row), " +
+                    "count(d) over (partition by i order by ts rows between 80000 preceding and current row), " +
+                    "count(c) over (partition by i order by ts rows between 80000 preceding and current row), " +
+                    "max(j) over (partition by i order by ts rows between 80000 preceding and current row), " +
+                    "min(j) over (partition by i order by ts rows between 80000 preceding and current row) " +
+                    "from tab) limit -4) " +
+                    "order by i")
                     .expectSize()
                     .noLeakCheck()
                     .returns(expected2);
@@ -1887,20 +1887,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // tests when frame doesn't end on current row and time gaps between values are bigger than hi bound
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
-                            "sum(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
-                            "first_value(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
-                            "last_value(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
-                            "count(*) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
-                            "count(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
-                            "count(s) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
-                            "count(d) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
-                            "count(c) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
-                            "max(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
-                            "min(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) " +
-                            "from tab_big")
+                    "avg(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                    "sum(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                    "first_value(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                    "last_value(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                    "count(*) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                    "count(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                    "count(s) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                    "count(d) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                    "count(c) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                    "max(j) over (partition by i order by ts range between unbounded preceding and 1 preceding), " +
+                    "min(j) over (partition by i order by ts range between unbounded preceding and 1 preceding) " +
+                    "from tab_big")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -1920,20 +1920,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "sum(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(*) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(s) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(d) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(c) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "max(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "min(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) " +
-                            "from tab_big order by ts desc")
+                    "avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "sum(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "last_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(*) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(s) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(d) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(c) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "max(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "min(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) " +
+                    "from tab_big order by ts desc")
                     .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -1953,20 +1953,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (order by ts range between unbounded preceding and 1 preceding), " +
-                            "sum(j) over (order by ts range between unbounded preceding and 1 preceding), " +
-                            "first_value(j) over (order by ts range between unbounded preceding and 1 preceding), " +
-                            "first_value(j) ignore nulls over (order by ts range between unbounded preceding and 1 preceding), " +
-                            "last_value(j) over (order by ts range between unbounded preceding and 1 preceding), " +
-                            "last_value(j) ignore nulls over (order by ts range between unbounded preceding and 1 preceding), " +
-                            "count(*) over (order by ts range between unbounded preceding and 1 preceding), " +
-                            "count(j) over (order by ts range between unbounded preceding and 1 preceding), " +
-                            "count(s) over (order by ts range between unbounded preceding and 1 preceding), " +
-                            "count(d) over (order by ts range between unbounded preceding and 1 preceding), " +
-                            "count(c) over (order by ts range between unbounded preceding and 1 preceding), " +
-                            "max(j) over (order by ts range between unbounded preceding and 1 preceding), " +
-                            "min(j) over (order by ts range between unbounded preceding and 1 preceding) " +
-                            "from tab_big")
+                    "avg(j) over (order by ts range between unbounded preceding and 1 preceding), " +
+                    "sum(j) over (order by ts range between unbounded preceding and 1 preceding), " +
+                    "first_value(j) over (order by ts range between unbounded preceding and 1 preceding), " +
+                    "first_value(j) ignore nulls over (order by ts range between unbounded preceding and 1 preceding), " +
+                    "last_value(j) over (order by ts range between unbounded preceding and 1 preceding), " +
+                    "last_value(j) ignore nulls over (order by ts range between unbounded preceding and 1 preceding), " +
+                    "count(*) over (order by ts range between unbounded preceding and 1 preceding), " +
+                    "count(j) over (order by ts range between unbounded preceding and 1 preceding), " +
+                    "count(s) over (order by ts range between unbounded preceding and 1 preceding), " +
+                    "count(d) over (order by ts range between unbounded preceding and 1 preceding), " +
+                    "count(c) over (order by ts range between unbounded preceding and 1 preceding), " +
+                    "max(j) over (order by ts range between unbounded preceding and 1 preceding), " +
+                    "min(j) over (order by ts range between unbounded preceding and 1 preceding) " +
+                    "from tab_big")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -1986,20 +1986,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "sum(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "first_value(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "first_value(j) ignore nulls over (order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "last_value(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "last_value(j) ignore nulls over (order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(*) over (order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(s) over (order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(d) over (order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(c) over (order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "max(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "min(j) over (order by ts desc range between unbounded preceding and 1 preceding) " +
-                            "from tab_big order by ts desc")
+                    "avg(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "sum(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "first_value(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "first_value(j) ignore nulls over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "last_value(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "last_value(j) ignore nulls over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(*) over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(s) over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(d) over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(c) over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "max(j) over (order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "min(j) over (order by ts desc range between unbounded preceding and 1 preceding) " +
+                    "from tab_big order by ts desc")
                     .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2024,20 +2024,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // tests for between X preceding and [Y preceding | current row]
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (), " +
-                            "sum(j) over (), " +
-                            "first_value(j) over (), " +
-                            "first_value(j) ignore nulls over (), " +
-                            "last_value(j) over (), " +
-                            "last_value(j) ignore nulls over (), " +
-                            "count(*) over (), " +
-                            "count(j) over (), " +
-                            "count(s) over (), " +
-                            "count(d) over (), " +
-                            "count(c) over (), " +
-                            "max(j) over (), " +
-                            "min(j) over () " +
-                            "from tab")
+                    "avg(j) over (), " +
+                    "sum(j) over (), " +
+                    "first_value(j) over (), " +
+                    "first_value(j) ignore nulls over (), " +
+                    "last_value(j) over (), " +
+                    "last_value(j) ignore nulls over (), " +
+                    "count(*) over (), " +
+                    "count(j) over (), " +
+                    "count(s) over (), " +
+                    "count(d) over (), " +
+                    "count(c) over (), " +
+                    "max(j) over (), " +
+                    "min(j) over () " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -2053,20 +2053,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i), " +
-                            "sum(j) over (partition by i), " +
-                            "first_value(j) over (partition by i), " +
-                            "first_value(j) ignore nulls over (partition by i), " +
-                            "last_value(j) over (partition by i), " +
-                            "last_value(j) ignore nulls over (partition by i), " +
-                            "count(*) over (partition by i), " +
-                            "count(j) over (partition by i), " +
-                            "count(s) over (partition by i), " +
-                            "count(d) over (partition by i), " +
-                            "count(c) over (partition by i), " +
-                            "max(j) over (partition by i), " +
-                            "min(j) over (partition by i) " +
-                            "from tab")
+                    "avg(j) over (partition by i), " +
+                    "sum(j) over (partition by i), " +
+                    "first_value(j) over (partition by i), " +
+                    "first_value(j) ignore nulls over (partition by i), " +
+                    "last_value(j) over (partition by i), " +
+                    "last_value(j) ignore nulls over (partition by i), " +
+                    "count(*) over (partition by i), " +
+                    "count(j) over (partition by i), " +
+                    "count(s) over (partition by i), " +
+                    "count(d) over (partition by i), " +
+                    "count(c) over (partition by i), " +
+                    "max(j) over (partition by i), " +
+                    "min(j) over (partition by i) " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -2084,7 +2084,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // separate test for first_value() only to use it with non-caching factory
             // this variant doesn't need to scan whole partition (while sum() or avg() do)
             assertQuery("select ts, i, j, first_value(j) over (partition by i) " +
-                            "from tab")
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2101,20 +2101,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
-                            "sum(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between 1 microsecond preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between 1 microsecond preceding and current row), " +
-                            "count(*) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
-                            "count(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
-                            "count(s) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
-                            "count(d) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
-                            "count(c) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
-                            "max(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
-                            "min(j) over (partition by i order by ts range between 1 microsecond preceding and current row) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                    "sum(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                    "count(*) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                    "count(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                    "count(s) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                    "count(d) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                    "count(c) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                    "max(j) over (partition by i order by ts range between 1 microsecond preceding and current row), " +
+                    "min(j) over (partition by i order by ts range between 1 microsecond preceding and current row) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2131,20 +2131,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
-                            "sum(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
-                            "first_value(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
-                            "last_value(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
-                            "count(*) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
-                            "count(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
-                            "count(s) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
-                            "count(d) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
-                            "count(c) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
-                            "max(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
-                            "min(j) over (partition by i order by ts rows between 4 preceding and 2 preceding) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                    "sum(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                    "first_value(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                    "last_value(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                    "count(*) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                    "count(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                    "count(s) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                    "count(d) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                    "count(c) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                    "max(j) over (partition by i order by ts rows between 4 preceding and 2 preceding), " +
+                    "min(j) over (partition by i order by ts rows between 4 preceding and 2 preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2161,20 +2161,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "sum(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "first_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "last_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "count(*) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "count(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "count(s) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "count(d) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "count(c) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "max(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "min(j) over (partition by i order by ts rows between 20 preceding and 10 preceding) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "sum(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "first_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "last_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "count(*) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "count(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "count(s) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "count(d) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "count(c) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "max(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "min(j) over (partition by i order by ts rows between 20 preceding and 10 preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2191,20 +2191,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
-                            "sum(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
-                            "first_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
-                            "last_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
-                            "count(*) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
-                            "count(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
-                            "count(s) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
-                            "count(d) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
-                            "count(c) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
-                            "max(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
-                            "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding) " +
-                            "from tab order by ts desc")
+                    "avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
+                    "sum(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
+                    "first_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
+                    "last_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
+                    "count(*) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
+                    "count(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
+                    "count(s) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
+                    "count(d) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
+                    "count(c) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
+                    "max(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding), " +
+                    "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and 2 microseconds preceding) " +
+                    "from tab order by ts desc")
                     .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2221,20 +2221,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "sum(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "count(*) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "count(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "count(s) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "count(d) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "count(c) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "max(i) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) " +
-                            "from tab order by ts desc")
+                    "avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "sum(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "count(*) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "count(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "count(s) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "count(d) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "count(c) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "max(i) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) " +
+                    "from tab order by ts desc")
                     .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2251,21 +2251,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
-                            "sum(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between 0 preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between 0 preceding and current row), " +
-                            "count(*) over (partition by i order by ts desc range between 0 preceding and current row), " +
-                            "count(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
-                            "count(s) over (partition by i order by ts desc range between 0 preceding and current row), " +
-                            "count(d) over (partition by i order by ts desc range between 0 preceding and current row), " +
-                            "count(c) over (partition by i order by ts desc range between 0 preceding and current row), " +
-                            "max(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
-                            "min(j) over (partition by i order by ts desc range between 0 preceding and current row) " +
-                            "from tab " +
-                            "order by ts desc")
+                    "avg(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
+                    "sum(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between 0 preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between 0 preceding and current row), " +
+                    "count(*) over (partition by i order by ts desc range between 0 preceding and current row), " +
+                    "count(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
+                    "count(s) over (partition by i order by ts desc range between 0 preceding and current row), " +
+                    "count(d) over (partition by i order by ts desc range between 0 preceding and current row), " +
+                    "count(c) over (partition by i order by ts desc range between 0 preceding and current row), " +
+                    "max(j) over (partition by i order by ts desc range between 0 preceding and current row), " +
+                    "min(j) over (partition by i order by ts desc range between 0 preceding and current row) " +
+                    "from tab " +
+                    "order by ts desc")
                     .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2282,20 +2282,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
-                            "sum(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts asc range between 0 preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts asc range between 0 preceding and current row), " +
-                            "count(*) over (partition by i order by ts asc range between 0 preceding and current row), " +
-                            "count(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
-                            "count(s) over (partition by i order by ts asc range between 0 preceding and current row), " +
-                            "count(d) over (partition by i order by ts asc range between 0 preceding and current row), " +
-                            "count(c) over (partition by i order by ts asc range between 0 preceding and current row), " +
-                            "max(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
-                            "min(j) over (partition by i order by ts asc range between 0 preceding and current row) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
+                    "sum(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts asc range between 0 preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts asc range between 0 preceding and current row), " +
+                    "count(*) over (partition by i order by ts asc range between 0 preceding and current row), " +
+                    "count(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
+                    "count(s) over (partition by i order by ts asc range between 0 preceding and current row), " +
+                    "count(d) over (partition by i order by ts asc range between 0 preceding and current row), " +
+                    "count(c) over (partition by i order by ts asc range between 0 preceding and current row), " +
+                    "max(j) over (partition by i order by ts asc range between 0 preceding and current row), " +
+                    "min(j) over (partition by i order by ts asc range between 0 preceding and current row) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2312,20 +2312,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
-                            "sum(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts asc range between unbounded preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts asc range between unbounded preceding and current row), " +
-                            "count(*) over (partition by i order by ts asc range between unbounded preceding and current row), " +
-                            "count(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
-                            "count(s) over (partition by i order by ts asc range between unbounded preceding and current row), " +
-                            "count(d) over (partition by i order by ts asc range between unbounded preceding and current row), " +
-                            "count(c) over (partition by i order by ts asc range between unbounded preceding and current row), " +
-                            "max(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
-                            "min(j) over (partition by i order by ts asc range between unbounded preceding and current row) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                    "sum(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                    "count(*) over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                    "count(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                    "count(s) over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                    "count(d) over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                    "count(c) over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                    "max(j) over (partition by i order by ts asc range between unbounded preceding and current row), " +
+                    "min(j) over (partition by i order by ts asc range between unbounded preceding and current row) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2342,20 +2342,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "sum(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "count(*) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "count(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "count(s) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "count(d) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "count(c) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "max(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "min(j) over (partition by i order by ts desc range between unbounded preceding and current row) " +
-                            "from tab order by ts desc")
+                    "avg(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "sum(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "count(*) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "count(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "count(s) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "count(d) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "count(c) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "max(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "min(j) over (partition by i order by ts desc range between unbounded preceding and current row) " +
+                    "from tab order by ts desc")
                     .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2372,20 +2372,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
-                            "sum(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
-                            "first_value(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
-                            "last_value(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
-                            "count(*) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
-                            "count(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
-                            "count(s) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
-                            "count(d) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
-                            "count(c) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
-                            "max(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
-                            "min(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                    "sum(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                    "first_value(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                    "last_value(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                    "count(*) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                    "count(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                    "count(s) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                    "count(d) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                    "count(c) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                    "max(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding), " +
+                    "min(j) over (partition by i order by ts asc range between unbounded preceding and 1 preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2402,21 +2402,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "sum(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(*) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(s) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(d) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "count(c) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "max(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
-                            "min(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) " +
-                            "from tab " +
-                            "order by ts desc")
+                    "avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "sum(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "last_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(*) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(s) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(d) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "count(c) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "max(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding), " +
+                    "min(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) " +
+                    "from tab " +
+                    "order by ts desc")
                     .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2434,20 +2434,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // all nulls because values never enter the frame
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
-                            "sum(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
-                            "first_value(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
-                            "last_value(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
-                            "count(*) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
-                            "count(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
-                            "count(s) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
-                            "count(d) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
-                            "count(c) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
-                            "max(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
-                            "min(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
+                    "sum(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
+                    "first_value(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
+                    "last_value(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
+                    "count(*) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
+                    "count(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
+                    "count(s) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
+                    "count(d) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
+                    "count(c) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
+                    "max(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding), " +
+                    "min(j) over (partition by i order by ts asc range between unbounded preceding and 10 microseconds preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2464,21 +2464,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
-                            "sum(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
-                            "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
-                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
-                            "count(*) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
-                            "count(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
-                            "count(s) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
-                            "count(d) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
-                            "count(c) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
-                            "max(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
-                            "min(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding) " +
-                            "from tab " +
-                            "order by ts desc")
+                    "avg(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
+                    "sum(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
+                    "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
+                    "last_value(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
+                    "count(*) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
+                    "count(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
+                    "count(s) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
+                    "count(d) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
+                    "count(c) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
+                    "max(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding), " +
+                    "min(j) over (partition by i order by ts desc range between unbounded preceding and 10 microseconds preceding) " +
+                    "from tab " +
+                    "order by ts desc")
                     .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2533,20 +2533,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "sum(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(*) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(s) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(d) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(c) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "max(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "min(j) over (partition by i order by ts range between 4 microseconds preceding and current row) " +
-                            "from dups")
+                    "avg(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "sum(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(*) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(s) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(d) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(c) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "max(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "min(j) over (partition by i order by ts range between 4 microseconds preceding and current row) " +
+                    "from dups")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2554,21 +2554,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(dupResult);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "sum(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(*) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(s) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(d) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(c) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "max(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "min(j) over (partition by i order by ts range between 4 microseconds preceding and current row) " +
-                            "from dups " +
-                            "order by ts")
+                    "avg(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "sum(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(*) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(s) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(d) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(c) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "max(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "min(j) over (partition by i order by ts range between 4 microseconds preceding and current row) " +
+                    "from dups " +
+                    "order by ts")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2576,21 +2576,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(dupResult);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "sum(j) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "count(*) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "count(j) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "count(s) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "count(d) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "count(c) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "max(j) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "min(j) over (partition by i order by ts range between unbounded preceding and current row) " +
-                            "from dups " +
-                            "order by ts")
+                    "avg(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "sum(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "count(*) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "count(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "count(s) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "count(d) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "count(c) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "max(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "min(j) over (partition by i order by ts range between unbounded preceding and current row) " +
+                    "from dups " +
+                    "order by ts")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2612,21 +2612,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "sum(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "count(*) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "count(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "count(s) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "count(d) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "count(c) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "max(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
-                            "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) " +
-                            "from dups " +
-                            "order by ts desc")
+                    "avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "sum(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "count(*) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "count(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "count(s) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "count(d) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "count(c) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "max(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row), " +
+                    "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) " +
+                    "from dups " +
+                    "order by ts desc")
                     .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2634,21 +2634,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(dupResult2);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "sum(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "count(*) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "count(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "count(s) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "count(d) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "count(c) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "max(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
-                            "min(j) over (partition by i order by ts desc range between unbounded preceding and current row) " +
-                            "from dups " +
-                            "order by ts desc")
+                    "avg(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "sum(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "count(*) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "count(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "count(s) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "count(d) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "count(c) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "max(j) over (partition by i order by ts desc range between unbounded preceding and current row), " +
+                    "min(j) over (partition by i order by ts desc range between unbounded preceding and current row) " +
+                    "from dups " +
+                    "order by ts desc")
                     .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -2678,24 +2678,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
-                            "from ( " +
-                            "select ts, i, j, n, " +
-                            "avg(j) over (partition by i order by ts range between 0 preceding and current row) as avg, " +
-                            "sum(j) over (partition by i order by ts range between 0 preceding and current row) as sum, " +
-                            "first_value(j) over (partition by i order by ts range between 0 preceding and current row) as first_value, " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between 0 preceding and current row) as first_value_ignore_nulls, " +
-                            "last_value(j) over (partition by i order by ts range between 0 preceding and current row) as last_value, " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between 0 preceding and current row) as last_value_ignore_nulls, " +
-                            "count(*) over (partition by i order by ts range between 0 preceding and current row) as count, " +
-                            "count(j) over (partition by i order by ts range between 0 preceding and current row) as count1, " +
-                            "count(s) over (partition by i order by ts range between 0 preceding and current row) as count2, " +
-                            "count(d) over (partition by i order by ts range between 0 preceding and current row) as count3, " +
-                            "count(c) over (partition by i order by ts range between 0 preceding and current row) as count4, " +
-                            "max(j) over (partition by i order by ts range between 0 preceding and current row) as max, " +
-                            "min(j) over (partition by i order by ts range between 0 preceding and current row) as min, " +
-                            "from dups2 " +
-                            "limit 10) " +
-                            "order by i, n")
+                    "from ( " +
+                    "select ts, i, j, n, " +
+                    "avg(j) over (partition by i order by ts range between 0 preceding and current row) as avg, " +
+                    "sum(j) over (partition by i order by ts range between 0 preceding and current row) as sum, " +
+                    "first_value(j) over (partition by i order by ts range between 0 preceding and current row) as first_value, " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between 0 preceding and current row) as first_value_ignore_nulls, " +
+                    "last_value(j) over (partition by i order by ts range between 0 preceding and current row) as last_value, " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between 0 preceding and current row) as last_value_ignore_nulls, " +
+                    "count(*) over (partition by i order by ts range between 0 preceding and current row) as count, " +
+                    "count(j) over (partition by i order by ts range between 0 preceding and current row) as count1, " +
+                    "count(s) over (partition by i order by ts range between 0 preceding and current row) as count2, " +
+                    "count(d) over (partition by i order by ts range between 0 preceding and current row) as count3, " +
+                    "count(c) over (partition by i order by ts range between 0 preceding and current row) as count4, " +
+                    "max(j) over (partition by i order by ts range between 0 preceding and current row) as max, " +
+                    "min(j) over (partition by i order by ts range between 0 preceding and current row) as min, " +
+                    "from dups2 " +
+                    "limit 10) " +
+                    "order by i, n")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix("""
@@ -2713,24 +2713,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min from ( " +
-                            "select ts, i, j, n, " +
-                            "avg(j) over (partition by i order by ts desc range between 0 preceding and current row) as avg, " +
-                            "sum(j) over (partition by i order by ts desc range between 0 preceding and current row) as sum, " +
-                            "first_value(j) over (partition by i order by ts desc range between 0 preceding and current row) as first_value, " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between 0 preceding and current row) as first_value_ignore_nulls, " +
-                            "last_value(j) over (partition by i order by ts desc range between 0 preceding and current row) as last_value, " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between 0 preceding and current row) as last_value_ignore_nulls, " +
-                            "count(*) over (partition by i order by ts desc range between 0 preceding and current row) as count, " +
-                            "count(j) over (partition by i order by ts desc range between 0 preceding and current row) as count1, " +
-                            "count(s) over (partition by i order by ts desc range between 0 preceding and current row) as count2, " +
-                            "count(d) over (partition by i order by ts desc range between 0 preceding and current row) as count3, " +
-                            "count(c) over (partition by i order by ts desc range between 0 preceding and current row) as count4, " +
-                            "max(j) over (partition by i order by ts desc range between 0 preceding and current row) as max, " +
-                            "min(j) over (partition by i order by ts desc range between 0 preceding and current row) as min " +
-                            "from dups2 " +
-                            "order by ts " +
-                            "desc limit 10) " +
-                            "order by i desc, n desc")
+                    "select ts, i, j, n, " +
+                    "avg(j) over (partition by i order by ts desc range between 0 preceding and current row) as avg, " +
+                    "sum(j) over (partition by i order by ts desc range between 0 preceding and current row) as sum, " +
+                    "first_value(j) over (partition by i order by ts desc range between 0 preceding and current row) as first_value, " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between 0 preceding and current row) as first_value_ignore_nulls, " +
+                    "last_value(j) over (partition by i order by ts desc range between 0 preceding and current row) as last_value, " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between 0 preceding and current row) as last_value_ignore_nulls, " +
+                    "count(*) over (partition by i order by ts desc range between 0 preceding and current row) as count, " +
+                    "count(j) over (partition by i order by ts desc range between 0 preceding and current row) as count1, " +
+                    "count(s) over (partition by i order by ts desc range between 0 preceding and current row) as count2, " +
+                    "count(d) over (partition by i order by ts desc range between 0 preceding and current row) as count3, " +
+                    "count(c) over (partition by i order by ts desc range between 0 preceding and current row) as count4, " +
+                    "max(j) over (partition by i order by ts desc range between 0 preceding and current row) as max, " +
+                    "min(j) over (partition by i order by ts desc range between 0 preceding and current row) as min " +
+                    "from dups2 " +
+                    "order by ts " +
+                    "desc limit 10) " +
+                    "order by i desc, n desc")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix("""
@@ -2748,24 +2748,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
-                            "from ( " +
-                            "select ts, i, j,n, " +
-                            "avg(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as avg, " +
-                            "sum(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as sum, " +
-                            "first_value(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as first_value, " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between 1 microseconds preceding and current row) as first_value_ignore_nulls, " +
-                            "last_value(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as last_value, " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between 1 microseconds preceding and current row) as last_value_ignore_nulls, " +
-                            "count(*) over (partition by i order by ts range between 1 microseconds preceding and current row) as count, " +
-                            "count(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as count1, " +
-                            "count(s) over (partition by i order by ts range between 1 microseconds preceding and current row) as count2, " +
-                            "count(d) over (partition by i order by ts range between 1 microseconds preceding and current row) as count3, " +
-                            "count(c) over (partition by i order by ts range between 1 microseconds preceding and current row) as count4, " +
-                            "max(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as max, " +
-                            "min(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as min " +
-                            "from dups2 " +
-                            "limit 10" +
-                            ") order by i, n")
+                    "from ( " +
+                    "select ts, i, j,n, " +
+                    "avg(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as avg, " +
+                    "sum(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as sum, " +
+                    "first_value(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as first_value, " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between 1 microseconds preceding and current row) as first_value_ignore_nulls, " +
+                    "last_value(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as last_value, " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between 1 microseconds preceding and current row) as last_value_ignore_nulls, " +
+                    "count(*) over (partition by i order by ts range between 1 microseconds preceding and current row) as count, " +
+                    "count(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as count1, " +
+                    "count(s) over (partition by i order by ts range between 1 microseconds preceding and current row) as count2, " +
+                    "count(d) over (partition by i order by ts range between 1 microseconds preceding and current row) as count3, " +
+                    "count(c) over (partition by i order by ts range between 1 microseconds preceding and current row) as count4, " +
+                    "max(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as max, " +
+                    "min(j) over (partition by i order by ts range between 1 microseconds preceding and current row) as min " +
+                    "from dups2 " +
+                    "limit 10" +
+                    ") order by i, n")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix("""
@@ -2783,25 +2783,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
-                            "from ( " +
-                            "select ts, i, j,n, " +
-                            "avg(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as avg, " +
-                            "sum(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as sum, " +
-                            "first_value(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as first_value, " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between 1 microseconds preceding and current row) as first_value_ignore_nulls, " +
-                            "last_value(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as last_value, " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between 1 microseconds preceding and current row) as last_value_ignore_nulls, " +
-                            "count(*) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as count, " +
-                            "count(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as count1, " +
-                            "count(s) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as count2, " +
-                            "count(d) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as count3, " +
-                            "count(c) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as count4, " +
-                            "max(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as max, " +
-                            "min(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as min " +
-                            "from dups2 " +
-                            "order by ts " +
-                            "desc limit 10" +
-                            ") order by i desc, n desc")
+                    "from ( " +
+                    "select ts, i, j,n, " +
+                    "avg(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as avg, " +
+                    "sum(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as sum, " +
+                    "first_value(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as first_value, " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between 1 microseconds preceding and current row) as first_value_ignore_nulls, " +
+                    "last_value(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as last_value, " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between 1 microseconds preceding and current row) as last_value_ignore_nulls, " +
+                    "count(*) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as count, " +
+                    "count(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as count1, " +
+                    "count(s) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as count2, " +
+                    "count(d) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as count3, " +
+                    "count(c) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as count4, " +
+                    "max(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as max, " +
+                    "min(j) over (partition by i order by ts desc range between 1 microseconds preceding and current row) as min " +
+                    "from dups2 " +
+                    "order by ts " +
+                    "desc limit 10" +
+                    ") order by i desc, n desc")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix("""
@@ -2833,72 +2833,72 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
-                            "from ( " +
-                            "select ts, i, j, n, " +
-                            "avg(j) over (partition by i order by ts range between 4 microseconds preceding and current row) avg, " +
-                            "sum(j) over (partition by i order by ts range between 4 microseconds preceding and current row) sum, " +
-                            "first_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row) first_value, " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row) first_value_ignore_nulls, " +
-                            "last_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row) last_value, " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row) last_value_ignore_nulls, " +
-                            "count(*) over (partition by i order by ts range between 4 microseconds preceding and current row) count, " +
-                            "count(j) over (partition by i order by ts range between 4 microseconds preceding and current row) count1, " +
-                            "count(s) over (partition by i order by ts range between 4 microseconds preceding and current row) count2, " +
-                            "count(d) over (partition by i order by ts range between 4 microseconds preceding and current row) count3, " +
-                            "count(c) over (partition by i order by ts range between 4 microseconds preceding and current row) count4, " +
-                            "max(j) over (partition by i order by ts range between 4 microseconds preceding and current row) max, " +
-                            "min(j) over (partition by i order by ts range between 4 microseconds preceding and current row) min " +
-                            "from dups2 " +
-                            "order by ts " +
-                            "limit 10" +
-                            ") order by i, n")
+                    "from ( " +
+                    "select ts, i, j, n, " +
+                    "avg(j) over (partition by i order by ts range between 4 microseconds preceding and current row) avg, " +
+                    "sum(j) over (partition by i order by ts range between 4 microseconds preceding and current row) sum, " +
+                    "first_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row) first_value, " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row) first_value_ignore_nulls, " +
+                    "last_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row) last_value, " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row) last_value_ignore_nulls, " +
+                    "count(*) over (partition by i order by ts range between 4 microseconds preceding and current row) count, " +
+                    "count(j) over (partition by i order by ts range between 4 microseconds preceding and current row) count1, " +
+                    "count(s) over (partition by i order by ts range between 4 microseconds preceding and current row) count2, " +
+                    "count(d) over (partition by i order by ts range between 4 microseconds preceding and current row) count3, " +
+                    "count(c) over (partition by i order by ts range between 4 microseconds preceding and current row) count4, " +
+                    "max(j) over (partition by i order by ts range between 4 microseconds preceding and current row) max, " +
+                    "min(j) over (partition by i order by ts range between 4 microseconds preceding and current row) min " +
+                    "from dups2 " +
+                    "order by ts " +
+                    "limit 10" +
+                    ") order by i, n")
                     .expectSize()
                     .noLeakCheck()
                     .returns(dupResult3);
 
             assertQuery("select ts, i, j,avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
-                            "from ( " +
-                            "select ts, i, j, n, " +
-                            "avg(j) over (partition by i order by ts range between unbounded preceding and current row) avg, " +
-                            "sum(j) over (partition by i order by ts range between unbounded preceding and current row) sum, " +
-                            "first_value(j) over (partition by i order by ts range between unbounded preceding and current row) first_value, " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and current row) first_value_ignore_nulls, " +
-                            "last_value(j) over (partition by i order by ts range between unbounded preceding and current row) last_value, " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and current row) last_value_ignore_nulls, " +
-                            "count(*) over (partition by i order by ts range between unbounded preceding and current row) count, " +
-                            "count(j) over (partition by i order by ts range between unbounded preceding and current row) count1, " +
-                            "count(s) over (partition by i order by ts range between unbounded preceding and current row) count2, " +
-                            "count(d) over (partition by i order by ts range between unbounded preceding and current row) count3, " +
-                            "count(c) over (partition by i order by ts range between unbounded preceding and current row) count4, " +
-                            "max(j) over (partition by i order by ts range between unbounded preceding and current row) max, " +
-                            "min(j) over (partition by i order by ts range between unbounded preceding and current row) min " +
-                            "from dups2 " +
-                            "order by ts " +
-                            "limit 10" +
-                            ") order by i, n")
+                    "from ( " +
+                    "select ts, i, j, n, " +
+                    "avg(j) over (partition by i order by ts range between unbounded preceding and current row) avg, " +
+                    "sum(j) over (partition by i order by ts range between unbounded preceding and current row) sum, " +
+                    "first_value(j) over (partition by i order by ts range between unbounded preceding and current row) first_value, " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and current row) first_value_ignore_nulls, " +
+                    "last_value(j) over (partition by i order by ts range between unbounded preceding and current row) last_value, " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and current row) last_value_ignore_nulls, " +
+                    "count(*) over (partition by i order by ts range between unbounded preceding and current row) count, " +
+                    "count(j) over (partition by i order by ts range between unbounded preceding and current row) count1, " +
+                    "count(s) over (partition by i order by ts range between unbounded preceding and current row) count2, " +
+                    "count(d) over (partition by i order by ts range between unbounded preceding and current row) count3, " +
+                    "count(c) over (partition by i order by ts range between unbounded preceding and current row) count4, " +
+                    "max(j) over (partition by i order by ts range between unbounded preceding and current row) max, " +
+                    "min(j) over (partition by i order by ts range between unbounded preceding and current row) min " +
+                    "from dups2 " +
+                    "order by ts " +
+                    "limit 10" +
+                    ") order by i, n")
                     .expectSize()
                     .noLeakCheck()
                     .returns(dupResult3);
 
             assertQuery("select ts, i, j, avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min from ( " +
-                            "select ts, i, j, n, " +
-                            "avg(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) avg, " +
-                            "sum(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) sum, " +
-                            "first_value(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) first_value, " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) first_value_ignore_nulls, " +
-                            "last_value(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) last_value, " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) last_value_ignore_nulls, " +
-                            "count(*) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) count, " +
-                            "count(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) count1, " +
-                            "count(s) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) count2, " +
-                            "count(d) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) count3, " +
-                            "count(c) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) count4, " +
-                            "max(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) max, " +
-                            "min(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) min " +
-                            "from dups2 " +
-                            "order by ts " +
-                            "limit 10" +
-                            ") order by i, n")
+                    "select ts, i, j, n, " +
+                    "avg(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) avg, " +
+                    "sum(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) sum, " +
+                    "first_value(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) first_value, " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) first_value_ignore_nulls, " +
+                    "last_value(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) last_value, " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) last_value_ignore_nulls, " +
+                    "count(*) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) count, " +
+                    "count(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) count1, " +
+                    "count(s) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) count2, " +
+                    "count(d) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) count3, " +
+                    "count(c) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) count4, " +
+                    "max(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) max, " +
+                    "min(j) over (partition by i order by ts range between unbounded preceding and 1 microseconds preceding) min " +
+                    "from dups2 " +
+                    "order by ts " +
+                    "limit 10" +
+                    ") order by i, n")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix("""
@@ -2930,73 +2930,73 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("select ts,i,j,avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
-                            "from ( " +
-                            "select ts, i, j, n, " +
-                            "avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) avg, " +
-                            "sum(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) sum, " +
-                            "first_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) first_value, " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and current row) first_value_ignore_nulls, " +
-                            "last_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) last_value, " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and current row) last_value_ignore_nulls, " +
-                            "count(*) over (partition by i order by ts desc range between 4 microseconds preceding and current row) count, " +
-                            "count(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) count1, " +
-                            "count(s) over (partition by i order by ts desc range between 4 microseconds preceding and current row) count2, " +
-                            "count(d) over (partition by i order by ts desc range between 4 microseconds preceding and current row) count3, " +
-                            "count(c) over (partition by i order by ts desc range between 4 microseconds preceding and current row) count4, " +
-                            "max(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) max, " +
-                            "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) min " +
-                            "from dups2 " +
-                            "order by ts desc " +
-                            "limit 10" +
-                            ") order by i desc, n desc")
+                    "from ( " +
+                    "select ts, i, j, n, " +
+                    "avg(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) avg, " +
+                    "sum(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) sum, " +
+                    "first_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) first_value, " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and current row) first_value_ignore_nulls, " +
+                    "last_value(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) last_value, " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between 4 microseconds preceding and current row) last_value_ignore_nulls, " +
+                    "count(*) over (partition by i order by ts desc range between 4 microseconds preceding and current row) count, " +
+                    "count(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) count1, " +
+                    "count(s) over (partition by i order by ts desc range between 4 microseconds preceding and current row) count2, " +
+                    "count(d) over (partition by i order by ts desc range between 4 microseconds preceding and current row) count3, " +
+                    "count(c) over (partition by i order by ts desc range between 4 microseconds preceding and current row) count4, " +
+                    "max(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) max, " +
+                    "min(j) over (partition by i order by ts desc range between 4 microseconds preceding and current row) min " +
+                    "from dups2 " +
+                    "order by ts desc " +
+                    "limit 10" +
+                    ") order by i desc, n desc")
                     .expectSize()
                     .noLeakCheck()
                     .returns(dupResult4);
 
             assertQuery("select ts,i,j,avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
-                            "from ( " +
-                            "select ts, i, j, n, " +
-                            "avg(j) over (partition by i order by ts desc range between unbounded preceding and current row) avg, " +
-                            "sum(j) over (partition by i order by ts desc range between unbounded preceding and current row) sum, " +
-                            "first_value(j) over (partition by i order by ts desc range between unbounded preceding and current row) first_value, " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and current row) first_value_ignore_nulls, " +
-                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and current row) last_value, " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and current row) last_value_ignore_nulls, " +
-                            "count(*) over (partition by i order by ts desc range between unbounded preceding and current row) count, " +
-                            "count(j) over (partition by i order by ts desc range between unbounded preceding and current row) count1, " +
-                            "count(s) over (partition by i order by ts desc range between unbounded preceding and current row) count2, " +
-                            "count(d) over (partition by i order by ts desc range between unbounded preceding and current row) count3, " +
-                            "count(c) over (partition by i order by ts desc range between unbounded preceding and current row) count4, " +
-                            "max(j) over (partition by i order by ts desc range between unbounded preceding and current row) max, " +
-                            "min(j) over (partition by i order by ts desc range between unbounded preceding and current row) min " +
-                            "from dups2 " +
-                            "order by ts desc " +
-                            "limit 10" +
-                            ") order by i desc, n desc")
+                    "from ( " +
+                    "select ts, i, j, n, " +
+                    "avg(j) over (partition by i order by ts desc range between unbounded preceding and current row) avg, " +
+                    "sum(j) over (partition by i order by ts desc range between unbounded preceding and current row) sum, " +
+                    "first_value(j) over (partition by i order by ts desc range between unbounded preceding and current row) first_value, " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and current row) first_value_ignore_nulls, " +
+                    "last_value(j) over (partition by i order by ts desc range between unbounded preceding and current row) last_value, " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and current row) last_value_ignore_nulls, " +
+                    "count(*) over (partition by i order by ts desc range between unbounded preceding and current row) count, " +
+                    "count(j) over (partition by i order by ts desc range between unbounded preceding and current row) count1, " +
+                    "count(s) over (partition by i order by ts desc range between unbounded preceding and current row) count2, " +
+                    "count(d) over (partition by i order by ts desc range between unbounded preceding and current row) count3, " +
+                    "count(c) over (partition by i order by ts desc range between unbounded preceding and current row) count4, " +
+                    "max(j) over (partition by i order by ts desc range between unbounded preceding and current row) max, " +
+                    "min(j) over (partition by i order by ts desc range between unbounded preceding and current row) min " +
+                    "from dups2 " +
+                    "order by ts desc " +
+                    "limit 10" +
+                    ") order by i desc, n desc")
                     .expectSize()
                     .noLeakCheck()
                     .returns(dupResult4);
 
             assertQuery("select ts,i,j,avg, sum, first_value, first_value_ignore_nulls, last_value, last_value_ignore_nulls, count, count1, count2, count3, count4, max, min " +
-                            "from ( " +
-                            "select ts, i, j, n, " +
-                            "avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) avg, " +
-                            "sum(j) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) sum, " +
-                            "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) first_value, " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) first_value_ignore_nulls, " +
-                            "last_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) last_value, " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) last_value_ignore_nulls, " +
-                            "count(*) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) count, " +
-                            "count(j) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) count1, " +
-                            "count(s) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) count2, " +
-                            "count(d) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) count3, " +
-                            "count(c) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) count4, " +
-                            "max(j) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) max, " +
-                            "min(j) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) min " +
-                            "from dups2 " +
-                            "order by ts desc " +
-                            "limit 10" +
-                            ") order by i desc, n desc")
+                    "from ( " +
+                    "select ts, i, j, n, " +
+                    "avg(j) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) avg, " +
+                    "sum(j) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) sum, " +
+                    "first_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) first_value, " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) first_value_ignore_nulls, " +
+                    "last_value(j) over (partition by i order by ts desc range between unbounded preceding and 1 preceding) last_value, " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) last_value_ignore_nulls, " +
+                    "count(*) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) count, " +
+                    "count(j) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) count1, " +
+                    "count(s) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) count2, " +
+                    "count(d) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) count3, " +
+                    "count(c) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) count4, " +
+                    "max(j) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) max, " +
+                    "min(j) over (partition by i order by ts desc range between unbounded preceding and 1 microseconds preceding) min " +
+                    "from dups2 " +
+                    "order by ts desc " +
+                    "limit 10" +
+                    ") order by i desc, n desc")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix("""
@@ -3018,20 +3018,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into nodts select (x/2)::timestamp, x%2, case when x % 3 = 0 THEN NULL ELSE x%5 END, 'k' || (x%5) ::symbol, x*2::double, 'k' || x from long_sequence(10)");
             // timestamp ascending order is declared using timestamp(ts) clause
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "sum(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(*) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(s) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(d) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "count(c) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "max(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
-                            "min(j) over (partition by i order by ts range between 4 microseconds preceding and current row) " +
-                            "from nodts timestamp(ts)")
+                    "avg(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "sum(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(*) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(s) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(d) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "count(c) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "max(j) over (partition by i order by ts range between 4 microseconds preceding and current row), " +
+                    "min(j) over (partition by i order by ts range between 4 microseconds preceding and current row) " +
+                    "from nodts timestamp(ts)")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3039,20 +3039,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(dupResult);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "sum(j) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "count(*) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "count(j) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "count(s) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "count(d) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "count(c) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "max(j) over (partition by i order by ts range between unbounded preceding and current row), " +
-                            "min(j) over (partition by i order by ts range between unbounded preceding and current row) " +
-                            "from nodts timestamp(ts)")
+                    "avg(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "sum(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "count(*) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "count(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "count(s) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "count(d) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "count(c) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "max(j) over (partition by i order by ts range between unbounded preceding and current row), " +
+                    "min(j) over (partition by i order by ts range between unbounded preceding and current row) " +
+                    "from nodts timestamp(ts)")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3060,20 +3060,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(dupResult);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
-                            "sum(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
-                            "first_value(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
-                            "last_value(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
-                            "count(*) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
-                            "count(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
-                            "count(s) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
-                            "count(d) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
-                            "count(c) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
-                            "max(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
-                            "min(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                    "sum(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                    "first_value(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                    "last_value(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                    "count(*) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                    "count(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                    "count(s) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                    "count(d) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                    "count(c) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                    "max(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                    "min(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3117,7 +3117,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             .fails(76, "RANGE is supported only for queries ordered by designated timestamp");
 
                     assertQuery("select ts, i, j, #FUNCT_NAME over (partition by i order by j desc range between unbounded preceding and 10 microsecond preceding) ".replace("#FUNCT_NAME", func).replace("#COLUMN", column) +
-                                    "from tab order by ts desc")
+                            "from tab order by ts desc")
                             .noLeakCheck()
                             .fails(76, "RANGE is supported only for queries ordered by designated timestamp");
 
@@ -3236,18 +3236,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into cpu select rnd_symbol('A', 'B', 'C'), x from long_sequence(1000)");
 
             assertQuery("select hostname, usage_system, " +
-                            "avg(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
-                            "sum(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
-                            "first_value(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
-                            "first_value(usage_system) ignore nulls over(partition by hostname rows between 50 preceding and current row), " +
-                            "last_value(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
-                            "last_value(usage_system) ignore nulls over(partition by hostname rows between 50 preceding and current row), " +
-                            "count(*) over(partition by hostname rows between 50 preceding and current row), " +
-                            "count(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
-                            "max(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
-                            "min(usage_system) over(partition by hostname rows between 50 preceding and current row) " +
-                            "from cpu " +
-                            "limit 10")
+                    "avg(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
+                    "sum(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
+                    "first_value(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
+                    "first_value(usage_system) ignore nulls over(partition by hostname rows between 50 preceding and current row), " +
+                    "last_value(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
+                    "last_value(usage_system) ignore nulls over(partition by hostname rows between 50 preceding and current row), " +
+                    "count(*) over(partition by hostname rows between 50 preceding and current row), " +
+                    "count(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
+                    "max(usage_system) over(partition by hostname rows between 50 preceding and current row), " +
+                    "min(usage_system) over(partition by hostname rows between 50 preceding and current row) " +
+                    "from cpu " +
+                    "limit 10")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -3276,17 +3276,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into x values ('aaa', 2);");
 
             assertQuery("SELECT sym, " +
-                            "avg(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
-                            "sum(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
-                            "first_value(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
-                            "first_value(i) ignore nulls OVER(PARTITION BY sym LIKE '%aaa%'), " +
-                            "last_value(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
-                            "last_value(i) ignore nulls OVER(PARTITION BY sym LIKE '%aaa%'), " +
-                            "count(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
-                            "count(sym) OVER(PARTITION BY sym LIKE '%aaa%'), " +
-                            "max(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
-                            "min(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
-                            "FROM x")
+                    "avg(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
+                    "sum(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
+                    "first_value(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
+                    "first_value(i) ignore nulls OVER(PARTITION BY sym LIKE '%aaa%'), " +
+                    "last_value(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
+                    "last_value(i) ignore nulls OVER(PARTITION BY sym LIKE '%aaa%'), " +
+                    "count(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
+                    "count(sym) OVER(PARTITION BY sym LIKE '%aaa%'), " +
+                    "max(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
+                    "min(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
+                    "FROM x")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -3307,17 +3307,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into x values ('aaa', 2, '2023-11-09T02:00:00.000000');");
 
             assertQuery("SELECT ts, sym, " +
-                            "avg(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
-                            "sum(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
-                            "first_value(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
-                            "first_value(i) ignore nulls OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
-                            "last_value(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
-                            "last_value(i) ignore nulls OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
-                            "count(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
-                            "count(sym) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
-                            "max(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
-                            "min(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
-                            "FROM x")
+                    "avg(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
+                    "sum(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
+                    "first_value(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
+                    "first_value(i) ignore nulls OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
+                    "last_value(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
+                    "last_value(i) ignore nulls OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
+                    "count(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
+                    "count(sym) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
+                    "max(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
+                    "min(i) OVER(PARTITION BY sym LIKE '%aaa%' ORDER BY ts), " +
+                    "FROM x")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3369,19 +3369,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(d) over (order by ts rows unbounded preceding)," +
-                            "sum(d) over (order by ts rows unbounded preceding), " +
-                            "first_value(j) over (order by ts rows unbounded preceding), " +
-                            "first_value(j) ignore nulls over (order by ts rows unbounded preceding), " +
-                            "last_value(j) over (order by ts rows unbounded preceding), " +
-                            "last_value(j) ignore nulls over (order by ts rows unbounded preceding), " +
-                            "count(*) over (order by ts rows unbounded preceding), " +
-                            "count(d) over (order by ts rows unbounded preceding), " +
-                            "count(s) over (order by ts rows unbounded preceding), " +
-                            "count(c) over (order by ts rows unbounded preceding), " +
-                            "max(d) over (order by ts rows unbounded preceding), " +
-                            "min(d) over (order by ts rows unbounded preceding) " +
-                            "from tab")
+                    "avg(d) over (order by ts rows unbounded preceding)," +
+                    "sum(d) over (order by ts rows unbounded preceding), " +
+                    "first_value(j) over (order by ts rows unbounded preceding), " +
+                    "first_value(j) ignore nulls over (order by ts rows unbounded preceding), " +
+                    "last_value(j) over (order by ts rows unbounded preceding), " +
+                    "last_value(j) ignore nulls over (order by ts rows unbounded preceding), " +
+                    "count(*) over (order by ts rows unbounded preceding), " +
+                    "count(d) over (order by ts rows unbounded preceding), " +
+                    "count(s) over (order by ts rows unbounded preceding), " +
+                    "count(c) over (order by ts rows unbounded preceding), " +
+                    "max(d) over (order by ts rows unbounded preceding), " +
+                    "min(d) over (order by ts rows unbounded preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -3397,19 +3397,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (order by i, j rows unbounded preceding), " +
-                            "sum(j) over (order by i, j rows unbounded preceding), " +
-                            "first_value(j) over (order by i, j rows unbounded preceding), " +
-                            "first_value(j) ignore nulls over (order by i, j rows unbounded preceding), " +
-                            "last_value(j) over (order by i, j rows unbounded preceding), " +
-                            "last_value(j) ignore nulls over (order by i, j rows unbounded preceding), " +
-                            "count(*) over (order by i, j rows unbounded preceding), " +
-                            "count(s) over (order by i, j rows unbounded preceding), " +
-                            "count(d) over (order by i, j rows unbounded preceding), " +
-                            "count(c) over (order by i, j rows unbounded preceding), " +
-                            "max(j) over (order by i, j rows unbounded preceding), " +
-                            "min(j) over (order by i, j rows unbounded preceding) " +
-                            "from tab")
+                    "avg(j) over (order by i, j rows unbounded preceding), " +
+                    "sum(j) over (order by i, j rows unbounded preceding), " +
+                    "first_value(j) over (order by i, j rows unbounded preceding), " +
+                    "first_value(j) ignore nulls over (order by i, j rows unbounded preceding), " +
+                    "last_value(j) over (order by i, j rows unbounded preceding), " +
+                    "last_value(j) ignore nulls over (order by i, j rows unbounded preceding), " +
+                    "count(*) over (order by i, j rows unbounded preceding), " +
+                    "count(s) over (order by i, j rows unbounded preceding), " +
+                    "count(d) over (order by i, j rows unbounded preceding), " +
+                    "count(c) over (order by i, j rows unbounded preceding), " +
+                    "max(j) over (order by i, j rows unbounded preceding), " +
+                    "min(j) over (order by i, j rows unbounded preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -3425,19 +3425,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(d) over (order by ts rows current row), " +
-                            "sum(d) over (order by ts rows current row), " +
-                            "first_value(j) over (order by ts rows current row), " +
-                            "first_value(j) ignore nulls over (order by ts rows current row), " +
-                            "last_value(j) over (order by ts rows current row), " +
-                            "last_value(j) ignore nulls over (order by ts rows current row), " +
-                            "count(*) over (order by ts rows current row), " +
-                            "count(s) over (order by ts rows current row), " +
-                            "count(d) over (order by ts rows current row), " +
-                            "count(c) over (order by ts rows current row), " +
-                            "max(d) over (order by ts rows current row), " +
-                            "min(d) over (order by ts rows current row) " +
-                            "from tab")
+                    "avg(d) over (order by ts rows current row), " +
+                    "sum(d) over (order by ts rows current row), " +
+                    "first_value(j) over (order by ts rows current row), " +
+                    "first_value(j) ignore nulls over (order by ts rows current row), " +
+                    "last_value(j) over (order by ts rows current row), " +
+                    "last_value(j) ignore nulls over (order by ts rows current row), " +
+                    "count(*) over (order by ts rows current row), " +
+                    "count(s) over (order by ts rows current row), " +
+                    "count(d) over (order by ts rows current row), " +
+                    "count(c) over (order by ts rows current row), " +
+                    "max(d) over (order by ts rows current row), " +
+                    "min(d) over (order by ts rows current row) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3454,19 +3454,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(d) over (order by ts desc rows current row), " +
-                            "sum(d) over (order by ts desc rows current row), " +
-                            "first_value(j) over (order by ts desc rows current row), " +
-                            "first_value(j) ignore nulls over (order by ts desc rows current row), " +
-                            "last_value(j) over (order by ts desc rows current row), " +
-                            "last_value(j) ignore nulls over (order by ts desc rows current row), " +
-                            "count(*) over (order by ts desc rows current row), " +
-                            "count(s) over (order by ts desc rows current row), " +
-                            "count(d) over (order by ts desc rows current row), " +
-                            "count(c) over (order by ts desc rows current row), " +
-                            "max(d) over (order by ts desc rows current row), " +
-                            "min(d) over (order by ts desc rows current row) " +
-                            "from tab")
+                    "avg(d) over (order by ts desc rows current row), " +
+                    "sum(d) over (order by ts desc rows current row), " +
+                    "first_value(j) over (order by ts desc rows current row), " +
+                    "first_value(j) ignore nulls over (order by ts desc rows current row), " +
+                    "last_value(j) over (order by ts desc rows current row), " +
+                    "last_value(j) ignore nulls over (order by ts desc rows current row), " +
+                    "count(*) over (order by ts desc rows current row), " +
+                    "count(s) over (order by ts desc rows current row), " +
+                    "count(d) over (order by ts desc rows current row), " +
+                    "count(c) over (order by ts desc rows current row), " +
+                    "max(d) over (order by ts desc rows current row), " +
+                    "min(d) over (order by ts desc rows current row) " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -3486,30 +3486,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix("""
-                    ts\ti\tj\td\ts\tc
-                    1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tk1\tk1
-                    1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tk2\tk2
-                    1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tk3\tk3
-                    1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tk4\tk4
-                    1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tk0\tk5
-                    1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tk1\tk6
-                    1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tk2\tk7
-                    """));
+                            ts\ti\tj\td\ts\tc
+                            1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tk1\tk1
+                            1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tk2\tk2
+                            1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tk3\tk3
+                            1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tk4\tk4
+                            1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tk0\tk5
+                            1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tk1\tk6
+                            1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tk2\tk7
+                            """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "sum(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "first_value(j) over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "first_value(j) ignore nulls over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "last_value(j) over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "last_value(j) ignore nulls over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "count(*) over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "count(s) over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "count(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "count(c) over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "max(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
-                            "min(d) over (order by ts rows between unbounded preceding and 1 preceding) " +
-                            "from tab")
+                    "avg(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                    "sum(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                    "first_value(j) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                    "first_value(j) ignore nulls over (order by ts rows between unbounded preceding and 1 preceding), " +
+                    "last_value(j) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                    "last_value(j) ignore nulls over (order by ts rows between unbounded preceding and 1 preceding), " +
+                    "count(*) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                    "count(s) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                    "count(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                    "count(c) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                    "max(d) over (order by ts rows between unbounded preceding and 1 preceding), " +
+                    "min(d) over (order by ts rows between unbounded preceding and 1 preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3526,19 +3526,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(d) over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "sum(d) over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "first_value(j) over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "first_value(j) ignore nulls over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "last_value(j) over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "last_value(j) ignore nulls over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "count(*) over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "count(s) over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "count(d) over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "count(c) over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "max(d) over (order by ts rows between 4 preceding and 2 preceding), " +
-                            "min(d) over (order by ts rows between 4 preceding and 2 preceding) " +
-                            "from tab")
+                    "avg(d) over (order by ts rows between 4 preceding and 2 preceding), " +
+                    "sum(d) over (order by ts rows between 4 preceding and 2 preceding), " +
+                    "first_value(j) over (order by ts rows between 4 preceding and 2 preceding), " +
+                    "first_value(j) ignore nulls over (order by ts rows between 4 preceding and 2 preceding), " +
+                    "last_value(j) over (order by ts rows between 4 preceding and 2 preceding), " +
+                    "last_value(j) ignore nulls over (order by ts rows between 4 preceding and 2 preceding), " +
+                    "count(*) over (order by ts rows between 4 preceding and 2 preceding), " +
+                    "count(s) over (order by ts rows between 4 preceding and 2 preceding), " +
+                    "count(d) over (order by ts rows between 4 preceding and 2 preceding), " +
+                    "count(c) over (order by ts rows between 4 preceding and 2 preceding), " +
+                    "max(d) over (order by ts rows between 4 preceding and 2 preceding), " +
+                    "min(d) over (order by ts rows between 4 preceding and 2 preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3555,19 +3555,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "sum(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "first_value(j) over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "first_value(j) ignore nulls over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "last_value(j) over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "last_value(j) ignore nulls over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "count(*) over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "count(s) over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "count(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "count(c) over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "max(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
-                            "min(d) over (order by ts desc rows between 4 preceding and 2 preceding) " +
-                            "from tab")
+                    "avg(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                    "sum(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                    "first_value(j) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                    "first_value(j) ignore nulls over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                    "last_value(j) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                    "last_value(j) ignore nulls over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                    "count(*) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                    "count(s) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                    "count(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                    "count(c) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                    "max(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
+                    "min(d) over (order by ts desc rows between 4 preceding and 2 preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -3583,19 +3583,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(d) over (order by i rows between unbounded preceding and unbounded following), " +
-                            "sum(d) over (order by i rows between unbounded preceding and unbounded following), " +
-                            "first_value(j) over (order by i rows between unbounded preceding and unbounded following), " +
-                            "first_value(j) ignore nulls over (order by i rows between unbounded preceding and unbounded following), " +
-                            "last_value(j) over (order by i rows between unbounded preceding and unbounded following), " +
-                            "last_value(j) ignore nulls over (order by i rows between unbounded preceding and unbounded following), " +
-                            "count(*) over (order by i rows between unbounded preceding and unbounded following), " +
-                            "count(s) over (order by i rows between unbounded preceding and unbounded following), " +
-                            "count(d) over (order by i rows between unbounded preceding and unbounded following), " +
-                            "count(c) over (order by i rows between unbounded preceding and unbounded following), " +
-                            "max(d) over (order by i rows between unbounded preceding and unbounded following), " +
-                            "min(d) over (order by i rows between unbounded preceding and unbounded following) " +
-                            "from tab")
+                    "avg(d) over (order by i rows between unbounded preceding and unbounded following), " +
+                    "sum(d) over (order by i rows between unbounded preceding and unbounded following), " +
+                    "first_value(j) over (order by i rows between unbounded preceding and unbounded following), " +
+                    "first_value(j) ignore nulls over (order by i rows between unbounded preceding and unbounded following), " +
+                    "last_value(j) over (order by i rows between unbounded preceding and unbounded following), " +
+                    "last_value(j) ignore nulls over (order by i rows between unbounded preceding and unbounded following), " +
+                    "count(*) over (order by i rows between unbounded preceding and unbounded following), " +
+                    "count(s) over (order by i rows between unbounded preceding and unbounded following), " +
+                    "count(d) over (order by i rows between unbounded preceding and unbounded following), " +
+                    "count(c) over (order by i rows between unbounded preceding and unbounded following), " +
+                    "max(d) over (order by i rows between unbounded preceding and unbounded following), " +
+                    "min(d) over (order by i rows between unbounded preceding and unbounded following) " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -3611,19 +3611,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(d) over (partition by i rows between unbounded preceding and unbounded following), " +
-                            "sum(d) over (partition by i rows between unbounded preceding and unbounded following), " +
-                            "first_value(d) over (partition by i rows between unbounded preceding and unbounded following), " +
-                            "first_value(d) ignore nulls over (partition by i rows between unbounded preceding and unbounded following), " +
-                            "last_value(d) over (partition by i rows between unbounded preceding and unbounded following), " +
-                            "last_value(d) ignore nulls over (partition by i rows between unbounded preceding and unbounded following), " +
-                            "count(*) over (partition by i rows between unbounded preceding and unbounded following), " +
-                            "count(s) over (partition by i rows between unbounded preceding and unbounded following), " +
-                            "count(d) over (partition by i rows between unbounded preceding and unbounded following), " +
-                            "count(c) over (partition by i rows between unbounded preceding and unbounded following), " +
-                            "max(d) over (partition by i rows between unbounded preceding and unbounded following), " +
-                            "min(d) over (partition by i rows between unbounded preceding and unbounded following) " +
-                            "from tab")
+                    "avg(d) over (partition by i rows between unbounded preceding and unbounded following), " +
+                    "sum(d) over (partition by i rows between unbounded preceding and unbounded following), " +
+                    "first_value(d) over (partition by i rows between unbounded preceding and unbounded following), " +
+                    "first_value(d) ignore nulls over (partition by i rows between unbounded preceding and unbounded following), " +
+                    "last_value(d) over (partition by i rows between unbounded preceding and unbounded following), " +
+                    "last_value(d) ignore nulls over (partition by i rows between unbounded preceding and unbounded following), " +
+                    "count(*) over (partition by i rows between unbounded preceding and unbounded following), " +
+                    "count(s) over (partition by i rows between unbounded preceding and unbounded following), " +
+                    "count(d) over (partition by i rows between unbounded preceding and unbounded following), " +
+                    "count(c) over (partition by i rows between unbounded preceding and unbounded following), " +
+                    "max(d) over (partition by i rows between unbounded preceding and unbounded following), " +
+                    "min(d) over (partition by i rows between unbounded preceding and unbounded following) " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -3650,19 +3650,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows unbounded preceding), " +
-                            "sum(j) over (partition by i order by ts rows unbounded preceding), " +
-                            "first_value(j) over (partition by i order by ts rows unbounded preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows unbounded preceding), " +
-                            "last_value(j) over (partition by i order by ts rows unbounded preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows unbounded preceding), " +
-                            "count(*) over (partition by i order by ts rows unbounded preceding), " +
-                            "count(s) over (partition by i order by ts rows unbounded preceding), " +
-                            "count(d) over (partition by i order by ts rows unbounded preceding), " +
-                            "count(c) over (partition by i order by ts rows unbounded preceding), " +
-                            "max(j) over (partition by i order by ts rows unbounded preceding), " +
-                            "min(j) over (partition by i order by ts rows unbounded preceding) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows unbounded preceding), " +
+                    "sum(j) over (partition by i order by ts rows unbounded preceding), " +
+                    "first_value(j) over (partition by i order by ts rows unbounded preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows unbounded preceding), " +
+                    "last_value(j) over (partition by i order by ts rows unbounded preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows unbounded preceding), " +
+                    "count(*) over (partition by i order by ts rows unbounded preceding), " +
+                    "count(s) over (partition by i order by ts rows unbounded preceding), " +
+                    "count(d) over (partition by i order by ts rows unbounded preceding), " +
+                    "count(c) over (partition by i order by ts rows unbounded preceding), " +
+                    "max(j) over (partition by i order by ts rows unbounded preceding), " +
+                    "min(j) over (partition by i order by ts rows unbounded preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3670,19 +3670,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(rowsResult1);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows unbounded preceding), " +
-                            "sum(j) over (partition by i order by ts rows unbounded preceding), " +
-                            "first_value(j) over (partition by i order by ts rows unbounded preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows unbounded preceding), " +
-                            "last_value(j) over (partition by i order by ts rows unbounded preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows unbounded preceding), " +
-                            "count(*) over (partition by i order by ts rows unbounded preceding), " +
-                            "count(s) over (partition by i order by ts rows unbounded preceding), " +
-                            "count(d) over (partition by i order by ts rows unbounded preceding), " +
-                            "count(c) over (partition by i order by ts rows unbounded preceding), " +
-                            "max(j) over (partition by i order by ts rows unbounded preceding), " +
-                            "min(j) over (partition by i order by ts rows unbounded preceding) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows unbounded preceding), " +
+                    "sum(j) over (partition by i order by ts rows unbounded preceding), " +
+                    "first_value(j) over (partition by i order by ts rows unbounded preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows unbounded preceding), " +
+                    "last_value(j) over (partition by i order by ts rows unbounded preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows unbounded preceding), " +
+                    "count(*) over (partition by i order by ts rows unbounded preceding), " +
+                    "count(s) over (partition by i order by ts rows unbounded preceding), " +
+                    "count(d) over (partition by i order by ts rows unbounded preceding), " +
+                    "count(c) over (partition by i order by ts rows unbounded preceding), " +
+                    "max(j) over (partition by i order by ts rows unbounded preceding), " +
+                    "min(j) over (partition by i order by ts rows unbounded preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3690,19 +3690,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(rowsResult1);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i rows unbounded preceding), " +
-                            "sum(j) over (partition by i rows unbounded preceding), " +
-                            "first_value(j) over (partition by i rows unbounded preceding), " +
-                            "first_value(j) ignore nulls over (partition by i rows unbounded preceding), " +
-                            "last_value(j) over (partition by i rows unbounded preceding), " +
-                            "last_value(j) ignore nulls over (partition by i rows unbounded preceding), " +
-                            "count(*) over (partition by i rows unbounded preceding), " +
-                            "count(s) over (partition by i rows unbounded preceding), " +
-                            "count(d) over (partition by i rows unbounded preceding), " +
-                            "count(c) over (partition by i rows unbounded preceding), " +
-                            "max(j) over (partition by i rows unbounded preceding), " +
-                            "min(j) over (partition by i rows unbounded preceding) " +
-                            "from tab")
+                    "avg(j) over (partition by i rows unbounded preceding), " +
+                    "sum(j) over (partition by i rows unbounded preceding), " +
+                    "first_value(j) over (partition by i rows unbounded preceding), " +
+                    "first_value(j) ignore nulls over (partition by i rows unbounded preceding), " +
+                    "last_value(j) over (partition by i rows unbounded preceding), " +
+                    "last_value(j) ignore nulls over (partition by i rows unbounded preceding), " +
+                    "count(*) over (partition by i rows unbounded preceding), " +
+                    "count(s) over (partition by i rows unbounded preceding), " +
+                    "count(d) over (partition by i rows unbounded preceding), " +
+                    "count(c) over (partition by i rows unbounded preceding), " +
+                    "max(j) over (partition by i rows unbounded preceding), " +
+                    "min(j) over (partition by i rows unbounded preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3710,19 +3710,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(rowsResult1);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i rows between unbounded preceding and current row), " +
-                            "sum(j) over (partition by i rows between unbounded preceding and current row), " +
-                            "first_value(j) over (partition by i rows between unbounded preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i rows between unbounded preceding and current row), " +
-                            "last_value(j) over (partition by i rows between unbounded preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i rows between unbounded preceding and current row), " +
-                            "count(*) over (partition by i rows between unbounded preceding and current row), " +
-                            "count(s) over (partition by i rows between unbounded preceding and current row), " +
-                            "count(d) over (partition by i rows between unbounded preceding and current row), " +
-                            "count(c) over (partition by i rows between unbounded preceding and current row), " +
-                            "max(j) over (partition by i rows between unbounded preceding and current row), " +
-                            "min(j) over (partition by i rows between unbounded preceding and current row) " +
-                            "from tab")
+                    "avg(j) over (partition by i rows between unbounded preceding and current row), " +
+                    "sum(j) over (partition by i rows between unbounded preceding and current row), " +
+                    "first_value(j) over (partition by i rows between unbounded preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i rows between unbounded preceding and current row), " +
+                    "last_value(j) over (partition by i rows between unbounded preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i rows between unbounded preceding and current row), " +
+                    "count(*) over (partition by i rows between unbounded preceding and current row), " +
+                    "count(s) over (partition by i rows between unbounded preceding and current row), " +
+                    "count(d) over (partition by i rows between unbounded preceding and current row), " +
+                    "count(c) over (partition by i rows between unbounded preceding and current row), " +
+                    "max(j) over (partition by i rows between unbounded preceding and current row), " +
+                    "min(j) over (partition by i rows between unbounded preceding and current row) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3730,19 +3730,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(rowsResult1);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows between 10 preceding and current row), " +
-                            "sum(j) over (partition by i order by ts rows between 10 preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts rows between 10 preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 10 preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts rows between 10 preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 10 preceding and current row), " +
-                            "count(*) over (partition by i order by ts rows between 10 preceding and current row), " +
-                            "count(s) over (partition by i order by ts rows between 10 preceding and current row), " +
-                            "count(d) over (partition by i order by ts rows between 10 preceding and current row), " +
-                            "count(c) over (partition by i order by ts rows between 10 preceding and current row), " +
-                            "max(j) over (partition by i order by ts rows between 10 preceding and current row), " +
-                            "min(j) over (partition by i order by ts rows between 10 preceding and current row) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows between 10 preceding and current row), " +
+                    "sum(j) over (partition by i order by ts rows between 10 preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts rows between 10 preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 10 preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts rows between 10 preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 10 preceding and current row), " +
+                    "count(*) over (partition by i order by ts rows between 10 preceding and current row), " +
+                    "count(s) over (partition by i order by ts rows between 10 preceding and current row), " +
+                    "count(d) over (partition by i order by ts rows between 10 preceding and current row), " +
+                    "count(c) over (partition by i order by ts rows between 10 preceding and current row), " +
+                    "max(j) over (partition by i order by ts rows between 10 preceding and current row), " +
+                    "min(j) over (partition by i order by ts rows between 10 preceding and current row) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3750,19 +3750,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(rowsResult1);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows between 3 preceding and current row), " +
-                            "sum(j) over (partition by i order by ts rows between 3 preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts rows between 3 preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 3 preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts rows between 3 preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 3 preceding and current row), " +
-                            "count(*) over (partition by i order by ts rows between 3 preceding and current row), " +
-                            "count(s) over (partition by i order by ts rows between 3 preceding and current row), " +
-                            "count(d) over (partition by i order by ts rows between 3 preceding and current row), " +
-                            "count(c) over (partition by i order by ts rows between 3 preceding and current row), " +
-                            "max(j) over (partition by i order by ts rows between 3 preceding and current row), " +
-                            "min(j) over (partition by i order by ts rows between 3 preceding and current row) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows between 3 preceding and current row), " +
+                    "sum(j) over (partition by i order by ts rows between 3 preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts rows between 3 preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 3 preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts rows between 3 preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 3 preceding and current row), " +
+                    "count(*) over (partition by i order by ts rows between 3 preceding and current row), " +
+                    "count(s) over (partition by i order by ts rows between 3 preceding and current row), " +
+                    "count(d) over (partition by i order by ts rows between 3 preceding and current row), " +
+                    "count(c) over (partition by i order by ts rows between 3 preceding and current row), " +
+                    "max(j) over (partition by i order by ts rows between 3 preceding and current row), " +
+                    "min(j) over (partition by i order by ts rows between 3 preceding and current row) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3770,20 +3770,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(rowsResult1);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(*) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(s) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(d) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(c) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "max(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "min(j) over (partition by i order by ts rows between 1 preceding and current row) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(*) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(s) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(d) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(c) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "max(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "min(j) over (partition by i order by ts rows between 1 preceding and current row) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3800,20 +3800,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows between 2 preceding and current row), " +
-                            "sum(j) over (partition by i order by ts rows between 2 preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts rows between 2 preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts rows between 2 preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and current row), " +
-                            "count(*) over (partition by i order by ts rows between 2 preceding and current row), " +
-                            "count(j) over (partition by i order by ts rows between 2 preceding and current row), " +
-                            "count(s) over (partition by i order by ts rows between 2 preceding and current row), " +
-                            "count(d) over (partition by i order by ts rows between 2 preceding and current row), " +
-                            "count(c) over (partition by i order by ts rows between 2 preceding and current row), " +
-                            "max(j) over (partition by i order by ts rows between 2 preceding and current row), " +
-                            "min(j) over (partition by i order by ts rows between 2 preceding and current row) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows between 2 preceding and current row), " +
+                    "sum(j) over (partition by i order by ts rows between 2 preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts rows between 2 preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts rows between 2 preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and current row), " +
+                    "count(*) over (partition by i order by ts rows between 2 preceding and current row), " +
+                    "count(j) over (partition by i order by ts rows between 2 preceding and current row), " +
+                    "count(s) over (partition by i order by ts rows between 2 preceding and current row), " +
+                    "count(d) over (partition by i order by ts rows between 2 preceding and current row), " +
+                    "count(c) over (partition by i order by ts rows between 2 preceding and current row), " +
+                    "max(j) over (partition by i order by ts rows between 2 preceding and current row), " +
+                    "min(j) over (partition by i order by ts rows between 2 preceding and current row) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3841,20 +3841,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
-                            "sum(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
-                            "first_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
-                            "last_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
-                            "count(*) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
-                            "count(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
-                            "count(s) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
-                            "count(d) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
-                            "count(c) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
-                            "max(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
-                            "min(j) over (partition by i order by ts rows between 2 preceding and 1 preceding) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                    "sum(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                    "first_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                    "last_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                    "count(*) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                    "count(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                    "count(s) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                    "count(d) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                    "count(c) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                    "max(j) over (partition by i order by ts rows between 2 preceding and 1 preceding), " +
+                    "min(j) over (partition by i order by ts rows between 2 preceding and 1 preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3862,20 +3862,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(result2);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
-                            "sum(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
-                            "first_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
-                            "last_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
-                            "count(*) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
-                            "count(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
-                            "count(s) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
-                            "count(d) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
-                            "count(c) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
-                            "max(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
-                            "min(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                    "sum(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                    "first_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                    "last_value(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                    "count(*) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                    "count(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                    "count(s) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                    "count(d) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                    "count(c) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                    "max(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row), " +
+                    "min(j) over (partition by i order by ts rows between 2 preceding and 1 preceding exclude current row) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3883,20 +3883,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(result2);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
-                            "sum(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
-                            "first_value(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
-                            "last_value(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
-                            "count(*) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
-                            "count(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
-                            "count(s) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
-                            "count(d) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
-                            "count(c) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
-                            "max(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
-                            "min(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                    "sum(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                    "first_value(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                    "last_value(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                    "count(*) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                    "count(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                    "count(s) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                    "count(d) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                    "count(c) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                    "max(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row), " +
+                    "min(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3905,20 +3905,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // partitions are smaller than 10 elements so avg is all nulls
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "sum(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "first_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "last_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "count(*) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "count(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "count(s) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "count(d) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "count(c) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "max(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
-                            "min(j) over (partition by i order by ts rows between 20 preceding and 10 preceding) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "sum(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "first_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "last_value(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "count(*) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "count(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "count(s) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "count(d) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "count(c) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "max(j) over (partition by i order by ts rows between 20 preceding and 10 preceding), " +
+                    "min(j) over (partition by i order by ts rows between 20 preceding and 10 preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3946,20 +3946,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
-                            "sum(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
-                            "first_value(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
-                            "last_value(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
-                            "count(*) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
-                            "count(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
-                            "count(s) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
-                            "count(d) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
-                            "count(c) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
-                            "max(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
-                            "min(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                    "sum(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                    "first_value(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                    "last_value(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                    "count(*) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                    "count(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                    "count(s) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                    "count(d) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                    "count(c) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                    "max(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding), " +
+                    "min(j) over (partition by i order by ts rows between unbounded preceding and 2 preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3967,20 +3967,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .returns(result3);
 
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
-                            "sum(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
-                            "first_value(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
-                            "last_value(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
-                            "count(*) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
-                            "count(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
-                            "count(s) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
-                            "count(d) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
-                            "count(c) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
-                            "max(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
-                            "min(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                    "sum(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                    "first_value(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                    "last_value(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                    "count(*) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                    "count(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                    "count(s) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                    "count(d) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                    "count(c) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                    "max(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding), " +
+                    "min(j) over (partition by i order by ts rows between 10000 preceding and 2 preceding) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -3989,20 +3989,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // here avg returns j as double because it processes current row only
             assertQuery("select ts, i, j, " +
-                            "avg(j) over (partition by i order by ts rows current row), " +
-                            "sum(j) over (partition by i order by ts rows current row), " +
-                            "first_value(j) over (partition by i order by ts rows current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows current row), " +
-                            "last_value(j) over (partition by i order by ts rows current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows current row), " +
-                            "count(*) over (partition by i order by ts rows current row), " +
-                            "count(j) over (partition by i order by ts rows current row), " +
-                            "count(s) over (partition by i order by ts rows current row), " +
-                            "count(d) over (partition by i order by ts rows current row), " +
-                            "count(c) over (partition by i order by ts rows current row), " +
-                            "max(j) over (partition by i order by ts rows current row), " +
-                            "min(j) over (partition by i order by ts rows current row) " +
-                            "from tab")
+                    "avg(j) over (partition by i order by ts rows current row), " +
+                    "sum(j) over (partition by i order by ts rows current row), " +
+                    "first_value(j) over (partition by i order by ts rows current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows current row), " +
+                    "last_value(j) over (partition by i order by ts rows current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows current row), " +
+                    "count(*) over (partition by i order by ts rows current row), " +
+                    "count(j) over (partition by i order by ts rows current row), " +
+                    "count(s) over (partition by i order by ts rows current row), " +
+                    "count(d) over (partition by i order by ts rows current row), " +
+                    "count(c) over (partition by i order by ts rows current row), " +
+                    "max(j) over (partition by i order by ts rows current row), " +
+                    "min(j) over (partition by i order by ts rows current row) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -4020,20 +4020,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // test with dependencies not included on column list + column reorder + sort
             assertQuery("select avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(*) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(s) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(d) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(c) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "max(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "min(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "ts, i, j " +
-                            "from tab")
+                    "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(*) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(s) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(d) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(c) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "max(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "min(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "ts, i, j " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -4050,20 +4050,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select avg(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(*) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(s) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(d) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "count(c) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "max(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "min(j) over (partition by i order by ts rows between 1 preceding and current row), " +
-                            "i, j " +
-                            "from tab")
+                    "sum(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(*) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(s) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(d) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "count(c) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "max(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "min(j) over (partition by i order by ts rows between 1 preceding and current row), " +
+                    "i, j " +
+                    "from tab")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -4089,58 +4089,58 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     2.0\t2.0\t2\t2\t2\t2\t1\t1\t1\t1\t1\t2\t2
                     """;
             assertQuery("select avg(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "sum(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "count(*) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "count(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "count(s) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "count(d) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "count(c) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "max(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "min(j) over (partition by i order by ts desc rows between 1 preceding and current row) " +
-                            "from tab")
+                    "sum(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "count(*) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "count(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "count(s) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "count(d) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "count(c) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "max(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "min(j) over (partition by i order by ts desc rows between 1 preceding and current row) " +
+                    "from tab")
                     .expectSize()
                     .noLeakCheck()
                     .returns(result4);
 
             assertQuery("select avg(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "sum(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "first_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "last_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "count(*) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "count(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "count(s) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "count(d) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "count(c) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "max(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
-                            "min(j) over (partition by i order by ts desc rows between 1 preceding and current row) " +
-                            "from tab " +
-                            "order by ts")
+                    "sum(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "first_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "last_value(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "count(*) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "count(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "count(s) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "count(d) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "count(c) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "max(j) over (partition by i order by ts desc rows between 1 preceding and current row), " +
+                    "min(j) over (partition by i order by ts desc rows between 1 preceding and current row) " +
+                    "from tab " +
+                    "order by ts")
                     .expectSize()
                     .noLeakCheck()
                     .returns(result4);
 
             assertQuery("select avg(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
-                            "sum(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
-                            "first_value(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
-                            "first_value(j) ignore nulls over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
-                            "last_value(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
-                            "last_value(j) ignore nulls over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
-                            "count(*) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
-                            "count(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
-                            "count(s) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
-                            "count(d) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
-                            "count(c) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
-                            "max(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
-                            "min(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
-                            "i, j " +
-                            "from tab " +
-                            "order by i, j")
+                    "sum(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                    "first_value(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                    "first_value(j) ignore nulls over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                    "last_value(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                    "last_value(j) ignore nulls over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                    "count(*) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                    "count(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                    "count(s) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                    "count(d) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                    "count(c) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                    "max(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                    "min(j) over (partition by i order by j, i  desc rows between 1 preceding and current row), " +
+                    "i, j " +
+                    "from tab " +
+                    "order by i, j")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -4158,21 +4158,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab1 select x::timestamp, x/13, case when x < 6 THEN NULL ELSE 1.0 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(12)");
 
             assertQuery("select avg(j) over (partition by i order by ts desc rows between 6 preceding and 3 preceding), " +
-                            "sum(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "first_value(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "first_value(j) ignore nulls over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "last_value(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "last_value(j) ignore nulls over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "count(*) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "count(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "count(s) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "count(d) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "count(c) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "max(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "min(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "i, j " +
-                            "from tab1 " +
-                            "order by ts desc")
+                    "sum(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "first_value(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "first_value(j) ignore nulls over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "last_value(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "last_value(j) ignore nulls over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "count(*) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "count(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "count(s) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "count(d) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "count(c) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "max(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "min(j) over (partition by i order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "i, j " +
+                    "from tab1 " +
+                    "order by ts desc")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -4193,21 +4193,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select avg(j) over (order by ts desc rows between 6 preceding and 3 preceding), " +
-                            "sum(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "first_value(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "first_value(j) ignore nulls over (order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "last_value(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "last_value(j) ignore nulls over (order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "count(*) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "count(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "count(s) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "count(d) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "count(c) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "max(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "min(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
-                            "j " +
-                            "from tab1 " +
-                            "order by ts desc")
+                    "sum(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "first_value(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "first_value(j) ignore nulls over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "last_value(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "last_value(j) ignore nulls over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "count(*) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "count(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "count(s) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "count(d) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "count(c) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "max(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "min(j) over (order by ts  desc rows between 6 preceding and 3 preceding), " +
+                    "j " +
+                    "from tab1 " +
+                    "order by ts desc")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -4228,20 +4228,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select avg(j) over (order by ts desc rows between unbounded preceding and current row), " +
-                            "sum(j) over (order by ts  desc rows between unbounded preceding and current row), " +
-                            "first_value(j) over (order by ts  desc rows between unbounded preceding and current row), " +
-                            "last_value(j) over (order by ts  desc rows between unbounded preceding and current row), " +
-                            "last_value(j) ignore nulls over (order by ts  desc rows between unbounded preceding and current row), " +
-                            "count(*) over (order by ts  desc rows between unbounded preceding and current row), " +
-                            "count(j) over (order by ts  desc rows between unbounded preceding and current row), " +
-                            "count(s) over (order by ts  desc rows between unbounded preceding and current row), " +
-                            "count(d) over (order by ts  desc rows between unbounded preceding and current row), " +
-                            "count(c) over (order by ts  desc rows between unbounded preceding and current row), " +
-                            "max(j) over (order by ts  desc rows between unbounded preceding and current row), " +
-                            "min(j) over (order by ts  desc rows between unbounded preceding and current row), " +
-                            "j " +
-                            "from tab1 " +
-                            "order by ts desc")
+                    "sum(j) over (order by ts  desc rows between unbounded preceding and current row), " +
+                    "first_value(j) over (order by ts  desc rows between unbounded preceding and current row), " +
+                    "last_value(j) over (order by ts  desc rows between unbounded preceding and current row), " +
+                    "last_value(j) ignore nulls over (order by ts  desc rows between unbounded preceding and current row), " +
+                    "count(*) over (order by ts  desc rows between unbounded preceding and current row), " +
+                    "count(j) over (order by ts  desc rows between unbounded preceding and current row), " +
+                    "count(s) over (order by ts  desc rows between unbounded preceding and current row), " +
+                    "count(d) over (order by ts  desc rows between unbounded preceding and current row), " +
+                    "count(c) over (order by ts  desc rows between unbounded preceding and current row), " +
+                    "max(j) over (order by ts  desc rows between unbounded preceding and current row), " +
+                    "min(j) over (order by ts  desc rows between unbounded preceding and current row), " +
+                    "j " +
+                    "from tab1 " +
+                    "order by ts desc")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -4294,11 +4294,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');");
 
             assertQuery("SELECT " +
-                            "    timestamp, " +
-                            "    price, " +
-                            "    lag('timestamp') OVER (ORDER BY timestamp) AS previous_price " +
-                            "FROM trades " +
-                            "LIMIT 10;")
+                    "    timestamp, " +
+                    "    price, " +
+                    "    lag('timestamp') OVER (ORDER BY timestamp) AS previous_price " +
+                    "FROM trades " +
+                    "LIMIT 10;")
                     .noLeakCheck()
                     .fails(0, "inconvertible value: `timestamp` [STRING -> DOUBLE]");
         });
@@ -4466,7 +4466,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(3_000_000::timestamp, 'B', 200.0)");
 
             assertQuery("select ts, sym, val, ksum(val) over (partition by sym order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
-                            "from tab")
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4506,7 +4506,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //   6s: 4s was NULL, 2s out of range -> 30
             // avg(val) over () counts non-null values: (20+10+30)/3 = 20.0
             assertQuery("select ts, sym, val, ksum(val) over (partition by sym order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
-                            "from tab")
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4843,7 +4843,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(4_000_000::timestamp, 'B', 40.0)");
 
             assertQuery("select ts, sym, val, ksum(val) over (order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
-                            "from tab")
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -4879,7 +4879,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //   5s, val=30  -> 3s out of range, NULL gap    -> 30
             // avg(val) over () counts non-null only: (10+20+30)/3 = 20.0
             assertQuery("select ts, val, ksum(val) over (order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
-                            "from tab")
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5315,15 +5315,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "case when x::double % 3 = 0 THEN NULL ELSE x::double%5 END, 'k' || (x%5) ::symbol, 'k' || x, x::date from long_sequence(7)");
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j) over (), " +
-                            "lag(j) over (), " +
-                            "lead(j) ignore nulls over (), " +
-                            "lag(j) ignore nulls over (), " +
-                            "lead(j) respect nulls over (), " +
-                            "lag(j) respect nulls over (), " +
-                            "lead(m) respect nulls over (), " +
-                            "lag(m) respect nulls over (), " +
-                            "from tab ")
+                    "lead(j) over (), " +
+                    "lag(j) over (), " +
+                    "lead(j) ignore nulls over (), " +
+                    "lag(j) ignore nulls over (), " +
+                    "lead(j) respect nulls over (), " +
+                    "lag(j) respect nulls over (), " +
+                    "lead(m) respect nulls over (), " +
+                    "lag(m) respect nulls over (), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5339,15 +5339,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(d) over (), " +
-                            "lag(d) over (), " +
-                            "lead(d) ignore nulls over (), " +
-                            "lag(d) ignore nulls over (), " +
-                            "lead(d) respect nulls over (), " +
-                            "lag(d) respect nulls over (), " +
-                            "lead(m) respect nulls over (), " +
-                            "lag(m) respect nulls over (), " +
-                            "from tab ")
+                    "lead(d) over (), " +
+                    "lag(d) over (), " +
+                    "lead(d) ignore nulls over (), " +
+                    "lag(d) ignore nulls over (), " +
+                    "lead(d) respect nulls over (), " +
+                    "lag(d) respect nulls over (), " +
+                    "lead(m) respect nulls over (), " +
+                    "lag(m) respect nulls over (), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5363,15 +5363,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(ts) over (), " +
-                            "lag(ts) over (), " +
-                            "lead(ts) ignore nulls over (), " +
-                            "lag(ts) ignore nulls over (), " +
-                            "lead(ts) respect nulls over (), " +
-                            "lag(ts) respect nulls over (), " +
-                            "lead(m) respect nulls over (), " +
-                            "lag(m) respect nulls over (), " +
-                            "from tab ")
+                    "lead(ts) over (), " +
+                    "lag(ts) over (), " +
+                    "lead(ts) ignore nulls over (), " +
+                    "lag(ts) ignore nulls over (), " +
+                    "lead(ts) respect nulls over (), " +
+                    "lag(ts) respect nulls over (), " +
+                    "lead(m) respect nulls over (), " +
+                    "lag(m) respect nulls over (), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5387,31 +5387,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 0) over (), " +
-                            "lag(j, 0) over (), " +
-                            "lead(j, 0) ignore nulls over (), " +
-                            "lag(j, 0) ignore nulls over (), " +
-                            "lead(j, 0) respect nulls over (), " +
-                            "lag(j, 0) respect nulls over (), " +
-                            "lead(d, 0) over (), " +
-                            "lag(d, 0) over (), " +
-                            "lead(d, 0) ignore nulls over (), " +
-                            "lag(d, 0) ignore nulls over (), " +
-                            "lead(d, 0) respect nulls over (), " +
-                            "lag(d, 0) respect nulls over (), " +
-                            "lead(ts, 0) over (), " +
-                            "lag(ts, 0) over (), " +
-                            "lead(ts, 0) ignore nulls over (), " +
-                            "lag(ts, 0) ignore nulls over (), " +
-                            "lead(ts, 0) respect nulls over (), " +
-                            "lag(ts, 0) respect nulls over (), " +
-                            "lead(m, 0) over (), " +
-                            "lag(m, 0) over (), " +
-                            "lead(m, 0) ignore nulls over (), " +
-                            "lag(m, 0) ignore nulls over (), " +
-                            "lead(m, 0) respect nulls over (), " +
-                            "lag(m, 0) respect nulls over (), " +
-                            "from tab ")
+                    "lead(j, 0) over (), " +
+                    "lag(j, 0) over (), " +
+                    "lead(j, 0) ignore nulls over (), " +
+                    "lag(j, 0) ignore nulls over (), " +
+                    "lead(j, 0) respect nulls over (), " +
+                    "lag(j, 0) respect nulls over (), " +
+                    "lead(d, 0) over (), " +
+                    "lag(d, 0) over (), " +
+                    "lead(d, 0) ignore nulls over (), " +
+                    "lag(d, 0) ignore nulls over (), " +
+                    "lead(d, 0) respect nulls over (), " +
+                    "lag(d, 0) respect nulls over (), " +
+                    "lead(ts, 0) over (), " +
+                    "lag(ts, 0) over (), " +
+                    "lead(ts, 0) ignore nulls over (), " +
+                    "lag(ts, 0) ignore nulls over (), " +
+                    "lead(ts, 0) respect nulls over (), " +
+                    "lag(ts, 0) respect nulls over (), " +
+                    "lead(m, 0) over (), " +
+                    "lag(m, 0) over (), " +
+                    "lead(m, 0) ignore nulls over (), " +
+                    "lag(m, 0) ignore nulls over (), " +
+                    "lead(m, 0) respect nulls over (), " +
+                    "lag(m, 0) respect nulls over (), " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -5428,31 +5428,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 3) over (), " +
-                            "lag(j, 3) over (), " +
-                            "lead(j, 3) ignore nulls over (), " +
-                            "lag(j, 3) ignore nulls over (), " +
-                            "lead(j, 3) respect nulls over (), " +
-                            "lag(j, 3) respect nulls over (), " +
-                            "lead(d, 3) over (), " +
-                            "lag(d, 3) over (), " +
-                            "lead(d, 3) ignore nulls over (), " +
-                            "lag(d, 3) ignore nulls over (), " +
-                            "lead(d, 3) respect nulls over (), " +
-                            "lag(d, 3) respect nulls over (), " +
-                            "lead(ts, 3) over (), " +
-                            "lag(ts, 3) over (), " +
-                            "lead(ts, 3) ignore nulls over (), " +
-                            "lag(ts, 3) ignore nulls over (), " +
-                            "lead(ts, 3) respect nulls over (), " +
-                            "lag(ts, 3) respect nulls over (), " +
-                            "lead(m, 3) over (), " +
-                            "lag(m, 3) over (), " +
-                            "lead(m, 3) ignore nulls over (), " +
-                            "lag(m, 3) ignore nulls over (), " +
-                            "lead(m, 3) respect nulls over (), " +
-                            "lag(m, 3) respect nulls over (), " +
-                            "from tab ")
+                    "lead(j, 3) over (), " +
+                    "lag(j, 3) over (), " +
+                    "lead(j, 3) ignore nulls over (), " +
+                    "lag(j, 3) ignore nulls over (), " +
+                    "lead(j, 3) respect nulls over (), " +
+                    "lag(j, 3) respect nulls over (), " +
+                    "lead(d, 3) over (), " +
+                    "lag(d, 3) over (), " +
+                    "lead(d, 3) ignore nulls over (), " +
+                    "lag(d, 3) ignore nulls over (), " +
+                    "lead(d, 3) respect nulls over (), " +
+                    "lag(d, 3) respect nulls over (), " +
+                    "lead(ts, 3) over (), " +
+                    "lag(ts, 3) over (), " +
+                    "lead(ts, 3) ignore nulls over (), " +
+                    "lag(ts, 3) ignore nulls over (), " +
+                    "lead(ts, 3) respect nulls over (), " +
+                    "lag(ts, 3) respect nulls over (), " +
+                    "lead(m, 3) over (), " +
+                    "lag(m, 3) over (), " +
+                    "lead(m, 3) ignore nulls over (), " +
+                    "lag(m, 3) ignore nulls over (), " +
+                    "lead(m, 3) respect nulls over (), " +
+                    "lag(m, 3) respect nulls over (), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5468,31 +5468,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 2, j + 1) over (), " +
-                            "lag(j, 2, j + 1) over (), " +
-                            "lead(j, 2, j + 1) ignore nulls over (), " +
-                            "lag(j, 2, j + 1) ignore nulls over (), " +
-                            "lead(j, 2, j + 1) respect nulls over (), " +
-                            "lag(j, 2, j + 1) respect nulls over (), " +
-                            "lead(d, 2, d + 1) over (), " +
-                            "lag(d, 2, d + 1) over (), " +
-                            "lead(d, 2, j + 1) ignore nulls over (), " +
-                            "lag(d, 2, j + 1) ignore nulls over (), " +
-                            "lead(d, 2, j + 1) respect nulls over (), " +
-                            "lag(d, 2, j + 1) respect nulls over (), " +
-                            "lead(ts, 2, ts + 10) over (), " +
-                            "lag(ts, 2, ts + 10) over (), " +
-                            "lead(ts, 2, ts + 10) ignore nulls over (), " +
-                            "lag(ts, 2, ts + 10) ignore nulls over (), " +
-                            "lead(ts, 2, ts + 10) respect nulls over (), " +
-                            "lag(ts, 2, ts + 10) respect nulls over (), " +
-                            "lead(m, 2, m) over (), " +
-                            "lag(m, 2, m) over (), " +
-                            "lead(m, 2, m) ignore nulls over (), " +
-                            "lag(m, 2, m) ignore nulls over (), " +
-                            "lead(m, 2, m) respect nulls over (), " +
-                            "lag(m, 2, m) respect nulls over (), " +
-                            "from tab ")
+                    "lead(j, 2, j + 1) over (), " +
+                    "lag(j, 2, j + 1) over (), " +
+                    "lead(j, 2, j + 1) ignore nulls over (), " +
+                    "lag(j, 2, j + 1) ignore nulls over (), " +
+                    "lead(j, 2, j + 1) respect nulls over (), " +
+                    "lag(j, 2, j + 1) respect nulls over (), " +
+                    "lead(d, 2, d + 1) over (), " +
+                    "lag(d, 2, d + 1) over (), " +
+                    "lead(d, 2, j + 1) ignore nulls over (), " +
+                    "lag(d, 2, j + 1) ignore nulls over (), " +
+                    "lead(d, 2, j + 1) respect nulls over (), " +
+                    "lag(d, 2, j + 1) respect nulls over (), " +
+                    "lead(ts, 2, ts + 10) over (), " +
+                    "lag(ts, 2, ts + 10) over (), " +
+                    "lead(ts, 2, ts + 10) ignore nulls over (), " +
+                    "lag(ts, 2, ts + 10) ignore nulls over (), " +
+                    "lead(ts, 2, ts + 10) respect nulls over (), " +
+                    "lag(ts, 2, ts + 10) respect nulls over (), " +
+                    "lead(m, 2, m) over (), " +
+                    "lag(m, 2, m) over (), " +
+                    "lead(m, 2, m) ignore nulls over (), " +
+                    "lag(m, 2, m) ignore nulls over (), " +
+                    "lead(m, 2, m) respect nulls over (), " +
+                    "lag(m, 2, m) respect nulls over (), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5508,31 +5508,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 2, j + 1) over (order by ts desc), " +
-                            "lag(j, 2, j + 1) over (order by ts desc), " +
-                            "lead(j, 2, j + 1) ignore nulls over (order by ts desc), " +
-                            "lag(j, 2, j + 1) ignore nulls over (order by ts desc), " +
-                            "lead(j, 2, j + 1) respect nulls over (order by ts desc), " +
-                            "lag(j, 2, j + 1) respect nulls over (order by ts desc), " +
-                            "lead(d, 2, d + 1) over (), " +
-                            "lag(d, 2, d + 1) over (), " +
-                            "lead(d, 2, d + 1) ignore nulls over (order by ts desc), " +
-                            "lag(d, 2, d + 1) ignore nulls over (order by ts desc), " +
-                            "lead(d, 2, d + 1) respect nulls over (order by ts desc), " +
-                            "lag(d, 2, d + 1) respect nulls over (order by ts desc), " +
-                            "lead(ts, 2, ts + 10) over (), " +
-                            "lag(ts, 2, ts + 10) over (), " +
-                            "lead(ts, 2, ts + 10) ignore nulls over (order by ts desc), " +
-                            "lag(ts, 2, ts + 10) ignore nulls over (order by ts desc), " +
-                            "lead(ts, 2, ts + 10) respect nulls over (order by ts desc), " +
-                            "lag(ts, 2, ts + 10) respect nulls over (order by ts desc), " +
-                            "lead(m, 2, m) over (), " +
-                            "lag(m, 2, m) over (), " +
-                            "lead(m, 2, m) ignore nulls over (order by ts desc), " +
-                            "lag(m, 2, m) ignore nulls over (order by ts desc), " +
-                            "lead(m, 2, m) respect nulls over (order by ts desc), " +
-                            "lag(m, 2, m) respect nulls over (order by ts desc), " +
-                            "from tab order by ts asc")
+                    "lead(j, 2, j + 1) over (order by ts desc), " +
+                    "lag(j, 2, j + 1) over (order by ts desc), " +
+                    "lead(j, 2, j + 1) ignore nulls over (order by ts desc), " +
+                    "lag(j, 2, j + 1) ignore nulls over (order by ts desc), " +
+                    "lead(j, 2, j + 1) respect nulls over (order by ts desc), " +
+                    "lag(j, 2, j + 1) respect nulls over (order by ts desc), " +
+                    "lead(d, 2, d + 1) over (), " +
+                    "lag(d, 2, d + 1) over (), " +
+                    "lead(d, 2, d + 1) ignore nulls over (order by ts desc), " +
+                    "lag(d, 2, d + 1) ignore nulls over (order by ts desc), " +
+                    "lead(d, 2, d + 1) respect nulls over (order by ts desc), " +
+                    "lag(d, 2, d + 1) respect nulls over (order by ts desc), " +
+                    "lead(ts, 2, ts + 10) over (), " +
+                    "lag(ts, 2, ts + 10) over (), " +
+                    "lead(ts, 2, ts + 10) ignore nulls over (order by ts desc), " +
+                    "lag(ts, 2, ts + 10) ignore nulls over (order by ts desc), " +
+                    "lead(ts, 2, ts + 10) respect nulls over (order by ts desc), " +
+                    "lag(ts, 2, ts + 10) respect nulls over (order by ts desc), " +
+                    "lead(m, 2, m) over (), " +
+                    "lag(m, 2, m) over (), " +
+                    "lead(m, 2, m) ignore nulls over (order by ts desc), " +
+                    "lag(m, 2, m) ignore nulls over (order by ts desc), " +
+                    "lead(m, 2, m) respect nulls over (order by ts desc), " +
+                    "lag(m, 2, m) respect nulls over (order by ts desc), " +
+                    "from tab order by ts asc")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5548,31 +5548,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 0) over (order by ts desc), " +
-                            "lag(j, 0) over (order by ts desc), " +
-                            "lead(j, 0) ignore nulls over (order by ts desc), " +
-                            "lag(j, 0) ignore nulls over (order by ts desc), " +
-                            "lead(j, 0) respect nulls over (order by ts desc), " +
-                            "lag(j, 0) respect nulls over (order by ts desc), " +
-                            "lead(j, 0) over (), " +
-                            "lag(j, 0) over (), " +
-                            "lead(j, 0) ignore nulls over (order by ts desc), " +
-                            "lag(j, 0) ignore nulls over (order by ts desc), " +
-                            "lead(j, 0) respect nulls over (order by ts desc), " +
-                            "lag(j, 0) respect nulls over (order by ts desc), " +
-                            "lead(ts, 0) over (), " +
-                            "lag(ts, 0) over (), " +
-                            "lead(ts, 0) ignore nulls over (order by ts desc), " +
-                            "lag(ts, 0) ignore nulls over (order by ts desc), " +
-                            "lead(ts, 0) respect nulls over (order by ts desc), " +
-                            "lag(ts, 0) respect nulls over (order by ts desc), " +
-                            "lead(m, 0) over (), " +
-                            "lag(m, 0) over (), " +
-                            "lead(m, 0) ignore nulls over (order by ts desc), " +
-                            "lag(m, 0) ignore nulls over (order by ts desc), " +
-                            "lead(m, 0) respect nulls over (order by ts desc), " +
-                            "lag(m, 0) respect nulls over (order by ts desc), " +
-                            "from tab order by ts asc")
+                    "lead(j, 0) over (order by ts desc), " +
+                    "lag(j, 0) over (order by ts desc), " +
+                    "lead(j, 0) ignore nulls over (order by ts desc), " +
+                    "lag(j, 0) ignore nulls over (order by ts desc), " +
+                    "lead(j, 0) respect nulls over (order by ts desc), " +
+                    "lag(j, 0) respect nulls over (order by ts desc), " +
+                    "lead(j, 0) over (), " +
+                    "lag(j, 0) over (), " +
+                    "lead(j, 0) ignore nulls over (order by ts desc), " +
+                    "lag(j, 0) ignore nulls over (order by ts desc), " +
+                    "lead(j, 0) respect nulls over (order by ts desc), " +
+                    "lag(j, 0) respect nulls over (order by ts desc), " +
+                    "lead(ts, 0) over (), " +
+                    "lag(ts, 0) over (), " +
+                    "lead(ts, 0) ignore nulls over (order by ts desc), " +
+                    "lag(ts, 0) ignore nulls over (order by ts desc), " +
+                    "lead(ts, 0) respect nulls over (order by ts desc), " +
+                    "lag(ts, 0) respect nulls over (order by ts desc), " +
+                    "lead(m, 0) over (), " +
+                    "lag(m, 0) over (), " +
+                    "lead(m, 0) ignore nulls over (order by ts desc), " +
+                    "lag(m, 0) ignore nulls over (order by ts desc), " +
+                    "lead(m, 0) respect nulls over (order by ts desc), " +
+                    "lag(m, 0) respect nulls over (order by ts desc), " +
+                    "from tab order by ts asc")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5588,13 +5588,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lag(j) over (), " +
-                            "lag(j) ignore nulls over (), " +
-                            "lag(j) respect nulls over (), " +
-                            "lag(d) over (), " +
-                            "lag(ts) over (), " +
-                            "lag(m) over () " +
-                            "from tab ")
+                    "lag(j) over (), " +
+                    "lag(j) ignore nulls over (), " +
+                    "lag(j) respect nulls over (), " +
+                    "lag(d) over (), " +
+                    "lag(ts) over (), " +
+                    "lag(m) over () " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -5611,13 +5611,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lag(j, 3) over (), " +
-                            "lag(j, 3) ignore nulls over (), " +
-                            "lag(j, 3) respect nulls over (), " +
-                            "lag(d, 3) over (), " +
-                            "lag(ts, 3) over (), " +
-                            "lag(m, 3) over () " +
-                            "from tab ")
+                    "lag(j, 3) over (), " +
+                    "lag(j, 3) ignore nulls over (), " +
+                    "lag(j, 3) respect nulls over (), " +
+                    "lag(d, 3) over (), " +
+                    "lag(ts, 3) over (), " +
+                    "lag(m, 3) over () " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -5634,13 +5634,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lag(j, 2, j + 1) over (), " +
-                            "lag(j, 2, j + 1) ignore nulls over (), " +
-                            "lag(j, 2, j + 1) respect nulls over (), " +
-                            "lag(d, 2, d + 1) over (), " +
-                            "lag(ts, 2, ts + 10) over (), " +
-                            "lag(m, 2, m) over () " +
-                            "from tab ")
+                    "lag(j, 2, j + 1) over (), " +
+                    "lag(j, 2, j + 1) ignore nulls over (), " +
+                    "lag(j, 2, j + 1) respect nulls over (), " +
+                    "lag(d, 2, d + 1) over (), " +
+                    "lag(ts, 2, ts + 10) over (), " +
+                    "lag(m, 2, m) over () " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -5667,31 +5667,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "case when x::double % 3 = 0 THEN NULL ELSE x::double%5 END, 'k' || (x%5) ::symbol, 'k' || x, x::date from long_sequence(7)");
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j) over (partition by i), " +
-                            "lag(j) over (partition by i), " +
-                            "lead(j) ignore nulls over (partition by i), " +
-                            "lag(j) ignore nulls over (partition by i), " +
-                            "lead(j) respect nulls over (partition by i), " +
-                            "lag(j) respect nulls over (partition by i), " +
-                            "lead(d) over (partition by i), " +
-                            "lag(d) over (partition by i), " +
-                            "lead(d) ignore nulls over (partition by i), " +
-                            "lag(d) ignore nulls over (partition by i), " +
-                            "lead(d) respect nulls over (partition by i), " +
-                            "lag(d) respect nulls over (partition by i), " +
-                            "lead(ts) over (partition by i), " +
-                            "lag(ts) over (partition by i), " +
-                            "lead(ts) ignore nulls over (partition by i), " +
-                            "lag(ts) ignore nulls over (partition by i), " +
-                            "lead(ts) respect nulls over (partition by i), " +
-                            "lag(ts) respect nulls over (partition by i), " +
-                            "lead(m) over (partition by i), " +
-                            "lag(m) over (partition by i), " +
-                            "lead(m) ignore nulls over (partition by i), " +
-                            "lag(m) ignore nulls over (partition by i), " +
-                            "lead(m) respect nulls over (partition by i), " +
-                            "lag(m) respect nulls over (partition by i), " +
-                            "from tab ")
+                    "lead(j) over (partition by i), " +
+                    "lag(j) over (partition by i), " +
+                    "lead(j) ignore nulls over (partition by i), " +
+                    "lag(j) ignore nulls over (partition by i), " +
+                    "lead(j) respect nulls over (partition by i), " +
+                    "lag(j) respect nulls over (partition by i), " +
+                    "lead(d) over (partition by i), " +
+                    "lag(d) over (partition by i), " +
+                    "lead(d) ignore nulls over (partition by i), " +
+                    "lag(d) ignore nulls over (partition by i), " +
+                    "lead(d) respect nulls over (partition by i), " +
+                    "lag(d) respect nulls over (partition by i), " +
+                    "lead(ts) over (partition by i), " +
+                    "lag(ts) over (partition by i), " +
+                    "lead(ts) ignore nulls over (partition by i), " +
+                    "lag(ts) ignore nulls over (partition by i), " +
+                    "lead(ts) respect nulls over (partition by i), " +
+                    "lag(ts) respect nulls over (partition by i), " +
+                    "lead(m) over (partition by i), " +
+                    "lag(m) over (partition by i), " +
+                    "lead(m) ignore nulls over (partition by i), " +
+                    "lag(m) ignore nulls over (partition by i), " +
+                    "lead(m) respect nulls over (partition by i), " +
+                    "lag(m) respect nulls over (partition by i), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5707,31 +5707,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 0) over (partition by i), " +
-                            "lag(j, 0) over (partition by i), " +
-                            "lead(j, 0) ignore nulls over (partition by i), " +
-                            "lag(j, 0) ignore nulls over (partition by i), " +
-                            "lead(j, 0) ignore nulls over (partition by i), " +
-                            "lag(j, 0) ignore nulls over (partition by i), " +
-                            "lead(d, 0) over (partition by i), " +
-                            "lag(d, 0) over (partition by i), " +
-                            "lead(d, 0) ignore nulls over (partition by i), " +
-                            "lag(d, 0) ignore nulls over (partition by i), " +
-                            "lead(d, 0) ignore nulls over (partition by i), " +
-                            "lag(d, 0) ignore nulls over (partition by i), " +
-                            "lead(ts, 0) over (partition by i), " +
-                            "lag(ts, 0) over (partition by i), " +
-                            "lead(ts, 0) ignore nulls over (partition by i), " +
-                            "lag(ts, 0) ignore nulls over (partition by i), " +
-                            "lead(ts, 0) ignore nulls over (partition by i), " +
-                            "lag(ts, 0) ignore nulls over (partition by i), " +
-                            "lead(m, 0) over (partition by i), " +
-                            "lag(m, 0) over (partition by i), " +
-                            "lead(m, 0) ignore nulls over (partition by i), " +
-                            "lag(m, 0) ignore nulls over (partition by i), " +
-                            "lead(m, 0) ignore nulls over (partition by i), " +
-                            "lag(m, 0) ignore nulls over (partition by i), " +
-                            "from tab ")
+                    "lead(j, 0) over (partition by i), " +
+                    "lag(j, 0) over (partition by i), " +
+                    "lead(j, 0) ignore nulls over (partition by i), " +
+                    "lag(j, 0) ignore nulls over (partition by i), " +
+                    "lead(j, 0) ignore nulls over (partition by i), " +
+                    "lag(j, 0) ignore nulls over (partition by i), " +
+                    "lead(d, 0) over (partition by i), " +
+                    "lag(d, 0) over (partition by i), " +
+                    "lead(d, 0) ignore nulls over (partition by i), " +
+                    "lag(d, 0) ignore nulls over (partition by i), " +
+                    "lead(d, 0) ignore nulls over (partition by i), " +
+                    "lag(d, 0) ignore nulls over (partition by i), " +
+                    "lead(ts, 0) over (partition by i), " +
+                    "lag(ts, 0) over (partition by i), " +
+                    "lead(ts, 0) ignore nulls over (partition by i), " +
+                    "lag(ts, 0) ignore nulls over (partition by i), " +
+                    "lead(ts, 0) ignore nulls over (partition by i), " +
+                    "lag(ts, 0) ignore nulls over (partition by i), " +
+                    "lead(m, 0) over (partition by i), " +
+                    "lag(m, 0) over (partition by i), " +
+                    "lead(m, 0) ignore nulls over (partition by i), " +
+                    "lag(m, 0) ignore nulls over (partition by i), " +
+                    "lead(m, 0) ignore nulls over (partition by i), " +
+                    "lag(m, 0) ignore nulls over (partition by i), " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -5748,31 +5748,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 3) over (partition by i), " +
-                            "lag(j, 3) over (partition by i), " +
-                            "lead(j, 3) ignore nulls over (partition by i), " +
-                            "lag(j, 3) ignore nulls over (partition by i), " +
-                            "lead(j, 3) respect nulls over (partition by i), " +
-                            "lag(j, 3) respect nulls over (partition by i), " +
-                            "lead(d, 3) over (partition by i), " +
-                            "lag(d, 3) over (partition by i), " +
-                            "lead(d, 3) ignore nulls over (partition by i), " +
-                            "lag(d, 3) ignore nulls over (partition by i), " +
-                            "lead(d, 3) respect nulls over (partition by i), " +
-                            "lag(d, 3) respect nulls over (partition by i), " +
-                            "lead(ts, 3) over (partition by i), " +
-                            "lag(ts, 3) over (partition by i), " +
-                            "lead(ts, 3) ignore nulls over (partition by i), " +
-                            "lag(ts, 3) ignore nulls over (partition by i), " +
-                            "lead(ts, 3) respect nulls over (partition by i), " +
-                            "lag(ts, 3) respect nulls over (partition by i), " +
-                            "lead(m, 3) over (partition by i), " +
-                            "lag(m, 3) over (partition by i), " +
-                            "lead(m, 3) ignore nulls over (partition by i), " +
-                            "lag(m, 3) ignore nulls over (partition by i), " +
-                            "lead(m, 3) respect nulls over (partition by i), " +
-                            "lag(m, 3) respect nulls over (partition by i), " +
-                            "from tab ")
+                    "lead(j, 3) over (partition by i), " +
+                    "lag(j, 3) over (partition by i), " +
+                    "lead(j, 3) ignore nulls over (partition by i), " +
+                    "lag(j, 3) ignore nulls over (partition by i), " +
+                    "lead(j, 3) respect nulls over (partition by i), " +
+                    "lag(j, 3) respect nulls over (partition by i), " +
+                    "lead(d, 3) over (partition by i), " +
+                    "lag(d, 3) over (partition by i), " +
+                    "lead(d, 3) ignore nulls over (partition by i), " +
+                    "lag(d, 3) ignore nulls over (partition by i), " +
+                    "lead(d, 3) respect nulls over (partition by i), " +
+                    "lag(d, 3) respect nulls over (partition by i), " +
+                    "lead(ts, 3) over (partition by i), " +
+                    "lag(ts, 3) over (partition by i), " +
+                    "lead(ts, 3) ignore nulls over (partition by i), " +
+                    "lag(ts, 3) ignore nulls over (partition by i), " +
+                    "lead(ts, 3) respect nulls over (partition by i), " +
+                    "lag(ts, 3) respect nulls over (partition by i), " +
+                    "lead(m, 3) over (partition by i), " +
+                    "lag(m, 3) over (partition by i), " +
+                    "lead(m, 3) ignore nulls over (partition by i), " +
+                    "lag(m, 3) ignore nulls over (partition by i), " +
+                    "lead(m, 3) respect nulls over (partition by i), " +
+                    "lag(m, 3) respect nulls over (partition by i), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5788,31 +5788,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 2, j + 1) over (partition by i), " +
-                            "lag(j, 2, j + 1) over (partition by i), " +
-                            "lead(j, 2, j + 1) ignore nulls over (partition by i), " +
-                            "lag(j, 2, j + 1) ignore nulls over (partition by i), " +
-                            "lead(j, 2, j + 1) respect nulls over (partition by i), " +
-                            "lag(j, 2, j + 1) respect nulls over (partition by i), " +
-                            "lead(d, 2, d + 1) over (partition by i), " +
-                            "lag(d, 2, d + 1) over (partition by i), " +
-                            "lead(d, 2, d + 1) ignore nulls over (partition by i), " +
-                            "lag(d, 2, d + 1) ignore nulls over (partition by i), " +
-                            "lead(d, 2, d + 1) respect nulls over (partition by i), " +
-                            "lag(d, 2, d + 1) respect nulls over (partition by i), " +
-                            "lead(ts, 2, ts + 10) over (partition by i), " +
-                            "lag(ts, 2, ts + 10) over (partition by i), " +
-                            "lead(ts, 2, ts + 10) ignore nulls over (partition by i), " +
-                            "lag(ts, 2, ts + 10) ignore nulls over (partition by i), " +
-                            "lead(ts, 2, ts + 10) respect nulls over (partition by i), " +
-                            "lag(ts, 2, ts + 10) respect nulls over (partition by i), " +
-                            "lead(m, 2, m) over (partition by i), " +
-                            "lag(m, 2, m) over (partition by i), " +
-                            "lead(m, 2, m) ignore nulls over (partition by i), " +
-                            "lag(m, 2, m) ignore nulls over (partition by i), " +
-                            "lead(m, 2, m) respect nulls over (partition by i), " +
-                            "lag(m, 2, m) respect nulls over (partition by i), " +
-                            "from tab ")
+                    "lead(j, 2, j + 1) over (partition by i), " +
+                    "lag(j, 2, j + 1) over (partition by i), " +
+                    "lead(j, 2, j + 1) ignore nulls over (partition by i), " +
+                    "lag(j, 2, j + 1) ignore nulls over (partition by i), " +
+                    "lead(j, 2, j + 1) respect nulls over (partition by i), " +
+                    "lag(j, 2, j + 1) respect nulls over (partition by i), " +
+                    "lead(d, 2, d + 1) over (partition by i), " +
+                    "lag(d, 2, d + 1) over (partition by i), " +
+                    "lead(d, 2, d + 1) ignore nulls over (partition by i), " +
+                    "lag(d, 2, d + 1) ignore nulls over (partition by i), " +
+                    "lead(d, 2, d + 1) respect nulls over (partition by i), " +
+                    "lag(d, 2, d + 1) respect nulls over (partition by i), " +
+                    "lead(ts, 2, ts + 10) over (partition by i), " +
+                    "lag(ts, 2, ts + 10) over (partition by i), " +
+                    "lead(ts, 2, ts + 10) ignore nulls over (partition by i), " +
+                    "lag(ts, 2, ts + 10) ignore nulls over (partition by i), " +
+                    "lead(ts, 2, ts + 10) respect nulls over (partition by i), " +
+                    "lag(ts, 2, ts + 10) respect nulls over (partition by i), " +
+                    "lead(m, 2, m) over (partition by i), " +
+                    "lag(m, 2, m) over (partition by i), " +
+                    "lead(m, 2, m) ignore nulls over (partition by i), " +
+                    "lag(m, 2, m) ignore nulls over (partition by i), " +
+                    "lead(m, 2, m) respect nulls over (partition by i), " +
+                    "lag(m, 2, m) respect nulls over (partition by i), " +
+                    "from tab ")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5828,31 +5828,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 2, j + 1) over (partition by i order by ts desc), " +
-                            "lag(j, 2, j + 1) over (partition by i order by ts desc), " +
-                            "lead(j, 2, j + 1) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(j, 2, j + 1) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(j, 2, j + 1) respect nulls over (partition by i order by ts desc), " +
-                            "lag(j, 2, j + 1) respect nulls over (partition by i order by ts desc), " +
-                            "lead(d, 2, d + 1) over (partition by i), " +
-                            "lag(d, 2, d + 1) over (partition by i), " +
-                            "lead(d, 2, d + 1) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(d, 2, d + 1) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(d, 2, d + 1) respect nulls over (partition by i order by ts desc), " +
-                            "lag(d, 2, d + 1) respect nulls over (partition by i order by ts desc), " +
-                            "lead(ts, 2, ts + 10) over (partition by i), " +
-                            "lag(ts, 2, ts + 10) over (partition by i), " +
-                            "lead(ts, 2, ts + 10) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(ts, 2, ts + 10) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(ts, 2, ts + 10) respect nulls over (partition by i order by ts desc), " +
-                            "lag(ts, 2, ts + 10) respect nulls over (partition by i order by ts desc), " +
-                            "lead(m, 2, m) over (partition by i), " +
-                            "lag(m, 2, m) over (partition by i), " +
-                            "lead(m, 2, m) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(m, 2, m) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(m, 2, m) respect nulls over (partition by i order by ts desc), " +
-                            "lag(m, 2, m) respect nulls over (partition by i order by ts desc), " +
-                            "from tab order by ts asc")
+                    "lead(j, 2, j + 1) over (partition by i order by ts desc), " +
+                    "lag(j, 2, j + 1) over (partition by i order by ts desc), " +
+                    "lead(j, 2, j + 1) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(j, 2, j + 1) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(j, 2, j + 1) respect nulls over (partition by i order by ts desc), " +
+                    "lag(j, 2, j + 1) respect nulls over (partition by i order by ts desc), " +
+                    "lead(d, 2, d + 1) over (partition by i), " +
+                    "lag(d, 2, d + 1) over (partition by i), " +
+                    "lead(d, 2, d + 1) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(d, 2, d + 1) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(d, 2, d + 1) respect nulls over (partition by i order by ts desc), " +
+                    "lag(d, 2, d + 1) respect nulls over (partition by i order by ts desc), " +
+                    "lead(ts, 2, ts + 10) over (partition by i), " +
+                    "lag(ts, 2, ts + 10) over (partition by i), " +
+                    "lead(ts, 2, ts + 10) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(ts, 2, ts + 10) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(ts, 2, ts + 10) respect nulls over (partition by i order by ts desc), " +
+                    "lag(ts, 2, ts + 10) respect nulls over (partition by i order by ts desc), " +
+                    "lead(m, 2, m) over (partition by i), " +
+                    "lag(m, 2, m) over (partition by i), " +
+                    "lead(m, 2, m) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(m, 2, m) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(m, 2, m) respect nulls over (partition by i order by ts desc), " +
+                    "lag(m, 2, m) respect nulls over (partition by i order by ts desc), " +
+                    "from tab order by ts asc")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5868,31 +5868,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lead(j, 0) over (partition by i order by ts desc), " +
-                            "lag(j, 0) over (partition by i order by ts desc), " +
-                            "lead(j, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(j, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(j, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lag(j, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lead(d, 0) over (partition by i order by ts desc), " +
-                            "lag(d, 0) over (partition by i order by ts desc), " +
-                            "lead(d, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(d, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(d, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lag(d, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lead(ts, 0) over (partition by i order by ts desc), " +
-                            "lag(ts, 0) over (partition by i order by ts desc), " +
-                            "lead(ts, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(ts, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(ts, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lag(ts, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lead(m, 0) over (partition by i order by ts desc), " +
-                            "lag(m, 0) over (partition by i order by ts desc), " +
-                            "lead(m, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(m, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(m, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lag(m, 0) respect nulls over (partition by i order by ts desc), " +
-                            "from tab order by ts asc")
+                    "lead(j, 0) over (partition by i order by ts desc), " +
+                    "lag(j, 0) over (partition by i order by ts desc), " +
+                    "lead(j, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(j, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(j, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lag(j, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lead(d, 0) over (partition by i order by ts desc), " +
+                    "lag(d, 0) over (partition by i order by ts desc), " +
+                    "lead(d, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(d, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(d, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lag(d, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lead(ts, 0) over (partition by i order by ts desc), " +
+                    "lag(ts, 0) over (partition by i order by ts desc), " +
+                    "lead(ts, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(ts, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(ts, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lag(ts, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lead(m, 0) over (partition by i order by ts desc), " +
+                    "lag(m, 0) over (partition by i order by ts desc), " +
+                    "lead(m, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lag(m, 0) ignore nulls over (partition by i order by ts desc), " +
+                    "lead(m, 0) respect nulls over (partition by i order by ts desc), " +
+                    "lag(m, 0) respect nulls over (partition by i order by ts desc), " +
+                    "from tab order by ts asc")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -5908,13 +5908,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lag(j) over (partition by i), " +
-                            "lag(j) ignore nulls over (partition by i), " +
-                            "lag(j) respect nulls over (partition by i), " +
-                            "lag(d) over (partition by i), " +
-                            "lag(ts) over (partition by i), " +
-                            "lag(m) over (partition by i) " +
-                            "from tab ")
+                    "lag(j) over (partition by i), " +
+                    "lag(j) ignore nulls over (partition by i), " +
+                    "lag(j) respect nulls over (partition by i), " +
+                    "lag(d) over (partition by i), " +
+                    "lag(ts) over (partition by i), " +
+                    "lag(m) over (partition by i) " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -5931,13 +5931,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lag(j, 3) over (partition by i), " +
-                            "lag(j, 3) ignore nulls over (partition by i), " +
-                            "lag(j, 3) respect nulls over (partition by i), " +
-                            "lag(d, 3) over (partition by i), " +
-                            "lag(ts, 3) over (partition by i), " +
-                            "lag(m, 3) over (partition by i) " +
-                            "from tab ")
+                    "lag(j, 3) over (partition by i), " +
+                    "lag(j, 3) ignore nulls over (partition by i), " +
+                    "lag(j, 3) respect nulls over (partition by i), " +
+                    "lag(d, 3) over (partition by i), " +
+                    "lag(ts, 3) over (partition by i), " +
+                    "lag(m, 3) over (partition by i) " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -5954,13 +5954,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, j, d, " +
-                            "lag(j, 2, j + 1) over (partition by i), " +
-                            "lag(j, 2, j + 1) ignore nulls over (partition by i), " +
-                            "lag(j, 2, j + 1) respect nulls over (partition by i), " +
-                            "lag(d, 2, d + 1) over (partition by i), " +
-                            "lag(ts, 2, ts + 1) over (partition by i), " +
-                            "lag(m, 2, m) over (partition by i) " +
-                            "from tab ")
+                    "lag(j, 2, j + 1) over (partition by i), " +
+                    "lag(j, 2, j + 1) ignore nulls over (partition by i), " +
+                    "lag(j, 2, j + 1) respect nulls over (partition by i), " +
+                    "lag(d, 2, d + 1) over (partition by i), " +
+                    "lag(ts, 2, ts + 1) over (partition by i), " +
+                    "lag(m, 2, m) over (partition by i) " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -6077,13 +6077,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "from long_sequence(360000)");
 
             assertQuery("select i, ts, d, max_d_window from (" +
-                            "select i, ts, d, " +
-                            "max(d) over (partition by i order by ts range between 80000 preceding and current row) as max_d_window, " +
-                            "row_number() over (partition by i order by ts desc) as rn " +
-                            "from tab " +
-                            "where i < 4" +
-                            ") where rn = 1 " +
-                            "order by i")
+                    "select i, ts, d, " +
+                    "max(d) over (partition by i order by ts range between 80000 preceding and current row) as max_d_window, " +
+                    "row_number() over (partition by i order by ts desc) as rn " +
+                    "from tab " +
+                    "where i < 4" +
+                    ") where rn = 1 " +
+                    "order by i")
                     .noLeakCheck()
                     .returns("""
                             i\tts\td\tmax_d_window
@@ -6094,15 +6094,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select max(d) as max_d, i " +
-                            "from ( " +
-                            "  select data.d, data.i " +
-                            "  from (select i, max(ts) as max from tab group by i) cnt " +
-                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "  order by data.i, ts " +
-                            ") " +
-                            "where i in (0,1,2,3) " +
-                            "group by i " +
-                            "order by i")
+                    "from ( " +
+                    "  select data.d, data.i " +
+                    "  from (select i, max(ts) as max from tab group by i) cnt " +
+                    "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                    "  order by data.i, ts " +
+                    ") " +
+                    "where i in (0,1,2,3) " +
+                    "group by i " +
+                    "order by i")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -6143,13 +6143,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQuery("select i, ts, d, max_d_window from (" +
-                            "select i, ts, d, " +
-                            "max(d) over (partition by i order by ts range between 80000 preceding and current row) as max_d_window, " +
-                            "row_number() over (partition by i order by ts desc) as rn " +
-                            "from tab " +
-                            "where i < 4" +
-                            ") where rn = 1 " +
-                            "order by i")
+                    "select i, ts, d, " +
+                    "max(d) over (partition by i order by ts range between 80000 preceding and current row) as max_d_window, " +
+                    "row_number() over (partition by i order by ts desc) as rn " +
+                    "from tab " +
+                    "where i < 4" +
+                    ") where rn = 1 " +
+                    "order by i")
                     .noLeakCheck()
                     .returns("""
                             i\tts\td\tmax_d_window
@@ -6161,15 +6161,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Cross-check: aggregate query equivalent to the window function
             assertQuery("select max(d) as max_d, i " +
-                            "from ( " +
-                            "  select data.d, data.i " +
-                            "  from (select i, max(ts) as max from tab group by i) cnt " +
-                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "  order by data.i, ts " +
-                            ") " +
-                            "where i in (0,1,2,3) " +
-                            "group by i " +
-                            "order by i")
+                    "from ( " +
+                    "  select data.d, data.i " +
+                    "  from (select i, max(ts) as max from tab group by i) cnt " +
+                    "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                    "  order by data.i, ts " +
+                    ") " +
+                    "where i in (0,1,2,3) " +
+                    "group by i " +
+                    "order by i")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -6197,9 +6197,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Verify max() correctly handles nulls in large dataset
             assertQuery("SELECT grp, " +
-                            "count(other_ts) as non_null_count, " +
-                            "max(other_ts) as max_other_ts " +
-                            "FROM tab GROUP BY grp ORDER BY grp")
+                    "count(other_ts) as non_null_count, " +
+                    "max(other_ts) as max_other_ts " +
+                    "FROM tab GROUP BY grp ORDER BY grp")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -6210,8 +6210,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Test window function with nulls
             assertQuery("SELECT DISTINCT grp, max_window_ts FROM (" +
-                            "SELECT grp, max(other_ts) OVER (PARTITION BY grp) as max_window_ts FROM tab" +
-                            ") ORDER BY grp")
+                    "SELECT grp, max(other_ts) OVER (PARTITION BY grp) as max_window_ts FROM tab" +
+                    ") ORDER BY grp")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -6237,9 +6237,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Verify max() correctly handles nulls in large dataset
             assertQuery("SELECT grp, " +
-                            "count(other_ts) as non_null_count, " +
-                            "max(other_ts) as max_other_ts " +
-                            "FROM tab GROUP BY grp ORDER BY grp")
+                    "count(other_ts) as non_null_count, " +
+                    "max(other_ts) as max_other_ts " +
+                    "FROM tab GROUP BY grp ORDER BY grp")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -6250,8 +6250,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Test window function with nulls
             assertQuery("SELECT DISTINCT grp, max_window_ts FROM (" +
-                            "SELECT grp, max(other_ts) OVER (PARTITION BY grp) as max_window_ts FROM tab" +
-                            ") ORDER BY grp")
+                    "SELECT grp, max(other_ts) OVER (PARTITION BY grp) as max_window_ts FROM tab" +
+                    ") ORDER BY grp")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -6372,13 +6372,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Test max(timestamp) with window function over partitioned data with large frame
             // Test the last row of each partition to verify boundary conditions
             assertQuery("select i, ts, max_ts_window from (" +
-                            "select i, ts, " +
-                            "max(ts) over (partition by i order by ts range between 80000 preceding and current row) as max_ts_window, " +
-                            "row_number() over (partition by i order by ts desc) as rn " +
-                            "from tab " +
-                            "where i < 4" +
-                            ") where rn = 1 " +
-                            "order by i")
+                    "select i, ts, " +
+                    "max(ts) over (partition by i order by ts range between 80000 preceding and current row) as max_ts_window, " +
+                    "row_number() over (partition by i order by ts desc) as rn " +
+                    "from tab " +
+                    "where i < 4" +
+                    ") where rn = 1 " +
+                    "order by i")
                     .noLeakCheck()
                     .returns("""
                             i\tts\tmax_ts_window
@@ -6390,15 +6390,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Cross-check: aggregate query equivalent to the window function
             assertQuery("select max(ts) as max_ts, i " +
-                            "from ( " +
-                            "  select data.ts, data.i " +
-                            "  from (select i, max(ts) as max from tab group by i) cnt " +
-                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "  order by data.i, ts " +
-                            ") " +
-                            "where i in (0,1,2,3) " +
-                            "group by i " +
-                            "order by i")
+                    "from ( " +
+                    "  select data.ts, data.i " +
+                    "  from (select i, max(ts) as max from tab group by i) cnt " +
+                    "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                    "  order by data.i, ts " +
+                    ") " +
+                    "where i in (0,1,2,3) " +
+                    "group by i " +
+                    "order by i")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -6439,13 +6439,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Test max(timestamp_ns) with window function over partitioned data with large frame
             // Test the last row of each partition to verify boundary conditions
             assertQuery("select i, ts, max_ts_window from (" +
-                            "select i, ts, " +
-                            "max(ts) over (partition by i order by ts range between 80000 preceding and current row) as max_ts_window, " +
-                            "row_number() over (partition by i order by ts desc) as rn " +
-                            "from tab " +
-                            "where i < 4" +
-                            ") where rn = 1 " +
-                            "order by i")
+                    "select i, ts, " +
+                    "max(ts) over (partition by i order by ts range between 80000 preceding and current row) as max_ts_window, " +
+                    "row_number() over (partition by i order by ts desc) as rn " +
+                    "from tab " +
+                    "where i < 4" +
+                    ") where rn = 1 " +
+                    "order by i")
                     .noLeakCheck()
                     .returns("""
                             i\tts\tmax_ts_window
@@ -6457,15 +6457,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Cross-check: aggregate query equivalent to the window function
             assertQuery("select max(ts) as max_ts, i " +
-                            "from ( " +
-                            "  select data.ts, data.i " +
-                            "  from (select i, max(ts) as max from tab group by i) cnt " +
-                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "  order by data.i, ts " +
-                            ") " +
-                            "where i in (0,1,2,3) " +
-                            "group by i " +
-                            "order by i")
+                    "from ( " +
+                    "  select data.ts, data.i " +
+                    "  from (select i, max(ts) as max from tab group by i) cnt " +
+                    "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                    "  order by data.i, ts " +
+                    ") " +
+                    "where i in (0,1,2,3) " +
+                    "group by i " +
+                    "order by i")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -6519,10 +6519,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Test with wide time window that will cause deque to hold many max values simultaneously
             // With 10-second intervals and 1-hour window, each partition will have ~360 overlapping frames
             assertQuery("SELECT count(*) as cnt, count(distinct grp)  as partitions FROM (" +
-                            "SELECT ts, val, grp, " +
-                            "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) as max_ts_large_window " +
-                            "FROM tab" +
-                            ")")
+                    "SELECT ts, val, grp, " +
+                    "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) as max_ts_large_window " +
+                    "FROM tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -6547,10 +6547,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Test bounded range frame that exercises dequeMem overflow handling
             assertQuery("SELECT count(*) as cnt, max(val) as max_val FROM (" +
-                            "SELECT ts, val, grp, " +
-                            "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as max_ts_bounded " +
-                            "FROM tab" +
-                            ")")
+                    "SELECT ts, val, grp, " +
+                    "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as max_ts_bounded " +
+                    "FROM tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -6611,10 +6611,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Test with many partitions to exercise Map operations in MaxMinOverPartitionRangeFrameFunction
             assertQuery("SELECT count(distinct grp) as partition_count, count(*) as total_rows FROM (" +
-                            "SELECT ts, val, grp, " +
-                            "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '30' MINUTE PRECEDING AND CURRENT ROW) as max_ts " +
-                            "FROM tab" +
-                            ")")
+                    "SELECT ts, val, grp, " +
+                    "max(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '30' MINUTE PRECEDING AND CURRENT ROW) as max_ts " +
+                    "FROM tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -6851,10 +6851,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Test multiple ROWS frame variations in one query to ensure different code paths work together
             assertQuery("SELECT ts, val, grp, " +
-                            "max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as unbounded_to_current, " +
-                            "max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) as current_only, " +
-                            "max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as whole_partition " +
-                            "FROM tab")
+                    "max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as unbounded_to_current, " +
+                    "max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) as current_only, " +
+                    "max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as whole_partition " +
+                    "FROM tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -7034,8 +7034,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab2 values ('2021-01-04T00:00:00.000000Z', 30, 'A')");
 
             assertQuery("SELECT t1.ts as t1_ts, t1.val as t1_val, t1.grp as t1_grp, t2.ts as t2_ts, t2.val as t2_val, " +
-                            "CASE WHEN t1.ts > t2.ts THEN t1.ts ELSE t2.ts END as ttt " +
-                            "FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp ORDER BY t1.ts, t2.ts")
+                    "CASE WHEN t1.ts > t2.ts THEN t1.ts ELSE t2.ts END as ttt " +
+                    "FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp ORDER BY t1.ts, t2.ts")
                     .timestamp("t1_ts")
                     .noLeakCheck()
                     .returns("""
@@ -7047,8 +7047,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-04T00:00:00.000000Z\t30\t2021-01-04T00:00:00.000000Z
                             """);
             assertQuery("SELECT t1.ts as t1_ts, t1.val as t1_val, t1.grp as t1_grp, t2.ts as t2_ts, t2.val as t2_val, " +
-                            "max(CASE WHEN t1.ts > t2.ts THEN t1.ts ELSE t2.ts END) OVER (PARTITION BY t1.grp) as max_ts " +
-                            "FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp ORDER BY t1.ts, t2.ts")
+                    "max(CASE WHEN t1.ts > t2.ts THEN t1.ts ELSE t2.ts END) OVER (PARTITION BY t1.grp) as max_ts " +
+                    "FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp ORDER BY t1.ts, t2.ts")
                     .timestamp("t1_ts")
                     .expectSize()
                     .noLeakCheck()
@@ -7093,9 +7093,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-02T12:00:00.000000Z', 7, 'A')");
 
             assertQuery("SELECT ts, val, grp, " +
-                            "max(ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_rows, " +
-                            "max(ts) OVER (ORDER BY ts RANGE BETWEEN '6' HOUR PRECEDING AND CURRENT ROW) as max_range " +
-                            "FROM tab")
+                    "max(ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as max_rows, " +
+                    "max(ts) OVER (ORDER BY ts RANGE BETWEEN '6' HOUR PRECEDING AND CURRENT ROW) as max_range " +
+                    "FROM tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -7441,13 +7441,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Test min(double) with window function over partitioned data with large frame
             // Test the last row of each partition to verify boundary conditions
             assertQuery("select i, ts, min_d_window from (" +
-                            "select i, ts, " +
-                            "min(d) over (partition by i order by ts range between 80000 preceding and current row) as min_d_window, " +
-                            "row_number() over (partition by i order by ts desc) as rn " +
-                            "from tab " +
-                            "where i < 4" +
-                            ") where rn = 1 " +
-                            "order by i")
+                    "select i, ts, " +
+                    "min(d) over (partition by i order by ts range between 80000 preceding and current row) as min_d_window, " +
+                    "row_number() over (partition by i order by ts desc) as rn " +
+                    "from tab " +
+                    "where i < 4" +
+                    ") where rn = 1 " +
+                    "order by i")
                     .noLeakCheck()
                     .returns("""
                             i\tts\tmin_d_window
@@ -7459,15 +7459,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Cross-check: aggregate query equivalent to the window function
             assertQuery("select min(d) as min_d, i " +
-                            "from ( " +
-                            "  select data.d, data.i " +
-                            "  from (select i, max(ts) as max from tab group by i) cnt " +
-                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "  order by data.i, ts " +
-                            ") " +
-                            "where i in (0,1,2,3) " +
-                            "group by i " +
-                            "order by i")
+                    "from ( " +
+                    "  select data.d, data.i " +
+                    "  from (select i, max(ts) as max from tab group by i) cnt " +
+                    "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                    "  order by data.i, ts " +
+                    ") " +
+                    "where i in (0,1,2,3) " +
+                    "group by i " +
+                    "order by i")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -7493,9 +7493,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "from long_sequence(10000)");
 
             assertQuery("SELECT grp, " +
-                            "count(other_ts) as non_null_count, " +
-                            "min(other_ts) as min_other_ts " +
-                            "FROM tab GROUP BY grp ORDER BY grp")
+                    "count(other_ts) as non_null_count, " +
+                    "min(other_ts) as min_other_ts " +
+                    "FROM tab GROUP BY grp ORDER BY grp")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -7505,8 +7505,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT DISTINCT grp, min_window_ts FROM (" +
-                            "SELECT grp, min(other_ts) OVER (PARTITION BY grp) as min_window_ts FROM tab" +
-                            ") ORDER BY grp")
+                    "SELECT grp, min(other_ts) OVER (PARTITION BY grp) as min_window_ts FROM tab" +
+                    ") ORDER BY grp")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -7634,10 +7634,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "from long_sequence(50000)");
 
             assertQuery("SELECT count(*) as cnt, count(distinct grp)  as partitions FROM (" +
-                            "SELECT ts, val, grp, " +
-                            "min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) as min_ts_large_window " +
-                            "FROM tab" +
-                            ")")
+                    "SELECT ts, val, grp, " +
+                    "min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) as min_ts_large_window " +
+                    "FROM tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -7660,10 +7660,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "from long_sequence(50000)");
 
             assertQuery("SELECT count(*) as cnt, max(val) as max_val FROM (" +
-                            "SELECT ts, val, grp, " +
-                            "min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as min_ts_bounded " +
-                            "FROM tab" +
-                            ")")
+                    "SELECT ts, val, grp, " +
+                    "min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND '1' HOUR PRECEDING) as min_ts_bounded " +
+                    "FROM tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -7720,10 +7720,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "from long_sequence(25000)");
 
             assertQuery("SELECT count(distinct grp) as partition_count, count(*) as total_rows FROM (" +
-                            "SELECT ts, val, grp, " +
-                            "min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '30' MINUTE PRECEDING AND CURRENT ROW) as min_ts " +
-                            "FROM tab" +
-                            ")")
+                    "SELECT ts, val, grp, " +
+                    "min(ts) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '30' MINUTE PRECEDING AND CURRENT ROW) as min_ts " +
+                    "FROM tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -7915,10 +7915,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Two different named windows - use ORDER BY x (in SELECT)
             assertQuery("SELECT x, category, " +
-                            "sum(x) OVER w1 as sum1, " +
-                            "sum(x) OVER w2 as sum2 " +
-                            "FROM t " +
-                            "WINDOW w1 AS (ORDER BY x), w2 AS (PARTITION BY category ORDER BY x)")
+                    "sum(x) OVER w1 as sum1, " +
+                    "sum(x) OVER w2 as sum2 " +
+                    "FROM t " +
+                    "WINDOW w1 AS (ORDER BY x), w2 AS (PARTITION BY category ORDER BY x)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -7946,11 +7946,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // If bug exists: both would show partitioned results
             // Correct: sum_ws partitions by side, sum_wt is global cumulative
             assertQuery("SELECT x, side, " +
-                            "sum(x) OVER ws as sum_ws, " +
-                            "sum(x) OVER wt as sum_wt " +
-                            "FROM t " +
-                            "WINDOW ws AS (PARTITION BY side ORDER BY x), " +
-                            "wt AS (ORDER BY x)")
+                    "sum(x) OVER ws as sum_ws, " +
+                    "sum(x) OVER wt as sum_wt " +
+                    "FROM t " +
+                    "WINDOW ws AS (PARTITION BY side ORDER BY x), " +
+                    "wt AS (ORDER BY x)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -7973,8 +7973,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Basic named window - empty window (whole table as partition)
             assertQuery("SELECT x, y, row_number() OVER w as row_num " +
-                            "FROM t " +
-                            "WINDOW w AS ()")
+                    "FROM t " +
+                    "WINDOW w AS ()")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -7987,7 +7987,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Verify inline window works correctly (baseline)
             assertQuery("SELECT x, y, sum(y) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as sum " +
-                            "FROM t")
+                    "FROM t")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -7999,8 +7999,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Named window with ORDER BY using SELECT column
             assertQuery("SELECT x, y, sum(y) OVER w as sum " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)")
+                    "FROM t " +
+                    "WINDOW w AS (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -8021,8 +8021,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Window name is case-insensitive - use ORDER BY x
             assertQuery("SELECT x, sum(x) OVER MyWindow as sum " +
-                            "FROM t " +
-                            "WINDOW mywindow AS (ORDER BY x)")
+                    "FROM t " +
+                    "WINDOW mywindow AS (ORDER BY x)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -8043,8 +8043,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Use named window for cumulative sum
             assertQuery("SELECT x, sum(x) OVER w as sum_cumulative " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)")
+                    "FROM t " +
+                    "WINDOW w AS (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -8067,7 +8067,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // sum(x) OVER w and sum(x) OVER (ORDER BY ts) should deduplicate
             // when w AS (ORDER BY ts), producing only one window computation
             assertQuery("SELECT x, sum(x) OVER w as sum1, sum(x) OVER (ORDER BY ts) as sum2 " +
-                            "FROM t WINDOW w AS (ORDER BY ts)")
+                    "FROM t WINDOW w AS (ORDER BY ts)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -8118,7 +8118,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Also verify results are different
             assertQuery("SELECT x, sum(x) OVER w1 as sum1, sum(x) OVER w2 as sum2 " +
-                            "FROM t WINDOW w1 AS (ORDER BY ts), w2 AS (PARTITION BY category ORDER BY ts)")
+                    "FROM t WINDOW w1 AS (ORDER BY ts), w2 AS (PARTITION BY category ORDER BY ts)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -8154,8 +8154,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Empty window specification (whole table as one partition)
             assertQuery("SELECT x, row_number() OVER w as row_num " +
-                            "FROM t " +
-                            "WINDOW w AS ()")
+                    "FROM t " +
+                    "WINDOW w AS ()")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -8271,11 +8271,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Two different named windows in the same query
             assertQuery("SELECT x, category, " +
-                            "sum(x) OVER w_global, " +
-                            "sum(x) OVER w_part " +
-                            "FROM t " +
-                            "WINDOW w_global AS (ORDER BY ts), " +
-                            "w_part AS (PARTITION BY category ORDER BY ts)")
+                    "sum(x) OVER w_global, " +
+                    "sum(x) OVER w_part " +
+                    "FROM t " +
+                    "WINDOW w_global AS (ORDER BY ts), " +
+                    "w_part AS (PARTITION BY category ORDER BY ts)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -8318,8 +8318,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Named window referenced inside a nested window function
             assertQuery("SELECT sum(row_number() OVER w) OVER () as outer_sum " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY ts)")
+                    "FROM t " +
+                    "WINDOW w AS (ORDER BY ts)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -8361,8 +8361,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // ORDER BY y, but y is not in SELECT - this should work
             assertQuery("SELECT x, sum(x) OVER w as sum_x " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY y)")
+                    "FROM t " +
+                    "WINDOW w AS (ORDER BY y)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -8387,8 +8387,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // PARTITION BY category, but category is not in SELECT - this should work
             assertQuery("SELECT x, sum(x) OVER w as sum_x " +
-                            "FROM t " +
-                            "WINDOW w AS (PARTITION BY category ORDER BY x)")
+                    "FROM t " +
+                    "WINDOW w AS (PARTITION BY category ORDER BY x)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -8463,8 +8463,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // rank() and dense_rank() with named window
             assertQuery("SELECT x, rank() OVER w as r, dense_rank() OVER w as dr " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY x)")
+                    "FROM t " +
+                    "WINDOW w AS (ORDER BY x)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -8487,8 +8487,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Multiple functions using the same named window - use ORDER BY x (in SELECT)
             assertQuery("SELECT x, sum(x) OVER w as sum, avg(x) OVER w as avg, count(*) OVER w as count " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY x)")
+                    "FROM t " +
+                    "WINDOW w AS (ORDER BY x)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -8511,8 +8511,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // row_number() with named window - use ORDER BY x
             assertQuery("SELECT x, category, row_number() OVER w as row_num " +
-                            "FROM t " +
-                            "WINDOW w AS (PARTITION BY category ORDER BY x)")
+                    "FROM t " +
+                    "WINDOW w AS (PARTITION BY category ORDER BY x)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -8630,7 +8630,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (30, 3, 2000000)");
 
             assertQuery("WITH a AS (SELECT * FROM t) " +
-                            "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)")
+                    "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -8654,7 +8654,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (40, 'B', 3000000)");
 
             assertQuery("WITH a AS (SELECT * FROM t) " +
-                            "SELECT x, category, sum(x) OVER w as sum_x FROM a WINDOW w AS (PARTITION BY category ORDER BY ts)")
+                    "SELECT x, category, sum(x) OVER w as sum_x FROM a WINDOW w AS (PARTITION BY category ORDER BY ts)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -8679,7 +8679,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (40, 2, 3000000)");
 
             assertQuery("WITH a AS (SELECT * FROM t WHERE y = 1) " +
-                            "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)")
+                    "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -8700,7 +8700,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (30, 2000000)");
 
             assertQuery("WITH a AS (SELECT x, x * 2 as double_x, ts FROM t) " +
-                            "SELECT x, double_x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)")
+                    "SELECT x, double_x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -8726,7 +8726,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Row 2: preceding row is 1, exclude self -> 1
             // Row 3: preceding rows are 1,2, exclude self -> 3
             assertQuery("SELECT x, sum(x) OVER w as sum FROM t " +
-                            "WINDOW w AS (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW)")
+                    "WINDOW w AS (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -8751,8 +8751,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Named window with ROWS frame specification - use ORDER BY x (in SELECT)
             assertQuery("SELECT x, sum(x) OVER w as sum " +
-                            "FROM t " +
-                            "WINDOW w AS (ORDER BY x ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)")
+                    "FROM t " +
+                    "WINDOW w AS (ORDER BY x ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -8777,10 +8777,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Window function combined with GROUP BY is not supported - must use sub-query
             assertQuery("SELECT category, sum(x) as total, " +
-                            "sum(x) OVER w " +
-                            "FROM t " +
-                            "GROUP BY category " +
-                            "WINDOW w AS (ORDER BY category)")
+                    "sum(x) OVER w " +
+                    "FROM t " +
+                    "GROUP BY category " +
+                    "WINDOW w AS (ORDER BY category)")
                     .noLeakCheck()
                     .fails(0, "Window function is not allowed in context of aggregation. Use sub-query.");
         });
@@ -8796,8 +8796,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (30, 2000000)");
 
             assertQuery("SELECT x, sum(x) OVER w as sum_x, count(*) OVER (ORDER BY ts) as count_x " +
-                            "FROM (SELECT * FROM t) " +
-                            "WINDOW w AS (ORDER BY ts)")
+                    "FROM (SELECT * FROM t) " +
+                    "WINDOW w AS (ORDER BY ts)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -8844,7 +8844,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Use first CTE with window function
             assertQuery("WITH a AS (SELECT * FROM t1), b AS (SELECT * FROM t2) " +
-                            "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)")
+                    "SELECT x, sum(x) OVER w as sum_x FROM a WINDOW w AS (ORDER BY ts)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -8888,7 +8888,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // SQL standard: WINDOW clause comes before ORDER BY
             assertQuery("SELECT x, sum(x) OVER w as sum FROM t " +
-                            "WINDOW w AS (ORDER BY ts) ORDER BY ts DESC")
+                    "WINDOW w AS (ORDER BY ts) ORDER BY ts DESC")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -8912,8 +8912,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Use ORDER BY x since x is in SELECT list
             // Note: ORDER BY columns not in SELECT list requires additional column propagation fix
             assertQuery("SELECT x, y, category, sum(y) OVER w as sum " +
-                            "FROM t " +
-                            "WINDOW w AS (PARTITION BY category ORDER BY x)")
+                    "FROM t " +
+                    "WINDOW w AS (PARTITION BY category ORDER BY x)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -8970,7 +8970,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Row 3 (ts=2s, x=3): sum of rows within [2s-2s, 2s] = sum(1,2,3) = 6
             // Row 4 (ts=4s, x=4): sum of rows within [4s-2s, 4s] = sum(3,4) = 7
             assertQuery("SELECT x, sum(x) OVER w FROM t " +
-                            "WINDOW w AS (ORDER BY ts RANGE BETWEEN '2' SECOND PRECEDING AND CURRENT ROW)")
+                    "WINDOW w AS (ORDER BY ts RANGE BETWEEN '2' SECOND PRECEDING AND CURRENT ROW)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -9109,7 +9109,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // WINDOW clause with table-prefixed columns
             assertQuery("SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER w as lag " +
-                            "FROM fx_trades t WINDOW w AS (PARTITION BY t.symbol ORDER BY t.timestamp)")
+                    "FROM fx_trades t WINDOW w AS (PARTITION BY t.symbol ORDER BY t.timestamp)")
                     .timestamp("timestamp")
                     .expectSize()
                     .noLeakCheck()
@@ -9122,7 +9122,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // WINDOW clause with unprefixed columns
             assertQuery("SELECT t.symbol, t.timestamp, lag(t.timestamp) OVER w as lag " +
-                            "FROM fx_trades t WINDOW w AS (PARTITION BY symbol ORDER BY timestamp)")
+                    "FROM fx_trades t WINDOW w AS (PARTITION BY symbol ORDER BY timestamp)")
                     .timestamp("timestamp")
                     .expectSize()
                     .noLeakCheck()
@@ -9150,8 +9150,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Each SELECT in a UNION ALL has its own WINDOW clause
             assertQuery("SELECT x, sum(x) OVER w FROM t1 WINDOW w AS (ORDER BY ts) " +
-                            "UNION ALL " +
-                            "SELECT x, sum(x) OVER w FROM t2 WINDOW w AS (ORDER BY ts)")
+                    "UNION ALL " +
+                    "SELECT x, sum(x) OVER w FROM t2 WINDOW w AS (ORDER BY ts)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -9175,10 +9175,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // WINDOW functions (named or inline) are not allowed in WINDOW JOIN queries
             assertQuery("SELECT price, bid, avg(price) OVER w as avg_price " +
-                            "FROM trades " +
-                            "WINDOW JOIN quotes ON ts " +
-                            "RANGE BETWEEN 10 SECOND PRECEDING AND 10 SECOND FOLLOWING " +
-                            "WINDOW w AS (ORDER BY ts)")
+                    "FROM trades " +
+                    "WINDOW JOIN quotes ON ts " +
+                    "RANGE BETWEEN 10 SECOND PRECEDING AND 10 SECOND FOLLOWING " +
+                    "WINDOW w AS (ORDER BY ts)")
                     .fails(19, "WINDOW functions are not allowed in WINDOW JOIN queries");
         });
     }
@@ -9187,12 +9187,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNegativeLimitWindowOrderedByNotTimestamp() throws Exception {
         // https://github.com/questdb/questdb/issues/4748
         assertMemoryLeak(() -> assertQuery("""
-                        SELECT x, row_number() OVER (
-                            ORDER BY x asc
-                            RANGE UNBOUNDED PRECEDING
-                        )
-                        FROM long_sequence(10)
-                        limit -10""")
+                SELECT x, row_number() OVER (
+                    ORDER BY x asc
+                    RANGE UNBOUNDED PRECEDING
+                )
+                FROM long_sequence(10)
+                limit -10""")
                 .expectSize()
                 .returns("""
                         x\trow_number
@@ -9501,8 +9501,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // row_number()
             assertQuery("select row_number() over (partition by i order by ts desc) " +
-                            "from tab " +
-                            "order by ts asc")
+                    "from tab " +
+                    "order by ts asc")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -9517,8 +9517,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select row_number() over (partition by i order by ts desc)" +
-                            "from tab " +
-                            "order by ts desc")
+                    "from tab " +
+                    "order by ts desc")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -9534,8 +9534,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select row_number() over (partition by i order by ts asc) " +
-                            "from tab " +
-                            "order by ts asc")
+                    "from tab " +
+                    "order by ts asc")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -9551,8 +9551,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select row_number() over (partition by i order by ts asc) " +
-                            "from tab " +
-                            "order by ts desc")
+                    "from tab " +
+                    "order by ts desc")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -9567,8 +9567,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select row_number() over (partition by i order by i, j asc) " +
-                            "from tab " +
-                            "order by ts desc")
+                    "from tab " +
+                    "order by ts desc")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -9617,27 +9617,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQuery("select row_number() over (partition by i order by ts asc), " +
-                            "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   first_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   last_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(d) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(c) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   rank() over (partition by i order by j asc), " +
-                            "   dense_rank() over (partition by i order by j asc), " +
-                            "   lag(j) over (partition by i order by j asc), " +
-                            "   lead(j) over (partition by i order by j asc), " +
-                            "   lag(j) ignore nulls over (partition by i order by j asc), " +
-                            "   lead(j) ignore nulls over (partition by i order by j asc) " +
-                            "from tab " +
-                            "order by ts asc")
+                    "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   first_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   last_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(d) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(c) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   rank() over (partition by i order by j asc), " +
+                    "   dense_rank() over (partition by i order by j asc), " +
+                    "   lag(j) over (partition by i order by j asc), " +
+                    "   lead(j) over (partition by i order by j asc), " +
+                    "   lag(j) ignore nulls over (partition by i order by j asc), " +
+                    "   lead(j) ignore nulls over (partition by i order by j asc) " +
+                    "from tab " +
+                    "order by ts asc")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -9652,27 +9652,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select row_number() over (partition by i order by ts asc), " +
-                            "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   first_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   last_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(d) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   count(c) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
-                            "   rank() over (partition by i order by j asc), " +
-                            "   dense_rank() over (partition by i order by j asc), " +
-                            "   lag(j) over (partition by i order by j asc), " +
-                            "   lead(j) over (partition by i order by j asc), " +
-                            "   lag(j) ignore nulls over (partition by i order by j asc), " +
-                            "   lead(j) ignore nulls over (partition by i order by j asc) " +
-                            "from tab " +
-                            "order by ts desc")
+                    "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   first_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   first_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   last_value(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   last_value(j) ignore nulls over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(*) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(s) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(d) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   count(c) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   max(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   min(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
+                    "   rank() over (partition by i order by j asc), " +
+                    "   dense_rank() over (partition by i order by j asc), " +
+                    "   lag(j) over (partition by i order by j asc), " +
+                    "   lead(j) over (partition by i order by j asc), " +
+                    "   lag(j) ignore nulls over (partition by i order by j asc), " +
+                    "   lead(j) ignore nulls over (partition by i order by j asc) " +
+                    "from tab " +
+                    "order by ts desc")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -9729,9 +9729,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // rank()/dense_rank() over(partition by)
             assertQuery("select ts, " +
-                            "rank() over (partition by s), " +
-                            "dense_rank() over (partition by s) " +
-                            "from tab ")
+                    "rank() over (partition by s), " +
+                    "dense_rank() over (partition by s) " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -9754,9 +9754,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // rank()/dense_rank() over()
             assertQuery("select ts, " +
-                            "rank() over (), " +
-                            "dense_rank() over () " +
-                            "from tab ")
+                    "rank() over (), " +
+                    "dense_rank() over () " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -9779,9 +9779,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // rank()/dense_rank() over(partition by xxx order by xxx)
             assertQuery("select ts, s," +
-                            "rank() over (partition by s order by ts), " +
-                            "dense_rank() over (partition by s order by ts) " +
-                            "from tab ")
+                    "rank() over (partition by s order by ts), " +
+                    "dense_rank() over (partition by s order by ts) " +
+                    "from tab ")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -9803,9 +9803,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, s," +
-                            "rank() over (partition by s order by ts), " +
-                            "dense_rank() over (partition by s order by ts) " +
-                            "from tab order by s, ts")
+                    "rank() over (partition by s order by ts), " +
+                    "dense_rank() over (partition by s order by ts) " +
+                    "from tab order by s, ts")
                     .timestamp("")
                     .expectSize()
                     .noLeakCheck()
@@ -9826,11 +9826,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, s," +
-                            "rank() over (partition by s order by ts), " +
-                            "rank() over (partition by s order by ts desc), " +
-                            "dense_rank() over (partition by s order by ts), " +
-                            "dense_rank() over (partition by s order by ts desc) " +
-                            "from tab order by s, ts")
+                    "rank() over (partition by s order by ts), " +
+                    "rank() over (partition by s order by ts desc), " +
+                    "dense_rank() over (partition by s order by ts), " +
+                    "dense_rank() over (partition by s order by ts desc) " +
+                    "from tab order by s, ts")
                     .timestamp("")
                     .expectSize()
                     .noLeakCheck()
@@ -9852,9 +9852,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // rank()/dense_rank() over(order by xxx)
             assertQuery("select ts," +
-                            "rank() over (order by ts), " +
-                            "dense_rank() over (order by ts) " +
-                            "from tab order by ts")
+                    "rank() over (order by ts), " +
+                    "dense_rank() over (order by ts) " +
+                    "from tab order by ts")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -9876,9 +9876,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, s," +
-                            "rank() over (order by ts), " +
-                            "dense_rank() over (order by ts) " +
-                            "from tab order by s")
+                    "rank() over (order by ts), " +
+                    "dense_rank() over (order by ts) " +
+                    "from tab order by s")
                     .timestamp("")
                     .expectSize()
                     .noLeakCheck()
@@ -9899,9 +9899,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts," +
-                            "rank() over (order by ts), " +
-                            "dense_rank() over (order by ts) " +
-                            "from tab")
+                    "rank() over (order by ts), " +
+                    "dense_rank() over (order by ts) " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -9923,11 +9923,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts," +
-                            "rank() over (order by ts), " +
-                            "dense_rank() over (order by ts), " +
-                            "rank() over (order by ts desc), " +
-                            "dense_rank() over (order by ts desc) " +
-                            "from tab")
+                    "rank() over (order by ts), " +
+                    "dense_rank() over (order by ts), " +
+                    "rank() over (order by ts desc), " +
+                    "dense_rank() over (order by ts desc) " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -9948,9 +9948,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, s," +
-                            "rank() over (partition by concat(s,'foobar') order by ts desc)," +
-                            "dense_rank() over (partition by concat(s,'foobar') order by ts desc)" +
-                            "from tab order by s, ts")
+                    "rank() over (partition by concat(s,'foobar') order by ts desc)," +
+                    "dense_rank() over (partition by concat(s,'foobar') order by ts desc)" +
+                    "from tab order by s, ts")
                     .timestamp("")
                     .expectSize()
                     .noLeakCheck()
@@ -10381,17 +10381,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testRowNumberWithFilter() throws Exception {
         assertQuery("with active_devs as (" +
-                        "    select author, sym, count() as commits" +
-                        "    from dev_stats" +
-                        "    where author is not null and author != 'github-actions[bot]'" +
-                        "    order by commits desc" +
-                        "    limit 100" +
-                        "), " +
-                        "active_ranked as (" +
-                        "    select author, sym, commits, row_number() over (partition by sym order by commits desc) as rk" +
-                        "    from active_devs" +
-                        ") " +
-                        "select * from active_ranked where sym = 'ETH' order by author, sym, commits")
+                "    select author, sym, count() as commits" +
+                "    from dev_stats" +
+                "    where author is not null and author != 'github-actions[bot]'" +
+                "    order by commits desc" +
+                "    limit 100" +
+                "), " +
+                "active_ranked as (" +
+                "    select author, sym, commits, row_number() over (partition by sym order by commits desc) as rk" +
+                "    from active_devs" +
+                ") " +
+                "select * from active_ranked where sym = 'ETH' order by author, sym, commits")
                 .ddl("create table dev_stats as " +
                         "(" +
                         "select" +
@@ -10710,12 +10710,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, 14.0)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "stddev(j) over (partition by i order by ts) sd, " +
-                            "stddev_samp(j) over (partition by i order by ts) sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "stddev(j) over (partition by i order by ts) sd, " +
+                    "stddev_samp(j) over (partition by i order by ts) sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -11039,7 +11039,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Every row shares the same ORDER BY key, so cume_dist = 1.0 for all rows.
             // Aggregation factory: no timestamp, no random access, size known.
             assertQuery("select min(cd) min, max(cd) max, count(*) count from (" +
-                            "select cume_dist() over (order by val) cd from tab)")
+                    "select cume_dist() over (order by val) cd from tab)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -11051,8 +11051,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Partitioned variant: many partitions, each with a single giant peer group.
             // Exercises CumeDistOverPartitionFunction's per-partition deferred slice growth.
             assertQuery("select min(cd) min, max(cd) max, count(*) count from (" +
-                            "select cume_dist() over (partition by (x % 20) order by val) cd " +
-                            "from (select x, 1.0 val from long_sequence(50_000)))")
+                    "select cume_dist() over (partition by (x % 20) order by val) cd " +
+                    "from (select x, 1.0 val from long_sequence(50_000)))")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -11074,7 +11074,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x % 1_000, rnd_double() from long_sequence(10_000)");
 
             assertQuery("select min(cd) > 0.0 min_cd, max(cd) max_cd, count(*) count from (" +
-                            "select cume_dist() over (partition by i order by val) cd from tab)")
+                    "select cume_dist() over (partition by i order by val) cd from tab)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -11156,9 +11156,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10.0), (2, 20.0)");
 
             assertQuery("select ts, " +
-                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
-                            "from tab")
+                    "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
+                    "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -11273,10 +11273,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // n=2 resolves on row 2 (20.0); n=3 and n=10 never resolve (NULL everywhere) —
             // confirms the n>totalRows boundary lies exactly at n<=totalRows.
             assertQuery("select ts, " +
-                            "nth_value(val, 2) over (order by ts) nv2, " +
-                            "nth_value(val, 3) over (order by ts) nv3, " +
-                            "nth_value(val, 10) over (order by ts) nv10 " +
-                            "from tab")
+                    "nth_value(val, 2) over (order by ts) nv2, " +
+                    "nth_value(val, 3) over (order by ts) nv3, " +
+                    "nth_value(val, 10) over (order by ts) nv10 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -11309,9 +11309,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // nth_value(val, 1) captures the NULL at row 1 and propagates it (default RESPECT NULLS).
             // nth_value(val, 2) picks up 20.0 at row 2 — confirms nv1's NULL output is not a trivial constant.
             assertQuery("select ts, " +
-                            "nth_value(val, 1) over (order by ts) nv1, " +
-                            "nth_value(val, 2) over (order by ts) nv2 " +
-                            "from tab")
+                    "nth_value(val, 1) over (order by ts) nv1, " +
+                    "nth_value(val, 2) over (order by ts) nv2 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -11509,9 +11509,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(6000000000, 1, 60.0), (6000000001, 2, 600.0)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts " +
-                            "range between unbounded preceding and 2 seconds preceding) nv " +
-                            "from tab")
+                    "partition by i order by ts " +
+                    "range between unbounded preceding and 2 seconds preceding) nv " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -11585,9 +11585,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
 
             assertQuery("select ts, i, " +
-                            "nth_value(val, 1) over (partition by i order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts rows between current row and current row) nv2 " +
-                            "from tab")
+                    "nth_value(val, 1) over (partition by i order by ts rows between current row and current row) nv1, " +
+                    "nth_value(val, 2) over (partition by i order by ts rows between current row and current row) nv2 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -11627,8 +11627,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //   ts=2s -> frame: {1s, 2s},  size=2, frameSize=2, nth=row 2's val
             //   ts=5s -> row 1s AND row 2s age out, frame: {5s}, size=1, frameSize=1, n=2 -> null
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts range between 2 seconds preceding and current row) nv " +
-                            "from tab")
+                    "partition by i order by ts range between 2 seconds preceding and current row) nv " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -12009,13 +12009,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Partitioned ROWS frame [3 preceding, current row], n=1 must equal first_value.
             // Aggregation factory: no timestamp, no random access, size known.
             assertQuery("with w as (" +
-                            "  select ts, i, " +
-                            "  nth_value(val, 1) over (partition by i order by ts rows between 3 preceding and current row) nv, " +
-                            "  first_value(val) over (partition by i order by ts rows between 3 preceding and current row) fv " +
-                            "  from tab" +
-                            ") " +
-                            "select count(*) mismatch from w " +
-                            "where (nv is null) != (fv is null) or (nv is not null and fv is not null and nv != fv)")
+                    "  select ts, i, " +
+                    "  nth_value(val, 1) over (partition by i order by ts rows between 3 preceding and current row) nv, " +
+                    "  first_value(val) over (partition by i order by ts rows between 3 preceding and current row) fv " +
+                    "  from tab" +
+                    ") " +
+                    "select count(*) mismatch from w " +
+                    "where (nv is null) != (fv is null) or (nv is not null and fv is not null and nv != fv)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -12023,13 +12023,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Non-partitioned ROWS frame [5 preceding, current row], n=1 must equal first_value.
             assertQuery("with w as (" +
-                            "  select ts, " +
-                            "  nth_value(val, 1) over (order by ts rows between 5 preceding and current row) nv, " +
-                            "  first_value(val) over (order by ts rows between 5 preceding and current row) fv " +
-                            "  from tab" +
-                            ") " +
-                            "select count(*) mismatch from w " +
-                            "where (nv is null) != (fv is null) or (nv is not null and fv is not null and nv != fv)")
+                    "  select ts, " +
+                    "  nth_value(val, 1) over (order by ts rows between 5 preceding and current row) nv, " +
+                    "  first_value(val) over (order by ts rows between 5 preceding and current row) fv " +
+                    "  from tab" +
+                    ") " +
+                    "select count(*) mismatch from w " +
+                    "where (nv is null) != (fv is null) or (nv is not null and fv is not null and nv != fv)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -12038,12 +12038,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Partitioned unbounded preceding to current row: until the n-th row arrives,
             // nth_value must stay NULL. After that it locks on the n-th seen value.
             assertQuery("with w as (" +
-                            "  select ts, i, " +
-                            "  nth_value(val, 3) over (partition by i order by ts rows between unbounded preceding and current row) nv, " +
-                            "  row_number() over (partition by i order by ts) rn " +
-                            "  from tab" +
-                            ") " +
-                            "select count(*) mismatch from w where rn < 3 and nv is not null")
+                    "  select ts, i, " +
+                    "  nth_value(val, 3) over (partition by i order by ts rows between unbounded preceding and current row) nv, " +
+                    "  row_number() over (partition by i order by ts) rn " +
+                    "  from tab" +
+                    ") " +
+                    "select count(*) mismatch from w where rn < 3 and nv is not null")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -12450,7 +12450,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(6, 2, 60.0), (7, 2, 70.0), (8, 2, 80.0)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab")
+                    "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -12476,7 +12476,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0), (6, 2, 60.0)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab")
+                    "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -12505,7 +12505,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
             assertQuery("select ts, nth_value(val, 2) over (" +
-                            "order by ts rows between 5 preceding and 2 preceding) nv from tab")
+                    "order by ts rows between 5 preceding and 2 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -12532,7 +12532,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
             assertQuery("select ts, nth_value(val, 2) over (" +
-                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
+                    "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -12612,7 +12612,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     : "insert into tab values (1000000000, 10.0), (2000000000, 20.0), (3000000000, 30.0), (4000000000, 40.0), (5000000000, 50.0)");
 
             assertQuery("select ts, nth_value(val, 2) over (" +
-                            "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab")
+                    "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -12651,7 +12651,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     : "insert into tab values (1000000, 10.0), (1100000, 20.0), (1200000, 30.0), (3000000, 40.0), (3100000, 50.0)");
 
             assertQuery("select ts, nth_value(val, 3) over (" +
-                            "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
+                    "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -12692,7 +12692,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(1400000, 1, 30.0), (1500000, 2, 35.0), (3000000, 1, 40.0), (3100000, 2, 45.0)");
 
             assertQuery("select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
+                    "partition by i order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -12751,8 +12751,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 // cume_dist for partition 1: 20/21 for val=1 rows, 21/21=1.0 for val=2.
                 // cume_dist for partition 2: 15/16 for val=1 rows, 16/16=1.0 for val=2.
                 assertQuery("select i, cd, count(*) cnt from (" +
-                                "select i, cume_dist() over (partition by i order by val) cd from tab" +
-                                ") group by i, cd order by i, cd")
+                        "select i, cume_dist() over (partition by i order by val) cd from tab" +
+                        ") group by i, cd order by i, cd")
                         .expectSize()
                         .noLeakCheck()
                         .returns("""
@@ -12787,9 +12787,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 // value (2.0). Expected distribution: 49 occurrences of 2.0, 1 NaN (NaN sorts
                 // last in ascending order).
                 assertQuery("select nv, count(*) cnt from (" +
-                                "select nth_value(val, 2) over (" +
-                                "order by ts range between 100 second preceding and current row) nv from tab" +
-                                ") group by nv order by nv")
+                        "select nth_value(val, 2) over (" +
+                        "order by ts range between 100 second preceding and current row) nv from tab" +
+                        ") group by nv order by nv")
                         .expectSize()
                         .noLeakCheck()
                         .returns("""
@@ -12803,9 +12803,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 // value: 4.0 for partition 0 (even x), 3.0 for partition 1 (odd x). Expected
                 // distribution: 24 occurrences of 3.0, 24 occurrences of 4.0, 2 NaN.
                 assertQuery("select nv, count(*) cnt from (" +
-                                "select nth_value(val, 2) over (" +
-                                "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
-                                ") group by nv order by nv")
+                        "select nth_value(val, 2) over (" +
+                        "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
+                        ") group by nv order by nv")
                         .expectSize()
                         .noLeakCheck()
                         .returns("""
@@ -12844,9 +12844,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // which is x=100 -> 100.0. Partition 1 (odd x) -> row-50 value = x=99 -> 99.0.
             // 49 NaNs per partition + 31 locked-value rows per partition = 98 NaNs and 62 hits.
             assertQuery("select nv, count(*) cnt from (" +
-                            "select nth_value(val, 50) over (" +
-                            "partition by i order by ts range between 1000 second preceding and current row) nv from tab" +
-                            ") group by nv order by nv")
+                    "select nth_value(val, 50) over (" +
+                    "partition by i order by ts range between 1000 second preceding and current row) nv from tab" +
+                    ") group by nv order by nv")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -12876,7 +12876,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // and emits it for every subsequent row where count >= n + bufferSize. With n=1 and
             // bufferSize=1, that threshold is reached on the second row of each partition.
             assertQuery("select ts, i, nth_value(val, 1) over (" +
-                            "partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab")
+                    "partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -12908,7 +12908,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(6, 2, 60.0), (7, 2, 70.0), (8, 2, 80.0)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between 2 preceding and current row) nv from tab")
+                    "partition by i order by ts rows between 2 preceding and current row) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -12943,10 +12943,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
             assertQuery("select ts, " +
-                            "nth_value(val, 3) over (order by ts rows between 2 preceding and current row) nv3, " +
-                            "nth_value(val, 5) over (order by ts rows between 2 preceding and current row) nv5, " +
-                            "nth_value(val, 1) over (order by ts rows between unbounded preceding and 2 preceding) nvlocked " +
-                            "from tab")
+                    "nth_value(val, 3) over (order by ts rows between 2 preceding and current row) nv3, " +
+                    "nth_value(val, 5) over (order by ts rows between 2 preceding and current row) nv5, " +
+                    "nth_value(val, 1) over (order by ts rows between unbounded preceding and 2 preceding) nvlocked " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -13163,7 +13163,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0), (6, 60.0)");
 
             assertQuery("select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
+                    "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -13193,7 +13193,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // totalCount locks row 2's value (=20) once totalCount == n == 2; emitted once
             // totalCount >= n + bufferSize = 4.
             assertQuery("select ts, nth_value(val, 2) over (" +
-                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
+                    "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -13221,7 +13221,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(6, 2, 100.0), (7, 2, 200.0), (8, 2, 300.0), (9, 2, 400.0)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between unbounded preceding and 2 preceding) nv from tab")
+                    "partition by i order by ts rows between unbounded preceding and 2 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -13255,7 +13255,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
             assertQuery("select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between 3 preceding and 2 preceding) nv from tab")
+                    "order by ts rows between 3 preceding and 2 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -13284,7 +13284,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(4, 2, 100.0), (5, 2, 200.0), (6, 2, 300.0)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab")
+                    "partition by i order by ts rows between unbounded preceding and current row) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -13313,7 +13313,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(4, 2, 100.0), (5, 2, 200.0), (6, 2, 300.0)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between unbounded preceding and unbounded following) nv from tab")
+                    "partition by i order by ts rows between unbounded preceding and unbounded following) nv from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -13339,7 +13339,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
             assertQuery("select ts, nth_value(val, 2) over (" +
-                            "order by ts range between unbounded preceding and current row) nv from tab")
+                    "order by ts range between unbounded preceding and current row) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -13365,7 +13365,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
             assertQuery("select ts, nth_value(val, 2) over (" +
-                            "order by ts rows between unbounded preceding and unbounded following) nv from tab")
+                    "order by ts rows between unbounded preceding and unbounded following) nv from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -13433,15 +13433,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
             assertQuery("select ntile(3) over (order by ts " +
-                            "range between unbounded preceding and current row exclude current row) from tab")
+                    "range between unbounded preceding and current row exclude current row) from tab")
                     .noLeakCheck()
                     .fails(84, "ntile() does not support EXCLUDE clause");
             assertQuery("select ntile(3) over (order by ts " +
-                            "range between unbounded preceding and current row exclude group) from tab")
+                    "range between unbounded preceding and current row exclude group) from tab")
                     .noLeakCheck()
                     .fails(84, "ntile() does not support EXCLUDE clause");
             assertQuery("select ntile(3) over (order by ts " +
-                            "range between unbounded preceding and current row exclude ties) from tab")
+                    "range between unbounded preceding and current row exclude ties) from tab")
                     .noLeakCheck()
                     .fails(84, "ntile() does not support EXCLUDE clause");
         });
@@ -13456,15 +13456,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
             assertQuery("select cume_dist() over (order by ts " +
-                            "range between unbounded preceding and current row exclude current row) from tab")
+                    "range between unbounded preceding and current row exclude current row) from tab")
                     .noLeakCheck()
                     .fails(87, "cume_dist() does not support EXCLUDE clause");
             assertQuery("select cume_dist() over (order by ts " +
-                            "range between unbounded preceding and current row exclude group) from tab")
+                    "range between unbounded preceding and current row exclude group) from tab")
                     .noLeakCheck()
                     .fails(87, "cume_dist() does not support EXCLUDE clause");
             assertQuery("select cume_dist() over (order by ts " +
-                            "range between unbounded preceding and current row exclude ties) from tab")
+                    "range between unbounded preceding and current row exclude ties) from tab")
                     .noLeakCheck()
                     .fails(87, "cume_dist() does not support EXCLUDE clause");
         });
@@ -13479,7 +13479,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
             assertQuery("select ts, val, nth_value(val, 2) over (order by ts " +
-                            "rows between 3 preceding and current row exclude no others) nv from tab")
+                    "rows between 3 preceding and current row exclude no others) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -13545,7 +13545,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
             assertQuery("select nth_value(val, 1) over (order by ts " +
-                            "rows between 3 preceding and current row exclude group) from tab")
+                    "rows between 3 preceding and current row exclude group) from tab")
                     .noLeakCheck()
                     .fails(84, "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported");
         });
@@ -13557,7 +13557,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
             assertQuery("select nth_value(val, 1) over (order by ts " +
-                            "rows between 3 preceding and current row exclude ties) from tab")
+                    "rows between 3 preceding and current row exclude ties) from tab")
                     .noLeakCheck()
                     .fails(84, "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported");
         });
@@ -13571,7 +13571,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
             assertQuery("select nth_value(val, 1) over (order by ts " +
-                            "rows between current row and 1 following) from tab")
+                    "rows between current row and 1 following) from tab")
                     .noLeakCheck()
                     .fails(74, "frame end supports _number_ PRECEDING and CURRENT ROW only");
         });
@@ -13583,7 +13583,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
             assertQuery("select nth_value(val, 1) over (order by ts " +
-                            "groups between unbounded preceding and current row) from tab")
+                    "groups between unbounded preceding and current row) from tab")
                     .noLeakCheck()
                     .fails(7, "function not implemented for given window parameters");
         });
@@ -13598,7 +13598,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
             assertQuery("select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between 1 preceding and 2 preceding) nv from tab")
+                    "order by ts rows between 1 preceding and 2 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -13755,9 +13755,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 10.0)");
 
             assertQuery("select ts, " +
-                            "nth_value(val, 1) over (order by ts) nv1, " +
-                            "nth_value(val, 2) over (order by ts) nv2 " +
-                            "from tab")
+                    "nth_value(val, 1) over (order by ts) nv1, " +
+                    "nth_value(val, 2) over (order by ts) nv2 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -13768,9 +13768,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """));
 
             assertQuery("select ts, i, " +
-                            "nth_value(val, 1) over (partition by i order by ts) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts) nv2 " +
-                            "from tab")
+                    "nth_value(val, 1) over (partition by i order by ts) nv1, " +
+                    "nth_value(val, 2) over (partition by i order by ts) nv2 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -13901,7 +13901,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     (6, 2, null)""");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts range between 1 second preceding and current row) nv from tab")
+                    "partition by i order by ts range between 1 second preceding and current row) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -13928,13 +13928,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // |rowsLo| = 2^31 > Integer.MAX_VALUE, current row as upper bound.
             assertQuery("select nth_value(val, 1) over (order by ts " +
-                            "rows between 2_147_483_648 preceding and current row) nv from tab")
+                    "rows between 2_147_483_648 preceding and current row) nv from tab")
                     .noLeakCheck()
                     .fails(70, "frame start exceeds maximum supported size");
 
             // rowsLo = unbounded (skips its own check), |rowsHi| = 2^31 > Integer.MAX_VALUE.
             assertQuery("select nth_value(val, 1) over (order by ts " +
-                            "rows between unbounded preceding and 2_147_483_648 preceding) nv from tab")
+                    "rows between unbounded preceding and 2_147_483_648 preceding) nv from tab")
                     .noLeakCheck()
                     .fails(94, "frame end exceeds maximum supported size");
         });
@@ -13950,10 +13950,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
             assertQuery("select ts, " +
-                            "ntile(3) over (order by ts) bucket, " +
-                            "cume_dist() over (order by ts) cd, " +
-                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv " +
-                            "from tab")
+                    "ntile(3) over (order by ts) bucket, " +
+                    "cume_dist() over (order by ts) cd, " +
+                    "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -14020,7 +14020,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
             assertQuery("select ts, nth_value(val, 2) over (" +
-                            "order by ts rows between 3 preceding and current row exclude current row) nv from tab")
+                    "order by ts rows between 3 preceding and current row exclude current row) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -14047,7 +14047,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
             assertQuery("select ts, nth_value(val, 2) over (" +
-                            "order by ts desc range between unbounded preceding and current row) nv from tab order by ts desc")
+                    "order by ts desc range between unbounded preceding and current row) nv from tab order by ts desc")
                     .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -14213,7 +14213,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(4, 'b', 40.0), (5, 'b', 50.0), (6, 'b', 60.0)");
 
             assertQuery("select ts, s, nth_value(val, 2) over (" +
-                            "partition by s order by ts rows between unbounded preceding and current row) nv from tab")
+                    "partition by s order by ts rows between unbounded preceding and current row) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -14243,7 +14243,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(4, 2, 40.0), (5, 2, 50.0), (6, 2, 60.0)");
 
             assertQuery("select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab")
+                    "partition by i order by ts rows between unbounded preceding and current row) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -14289,9 +14289,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10), (2, 20)");
 
             assertQuery("select ts, " +
-                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
-                            "from tab")
+                    "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
+                    "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -14441,9 +14441,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, null), (2, 20), (3, null), (4, 40)");
 
             assertQuery("select ts, " +
-                            "nth_value(val, 1) over (order by ts) nv1, " +
-                            "nth_value(val, 2) over (order by ts) nv2 " +
-                            "from tab")
+                    "nth_value(val, 1) over (order by ts) nv1, " +
+                    "nth_value(val, 2) over (order by ts) nv2 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -14473,9 +14473,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // rows per partition = 98 NULLs and 62 hits. ORDER BY a Long places NULL first
             // (LONG_NULL = Long.MIN_VALUE), unlike Double where NaN sorts last.
             assertQuery("select nv, count(*) cnt from (" +
-                            "select nth_value(val, 50) over (" +
-                            "partition by i order by ts range between 1000 second preceding and current row) nv from tab" +
-                            ") group by nv order by nv")
+                    "select nth_value(val, 50) over (" +
+                    "partition by i order by ts range between 1000 second preceding and current row) nv from tab" +
+                    ") group by nv order by nv")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -14499,18 +14499,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 2, 40), (5, 2, 50), (6, 2, 60)");
 
             assertQuery("select ts, " +
-                            "cume_dist() over (order by ts) cd, " +
-                            "cume_dist() over (partition by i) cd_no, " +
-                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts range between 1 second preceding and current row) nv2, " +
-                            "nth_value(val, 2) over (partition by i order by ts rows between 2 preceding and current row) nv3, " +
-                            "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv4, " +
-                            "nth_value(val, 2) over (order by ts range between 1 second preceding and current row) nv5, " +
-                            "nth_value(val, 2) over (order by ts rows between 2 preceding and current row) nv6, " +
-                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and 1 preceding) nv7, " +
-                            "nth_value(val, 2) over (partition by i order by ts) nv8, " +
-                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv9 " +
-                            "from tab")
+                    "cume_dist() over (order by ts) cd, " +
+                    "cume_dist() over (partition by i) cd_no, " +
+                    "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
+                    "nth_value(val, 2) over (partition by i order by ts range between 1 second preceding and current row) nv2, " +
+                    "nth_value(val, 2) over (partition by i order by ts rows between 2 preceding and current row) nv3, " +
+                    "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv4, " +
+                    "nth_value(val, 2) over (order by ts range between 1 second preceding and current row) nv5, " +
+                    "nth_value(val, 2) over (order by ts rows between 2 preceding and current row) nv6, " +
+                    "nth_value(val, 2) over (order by ts rows between unbounded preceding and 1 preceding) nv7, " +
+                    "nth_value(val, 2) over (partition by i order by ts) nv8, " +
+                    "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv9 " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -14764,8 +14764,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //   ts=2s -> frame: {1s, 2s},  size=2, frameSize=2, nth=row 2's val
             //   ts=5s -> rows 1s and 2s age out (diff > 2s), frame: {5s}, frameSize=1, n=2 -> null
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts range between 2 seconds preceding and current row) nv " +
-                            "from tab")
+                    "partition by i order by ts range between 2 seconds preceding and current row) nv " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -14805,7 +14805,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(6, 2, 60), (7, 2, 70), (8, 2, 80)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab")
+                    "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -14894,7 +14894,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     : "insert into tab values (1_000_000_000, 10), (2_000_000_000, 20), (3_000_000_000, 30), (4_000_000_000, 40), (5_000_000_000, 50)");
 
             assertQuery("select ts, nth_value(val, 2) over (" +
-                            "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab")
+                    "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -15155,7 +15155,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10), (2, 20), (3, 30)");
 
             assertQuery("select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between 1 preceding and 2 preceding) nv from tab")
+                    "order by ts rows between 1 preceding and 2 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -15178,12 +15178,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
 
             assertQuery("select nth_value(val, 1) over (order by ts " +
-                            "rows between 2_147_483_648 preceding and current row) nv from tab")
+                    "rows between 2_147_483_648 preceding and current row) nv from tab")
                     .noLeakCheck()
                     .fails(70, "frame start exceeds maximum supported size");
 
             assertQuery("select nth_value(val, 1) over (order by ts " +
-                            "rows between unbounded preceding and 2_147_483_648 preceding) nv from tab")
+                    "rows between unbounded preceding and 2_147_483_648 preceding) nv from tab")
                     .noLeakCheck()
                     .fails(94, "frame end exceeds maximum supported size");
         });
@@ -15283,9 +15283,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 2, 40), (5, 2, 50)");
 
             assertQuery("select ts, i, " +
-                            "nth_value(val, 1) over (partition by i order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts rows between current row and current row) nv2 " +
-                            "from tab")
+                    "nth_value(val, 1) over (partition by i order by ts rows between current row and current row) nv1, " +
+                    "nth_value(val, 2) over (partition by i order by ts rows between current row and current row) nv2 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -15314,9 +15314,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(4, 2, 100), (5, 2, 200), (6, 2, 300)");
 
             assertQuery("select ts, i, " +
-                            "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and current row) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv2 " +
-                            "from tab")
+                    "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and current row) nv1, " +
+                    "nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv2 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -15346,7 +15346,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(4, 2, 100), (5, 2, 200), (6, 2, 300)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between unbounded preceding and unbounded following) nv from tab")
+                    "partition by i order by ts rows between unbounded preceding and unbounded following) nv from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -15387,9 +15387,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(6000000000, 1, 60), (6000000001, 2, 600)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts " +
-                            "range between unbounded preceding and 2 seconds preceding) nv " +
-                            "from tab")
+                    "partition by i order by ts " +
+                    "range between unbounded preceding and 2 seconds preceding) nv " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -15445,7 +15445,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(1400000, 1, 30), (1500000, 2, 35), (3000000, 1, 40), (3100000, 2, 45)");
 
             assertQuery("select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
+                    "partition by i order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -15492,9 +15492,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 // Non-partitioned: 49 occurrences of 2, 1 NULL. ORDER BY a Long places NULL
                 // first (LONG_NULL = Long.MIN_VALUE).
                 assertQuery("select nv, count(*) cnt from (" +
-                                "select nth_value(val, 2) over (" +
-                                "order by ts range between 100 second preceding and current row) nv from tab" +
-                                ") group by nv order by nv")
+                        "select nth_value(val, 2) over (" +
+                        "order by ts range between 100 second preceding and current row) nv from tab" +
+                        ") group by nv order by nv")
                         .expectSize()
                         .noLeakCheck()
                         .returns("""
@@ -15505,9 +15505,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 // Partitioned by i (x%2). 24 occurrences of 3, 24 of 4, 2 NULL.
                 assertQuery("select nv, count(*) cnt from (" +
-                                "select nth_value(val, 2) over (" +
-                                "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
-                                ") group by nv order by nv")
+                        "select nth_value(val, 2) over (" +
+                        "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
+                        ") group by nv order by nv")
                         .expectSize()
                         .noLeakCheck()
                         .returns("""
@@ -15535,7 +15535,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     : "insert into tab values (1000000, 10), (1100000, 20), (1200000, 30), (3000000, 40), (3100000, 50)");
 
             assertQuery("select ts, nth_value(val, 3) over (" +
-                            "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
+                    "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -15609,7 +15609,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Same per-partition shape as the non-partitioned variant: rows 1..3 -> null,
             // row 4 first hits n <= currentFrameSize=3, subsequent rows keep nth = row 3 val.
             assertQuery("select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts rows between 5 preceding and 1 preceding) nv from tab")
+                    "partition by i order by ts rows between 5 preceding and 1 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -15646,7 +15646,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(5, 2, 100), (6, 2, 200), (7, 2, 300), (8, 2, 400)");
 
             assertQuery("select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab")
+                    "partition by i order by ts rows between unbounded preceding and current row) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -15680,7 +15680,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // Frame = [100us..50us] preceding. Inter-row gaps are ~1s -> every prior row
             // is beyond maxDiff and evicted before ever entering the frame.
             assertQuery("select ts, nth_value(val, 1) over (" +
-                            "order by ts range between 100 microseconds preceding and 50 microseconds preceding) nv from tab")
+                    "order by ts range between 100 microseconds preceding and 50 microseconds preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -15712,7 +15712,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40)");
 
             assertQuery("select ts, nth_value(val, 3) over (" +
-                            "order by ts range between unbounded preceding and unbounded following) nv from tab")
+                    "order by ts range between unbounded preceding and unbounded following) nv from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -15767,8 +15767,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(3_000_000_001, 2, 100), (4_000_000_001, 2, 200), (5_000_000_001, 2, 300)");
 
             assertQuery("select ts, i, nth_value(val, 1) over (" +
-                            "partition by i order by ts " +
-                            "range between 100 microseconds preceding and 50 microseconds preceding) nv from tab")
+                    "partition by i order by ts " +
+                    "range between 100 microseconds preceding and 50 microseconds preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -15807,7 +15807,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)");
 
             assertQuery("select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
+                    "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -15853,9 +15853,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 100), (2, 200)");
 
             assertQuery("select ts, " +
-                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
-                            "from tab")
+                    "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
+                    "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -15983,9 +15983,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, null), (2, 200), (3, null), (4, 400)");
 
             assertQuery("select ts, " +
-                            "nth_value(val, 1) over (order by ts) nv1, " +
-                            "nth_value(val, 2) over (order by ts) nv2 " +
-                            "from tab")
+                    "nth_value(val, 1) over (order by ts) nv1, " +
+                    "nth_value(val, 2) over (order by ts) nv2 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -16015,9 +16015,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // timestamp renders as the empty string. ORDER BY a TIMESTAMP places NULL first
             // (LONG_NULL backing value is Long.MIN_VALUE), unlike Double where NaN sorts last.
             assertQuery("select nv, count(*) cnt from (" +
-                            "select nth_value(val, 50) over (" +
-                            "partition by i order by ts range between 1000 second preceding and current row) nv from tab" +
-                            ") group by nv order by nv")
+                    "select nth_value(val, 50) over (" +
+                    "partition by i order by ts range between 1000 second preceding and current row) nv from tab" +
+                    ") group by nv order by nv")
                     .timestamp("nv")
                     .expectSize()
                     .noLeakCheck()
@@ -16042,18 +16042,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 100), (2, 1, 200), (3, 1, 300), (4, 2, 400), (5, 2, 500), (6, 2, 600)");
 
             assertQuery("select ts, " +
-                            "cume_dist() over (order by ts) cd, " +
-                            "cume_dist() over (partition by i) cd_no, " +
-                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts range between 1 second preceding and current row) nv2, " +
-                            "nth_value(val, 2) over (partition by i order by ts rows between 2 preceding and current row) nv3, " +
-                            "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv4, " +
-                            "nth_value(val, 2) over (order by ts range between 1 second preceding and current row) nv5, " +
-                            "nth_value(val, 2) over (order by ts rows between 2 preceding and current row) nv6, " +
-                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and 1 preceding) nv7, " +
-                            "nth_value(val, 2) over (partition by i order by ts) nv8, " +
-                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv9 " +
-                            "from tab")
+                    "cume_dist() over (order by ts) cd, " +
+                    "cume_dist() over (partition by i) cd_no, " +
+                    "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
+                    "nth_value(val, 2) over (partition by i order by ts range between 1 second preceding and current row) nv2, " +
+                    "nth_value(val, 2) over (partition by i order by ts rows between 2 preceding and current row) nv3, " +
+                    "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv4, " +
+                    "nth_value(val, 2) over (order by ts range between 1 second preceding and current row) nv5, " +
+                    "nth_value(val, 2) over (order by ts rows between 2 preceding and current row) nv6, " +
+                    "nth_value(val, 2) over (order by ts rows between unbounded preceding and 1 preceding) nv7, " +
+                    "nth_value(val, 2) over (partition by i order by ts) nv8, " +
+                    "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv9 " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -16312,8 +16312,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(5_000_000_000, 1, 50), (5_000_000_001, 2, 55)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts range between 2 seconds preceding and current row) nv " +
-                            "from tab")
+                    "partition by i order by ts range between 2 seconds preceding and current row) nv " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -16353,7 +16353,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(6, 2, 60), (7, 2, 70), (8, 2, 80)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab")
+                    "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -16465,7 +16465,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     : "insert into tab values (1_000_000_000, 10), (2_000_000_000, 20), (3_000_000_000, 30), (4_000_000_000, 40), (5_000_000_000, 50)");
 
             assertQuery("select ts, nth_value(val, 2) over (" +
-                            "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab")
+                    "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -16730,7 +16730,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 100), (2, 200), (3, 300)");
 
             assertQuery("select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between 1 preceding and 2 preceding) nv from tab")
+                    "order by ts rows between 1 preceding and 2 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -16753,12 +16753,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
 
             assertQuery("select nth_value(val, 1) over (order by ts " +
-                            "rows between 2_147_483_648 preceding and current row) nv from tab")
+                    "rows between 2_147_483_648 preceding and current row) nv from tab")
                     .noLeakCheck()
                     .fails(70, "frame start exceeds maximum supported size");
 
             assertQuery("select nth_value(val, 1) over (order by ts " +
-                            "rows between unbounded preceding and 2_147_483_648 preceding) nv from tab")
+                    "rows between unbounded preceding and 2_147_483_648 preceding) nv from tab")
                     .noLeakCheck()
                     .fails(94, "frame end exceeds maximum supported size");
         });
@@ -16891,9 +16891,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 100), (2, 1, 200), (3, 1, 300), (4, 2, 400), (5, 2, 500)");
 
             assertQuery("select ts, i, " +
-                            "nth_value(val, 1) over (partition by i order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts rows between current row and current row) nv2 " +
-                            "from tab")
+                    "nth_value(val, 1) over (partition by i order by ts rows between current row and current row) nv1, " +
+                    "nth_value(val, 2) over (partition by i order by ts rows between current row and current row) nv2 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -16922,9 +16922,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(4, 2, 1000), (5, 2, 2000), (6, 2, 3000)");
 
             assertQuery("select ts, i, " +
-                            "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and current row) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv2 " +
-                            "from tab")
+                    "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and current row) nv1, " +
+                    "nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv2 " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -16954,7 +16954,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(4, 2, 1000), (5, 2, 2000), (6, 2, 3000)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts rows between unbounded preceding and unbounded following) nv from tab")
+                    "partition by i order by ts rows between unbounded preceding and unbounded following) nv from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -16994,9 +16994,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(6000000000, 1, 60), (6000000001, 2, 600)");
 
             assertQuery("select ts, i, nth_value(val, 2) over (" +
-                            "partition by i order by ts " +
-                            "range between unbounded preceding and 2 seconds preceding) nv " +
-                            "from tab")
+                    "partition by i order by ts " +
+                    "range between unbounded preceding and 2 seconds preceding) nv " +
+                    "from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -17052,7 +17052,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(1400000, 1, 30), (1500000, 2, 35), (3000000, 1, 40), (3100000, 2, 45)");
 
             assertQuery("select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
+                    "partition by i order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -17099,9 +17099,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 // Non-partitioned: 49 occurrences of timestamp 2us, 1 NULL (NULL renders as empty
                 // string). ORDER BY a TIMESTAMP places NULL first (LONG_NULL = Long.MIN_VALUE).
                 assertQuery("select nv, count(*) cnt from (" +
-                                "select nth_value(val, 2) over (" +
-                                "order by ts range between 100 second preceding and current row) nv from tab" +
-                                ") group by nv order by nv")
+                        "select nth_value(val, 2) over (" +
+                        "order by ts range between 100 second preceding and current row) nv from tab" +
+                        ") group by nv order by nv")
                         .timestamp("nv")
                         .expectSize()
                         .noLeakCheck()
@@ -17113,9 +17113,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 // Partitioned by i (x%2). 24 occurrences of timestamp 3us, 24 of 4us, 2 NULL.
                 assertQuery("select nv, count(*) cnt from (" +
-                                "select nth_value(val, 2) over (" +
-                                "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
-                                ") group by nv order by nv")
+                        "select nth_value(val, 2) over (" +
+                        "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
+                        ") group by nv order by nv")
                         .timestamp("nv")
                         .expectSize()
                         .noLeakCheck()
@@ -17145,7 +17145,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     : "insert into tab values (1000000, 10), (1100000, 20), (1200000, 30), (3000000, 40), (3100000, 50)");
 
             assertQuery("select ts, nth_value(val, 3) over (" +
-                            "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
+                    "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -17208,7 +17208,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(7, 2, 1000), (8, 2, 2000), (9, 2, 3000), (10, 2, 4000), (11, 2, 5000), (12, 2, 6000)");
 
             assertQuery("select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts rows between 5 preceding and 1 preceding) nv from tab")
+                    "partition by i order by ts rows between 5 preceding and 1 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -17243,7 +17243,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(5, 2, 1000), (6, 2, 2000), (7, 2, 3000), (8, 2, 4000)");
 
             assertQuery("select ts, i, nth_value(val, 3) over (" +
-                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab")
+                    "partition by i order by ts rows between unbounded preceding and current row) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -17275,7 +17275,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     : "insert into tab values (1_000, 100), (1_000_000_000, 200), (2_000_000_000, 300)");
 
             assertQuery("select ts, nth_value(val, 1) over (" +
-                            "order by ts range between 100 microseconds preceding and 50 microseconds preceding) nv from tab")
+                    "order by ts range between 100 microseconds preceding and 50 microseconds preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -17307,7 +17307,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 100), (2, 200), (3, 300), (4, 400)");
 
             assertQuery("select ts, nth_value(val, 3) over (" +
-                            "order by ts range between unbounded preceding and unbounded following) nv from tab")
+                    "order by ts range between unbounded preceding and unbounded following) nv from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -17361,8 +17361,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                       "(3_000_000_001, 2, 1000), (4_000_000_001, 2, 2000), (5_000_000_001, 2, 3000)");
 
             assertQuery("select ts, i, nth_value(val, 1) over (" +
-                            "partition by i order by ts " +
-                            "range between 100 microseconds preceding and 50 microseconds preceding) nv from tab")
+                    "partition by i order by ts " +
+                    "range between 100 microseconds preceding and 50 microseconds preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -17402,7 +17402,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 100), (2, 200), (3, 300), (4, 400), (5, 500), (6, 600)");
 
             assertQuery("select ts, nth_value(val, 1) over (" +
-                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
+                    "order by ts rows between unbounded preceding and 2 preceding) nv from tab")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -17430,11 +17430,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
             assertQuery("select ts, " +
-                            "ntile(3) over w bucket, " +
-                            "cume_dist() over w cd, " +
-                            "nth_value(val, 1) over w nv " +
-                            "from tab " +
-                            "window w as (order by ts)")
+                    "ntile(3) over w bucket, " +
+                    "cume_dist() over w cd, " +
+                    "nth_value(val, 1) over w nv " +
+                    "from tab " +
+                    "window w as (order by ts)")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -17461,10 +17461,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(5, 1, 50.0), (6, 2, 60.0)");
 
             assertQuery("select ts, i, " +
-                            "ntile(3) over (order by ts) bucket, " +
-                            "cume_dist() over (order by ts) cd, " +
-                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv " +
-                            "from (select * from tab where i = 1)")
+                    "ntile(3) over (order by ts) bucket, " +
+                    "cume_dist() over (order by ts) cd, " +
+                    "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv " +
+                    "from (select * from tab where i = 1)")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -17526,14 +17526,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Cross-validate stddev_pop against sqrt(avg(x²) - avg(x)²) over a large sliding window
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 6) max_diff " +
-                            "from (" +
-                            "select " +
-                            "stddev_pop(d) over (order by ts rows between 999 preceding and current row) sd, " +
-                            "sqrt(avg(d * d) over (order by ts rows between 999 preceding and current row) - " +
-                            "avg(d) over (order by ts rows between 999 preceding and current row) * " +
-                            "avg(d) over (order by ts rows between 999 preceding and current row)) sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "stddev_pop(d) over (order by ts rows between 999 preceding and current row) sd, " +
+                    "sqrt(avg(d * d) over (order by ts rows between 999 preceding and current row) - " +
+                    "avg(d) over (order by ts rows between 999 preceding and current row) * " +
+                    "avg(d) over (order by ts rows between 999 preceding and current row)) sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -17551,12 +17551,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "stddev_pop(j) over (order by ts) sd, " +
-                            "sqrt(avg(j * j) over (order by ts) - avg(j) over (order by ts) * avg(j) over (order by ts)) sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "stddev_pop(j) over (order by ts) sd, " +
+                    "sqrt(avg(j * j) over (order by ts) - avg(j) over (order by ts) * avg(j) over (order by ts)) sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -17574,16 +17574,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "stddev_pop(j) over (order by ts range between 2 microseconds preceding and current row) sd, " +
-                            "sqrt(" +
-                            "avg(j * j) over (order by ts range between 2 microseconds preceding and current row) - " +
-                            "avg(j) over (order by ts range between 2 microseconds preceding and current row) * " +
-                            "avg(j) over (order by ts range between 2 microseconds preceding and current row)" +
-                            ") sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "stddev_pop(j) over (order by ts range between 2 microseconds preceding and current row) sd, " +
+                    "sqrt(" +
+                    "avg(j * j) over (order by ts range between 2 microseconds preceding and current row) - " +
+                    "avg(j) over (order by ts range between 2 microseconds preceding and current row) * " +
+                    "avg(j) over (order by ts range between 2 microseconds preceding and current row)" +
+                    ") sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -17601,16 +17601,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "stddev_pop(j) over (order by ts rows between 2 preceding and current row) sd, " +
-                            "sqrt(" +
-                            "avg(j * j) over (order by ts rows between 2 preceding and current row) - " +
-                            "avg(j) over (order by ts rows between 2 preceding and current row) * " +
-                            "avg(j) over (order by ts rows between 2 preceding and current row)" +
-                            ") sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "stddev_pop(j) over (order by ts rows between 2 preceding and current row) sd, " +
+                    "sqrt(" +
+                    "avg(j * j) over (order by ts rows between 2 preceding and current row) - " +
+                    "avg(j) over (order by ts rows between 2 preceding and current row) * " +
+                    "avg(j) over (order by ts rows between 2 preceding and current row)" +
+                    ") sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -17628,12 +17628,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, 4.0), (4, 2, null), (5, 2, null), (6, 3, 10.0), (7, 3, 14.0)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select i, " +
-                            "stddev_pop(j) over (partition by i) sd, " +
-                            "sqrt(avg(j * j) over (partition by i) - avg(j) over (partition by i) * avg(j) over (partition by i)) sd_ref " +
-                            "from tab" +
-                            ") where i in (1, 3)")
+                    "from (" +
+                    "select i, " +
+                    "stddev_pop(j) over (partition by i) sd, " +
+                    "sqrt(avg(j * j) over (partition by i) - avg(j) over (partition by i) * avg(j) over (partition by i)) sd_ref " +
+                    "from tab" +
+                    ") where i in (1, 3)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -17651,12 +17651,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select i, " +
-                            "stddev_pop(j) over (partition by i order by ts) sd, " +
-                            "sqrt(avg(j * j) over (partition by i order by ts) - avg(j) over (partition by i order by ts) * avg(j) over (partition by i order by ts)) sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select i, " +
+                    "stddev_pop(j) over (partition by i order by ts) sd, " +
+                    "sqrt(avg(j * j) over (partition by i order by ts) - avg(j) over (partition by i order by ts) * avg(j) over (partition by i order by ts)) sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -17674,16 +17674,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select i, " +
-                            "stddev_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd, " +
-                            "sqrt(" +
-                            "avg(j * j) over (partition by i order by ts range between 2 microseconds preceding and current row) - " +
-                            "avg(j) over (partition by i order by ts range between 2 microseconds preceding and current row) * " +
-                            "avg(j) over (partition by i order by ts range between 2 microseconds preceding and current row)" +
-                            ") sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select i, " +
+                    "stddev_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd, " +
+                    "sqrt(" +
+                    "avg(j * j) over (partition by i order by ts range between 2 microseconds preceding and current row) - " +
+                    "avg(j) over (partition by i order by ts range between 2 microseconds preceding and current row) * " +
+                    "avg(j) over (partition by i order by ts range between 2 microseconds preceding and current row)" +
+                    ") sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -17701,16 +17701,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select i, " +
-                            "stddev_pop(j) over (partition by i order by ts rows between 2 preceding and current row) sd, " +
-                            "sqrt(" +
-                            "avg(j * j) over (partition by i order by ts rows between 2 preceding and current row) - " +
-                            "avg(j) over (partition by i order by ts rows between 2 preceding and current row) * " +
-                            "avg(j) over (partition by i order by ts rows between 2 preceding and current row)" +
-                            ") sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select i, " +
+                    "stddev_pop(j) over (partition by i order by ts rows between 2 preceding and current row) sd, " +
+                    "sqrt(" +
+                    "avg(j * j) over (partition by i order by ts rows between 2 preceding and current row) - " +
+                    "avg(j) over (partition by i order by ts rows between 2 preceding and current row) * " +
+                    "avg(j) over (partition by i order by ts rows between 2 preceding and current row)" +
+                    ") sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -17731,14 +17731,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Cross-validate stddev_pop over partitioned range frame
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 6) max_diff " +
-                            "from (" +
-                            "select " +
-                            "stddev_pop(d) over (partition by i order by ts range between " + rangeVal + " preceding and current row) sd, " +
-                            "sqrt(avg(d * d) over (partition by i order by ts range between " + rangeVal + " preceding and current row) - " +
-                            "avg(d) over (partition by i order by ts range between " + rangeVal + " preceding and current row) * " +
-                            "avg(d) over (partition by i order by ts range between " + rangeVal + " preceding and current row)) sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "stddev_pop(d) over (partition by i order by ts range between " + rangeVal + " preceding and current row) sd, " +
+                    "sqrt(avg(d * d) over (partition by i order by ts range between " + rangeVal + " preceding and current row) - " +
+                    "avg(d) over (partition by i order by ts range between " + rangeVal + " preceding and current row) * " +
+                    "avg(d) over (partition by i order by ts range between " + rangeVal + " preceding and current row)) sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -17756,12 +17756,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 5.0)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "stddev_pop(j) over () sd, " +
-                            "sqrt(avg(j * j) over () - avg(j) over () * avg(j) over ()) sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "stddev_pop(j) over () sd, " +
+                    "sqrt(avg(j * j) over () - avg(j) over () * avg(j) over ()) sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -17813,8 +17813,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 // non-partitioned: 50 rows > capacity 16 → inline buffer doubling
                 assertQuery("select count(*) cnt from (" +
-                                "select stddev_pop(val) over (order by ts range between 100 second preceding and current row) sd from tab" +
-                                ") where sd is not null")
+                        "select stddev_pop(val) over (order by ts range between 100 second preceding and current row) sd from tab" +
+                        ") where sd is not null")
                         .noRandomAccess()
                         .expectSize()
                         .noLeakCheck()
@@ -17825,8 +17825,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 // partitioned: 25 rows per partition > initial range buffer (32 default, but capacity=16 from pageSize) → expandRingBuffer
                 assertQuery("select count(*) cnt from (" +
-                                "select stddev_pop(val) over (partition by i order by ts range between 100 second preceding and current row) sd from tab" +
-                                ") where sd is not null")
+                        "select stddev_pop(val) over (partition by i order by ts range between 100 second preceding and current row) sd from tab" +
+                        ") where sd is not null")
                         .noRandomAccess()
                         .expectSize()
                         .noLeakCheck()
@@ -18064,12 +18064,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "stddev_samp(j) over (order by ts) sd, " +
-                            "sqrt(count(j) over (order by ts)::double / (count(j) over (order by ts) - 1)) * stddev_pop(j) over (order by ts) sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "stddev_samp(j) over (order by ts) sd, " +
+                    "sqrt(count(j) over (order by ts)::double / (count(j) over (order by ts) - 1)) * stddev_pop(j) over (order by ts) sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18087,15 +18087,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "stddev_samp(j) over (order by ts range between 2 microseconds preceding and current row) sd, " +
-                            "sqrt(" +
-                            "count(j) over (order by ts range between 2 microseconds preceding and current row)::double / " +
-                            "(count(j) over (order by ts range between 2 microseconds preceding and current row) - 1)) * " +
-                            "stddev_pop(j) over (order by ts range between 2 microseconds preceding and current row) sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "stddev_samp(j) over (order by ts range between 2 microseconds preceding and current row) sd, " +
+                    "sqrt(" +
+                    "count(j) over (order by ts range between 2 microseconds preceding and current row)::double / " +
+                    "(count(j) over (order by ts range between 2 microseconds preceding and current row) - 1)) * " +
+                    "stddev_pop(j) over (order by ts range between 2 microseconds preceding and current row) sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18113,15 +18113,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "stddev_samp(j) over (order by ts rows between 2 preceding and current row) sd, " +
-                            "sqrt(" +
-                            "count(j) over (order by ts rows between 2 preceding and current row)::double / " +
-                            "(count(j) over (order by ts rows between 2 preceding and current row) - 1)) * " +
-                            "stddev_pop(j) over (order by ts rows between 2 preceding and current row) sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "stddev_samp(j) over (order by ts rows between 2 preceding and current row) sd, " +
+                    "sqrt(" +
+                    "count(j) over (order by ts rows between 2 preceding and current row)::double / " +
+                    "(count(j) over (order by ts rows between 2 preceding and current row) - 1)) * " +
+                    "stddev_pop(j) over (order by ts rows between 2 preceding and current row) sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18139,12 +18139,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select i, " +
-                            "stddev_samp(j) over (partition by i order by ts) sd, " +
-                            "sqrt(count(j) over (partition by i order by ts)::double / (count(j) over (partition by i order by ts) - 1)) * stddev_pop(j) over (partition by i order by ts) sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select i, " +
+                    "stddev_samp(j) over (partition by i order by ts) sd, " +
+                    "sqrt(count(j) over (partition by i order by ts)::double / (count(j) over (partition by i order by ts) - 1)) * stddev_pop(j) over (partition by i order by ts) sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18162,15 +18162,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select i, " +
-                            "stddev_samp(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd, " +
-                            "sqrt(" +
-                            "count(j) over (partition by i order by ts range between 2 microseconds preceding and current row)::double / " +
-                            "(count(j) over (partition by i order by ts range between 2 microseconds preceding and current row) - 1)) * " +
-                            "stddev_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select i, " +
+                    "stddev_samp(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd, " +
+                    "sqrt(" +
+                    "count(j) over (partition by i order by ts range between 2 microseconds preceding and current row)::double / " +
+                    "(count(j) over (partition by i order by ts range between 2 microseconds preceding and current row) - 1)) * " +
+                    "stddev_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18188,15 +18188,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select i, " +
-                            "stddev_samp(j) over (partition by i order by ts rows between 2 preceding and current row) sd, " +
-                            "sqrt(" +
-                            "count(j) over (partition by i order by ts rows between 2 preceding and current row)::double / " +
-                            "(count(j) over (partition by i order by ts rows between 2 preceding and current row) - 1)) * " +
-                            "stddev_pop(j) over (partition by i order by ts rows between 2 preceding and current row) sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select i, " +
+                    "stddev_samp(j) over (partition by i order by ts rows between 2 preceding and current row) sd, " +
+                    "sqrt(" +
+                    "count(j) over (partition by i order by ts rows between 2 preceding and current row)::double / " +
+                    "(count(j) over (partition by i order by ts rows between 2 preceding and current row) - 1)) * " +
+                    "stddev_pop(j) over (partition by i order by ts rows between 2 preceding and current row) sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18214,12 +18214,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 5.0)");
 
             assertQuery("select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "stddev_samp(j) over () sd, " +
-                            "sqrt(count(j) over ()::double / (count(j) over () - 1)) * stddev_pop(j) over () sd_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "stddev_samp(j) over () sd, " +
+                    "sqrt(count(j) over ()::double / (count(j) over () - 1)) * stddev_pop(j) over () sd_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18256,9 +18256,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testTwoWindowColumns() throws Exception {
         // Test two window functions with different specifications
         assertQuery("SELECT id, " +
-                        "row_number() OVER (ORDER BY ts) AS rn, " +
-                        "sum(id) OVER () AS total " +
-                        "FROM x")
+                "row_number() OVER (ORDER BY ts) AS rn, " +
+                "sum(id) OVER () AS total " +
+                "FROM x")
                 .ddl("CREATE TABLE x AS (" +
                         "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
                         "FROM long_sequence(5)" +
@@ -18297,7 +18297,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testUnSupportImplicitCast() throws Exception {
         assertQuery("SELECT ts, side, lead(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
-                        "AS next_price FROM trades ")
+                "AS next_price FROM trades ")
                 .ddl("create table trades as " +
                         "(" +
                         "select" +
@@ -18310,7 +18310,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 .fails(0, "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]");
 
         assertQuery("SELECT ts, side, first_value(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
-                        "AS next_price FROM trades ")
+                "AS next_price FROM trades ")
                 .fails(0, "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]");
     }
 
@@ -18321,12 +18321,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
             assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "var_pop(j) over (order by ts) vr, " +
-                            "stddev_pop(j) over (order by ts) sd " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "var_pop(j) over (order by ts) vr, " +
+                    "stddev_pop(j) over (order by ts) sd " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18365,12 +18365,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Cross-validate var_pop = stddev_pop²
             assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 6) max_diff " +
-                            "from (" +
-                            "select " +
-                            "var_pop(d) over (order by ts rows between 999 preceding and current row) vr, " +
-                            "stddev_pop(d) over (order by ts rows between 999 preceding and current row) sd " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "var_pop(d) over (order by ts rows between 999 preceding and current row) vr, " +
+                    "stddev_pop(d) over (order by ts rows between 999 preceding and current row) sd " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18388,12 +18388,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
 
             assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
-                            "from (" +
-                            "select i, " +
-                            "var_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) vr, " +
-                            "stddev_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select i, " +
+                    "var_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) vr, " +
+                    "stddev_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18411,9 +18411,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 5.0)");
 
             assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
-                            "from (" +
-                            "select var_pop(j) over () vr, stddev_pop(j) over () sd from tab" +
-                            ")")
+                    "from (" +
+                    "select var_pop(j) over () vr, stddev_pop(j) over () sd from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18453,12 +18453,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
 
             assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "var_samp(j) over (order by ts) vr, " +
-                            "stddev_samp(j) over (order by ts) sd " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "var_samp(j) over (order by ts) vr, " +
+                    "stddev_samp(j) over (order by ts) sd " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18496,9 +18496,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, 14.0)");
 
             assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
-                            "from (" +
-                            "select var_samp(j) over (partition by i order by ts) vr, stddev_samp(j) over (partition by i order by ts) sd from tab" +
-                            ")")
+                    "from (" +
+                    "select var_samp(j) over (partition by i order by ts) vr, stddev_samp(j) over (partition by i order by ts) sd from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18516,9 +18516,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 5.0)");
 
             assertQuery("select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
-                            "from (" +
-                            "select var_samp(j) over () vr, stddev_samp(j) over () sd from tab" +
-                            ")")
+                    "from (" +
+                    "select var_samp(j) over () vr, stddev_samp(j) over () sd from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18562,12 +18562,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, 14.0)");
 
             assertQuery("select round(max(case when vr is null and vr_ref is null then 0.0 when vr is null or vr_ref is null then 1.0 else abs(vr - vr_ref) end), 12) max_diff " +
-                            "from (" +
-                            "select " +
-                            "variance(j) over (partition by i order by ts) vr, " +
-                            "var_samp(j) over (partition by i order by ts) vr_ref " +
-                            "from tab" +
-                            ")")
+                    "from (" +
+                    "select " +
+                    "variance(j) over (partition by i order by ts) vr, " +
+                    "var_samp(j) over (partition by i order by ts) vr_ref " +
+                    "from tab" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -19278,15 +19278,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Base column mixed with window function inside aggregate argument with GROUP BY.
         // max(x - avg(x) OVER (...)) computes max deviation from the moving average per category.
         assertMemoryLeak(() -> assertQuery("SELECT category, max(x - avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS max_dev " +
-                        "FROM tab GROUP BY category ORDER BY category")
-        .ddl("CREATE TABLE tab AS (" +
+                "FROM tab GROUP BY category ORDER BY category")
+                .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY")
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         category\tmax_dev
                         A\t0.5
                         B\t0.5
@@ -19298,15 +19298,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Base column mixed with window function inside aggregate, no GROUP BY clause.
         // sum triggers implicit grouping; x needs pass-through in the inner window model.
         assertMemoryLeak(() -> assertQuery("SELECT sum(x + avg(x) OVER ()) AS result FROM tab")
-        .ddl("CREATE TABLE tab AS (" +
+                .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY")
-        .noRandomAccess()
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                .noRandomAccess()
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         result
                         20.0
                         """));
@@ -19315,14 +19315,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionAsArgumentToAggregateWithBasicGroupBy() throws Exception {
         assertMemoryLeak(() -> assertQuery("SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category")
-        .ddl("CREATE TABLE tab AS (" +
+                .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY")
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         category\tresult
                         A\t5.0
                         B\t5.0
@@ -19335,15 +19335,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // max(avg(x) OVER (PARTITION BY cat ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW))
         // computes a 3-row moving average per category, then picks the peak per category.
         assertMemoryLeak(() -> assertQuery("SELECT category, max(avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS peak_ma " +
-                        "FROM tab GROUP BY category ORDER BY category")
-        .ddl("CREATE TABLE tab AS (" +
+                "FROM tab GROUP BY category ORDER BY category")
+                .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY")
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         category\tpeak_ma
                         A\t1.5
                         B\t3.5
@@ -19357,15 +19357,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Row 5 has x=NULL, category=B; avg(x) OVER () still returns 2.5 for that row.
         // sum per category: A(2 rows)=5.0, B(3 rows)=7.5
         assertMemoryLeak(() -> assertQuery("SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category")
-        .ddl("CREATE TABLE tab AS (" +
+                .ddl("CREATE TABLE tab AS (" +
                         "SELECT CASE WHEN x = 5 THEN NULL ELSE x::DOUBLE END AS x, " +
                         "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(5)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY")
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         category\tresult
                         A\t5.0
                         B\t7.5
@@ -19378,15 +19378,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // window inside an aggregate. The inner window model must expose the underlying
         // literal (cat), not the GROUP BY alias (upper_cat).
         assertMemoryLeak(() -> assertQuery("SELECT upper(cat) AS upper_cat, sum(avg(x) OVER ()) AS result " +
-                        "FROM tab GROUP BY upper(cat) ORDER BY upper_cat")
-        .ddl("CREATE TABLE tab AS (" +
+                "FROM tab GROUP BY upper(cat) ORDER BY upper_cat")
+                .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'a' ELSE 'b' END AS cat, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY")
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         upper_cat\tresult
                         A\t5.0
                         B\t5.0
@@ -19400,17 +19400,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // one window's alias must only reach outer models that have the owning model in their
         // nested chain, not the deeper one (which would produce an unresolvable column).
         assertMemoryLeak(() -> assertQuery("SELECT category, " +
-                        "max(avg(x) OVER (PARTITION BY category)) AS max_avg, " +
-                        "min(sum(x) OVER (PARTITION BY category)) AS min_sum " +
-                        "FROM tab GROUP BY category ORDER BY category")
-        .ddl("CREATE TABLE tab AS (" +
+                "max(avg(x) OVER (PARTITION BY category)) AS max_avg, " +
+                "min(sum(x) OVER (PARTITION BY category)) AS min_sum " +
+                "FROM tab GROUP BY category ORDER BY category")
+                .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY")
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         category\tmax_avg\tmin_sum
                         A\t1.5\t3.0
                         B\t3.5\t7.0
@@ -19422,16 +19422,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Multiple GROUP BY keys must all get pass-through columns in the inner window model.
         // avg(x) OVER () = (1+2+3+4)/4 = 2.5, each (cat1, cat2) group has 1 row → sum(2.5) = 2.5
         assertMemoryLeak(() -> assertQuery("SELECT cat1, cat2, sum(avg(x) OVER ()) AS result FROM tab GROUP BY cat1, cat2 ORDER BY cat1, cat2")
-        .ddl("CREATE TABLE tab AS (" +
+                .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, " +
                         "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS cat1, " +
                         "CASE WHEN x % 2 = 1 THEN 'X' ELSE 'Y' END AS cat2, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY")
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         cat1\tcat2\tresult
                         A\tX\t2.5
                         A\tY\t2.5
@@ -19446,18 +19446,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // nInner > 2: pass-through must reach intermediate models without leaking window
         // aliases into models that can't resolve them.
         assertMemoryLeak(() -> assertQuery("SELECT category, " +
-                        "max(avg(x) OVER (PARTITION BY category)) AS max_avg, " +
-                        "min(sum(x) OVER (PARTITION BY category)) AS min_sum, " +
-                        "avg(count(x) OVER (PARTITION BY category)) AS avg_cnt " +
-                        "FROM tab GROUP BY category ORDER BY category")
-        .ddl("CREATE TABLE tab AS (" +
+                "max(avg(x) OVER (PARTITION BY category)) AS max_avg, " +
+                "min(sum(x) OVER (PARTITION BY category)) AS min_sum, " +
+                "avg(count(x) OVER (PARTITION BY category)) AS avg_cnt " +
+                "FROM tab GROUP BY category ORDER BY category")
+                .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY")
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         category\tmax_avg\tmin_sum\tavg_cnt
                         A\t1.5\t3.0\t2.0
                         B\t3.5\t7.0\t2.0
@@ -19469,17 +19469,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Window PARTITION BY uses a column (cat2) that is NOT a GROUP BY key (cat1).
         // Inner window model must expose both columns so the chain resolves them.
         assertMemoryLeak(() -> assertQuery("SELECT cat1, max(avg(x) OVER (PARTITION BY cat2)) AS peak " +
-                        "FROM tab GROUP BY cat1 ORDER BY cat1")
-        .ddl("CREATE TABLE tab AS (" +
+                "FROM tab GROUP BY cat1 ORDER BY cat1")
+                .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, " +
                         "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS cat1, " +
                         "CASE WHEN x % 2 = 1 THEN 'X' ELSE 'Y' END AS cat2, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY")
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         cat1\tpeak
                         A\t3.0
                         B\t3.0
@@ -19492,15 +19492,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // column as the GROUP BY key. SYMBOL resolution goes through a distinct code path
         // from STRING, so this guards against a regression specific to that type.
         assertMemoryLeak(() -> assertQuery("SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category ORDER BY category")
-        .ddl("CREATE TABLE tab AS (" +
+                .ddl("CREATE TABLE tab AS (" +
                         "SELECT x::DOUBLE AS x, " +
                         "(CASE WHEN x <= 2 THEN 'A' ELSE 'B' END)::SYMBOL AS category, " +
                         "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
                         "FROM long_sequence(4)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY")
-        .expectSize()
-        .noLeakCheck()
-        .returns("""
+                .expectSize()
+                .noLeakCheck()
+                .returns("""
                         category\tresult
                         A\t5.0
                         B\t5.0
@@ -19591,7 +19591,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day", sqlExecutionContext);
 
             assertQuery("select symbol, price, row_number() over (partition by symbol order by price) " +
-                            "from trades")
+                    "from trades")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -19821,10 +19821,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowFunctionInCaseDifferentOverSpecs() throws Exception {
         // Window functions with different OVER specs in THEN vs ELSE branches
         assertQuery("SELECT id, CASE " +
-                        "  WHEN id <= 3 THEN sum(id) OVER (ORDER BY ts) " +
-                        "  ELSE sum(id) OVER (PARTITION BY id ORDER BY ts) " +
-                        "END AS result " +
-                        "FROM x")
+                "  WHEN id <= 3 THEN sum(id) OVER (ORDER BY ts) " +
+                "  ELSE sum(id) OVER (PARTITION BY id ORDER BY ts) " +
+                "END AS result " +
+                "FROM x")
                 .ddl("CREATE TABLE x AS (" +
                         "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
                         "FROM long_sequence(5)" +
@@ -19845,11 +19845,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowFunctionInCaseExpression() throws Exception {
         // Test window function directly inside CASE WHEN condition
         assertQuery("SELECT CASE " +
-                        "  WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' " +
-                        "  WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' " +
-                        "  ELSE 'middle' " +
-                        "END AS category " +
-                        "FROM x")
+                "  WHEN row_number() OVER (ORDER BY ts) = 1 THEN 'first' " +
+                "  WHEN row_number() OVER (ORDER BY ts) = 3 THEN 'last' " +
+                "  ELSE 'middle' " +
+                "END AS category " +
+                "FROM x")
                 .ddl("CREATE TABLE x AS (" +
                         "SELECT timestamp_sequence('2024-01-01', 1000000) AS ts FROM long_sequence(3)" +
                         ") TIMESTAMP(ts) PARTITION BY DAY")
@@ -19867,10 +19867,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowFunctionInCaseThenAndElse() throws Exception {
         // Window functions in both THEN and ELSE with different functions
         assertQuery("SELECT id, CASE " +
-                        "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts) " +
-                        "  ELSE lag(id) OVER (ORDER BY ts) " +
-                        "END AS result " +
-                        "FROM x")
+                "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts) " +
+                "  ELSE lag(id) OVER (ORDER BY ts) " +
+                "END AS result " +
+                "FROM x")
                 .ddl("CREATE TABLE x AS (" +
                         "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
                         "FROM long_sequence(5)" +
@@ -19891,10 +19891,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowFunctionInCaseWithCast() throws Exception {
         // Window function with cast inside CASE expression
         assertQuery("SELECT id, CASE " +
-                        "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts)::string " +
-                        "  ELSE 'N/A' " +
-                        "END AS result " +
-                        "FROM x")
+                "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts)::string " +
+                "  ELSE 'N/A' " +
+                "END AS result " +
+                "FROM x")
                 .ddl("CREATE TABLE x AS (" +
                         "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
                         "FROM long_sequence(5)" +
@@ -19914,9 +19914,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionInPartitionByFails() throws Exception {
         assertQuery("""
-                        SELECT pickup_datetime, row_number() OVER (PARTITION BY row_number())
-                        FROM trips
-                        WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'""")
+                SELECT pickup_datetime, row_number() OVER (PARTITION BY row_number())
+                FROM trips
+                WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'""")
                 .ddl("create table trips as " +
                         "(" +
                         "select" +
@@ -19949,11 +19949,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowFunctionMultipleInSelect() throws Exception {
         // Test multiple window functions in select with different operations
         assertQuery("SELECT " +
-                        "  id, " +
-                        "  sum(id) OVER (ORDER BY ts) AS running_sum, " +
-                        "  lag(id) OVER (ORDER BY ts) AS prev_id, " +
-                        "  sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS diff " +
-                        "FROM x")
+                "  id, " +
+                "  sum(id) OVER (ORDER BY ts) AS running_sum, " +
+                "  lag(id) OVER (ORDER BY ts) AS prev_id, " +
+                "  sum(id) OVER (ORDER BY ts) - lag(id) OVER (ORDER BY ts) AS diff " +
+                "FROM x")
                 .ddl("CREATE TABLE x AS (" +
                         "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
                         "FROM long_sequence(5)" +
@@ -20009,17 +20009,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT d.y AS z, row_number() OVER (ORDER BY z) AS rn
-                            FROM tab1 t1
-                            JOIN (
-                                SELECT grp, x + 1 AS y
-                                FROM (
-                                    SELECT grp, score + 1 AS x
-                                    FROM tab2
-                                )
-                            ) d ON t1.grp = d.grp
-                            ORDER BY z
-                            """)
+                    SELECT d.y AS z, row_number() OVER (ORDER BY z) AS rn
+                    FROM tab1 t1
+                    JOIN (
+                        SELECT grp, x + 1 AS y
+                        FROM (
+                            SELECT grp, score + 1 AS x
+                            FROM tab2
+                        )
+                    ) d ON t1.grp = d.grp
+                    ORDER BY z
+                    """)
                     .expectSize()
                     .returns("""
                             z\trn
@@ -20045,13 +20045,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT grp, row_number() OVER (ORDER BY x) AS rn
-                            FROM (
-                                SELECT grp, score AS x
-                                FROM tab2
-                            )
-                            ORDER BY grp
-                            """)
+                    SELECT grp, row_number() OVER (ORDER BY x) AS rn
+                    FROM (
+                        SELECT grp, score AS x
+                        FROM tab2
+                    )
+                    ORDER BY grp
+                    """)
                     .expectSize()
                     .returns("""
                             grp\trn
@@ -20084,10 +20084,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            SELECT score, score AS x, row_number() OVER (ORDER BY x) AS rn
-                            FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp
-                            ORDER BY score
-                            """)
+                    SELECT score, score AS x, row_number() OVER (ORDER BY x) AS rn
+                    FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp
+                    ORDER BY score
+                    """)
                     .expectSize()
                     .returns("""
                             score\tx\trn
@@ -20197,10 +20197,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testWindowFunctionWithArithmeticInCaseBranches() throws Exception {
         // Window function with arithmetic operations in different CASE branches
         assertQuery("SELECT id, CASE " +
-                        "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts) + 1 " +
-                        "  ELSE row_number() OVER (ORDER BY ts) - 1 " +
-                        "END AS result " +
-                        "FROM x")
+                "  WHEN id <= 3 THEN row_number() OVER (ORDER BY ts) + 1 " +
+                "  ELSE row_number() OVER (ORDER BY ts) - 1 " +
+                "END AS result " +
+                "FROM x")
                 .ddl("CREATE TABLE x AS (" +
                         "SELECT x AS id, timestamp_sequence('2024-01-01', 1000000) AS ts " +
                         "FROM long_sequence(5)" +
@@ -20330,7 +20330,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // w2 inherits everything from w1 without adding anything
             assertQuery("SELECT sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1)")
+                    "WINDOW w1 AS (ORDER BY ts), w2 AS (w1)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -20353,7 +20353,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // w2 inherits ORDER BY from w1 and adds its own frame
             assertQuery("SELECT sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)")
+                    "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -20377,9 +20377,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Chained: w3 inherits from w2, which inherits from w1
             assertQuery("SELECT x, category, sum(x) OVER w3 as sum FROM t " +
-                            "WINDOW w1 AS (PARTITION BY category), " +
-                            "w2 AS (w1 ORDER BY ts), " +
-                            "w3 AS (w2 ROWS BETWEEN CURRENT ROW AND CURRENT ROW)")
+                    "WINDOW w1 AS (PARTITION BY category), " +
+                    "w2 AS (w1 ORDER BY ts), " +
+                    "w3 AS (w2 ROWS BETWEEN CURRENT ROW AND CURRENT ROW)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -20428,9 +20428,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Window inheritance inside a subquery
             assertQuery("SELECT * FROM (" +
-                            "SELECT x, sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)" +
-                            ")")
+                    "SELECT x, sum(x) OVER w2 as sum FROM t " +
+                    "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)" +
+                    ")")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -20453,7 +20453,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Multiple functions sharing the inherited window
             assertQuery("SELECT sum(x) OVER w2 as s, avg(x) OVER w2 as a FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)")
+                    "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -20476,8 +20476,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // w2 inherits ORDER BY from w1 but overrides frame
             assertQuery("SELECT sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), " +
-                            "w2 AS (w1 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)")
+                    "WINDOW w1 AS (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), " +
+                    "w2 AS (w1 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -20500,7 +20500,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // w2 inherits from w1 but overrides ORDER BY with its own
             assertQuery("SELECT x, sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ORDER BY ts DESC)")
+                    "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 ORDER BY ts DESC)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -20523,7 +20523,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // w1 provides PARTITION BY, w2 adds ORDER BY on top
             assertQuery("SELECT x, category, sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (PARTITION BY category), w2 AS (w1 ORDER BY ts)")
+                    "WINDOW w1 AS (PARTITION BY category), w2 AS (w1 ORDER BY ts)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -20544,7 +20544,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // SQL standard: PARTITION BY not allowed in child window when base is specified
             assertQuery("SELECT sum(x) OVER w2 FROM t " +
-                            "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 PARTITION BY category)")
+                    "WINDOW w1 AS (ORDER BY ts), w2 AS (w1 PARTITION BY category)")
                     .noLeakCheck()
                     .fails(67, "PARTITION BY not allowed in window referencing another window");
         });
@@ -20561,8 +20561,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // w1 provides PARTITION BY + ORDER BY, w2 adds frame
             assertQuery("SELECT x, category, sum(x) OVER w2 as sum FROM t " +
-                            "WINDOW w1 AS (PARTITION BY category ORDER BY ts), " +
-                            "w2 AS (w1 ROWS BETWEEN CURRENT ROW AND CURRENT ROW)")
+                    "WINDOW w1 AS (PARTITION BY category ORDER BY ts), " +
+                    "w2 AS (w1 ROWS BETWEEN CURRENT ROW AND CURRENT ROW)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -20619,14 +20619,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "('2021-01-14 09:30:00', 'SPY', 373.00, 373.50, 372.50, 373.25, 1400);");
             drainWalQueue();
             assertQuery("WITH true_ranges AS " +
-                            "( SELECT rn, ticker, timestamp, open, high, low, close, high-low AS day_range, avg_14_bar_range, " +
-                            "greatest(high-low, abs(high-prev_close), abs(low-prev_close)) as true_range FROM " +
-                            "( SELECT timestamp, ticker, open, high, low, close, row_number() OVER (PARTITION BY ticker ORDER BY timestamp) as rn, " +
-                            "avg(high - low) OVER (PARTITION BY ticker ORDER BY timestamp ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) as avg_14_bar_range, " +
-                            "LAG(close) OVER (PARTITION BY ticker ORDER BY timestamp) AS prev_close, FROM x WHERE ticker = 'SPY' ))" +
-                            "SELECT rn, ticker, timestamp, open, high, low, close, atr FROM ( " +
-                            "SELECT rn, ticker, timestamp, open, high, low, close, avg(true_range) OVER " +
-                            "(PARTITION BY ticker ORDER BY timestamp ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS atr FROM true_ranges ) ORDER BY ticker, timestamp DESC;")
+                    "( SELECT rn, ticker, timestamp, open, high, low, close, high-low AS day_range, avg_14_bar_range, " +
+                    "greatest(high-low, abs(high-prev_close), abs(low-prev_close)) as true_range FROM " +
+                    "( SELECT timestamp, ticker, open, high, low, close, row_number() OVER (PARTITION BY ticker ORDER BY timestamp) as rn, " +
+                    "avg(high - low) OVER (PARTITION BY ticker ORDER BY timestamp ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) as avg_14_bar_range, " +
+                    "LAG(close) OVER (PARTITION BY ticker ORDER BY timestamp) AS prev_close, FROM x WHERE ticker = 'SPY' ))" +
+                    "SELECT rn, ticker, timestamp, open, high, low, close, atr FROM ( " +
+                    "SELECT rn, ticker, timestamp, open, high, low, close, avg(true_range) OVER " +
+                    "(PARTITION BY ticker ORDER BY timestamp ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS atr FROM true_ranges ) ORDER BY ticker, timestamp DESC;")
                     .noLeakCheck()
                     .returns(replaceTimestampSuffix("""
                             rn\tticker\ttimestamp\topen\thigh\tlow\tclose\tatr
@@ -20981,17 +20981,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // streaming Window plan and the no-ORDER variant's pass1() would also be skipped;
             // pinning both cume_dist shapes in one SELECT exercises both pass1 paths.
             assertQuery("select ts, " +
-                            "cume_dist() over (order by ts) cd, " +
-                            "cume_dist() over (partition by i) cd_no, " +
-                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
-                            "nth_value(val, 2) over (partition by i order by ts range between 1 second preceding and current row) nv2, " +
-                            "nth_value(val, 2) over (partition by i order by ts rows between 2 preceding and current row) nv3, " +
-                            "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv4, " +
-                            "nth_value(val, 2) over (order by ts range between 1 second preceding and current row) nv5, " +
-                            "nth_value(val, 2) over (order by ts rows between 2 preceding and current row) nv6, " +
-                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and 1 preceding) nv7, " +
-                            "nth_value(val, 2) over (partition by i order by ts) nv8 " +
-                            "from tab")
+                    "cume_dist() over (order by ts) cd, " +
+                    "cume_dist() over (partition by i) cd_no, " +
+                    "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
+                    "nth_value(val, 2) over (partition by i order by ts range between 1 second preceding and current row) nv2, " +
+                    "nth_value(val, 2) over (partition by i order by ts rows between 2 preceding and current row) nv3, " +
+                    "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv4, " +
+                    "nth_value(val, 2) over (order by ts range between 1 second preceding and current row) nv5, " +
+                    "nth_value(val, 2) over (order by ts rows between 2 preceding and current row) nv6, " +
+                    "nth_value(val, 2) over (order by ts rows between unbounded preceding and 1 preceding) nv7, " +
+                    "nth_value(val, 2) over (partition by i order by ts) nv8 " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()

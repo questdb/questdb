@@ -78,11 +78,11 @@ public class JoinTest extends AbstractCairoTest {
 
             // query "2"
             assertQuery("""
-                             select a.name, a.age, a.member, b.address, a.ts
-                             from table_1 as a
-                             left join table_2 as b
-                                on a.ts = b.ts\
-                            """)
+                     select a.name, a.age, a.member, b.address, a.ts
+                     from table_1 as a
+                     left join table_2 as b
+                        on a.ts = b.ts\
+                    """)
                     .noLeakCheck()
                     .ddl(null)
                     .timestamp("ts")
@@ -95,11 +95,11 @@ public class JoinTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                             select a.name, a.age, a.member, b.address, a.ts
-                             from table_2 as b
-                             right join table_1 as a
-                                on a.ts = b.ts
-                            """)
+                     select a.name, a.age, a.member, b.address, a.ts
+                     from table_2 as b
+                     right join table_1 as a
+                        on a.ts = b.ts
+                    """)
                     .noLeakCheck()
                     .ddl(null)
                     .noRandomAccess()
@@ -111,11 +111,11 @@ public class JoinTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                             select a.name, a.age, a.member, b.address, a.ts
-                             from table_2 as b
-                             full join table_1 as a
-                                on a.ts = b.ts
-                            """)
+                     select a.name, a.age, a.member, b.address, a.ts
+                     from table_2 as b
+                     full join table_1 as a
+                        on a.ts = b.ts
+                    """)
                     .noLeakCheck()
                     .ddl(null)
                     .noRandomAccess()
@@ -129,11 +129,11 @@ public class JoinTest extends AbstractCairoTest {
 
             // query "3"
             assertQuery("""
-                            select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                            from table_1 as a
-                            left join table_2 as b
-                            on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts)
-                            """)
+                    select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                    from table_1 as a
+                    left join table_2 as b
+                    on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts)
+                    """)
                     .noLeakCheck()
                     .ddl(null)
                     .timestamp("ts")
@@ -146,11 +146,11 @@ public class JoinTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                            from table_2 as b
-                            right join table_1 as a
-                               on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts)
-                            """)
+                    select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                    from table_2 as b
+                    right join table_1 as a
+                       on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts)
+                    """)
                     .noLeakCheck()
                     .ddl(null)
                     .noRandomAccess()
@@ -162,11 +162,11 @@ public class JoinTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                            from table_1 as a
-                            full join table_2 as b
-                               on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts)
-                            """)
+                    select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                    from table_1 as a
+                    full join table_2 as b
+                       on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts)
+                    """)
                     .noLeakCheck()
                     .ddl(null)
                     .noRandomAccess()
@@ -180,11 +180,11 @@ public class JoinTest extends AbstractCairoTest {
 
             // query "4" - same as "3" but between is replaced with >= and <=
             assertQuery("""
-                            select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                            from table_1 as a
-                            left join table_2 as b
-                               on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)
-                            """)
+                    select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                    from table_1 as a
+                    left join table_2 as b
+                       on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)
+                    """)
                     .noLeakCheck()
                     .ddl(null)
                     .timestamp("ts")
@@ -197,11 +197,11 @@ public class JoinTest extends AbstractCairoTest {
                             """);
 
             assertQuery("""
-                            select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                            from table_2 as b
-                            right join table_1 as a
-                               on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)
-                            """)
+                    select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                    from table_2 as b
+                    right join table_1 as a
+                       on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)
+                    """)
                     .noLeakCheck()
                     .ddl(null)
                     .noRandomAccess()
@@ -214,11 +214,11 @@ public class JoinTest extends AbstractCairoTest {
 
 
             assertQuery("""
-                            select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                            from table_2 as b
-                            full join table_1 as a
-                               on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)
-                            """)
+                    select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                    from table_2 as b
+                    full join table_1 as a
+                       on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)
+                    """)
                     .noLeakCheck()
                     .ddl(null)
                     .noRandomAccess()
@@ -1718,9 +1718,9 @@ public class JoinTest extends AbstractCairoTest {
                     "timestamp(timestamp)");
 
             assertQuery("""
-                            SELECT pickup_datetime, fare_amount, tempF, windDir\s
-                            FROM (trips WHERE pickup_datetime IN '1970-01-01')\s
-                            ASOF JOIN weather""")
+                    SELECT pickup_datetime, fare_amount, tempF, windDir\s
+                    FROM (trips WHERE pickup_datetime IN '1970-01-01')\s
+                    ASOF JOIN weather""")
                     .noLeakCheck()
                     .timestamp("pickup_datetime")
                     .noRandomAccess()
@@ -2047,12 +2047,12 @@ public class JoinTest extends AbstractCairoTest {
             execute("CREATE TABLE t (event INT, origin INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (1, 1, '2024-01-01T00:00:00.000000Z'), (2, 2, '2024-01-02T00:00:00.000000Z')");
             assertQuery("SELECT T1.origin, count(*) " +
-                            "FROM t T1 " +
-                            "CROSS JOIN t T2 " +
-                            "CROSS JOIN t T3 " +
-                            "JOIN t T4 ON T3.event = T4.event AND T3.origin = T4.origin " +
-                            "GROUP BY T1.origin " +
-                            "ORDER BY T1.origin")
+                    "FROM t T1 " +
+                    "CROSS JOIN t T2 " +
+                    "CROSS JOIN t T3 " +
+                    "JOIN t T4 ON T3.event = T4.event AND T3.origin = T4.origin " +
+                    "GROUP BY T1.origin " +
+                    "ORDER BY T1.origin")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2105,11 +2105,11 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testJoinByInterval() throws Exception {
         assertMemoryLeak(() -> assertQuery("select * from (" +
-                        "  (select interval(100000,200000) i, 'foo' s) a " +
-                        "  join " +
-                        "  (select interval(100000,200000) i, 'bar' s) b " +
-                        "  on a.i = b.i " +
-                        ")")
+                "  (select interval(100000,200000) i, 'foo' s) a " +
+                "  join " +
+                "  (select interval(100000,200000) i, 'bar' s) b " +
+                "  on a.i = b.i " +
+                ")")
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("""
@@ -2850,8 +2850,8 @@ public class JoinTest extends AbstractCairoTest {
                     (3, '2024-01-03T00:00:00.000000Z')
                     """);
             assertQuery("SELECT T1.val, T2.val FROM t T1 " +
-                            "INNER JOIN t T2 ON T1.ts < T2.ts " +
-                            "WHERE T1.val > 0 AND NOW() = NOW()")
+                    "INNER JOIN t T2 ON T1.ts < T2.ts " +
+                    "WHERE T1.val > 0 AND NOW() = NOW()")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
@@ -2872,8 +2872,8 @@ public class JoinTest extends AbstractCairoTest {
             execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z')");
             assertQuery("SELECT T1.val, T2.val FROM t T1 " +
-                            "INNER JOIN t T2 ON T1.ts < T2.ts " +
-                            "WHERE T1.val > 0 AND 1 > 10 AND NOW() = NOW()")
+                    "INNER JOIN t T2 ON T1.ts < T2.ts " +
+                    "WHERE T1.val > 0 AND 1 > 10 AND NOW() = NOW()")
                     .noLeakCheck()
                     .expectSize()
                     .returns("val\tval1\n");
@@ -3002,9 +3002,9 @@ public class JoinTest extends AbstractCairoTest {
                     (200, '2024-01-04T00:00:00.000000Z')
                     """);
             assertQuery("SELECT a.val, b.val, c.val FROM t1 a " +
-                            "INNER JOIN t2 b ON a.ts < b.ts " +
-                            "INNER JOIN t3 c ON b.ts < c.ts " +
-                            "WHERE a.val + b.val > 5 AND b.val + c.val > 50")
+                    "INNER JOIN t2 b ON a.ts < b.ts " +
+                    "INNER JOIN t3 c ON b.ts < c.ts " +
+                    "WHERE a.val + b.val > 5 AND b.val + c.val > 50")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
@@ -3122,8 +3122,8 @@ public class JoinTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
-                            "from x " +
-                            "join x as x1 on x.i = x1.i")
+                    "from x " +
+                    "join x as x1 on x.i = x1.i")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
@@ -3134,8 +3134,8 @@ public class JoinTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select *, x.\"in\" + x1.\"from\" " +
-                            "from x " +
-                            "join x as x1 on x.i = x1.i")
+                    "from x " +
+                    "join x as x1 on x.i = x1.i")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
@@ -3786,9 +3786,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testJoiningSubqueryWithDotInColumnName() throws Exception {
         assertMemoryLeak(() -> assertQuery("""
-                        SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))
-                        LEFT JOIN (select 1) ON true;
-                        """)
+                SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))
+                LEFT JOIN (select 1) ON true;
+                """)
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("""
@@ -4815,20 +4815,20 @@ public class JoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    i\tj
-                    null\t11
-                    null\t12
-                    null\t13
-                    """);
+                            i\tj
+                            null\t11
+                            null\t12
+                            null\t13
+                            """);
             assertQuery("select * from t1 full join t2 on t1.i+10 = t2.j")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    i\tj
-                    null\t11
-                    null\t12
-                    null\t13
-                    """);
+                            i\tj
+                            null\t11
+                            null\t12
+                            null\t13
+                            """);
         });
     }
 
@@ -5723,27 +5723,27 @@ public class JoinTest extends AbstractCairoTest {
             execute("insert into t values('2023-09-21T10:00:00.000000Z',1,1);\n");
 
             assertQuery("select count(*) " +
-                            "from t as t1 " +
-                            "join t as t2 on t1.c0<t2.c0 " +
-                            "cross join t as t3")
+                    "from t as t1 " +
+                    "join t as t2 on t1.c0<t2.c0 " +
+                    "cross join t as t3")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
                     .returns("count\n0\n");
 
             assertQuery("select count(*) " +
-                            "from t as t3 " +
-                            "cross join t as t1 " +
-                            "join t as t2 on t1.c0<t2.c0 ")
+                    "from t as t3 " +
+                    "cross join t as t1 " +
+                    "join t as t2 on t1.c0<t2.c0 ")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
                     .returns("count\n0\n");
 
             assertQuery("select count(*) " +
-                            "from t as t3 " +
-                            "cross join t as t2 " +
-                            "join t as t1 on t1.c0<t2.c0 ")
+                    "from t as t3 " +
+                    "cross join t as t2 " +
+                    "join t as t1 on t1.c0<t2.c0 ")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -5825,16 +5825,16 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             assertQuery("""
-                            with
-                            eventlist as (select * from contact_events latest on timestamp partition by _id order by timestamp)
-                            ,contactlist as (select * from contacts latest on timestamp partition by _id order by timestamp)
-                            ,c as (select distinct contactid from eventlist where groupId = 'ykom80aRN5AwUcuRp4LJ' except select distinct _id as contactId from contactlist where notRealType = 'bot')
-                            select
-                            c.contactId as id
-                            from
-                            c
-                            join contactlist on c.contactid = contactlist._id
-                            """)
+                    with
+                    eventlist as (select * from contact_events latest on timestamp partition by _id order by timestamp)
+                    ,contactlist as (select * from contacts latest on timestamp partition by _id order by timestamp)
+                    ,c as (select distinct contactid from eventlist where groupId = 'ykom80aRN5AwUcuRp4LJ' except select distinct _id as contactId from contactlist where notRealType = 'bot')
+                    select
+                    c.contactId as id
+                    from
+                    c
+                    join contactlist on c.contactid = contactlist._id
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .sizeMayVary()
@@ -6356,8 +6356,8 @@ public class JoinTest extends AbstractCairoTest {
                     ) timestamp (ts) PARTITION BY MONTH""");
 
             assertQuery("SELECT *" +
-                            "FROM trade t1 " +
-                            "SPLICE JOIN trade t2")
+                    "FROM trade t1 " +
+                    "SPLICE JOIN trade t2")
                     .fullFatJoins()
                     .noLeakCheck()
                     .fails(22, "splice join doesn't support full fat mode");
@@ -6734,7 +6734,10 @@ public class JoinTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000004Z\t103\t102
                     """;
 
-            printSqlResult(expected, query, null, false, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 

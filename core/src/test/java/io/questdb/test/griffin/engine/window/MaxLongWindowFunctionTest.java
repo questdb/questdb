@@ -210,9 +210,9 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
 
             // Verify max() correctly handles nulls in large dataset
             assertQuery("SELECT grp, " +
-                            "count(other_val) as non_null_count, " +
-                            "max(other_val) as max_other_val " +
-                            "FROM tab GROUP BY grp ORDER BY grp")
+                    "count(other_val) as non_null_count, " +
+                    "max(other_val) as max_other_val " +
+                    "FROM tab GROUP BY grp ORDER BY grp")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -223,8 +223,8 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
 
             // Test window function with nulls
             assertQuery("SELECT DISTINCT grp, max_window_val FROM (" +
-                            "SELECT grp, max(other_val) OVER (PARTITION BY grp) as max_window_val FROM tab" +
-                            ") ORDER BY grp")
+                    "SELECT grp, max(other_val) OVER (PARTITION BY grp) as max_window_val FROM tab" +
+                    ") ORDER BY grp")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""

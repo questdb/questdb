@@ -72,12 +72,12 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                sum
-                null
-                """, """
-                sum
-                0.9822
-                """);
+                        sum
+                        null
+                        """, """
+                        sum
+                        0.9822
+                        """);
     }
 
     @Test

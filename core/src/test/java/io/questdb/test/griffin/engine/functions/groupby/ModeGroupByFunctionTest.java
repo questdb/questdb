@@ -204,10 +204,10 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
                             "select 'MSFT'::symbol as symbol, 'BUY' as side from long_sequence(2))"
             );
             assertQuery("select p.symbol, mode(o.side) as mode_side " +
-                            "from prices p " +
-                            "join orders o on p.symbol = o.symbol " +
-                            "group by p.symbol " +
-                            "order by p.symbol")
+                    "from prices p " +
+                    "join orders o on p.symbol = o.symbol " +
+                    "group by p.symbol " +
+                    "order by p.symbol")
                     .noLeakCheck()
                     .ddl(null)
                     .expectSize()
@@ -334,13 +334,13 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeWithSubquery() throws Exception {
         assertQuery("select department, mode(rating) as most_common_rating " +
-                        "from (" +
-                        "  select department, rating " +
-                        "  from employees " +
-                        "  where rating >= 70" +
-                        ") " +
-                        "group by department " +
-                        "order by department")
+                "from (" +
+                "  select department, rating " +
+                "  from employees " +
+                "  where rating >= 70" +
+                ") " +
+                "group by department " +
+                "order by department")
                 .ddl("create table employees as (" +
                         "select 'Engineering' as department, 85L as rating from long_sequence(4) " +
                         "union all " +

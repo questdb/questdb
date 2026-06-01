@@ -393,9 +393,9 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
                                     .expectSize()
                                     .timestamp("timestamp")
                                     .returns("""
-                                    sym\ttimestamp\tk
-                                    msft\t2018-01-01T00:12:00.000000Z\t1970-01-01T00:00:00.000000Z
-                                    """);
+                                            sym\ttimestamp\tk
+                                            msft\t2018-01-01T00:12:00.000000Z\t1970-01-01T00:00:00.000000Z
+                                            """);
 
                             rdr1.goPassive();
 

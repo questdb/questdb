@@ -49,7 +49,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
         // Simple ASOF JOIN without projection references
         assertQuery("select e.symbol, e.value, q.quote, e.value + q.quote as sum " +
-                        "from events e asof join quotes q on e.symbol = q.symbol")
+                "from events e asof join quotes q on e.symbol = q.symbol")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
@@ -163,7 +163,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
         // Simple join without projection references to ensure JOIN works
         assertQuery("select t1.id, t1.val as val1, t2.val as val2, t1.val + t2.val as sum " +
-                        "from t1 inner join t2 on t1.id = t2.id")
+                "from t1 inner join t2 on t1.id = t2.id")
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("""
@@ -181,12 +181,12 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("insert into customers values (1, 'Alice'), (2, 'Bob')");
 
         assertQuery("select" +
-                        " o.id as order_id," +
-                        " c.name as customer_name," +
-                        " o.amount," +
-                        " o.amount * 0.1 as tax," +
-                        " o.amount + tax as total" +
-                        " from orders o join customers c on o.id = c.id")
+                " o.id as order_id," +
+                " c.name as customer_name," +
+                " o.amount," +
+                " o.amount * 0.1 as tax," +
+                " o.amount + tax as total" +
+                " from orders o join customers c on o.id = c.id")
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("""
@@ -522,12 +522,12 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("insert into grades values (95), (85), (75), (65)");
 
         assertQuery("select score, " +
-                        "case when score >= 90 then 'A' " +
-                        "     when score >= 80 then 'B' " +
-                        "     when score >= 70 then 'C' " +
-                        "     else 'D' end as grade, " +
-                        "case when grade in ('A', 'B', 'C') then 'PASS' else 'FAIL' end as pass_status " +
-                        "from grades")
+                "case when score >= 90 then 'A' " +
+                "     when score >= 80 then 'B' " +
+                "     when score >= 70 then 'C' " +
+                "     else 'D' end as grade, " +
+                "case when grade in ('A', 'B', 'C') then 'PASS' else 'FAIL' end as pass_status " +
+                "from grades")
                 .ddl(null)
                 .expectSize()
                 .returns("""
@@ -562,8 +562,8 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("INSERT INTO data VALUES (10), (20), (30)");
 
         assertQuery("select sum(c) from (" +
-                        "select x, x + 1 as a, x + 2 as b, a + b as c from data" +
-                        ")")
+                "select x, x + 1 as a, x + 2 as b, a + b as c from data" +
+                ")")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
@@ -578,8 +578,8 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("CREATE TABLE data (x INT, y INT)");
         execute("INSERT INTO data VALUES (10, 2), (20, 4), (30, 6)");
         assertQuery("select sum(b), sum(c), sum(d) from (" +
-                        "select x, x + y as a, a * 2 as b, a * 3 as c, a * 4 as d from data" +
-                        ")")
+                "select x, x + y as a, a * 2 as b, a * 3 as c, a * 4 as d from data" +
+                ")")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
@@ -595,10 +595,10 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("INSERT INTO data VALUES (1), (2), (3)");
 
         assertQuery("select sum(c) from (" +
-                        "select b, b + 1 as c from (" +
-                        "select x, x + 1 as a, a + 2 as b from data" +
-                        ")" +
-                        ")")
+                "select b, b + 1 as c from (" +
+                "select x, x + 1 as a, a + 2 as b from data" +
+                ")" +
+                ")")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
@@ -623,8 +623,8 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 "('2025-01-01T00:00:01.000000Z', 'B', 200.0, 30, 201.0, 40)");
 
         assertQuery("select avg(schmalolzers) from (" +
-                        "select timestamp, bid_volume * 1.0 / ask_volume as lolzings, lolzings * bid_price as schmalolzers from core_price" +
-                        ")")
+                "select timestamp, bid_volume * 1.0 / ask_volume as lolzings, lolzings * bid_price as schmalolzers from core_price" +
+                ")")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
@@ -640,8 +640,8 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("INSERT INTO data VALUES (4), (9), (16)");
 
         assertQuery("select sum(b) from (" +
-                        "select x, sqrt(x) as a, a * 2 as b from data" +
-                        ")")
+                "select x, sqrt(x) as a, a * 2 as b from data" +
+                ")")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
@@ -657,8 +657,8 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
         execute("INSERT INTO data VALUES (1), (2), (3)");
 
         assertQuery("select x, b, d from (" +
-                        "select x, x + 1 as a, a + 2 as b, b + 1 as c, c + 5 as d from data" +
-                        ")")
+                "select x, x + 1 as a, a + 2 as b, b + 1 as c, c + 5 as d from data" +
+                ")")
                 .noLeakCheck()
                 .expectSize()
                 .returns("""

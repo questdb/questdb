@@ -488,10 +488,10 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table abc as (select x, x::short y from temp)");
 
             assertQuery("select avg(x) avg_x, avg(y) avg_y, " +
-                            "sum(x) sum_x, sum(y) sum_y, " +
-                            "min(x) min_x, min(y) min_y, " +
-                            "max(x) max_x, max(y) max_y " +
-                            "from abc")
+                    "sum(x) sum_x, sum(y) sum_y, " +
+                    "min(x) min_x, min(y) min_y, " +
+                    "max(x) max_x, max(y) max_y " +
+                    "from abc")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
@@ -508,10 +508,10 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
             execute("create table x (x short, y long)");
 
             assertQuery("select avg(x) avg_x, avg(y) avg_y, " +
-                            "sum(x) sum_x, sum(y) sum_y, " +
-                            "min(x) min_x, min(y) min_y, " +
-                            "max(x) max_x, max(y) max_y " +
-                            "from x")
+                    "sum(x) sum_x, sum(y) sum_y, " +
+                    "min(x) min_x, min(y) min_y, " +
+                    "max(x) max_x, max(y) max_y " +
+                    "from x")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()

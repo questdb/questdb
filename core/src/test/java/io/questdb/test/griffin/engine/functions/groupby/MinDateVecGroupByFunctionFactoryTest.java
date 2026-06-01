@@ -40,12 +40,12 @@ public class MinDateVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                avg
-                5261.376146789
-                """, """
-                avg
-                5261.376146789
-                """);
+                        avg
+                        5261.376146789
+                        """, """
+                        avg
+                        5261.376146789
+                        """);
 
         assertQuery("select round(avg(f),6) avg, min(b) min from tab")
                 .ddl("insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)")
@@ -65,12 +65,12 @@ public class MinDateVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                min
-                
-                """, """
-                min
-                3170843-11-07T09:46:39.999Z
-                """);
+                        min
+                        
+                        """, """
+                        min
+                        3170843-11-07T09:46:39.999Z
+                        """);
     }
 
     @Test
@@ -80,12 +80,12 @@ public class MinDateVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .mutateWith("insert into tab select 1, 9223372036854775807L from long_sequence(1)")
                 .expectSize()
                 .returns("""
-                i\tmin
-                1\t
-                """, """
-                i\tmin
-                1\t292278994-08-17T07:12:55.807Z
-                """);
+                        i\tmin
+                        1\t
+                        """, """
+                        i\tmin
+                        1\t292278994-08-17T07:12:55.807Z
+                        """);
     }
 
     @Test
@@ -96,12 +96,12 @@ public class MinDateVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                min
-                
-                """, """
-                min
-                292278994-08-17T07:12:55.807Z
-                """);
+                        min
+                        
+                        """, """
+                        min
+                        292278994-08-17T07:12:55.807Z
+                        """);
     }
 
     @Test

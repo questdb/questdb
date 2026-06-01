@@ -337,7 +337,7 @@ public class DistinctTest extends AbstractCairoTest {
             execute("insert into sensors values ('air', 1, '1970-02-02T10:10:01');");
 
             assertQuery("select distinct sensors.sensor_id, sensors.apptype " +
-                            "from sensors")
+                    "from sensors")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -369,8 +369,8 @@ public class DistinctTest extends AbstractCairoTest {
             execute("insert into samples values ('air', '1970-02-02T10:10:00');");
 
             assertQuery("select distinct samples.sensor_id, sensors.apptype " +
-                            "from samples " +
-                            "inner join sensors on sensors.sensor_id = samples.sensor_id")
+                    "from samples " +
+                    "inner join sensors on sensors.sensor_id = samples.sensor_id")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -405,8 +405,8 @@ public class DistinctTest extends AbstractCairoTest {
 
             final String secondAlias = columnAliasExprEnabled ? "apptype_2" : "apptype1";
             assertQuery("select distinct samples.sensor_id, sensors.apptype, samples.apptype " +
-                            "from samples " +
-                            "inner join sensors on sensors.sensor_id = samples.sensor_id")
+                    "from samples " +
+                    "inner join sensors on sensors.sensor_id = samples.sensor_id")
                     .noLeakCheck()
                     .expectSize()
                     .returns("sensor_id\tapptype\t" + secondAlias + "\n" +

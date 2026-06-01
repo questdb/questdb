@@ -533,14 +533,14 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
             bindVariableService.setStr("str_bind", "2020-01-01T00:00:00.000002Z");
             bindVariableService.setTimestamp("micro_bind", MicrosTimestampDriver.floor("2020-01-01T00:00:00.000002Z"));
             assertQuery("select " +
-                            "a != b, " +
-                            "ts != '2020-01-01T00:00:00.000001Z'::timestamp, " +
-                            "ts != ts_ns, " +
-                            "ts != '2020-01-01T00:00:00.000002000Z'::timestamp_ns, " +
-                            "ts != :str_bind, " +
-                            ":micro_bind != ts_ns, " +
-                            ":micro_bind != ts " +
-                            "from x")
+                    "a != b, " +
+                    "ts != '2020-01-01T00:00:00.000001Z'::timestamp, " +
+                    "ts != ts_ns, " +
+                    "ts != '2020-01-01T00:00:00.000002000Z'::timestamp_ns, " +
+                    "ts != :str_bind, " +
+                    ":micro_bind != ts_ns, " +
+                    ":micro_bind != ts " +
+                    "from x")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -565,17 +565,17 @@ public class EqTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
             bindVariableService.setTimestamp("null_bind", Numbers.LONG_NULL);
             bindVariableService.setStr("null_str_bind", null);
             assertQuery("select " +
-                            "null::timestamp = ts, " +
-                            "ts = null::timestamp, " +
-                            "null::timestamp = null::timestamp, " +
-                            ":null_bind = ts, " +
-                            "ts = :null_bind, " +
-                            "null::timestamp = ts_ns, " +
-                            "ts_ns = null::timestamp, " +
-                            "null::timestamp = null::timestamp_ns, " +
-                            ":null_bind = ts_ns, " +
-                            "ts = :null_str_bind " +
-                            "from x")
+                    "null::timestamp = ts, " +
+                    "ts = null::timestamp, " +
+                    "null::timestamp = null::timestamp, " +
+                    ":null_bind = ts, " +
+                    "ts = :null_bind, " +
+                    "null::timestamp = ts_ns, " +
+                    "ts_ns = null::timestamp, " +
+                    "null::timestamp = null::timestamp_ns, " +
+                    ":null_bind = ts_ns, " +
+                    "ts = :null_str_bind " +
+                    "from x")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""

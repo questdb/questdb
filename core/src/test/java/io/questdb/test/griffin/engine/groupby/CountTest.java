@@ -75,9 +75,9 @@ public class CountTest extends AbstractCairoTest {
     @Test
     public void testCountDecimal() throws Exception {
         assertQuery("select id%20 key, count(d8) c8, count(d16) c16, count(d32) c32, " +
-                        "count(d64) c64, count(d128) c128, count(d256) c256 " +
-                        "from x " +
-                        "order by key desc")
+                "count(d64) c64, count(d128) c128, count(d256) c256 " +
+                "from x " +
+                "order by key desc")
                 .ddl("create table x as (" +
                         "select" +
                         " x id," +

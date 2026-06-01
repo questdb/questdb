@@ -320,9 +320,9 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("""
-                    min\tmax\tcount
-                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47
-                    """);
+                            min\tmax\tcount
+                            2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47
+                            """);
 
             Utf8StringSink sink = new Utf8StringSink();
 
@@ -334,9 +334,9 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("""
-                    min\tmax\tcount
-                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t6
-                    """);
+                            min\tmax\tcount
+                            2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t6
+                            """);
 
             assertQuery("select * from rg")
                     .noLeakCheck()
@@ -389,9 +389,9 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("""
-                    min\tmax\tcount
-                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47
-                    """);
+                            min\tmax\tcount
+                            2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47
+                            """);
 
             Utf8StringSink sink = new Utf8StringSink();
 
@@ -403,9 +403,9 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("""
-                    min\tmax\tcount
-                    2022-02-24T14:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t5
-                    """);
+                            min\tmax\tcount
+                            2022-02-24T14:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t5
+                            """);
 
             assertQuery("select * from rg")
                     .noLeakCheck()
@@ -457,9 +457,9 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("""
-                    min\tmax\tcount
-                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47
-                    """);
+                            min\tmax\tcount
+                            2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47
+                            """);
 
             Utf8StringSink sink = new Utf8StringSink();
 
@@ -471,9 +471,9 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("""
-                    min\tmax\tcount
-                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t3
-                    """);
+                            min\tmax\tcount
+                            2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t3
+                            """);
 
             assertQuery("select * from rg")
                     .noLeakCheck()

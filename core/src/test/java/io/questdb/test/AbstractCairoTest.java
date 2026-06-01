@@ -1659,6 +1659,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    // todo: remove
     protected static void printSqlResult(CharSequence expected, CharSequence query, CharSequence expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
         printSqlResult(() -> expected, query, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false, null);
     }
@@ -1950,24 +1951,37 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertQueryNoLeakCheck(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
     }
 
+    // todo: remove
+    protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean sizeCanBeVariable) throws SqlException {
+        snapshotMemoryUsage();
+        try (final RecordCursorFactory factory = select(query)) {
+            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, expectSize, sizeCanBeVariable);
+        }
+    }
+
+    // todo: delete
     protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
     }
 
+    // todo: delete
     protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp) throws SqlException {
         assertQueryNoLeakCheck(expected, query, expectedTimestamp, false);
     }
 
+    // todo: delete
     protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             assertQueryNoLeakCheck(compiler, expected, query, expectedTimestamp, supportsRandomAccess, sqlExecutionContext);
         }
     }
 
+    // todo: delete
     protected void assertQueryNoLeakCheck(String expected, String query) throws SqlException {
         assertQueryNoLeakCheck(expected, query, true);
     }
 
+    // todo: delete
     protected void assertQueryNoLeakCheck(String expected, String query, boolean expectSize) throws SqlException {
         snapshotMemoryUsage();
         try (RecordCursorFactory factory = select(query)) {
@@ -1983,6 +1997,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    // todo: remove
     protected void assertQueryNoLeakCheckWithFatJoin(String sql, String expected, String ts, boolean fullFatJoins, boolean randomAccess, boolean expectedSize) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoins);

@@ -2059,14 +2059,14 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             @Nullable String from,
             @Nullable String offset,
             @Nullable String timezone
-    ) throws Exception{
+    ) throws Exception {
         assertQuery("select timestamp_floor('" +
-                        interval + "', " +
-                        (timestamp != null ? "'" + timestamp + "'" : "null") + ", " +
-                        (from != null ? "'" + from + "'" : "null") + ", " +
-                        (offset != null ? "'" + offset + "'" : "null") + ", " +
-                        (timezone != null ? "'" + timezone + "'" : "null") +
-                        ")")
+                interval + "', " +
+                (timestamp != null ? "'" + timestamp + "'" : "null") + ", " +
+                (from != null ? "'" + from + "'" : "null") + ", " +
+                (offset != null ? "'" + offset + "'" : "null") + ", " +
+                (timezone != null ? "'" + timezone + "'" : "null") +
+                ")")
                 .noLeakCheck()
                 .expectSize()
                 .returns(expected);
@@ -2075,12 +2075,12 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
         bindVariableService.clear();
         bindVariableService.setStr("offset", offset);
         assertQuery("select timestamp_floor('" +
-                        interval + "', " +
-                        (timestamp != null ? "'" + timestamp + "'" : "null") + ", " +
-                        (from != null ? "'" + from + "'" : "null") + ", " +
-                        ":offset, " +
-                        (timezone != null ? "'" + timezone + "'" : "null") +
-                        ")")
+                interval + "', " +
+                (timestamp != null ? "'" + timestamp + "'" : "null") + ", " +
+                (from != null ? "'" + from + "'" : "null") + ", " +
+                ":offset, " +
+                (timezone != null ? "'" + timezone + "'" : "null") +
+                ")")
                 .noLeakCheck()
                 .expectSize()
                 .returns(expected);
@@ -2089,12 +2089,12 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
         bindVariableService.clear();
         bindVariableService.setStr("tz", timezone);
         assertQuery("select timestamp_floor('" +
-                        interval + "', " +
-                        (timestamp != null ? "'" + timestamp + "'" : "null") + ", " +
-                        (from != null ? "'" + from + "'" : "null") + ", " +
-                        (offset != null ? "'" + offset + "'" : "null") + ", " +
-                        ":tz" +
-                        ")")
+                interval + "', " +
+                (timestamp != null ? "'" + timestamp + "'" : "null") + ", " +
+                (from != null ? "'" + from + "'" : "null") + ", " +
+                (offset != null ? "'" + offset + "'" : "null") + ", " +
+                ":tz" +
+                ")")
                 .noLeakCheck()
                 .expectSize()
                 .returns(expected);
@@ -2104,12 +2104,12 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
         bindVariableService.setStr("offset", offset);
         bindVariableService.setStr("tz", timezone);
         assertQuery("select timestamp_floor('" +
-                        interval + "', " +
-                        (timestamp != null ? "'" + timestamp + "'" : "null") + ", " +
-                        (from != null ? "'" + from + "'" : "null") + ", " +
-                        ":offset, " +
-                        ":tz" +
-                        ")")
+                interval + "', " +
+                (timestamp != null ? "'" + timestamp + "'" : "null") + ", " +
+                (from != null ? "'" + from + "'" : "null") + ", " +
+                ":offset, " +
+                ":tz" +
+                ")")
                 .noLeakCheck()
                 .expectSize()
                 .returns(expected);

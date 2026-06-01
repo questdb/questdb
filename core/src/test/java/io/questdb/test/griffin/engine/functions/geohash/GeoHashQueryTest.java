@@ -237,18 +237,18 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    geo1\tgeo2\tgeo4\tgeo8\tgeo9\tx
-                    q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t0
-                    q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t1
-                    q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t2
-                    q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t3
-                    q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t4
-                    q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t5
-                    q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t6
-                    q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t7
-                    q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t8
-                    q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t9
-                    """);
+                            geo1\tgeo2\tgeo4\tgeo8\tgeo9\tx
+                            q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t0
+                            q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t1
+                            q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t2
+                            q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t3
+                            q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t4
+                            q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t5
+                            q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t6
+                            q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t7
+                            q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t8
+                            q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t9
+                            """);
         });
     }
 
@@ -276,10 +276,10 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    geo1\tgeo2\tgeo4\tgeo8\tx
-                    \t\t\t\t0
-                    \t\t\t\t1
-                    """);
+                            geo1\tgeo2\tgeo4\tgeo8\tx
+                            \t\t\t\t0
+                            \t\t\t\t1
+                            """);
         });
     }
 
@@ -299,15 +299,15 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    geo4\tx\tgeo41\tx1
-                    1234\t3\t1234\t1
-                    3456\t4\t3456\t2
-                    3456\t5\t3456\t2
-                    3456\t6\t3456\t2
-                    3456\t7\t3456\t2
-                    1234\t8\t1234\t1
-                    1234\t10\t1234\t1
-                    """);
+                            geo4\tx\tgeo41\tx1
+                            1234\t3\t1234\t1
+                            3456\t4\t3456\t2
+                            3456\t5\t3456\t2
+                            3456\t6\t3456\t2
+                            3456\t7\t3456\t2
+                            1234\t8\t1234\t1
+                            1234\t10\t1234\t1
+                            """);
         });
     }
 
@@ -327,9 +327,9 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    cast\tcast1\tcast2\tcast3
-                    0f91tz\t0f9\t0\t0
-                    """);
+                            cast\tcast1\tcast2\tcast3
+                            0f91tz\t0f9\t0\t0
+                            """);
         });
     }
 
@@ -343,10 +343,10 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                cast
-                questd
-                questd
-                """));
+                        cast
+                        questd
+                        questd
+                        """));
     }
 
     @Test
@@ -355,9 +355,9 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                cast
-
-                """));
+                        cast
+                        
+                        """));
     }
 
     @Test
@@ -366,9 +366,9 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                cast
-                questdb
-                """));
+                        cast
+                        questdb
+                        """));
     }
 
     @Test
@@ -382,10 +382,10 @@ public class GeoHashQueryTest extends AbstractCairoTest {
             assertQuery("select * from t1 where geo4 = cast('questdb' as geohash(7c))")
                     .noLeakCheck()
                     .returns("""
-                    geo4\tx
-                    questdb\t1
-                    questdb\t2
-                    """);
+                            geo4\tx
+                            questdb\t1
+                            questdb\t2
+                            """);
         });
     }
 
@@ -409,16 +409,16 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    geo4\tgeo1\tx\tgeo41\tgeo11\tx1
-                    ques\tq\t1\tques\t3\t2
-                    1234\t3\t2\t1234\tq\t1
-                    ques\t1\t5\tques\t3\t2
-                    1234\t3\t6\t1234\tq\t1
-                    1234\t1\t7\t1234\tq\t1
-                    1234\tq\t8\t1234\tq\t1
-                    ques\t1\t9\tques\t3\t2
-                    ques\t1\t10\tques\t3\t2
-                    """);
+                            geo4\tgeo1\tx\tgeo41\tgeo11\tx1
+                            ques\tq\t1\tques\t3\t2
+                            1234\t3\t2\t1234\tq\t1
+                            ques\t1\t5\tques\t3\t2
+                            1234\t3\t6\t1234\tq\t1
+                            1234\t1\t7\t1234\tq\t1
+                            1234\tq\t8\t1234\tq\t1
+                            ques\t1\t9\tques\t3\t2
+                            ques\t1\t10\tques\t3\t2
+                            """);
         });
     }
 
@@ -442,16 +442,16 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    geo4\tgeo1\tx\tgeo41\tgeo11\tx1
-                    ques\tq\t1\tques\t3\t2
-                    1234\t3\t2\t1234\tq\t1
-                    ques\t1\t5\tques\t3\t2
-                    1234\t3\t6\t1234\tq\t1
-                    1234\t1\t7\t1234\tq\t1
-                    1234\tq\t8\t1234\tq\t1
-                    ques\t1\t9\tques\t3\t2
-                    ques\t1\t10\tques\t3\t2
-                    """);
+                            geo4\tgeo1\tx\tgeo41\tgeo11\tx1
+                            ques\tq\t1\tques\t3\t2
+                            1234\t3\t2\t1234\tq\t1
+                            ques\t1\t5\tques\t3\t2
+                            1234\t3\t6\t1234\tq\t1
+                            1234\t1\t7\t1234\tq\t1
+                            1234\tq\t8\t1234\tq\t1
+                            ques\t1\t9\tques\t3\t2
+                            ques\t1\t10\tques\t3\t2
+                            """);
         });
     }
 
@@ -472,8 +472,8 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "from long_sequence(2)) timestamp(ts)");
 
             assertQuery("with g1 as (select distinct * from t1 order by ts)," +
-                            "g2 as (select distinct * from t2 order by ts)" +
-                            "select * from g1 lt join g2 on g1.geo4 = g2.geo4")
+                    "g2 as (select distinct * from t2 order by ts)" +
+                    "select * from g1 lt join g2 on g1.geo4 = g2.geo4")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -512,10 +512,10 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    geo4\tgeo8\tx\tgeo1\tgeo2\tx1
-                    9v1s\t46swgj10\t1\ts\t1c\t1
-                    jnw9\tzfuqd3bf\t2\tm\t71\t2
-                    """);
+                            geo4\tgeo8\tx\tgeo1\tgeo2\tx1
+                            9v1s\t46swgj10\t1\ts\t1c\t1
+                            jnw9\tzfuqd3bf\t2\tm\t71\t2
+                            """);
         });
     }
 
@@ -531,11 +531,11 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    geo4\tx
-                    questdb\t1
-                    questdb\t2
-                    1234567\t3
-                    """);
+                            geo4\tx
+                            questdb\t1
+                            questdb\t2
+                            1234567\t3
+                            """);
         });
     }
 
@@ -550,9 +550,9 @@ public class GeoHashQueryTest extends AbstractCairoTest {
             assertQuery("select * from t1 where geo4 != cast('questdb' as geohash(7c))")
                     .noLeakCheck()
                     .returns("""
-                    geo4\tx
-                    1234567\t3
-                    """);
+                            geo4\tx
+                            1234567\t3
+                            """);
         });
     }
 
@@ -586,9 +586,9 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
-                    first\tlast
-                    questdb\t1234567
-                    """);
+                            first\tlast
+                            questdb\t1234567
+                            """);
         });
     }
 
@@ -692,9 +692,9 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    g1c\tg2c\tg4c\tg8c
-                    9\t9v\t9v1s\t9v1s8hm7
-                    """);
+                            g1c\tg2c\tg4c\tg8c
+                            9\t9v\t9v1s\t9v1s8hm7
+                            """);
         });
     }
 
@@ -724,12 +724,12 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tts\ta1\ta2\ta4\ta8
-                    1\t1970-01-01T00:00:00.000000Z\t\t\t\t
-                    2\t1970-01-01T00:00:01.000000Z\t\t\t\t
-                    1\t1970-01-01T00:00:00.000000Z\tq\tqu\t1234\t90123456
-                    2\t1970-01-01T00:00:01.000000Z\t3\t34\t3456\t12345672
-                    """);
+                            x\tts\ta1\ta2\ta4\ta8
+                            1\t1970-01-01T00:00:00.000000Z\t\t\t\t
+                            2\t1970-01-01T00:00:01.000000Z\t\t\t\t
+                            1\t1970-01-01T00:00:00.000000Z\tq\tqu\t1234\t90123456
+                            2\t1970-01-01T00:00:01.000000Z\t3\t34\t3456\t12345672
+                            """);
         });
     }
 

@@ -1546,17 +1546,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             .expectSize()
                             .noRandomAccess()
                             .returns(replaceTimestampSuffix("""
-                            count\tmin\tmax
-                            500\t2022-06-01T00:02:52.799000Z\t2022-06-01T23:59:59.500000Z
-                            """));
+                                    count\tmin\tmax
+                                    500\t2022-06-01T00:02:52.799000Z\t2022-06-01T23:59:59.500000Z
+                                    """));
                     assertQuery("select count(1), min(ts), max(ts) from " + tableName + " where ts in '2022-06-02'")
                             .noLeakCheck()
                             .expectSize()
                             .noRandomAccess()
                             .returns(replaceTimestampSuffix("""
-                            count\tmin\tmax
-                            500\t2022-06-02T00:02:52.299000Z\t2022-06-02T23:59:59.000000Z
-                            """));
+                                    count\tmin\tmax
+                                    500\t2022-06-02T00:02:52.299000Z\t2022-06-02T23:59:59.000000Z
+                                    """));
 
                     try (TableReader ignore = getReader(token)) {
                         // Split partition by committing O3 to "2022-06-01"
@@ -1576,9 +1576,9 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             .expectSize()
                             .timestamp("min")
                             .returns(replaceTimestampSuffix("""
-                            min
-                            2022-06-01T00:02:52.799000Z
-                            """));
+                                    min
+                                    2022-06-01T00:02:52.799000Z
+                                    """));
                 });
     }
 

@@ -159,7 +159,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                             " from long_sequence(10)" +
                             ") timestamp (ts) partition by DAY")
                     .mutateWith(// duplicate timestamp and symbol shouldn't change the result
-                    "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')")
+                            "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')")
                     .timestampAsc("ts")
                     .sizeMayVary()
                     .returns(expected, expected);
@@ -191,7 +191,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                             " from long_sequence(10)" +
                             ") timestamp (ts) partition by DAY")
                     .mutateWith(// duplicate timestamp and symbol shouldn't change the result
-                    "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')")
+                            "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')")
                     .timestampDesc("ts")
                     .expectSize()
                     .returns(expected, expected);

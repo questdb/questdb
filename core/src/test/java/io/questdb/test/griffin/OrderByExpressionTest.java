@@ -42,19 +42,19 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Test
     public void testOrderByColumnInJoinedSubquery() throws Exception {
         assertQuery("""
-                        select * from\s
-                        (
-                          selecT x from long_sequence(10)\s
-                        )
-                        cross join\s
-                        (
-                          select * from\s
-                          (
-                            selecT x*x as oth from long_sequence(10) order by x desc limit 5\s
-                          )
-                        )
-                        order by x*2 asc
-                        limit 3""")
+                select * from\s
+                (
+                  selecT x from long_sequence(10)\s
+                )
+                cross join\s
+                (
+                  select * from\s
+                  (
+                    selecT x*x as oth from long_sequence(10) order by x desc limit 5\s
+                  )
+                )
+                order by x*2 asc
+                limit 3""")
                 .ddl(null)
                 .returns("""
                         x\toth
@@ -70,16 +70,16 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Ignore
     public void testOrderByExpressionInJoinedSubquery() throws Exception {
         assertQuery("""
-                        select * from\s
-                        (
-                          select x from long_sequence(10)\s
-                        )
-                        cross join\s
-                        (
-                            select x*x,5*x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5\s
-                        )
-                        order by x*2  asc
-                        limit 3""")
+                select * from\s
+                (
+                  select x from long_sequence(10)\s
+                )
+                cross join\s
+                (
+                    select x*x,5*x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5\s
+                )
+                order by x*2  asc
+                limit 3""")
                 .ddl(null)
                 .expectSize()
                 .returns("""
@@ -93,12 +93,12 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Test
     public void testOrderByExpressionInNestedQuery() throws Exception {
         assertQuery("""
-                        select * from\s
-                        (
-                          select x from long_sequence(10) order by x/2 desc limit 5\s
-                        )
-                        order by x*2 asc
-                        limit 3""")
+                select * from\s
+                (
+                  select x from long_sequence(10) order by x/2 desc limit 5\s
+                )
+                order by x*2 asc
+                limit 3""")
                 .ddl(null)
                 .expectSize()
                 .returns("x\n6\n7\n8\n");
@@ -107,16 +107,16 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Test
     public void testOrderByExpressionWhenColumnHasAliasInJoinedSubquery() throws Exception {
         assertQuery("""
-                        select * from\s
-                        (
-                          select x from long_sequence(10)\s
-                        )
-                        cross join\s
-                        (
-                            select x*x as ext from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5\s
-                        )
-                        order by x*2 asc, ext desc
-                        limit 3""")
+                select * from\s
+                (
+                  select x from long_sequence(10)\s
+                )
+                cross join\s
+                (
+                    select x*x as ext from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5\s
+                )
+                order by x*2 asc, ext desc
+                limit 3""")
                 .ddl(null)
                 .expectSize()
                 .returns("x\text\n1\t100\n1\t81\n1\t64\n");
@@ -196,12 +196,12 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Test
     public void testOrderByExpressionWithFunctionCallInNestedQuery() throws Exception {
         assertQuery("""
-                        select * from\s
-                        (
-                            select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5\s
-                        )
-                        order by x*2 asc
-                        limit 3""")
+                select * from\s
+                (
+                    select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5\s
+                )
+                order by x*2 asc
+                limit 3""")
                 .ddl(null)
                 .expectSize()
                 .returns("x\n6\n7\n8\n");
@@ -210,10 +210,10 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Test
     public void testOrderByExpressionWithFunctionCallInWithClause() throws Exception {
         assertQuery("""
-                        with q as (select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 )\s
-                        select * from q
-                        order by x*2 asc
-                        limit 3""")
+                with q as (select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 )\s
+                select * from q
+                order by x*2 asc
+                limit 3""")
                 .ddl(null)
                 .expectSize()
                 .returns("x\n6\n7\n8\n");
@@ -222,27 +222,27 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Test
     public void testOrderByIntervalFails() throws Exception {
         assertQuery("select i from (" +
-                        "  (select interval(100000,200000) i) " +
-                        "  union all " +
-                        "  (select interval(100000,200000) i) " +
-                        "  union all " +
-                        "  (select null::interval i)" +
-                        ") " +
-                        "order by i desc")
+                "  (select interval(100000,200000) i) " +
+                "  union all " +
+                "  (select interval(100000,200000) i) " +
+                "  union all " +
+                "  (select null::interval i)" +
+                ") " +
+                "order by i desc")
                 .fails(151, "INTERVAL is not a supported type in ORDER BY clause");
     }
 
     @Test
     public void testOrderByNumericColumnThatDoesExist() throws Exception {
         assertQuery("""
-                        SELECT * FROM (
-                          SELECT 456 AS "5"
-                          UNION ALL\s
-                          SELECT 789 AS "5"
-                          UNION ALL\s
-                          SELECT 123 AS "5"
-                        )
-                        ORDER BY 5""")
+                SELECT * FROM (
+                  SELECT 456 AS "5"
+                  UNION ALL\s
+                  SELECT 789 AS "5"
+                  UNION ALL\s
+                  SELECT 123 AS "5"
+                )
+                ORDER BY 5""")
                 .expectSize()
                 .returns("""
                         5
@@ -252,14 +252,14 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                         """);
 
         assertQuery("""
-                        SELECT * FROM (
-                          SELECT 456 AS "5"
-                          UNION ALL\s
-                          SELECT 789 AS "5"
-                          UNION ALL\s
-                          SELECT 123 AS "5"
-                        )
-                        ORDER BY 1""")
+                SELECT * FROM (
+                  SELECT 456 AS "5"
+                  UNION ALL\s
+                  SELECT 789 AS "5"
+                  UNION ALL\s
+                  SELECT 123 AS "5"
+                )
+                ORDER BY 1""")
                 .expectSize()
                 .returns("""
                         5
@@ -286,12 +286,12 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Test
     public void testOrderByTwoColumnsInJoin() throws Exception {
         assertQuery("select * " +
-                        "from (" +
-                        "  select b.*" +
-                        "  from (select 42 id) a " +
-                        "  left join (x union all (select 0 id, 'foo0' s1, 'bar0')) b on a.id = b.id" +
-                        ")" +
-                        "order by s1, s2")
+                "from (" +
+                "  select b.*" +
+                "  from (select 42 id) a " +
+                "  left join (x union all (select 0 id, 'foo0' s1, 'bar0')) b on a.id = b.id" +
+                ")" +
+                "order by s1, s2")
                 .ddl("create table x as (select 42 id, rnd_str('foo1','foo2','foo3') s1, rnd_str('bar1','bar2','bar3') s2 from long_sequence(10))")
                 .returns("""
                         id\ts1\ts2
@@ -319,12 +319,12 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Test
     public void testOrderByTwoExpressionsInNestedQuery() throws Exception {
         assertQuery("""
-                        select * from\s
-                        (
-                          select x from long_sequence(10) order by x/2 desc, x*8 desc limit 5\s
-                        )
-                        order by x*2 asc
-                        limit 3""")
+                select * from\s
+                (
+                  select x from long_sequence(10) order by x/2 desc, x*8 desc limit 5\s
+                )
+                order by x*2 asc
+                limit 3""")
                 .ddl(null)
                 .expectSize()
                 .returns("x\n6\n7\n8\n");
@@ -344,11 +344,11 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .expectSize()
                 .returns("""
-                5_sum
-                123
-                456
-                789
-                """));
+                        5_sum
+                        123
+                        456
+                        789
+                        """));
     }
 
     @Test
@@ -392,14 +392,14 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Test
     public void testOrderByWithAmbiguousColumnOrdering() throws Exception {
         assertQuery("""
-                        SELECT * FROM (
-                          SELECT 456 AS "5", 123 AS "1"
-                          UNION ALL\s
-                          SELECT 789 AS "5",  456 AS "1"
-                          UNION ALL\s
-                          SELECT 123 AS "5",  999 AS "1"
-                        )
-                        ORDER BY 1""")
+                SELECT * FROM (
+                  SELECT 456 AS "5", 123 AS "1"
+                  UNION ALL\s
+                  SELECT 789 AS "5",  456 AS "1"
+                  UNION ALL\s
+                  SELECT 123 AS "5",  999 AS "1"
+                )
+                ORDER BY 1""")
                 .expectSize()
                 .returns("""
                         5\t1

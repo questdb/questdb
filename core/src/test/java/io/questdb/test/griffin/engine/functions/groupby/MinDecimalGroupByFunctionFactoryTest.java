@@ -62,9 +62,9 @@ public class MinDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMinKeyed() throws Exception {
         assertQuery("select id%5 key, min(d8) m8, min(d16) m16, min(d32) m32, " +
-                        "min(d64) m64, min(d128) m128, min(d256) m256 " +
-                        "from x " +
-                        "order by key desc")
+                "min(d64) m64, min(d128) m128, min(d256) m256 " +
+                "from x " +
+                "order by key desc")
                 .ddl("create table x as (" +
                         "select" +
                         " x id," +

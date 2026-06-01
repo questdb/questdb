@@ -597,9 +597,9 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
 
             // Join to find which stores can deliver to each customer
             assertQuery("select c.customer_id, s.store_name " +
-                            "from customers c " +
-                            "join stores s on geo_within_radius_latlon(c.lat, c.lon, s.lat, s.lon, s.delivery_radius) " +
-                            "order by c.customer_id, s.store_name")
+                    "from customers c " +
+                    "join stores s on geo_within_radius_latlon(c.lat, c.lon, s.lat, s.lon, s.delivery_radius) " +
+                    "order by c.customer_id, s.store_name")
                     .noLeakCheck()
                     .returns("""
                             customer_id\tstore_name
@@ -623,9 +623,9 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
 
             // Should match both stores
             assertQuery("select c.customer_id, s.store_name " +
-                            "from customers c, stores s " +
-                            "where geo_within_radius_latlon(c.lat, c.lon, s.lat, s.lon, s.delivery_radius) " +
-                            "order by c.customer_id, s.store_name")
+                    "from customers c, stores s " +
+                    "where geo_within_radius_latlon(c.lat, c.lon, s.lat, s.lon, s.delivery_radius) " +
+                    "order by c.customer_id, s.store_name")
                     .noLeakCheck()
                     .returns("""
                             customer_id\tstore_name

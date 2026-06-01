@@ -26,7 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
@@ -207,14 +206,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test where ts ='2020'
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -228,14 +234,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -249,14 +262,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -270,14 +290,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23:59'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -291,14 +318,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23:59:59'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -312,14 +346,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000001Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000001Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23:59:59.000001Z'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -403,14 +444,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp >= '2020'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -424,14 +472,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp > '2019'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -445,11 +500,18 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp <= '2019'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -463,11 +525,18 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where '2021' <=  timestamp";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -481,14 +550,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp <= '2021'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -502,14 +578,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where '2020' <=  timestamp";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -523,11 +606,18 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp <'2020'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -541,11 +631,18 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where '2021' <  timestamp";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -559,14 +656,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp <'2021'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -580,14 +684,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where '2019' <  timestamp";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -781,11 +892,18 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp >= '2021'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -799,11 +917,18 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where '2019' >=  timestamp";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -817,14 +942,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where '2021-01-01' >=  timestamp";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -838,11 +970,18 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp >= '2021'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -856,11 +995,18 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where '2020' > timestamp";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -875,14 +1021,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // test
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where '2021' >  timestamp";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -947,14 +1100,20 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     """;
 
             String query1 = "select now() as now1, now() as now2, symbol, timestamp FROM ob_mem_snapshot WHERE now() = now()";
-            printSqlResult(expected, query1, "timestamp", true, false);
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
 
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot where timestamp > now()";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -1281,22 +1440,35 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             // 2 ms characters
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23:59:59.00Z'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
             // 1 ms character
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23:59:59.0Z'";
-            printSqlResult(expected, query, "timestamp", true, false);
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -1310,13 +1482,20 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(expected);
             expected = """
                     symbol\tme_seq_num\ttimestamp
                     1\t1\t2020-12-31T23:59:59.000000Z
                     """;
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-12-31T23:59:59Z'";
-            printSqlResult(expected, query, "timestamp", true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -1940,17 +2119,17 @@ public class TimestampQueryTest extends AbstractCairoTest {
         });
     }
 
-    private void assertQueryWithConditions(String query, String expected, String columnName) throws Exception{
-        assertSql(expected, query);
+    private void assertQueryWithConditions(String query, String expected, String columnName) throws Exception {
+        assertQuery(query).noLeakCheck().returnsOnce(expected);
 
         String joining = query.indexOf("where") > 0 ? " and " : " where ";
 
         // Non-impacting additions to WHERE
-        assertSql(expected, query + joining + columnName + " not between now() and CAST(NULL as TIMESTAMP)");
-        assertSql(expected, query + joining + columnName + " between '2200-01-01' and dateadd('y', -10000, now())");
-        assertSql(expected, query + joining + columnName + " > dateadd('y', -1000, now())");
-        assertSql(expected, query + joining + columnName + " <= dateadd('y', 1000, now())");
-        assertSql(expected, query + joining + columnName + " not in '1970-01-01'");
+        assertQuery(query + joining + columnName + " not between now() and CAST(NULL as TIMESTAMP)").noLeakCheck().returnsOnce(expected);
+        assertQuery(query + joining + columnName + " between '2200-01-01' and dateadd('y', -10000, now())").noLeakCheck().returnsOnce(expected);
+        assertQuery(query + joining + columnName + " > dateadd('y', -1000, now())").noLeakCheck().returnsOnce(expected);
+        assertQuery(query + joining + columnName + " <= dateadd('y', 1000, now())").noLeakCheck().returnsOnce(expected);
+        assertQuery(query + joining + columnName + " not in '1970-01-01'").noLeakCheck().returnsOnce(expected);
     }
 
     private void assertTimestampTtFailedQuery(String sql, int errorPos, String expectedError) throws Exception {
@@ -1965,13 +2144,13 @@ public class TimestampQueryTest extends AbstractCairoTest {
                 .fails(errorPos, contains);
     }
 
-    private void assertTimestampTtQuery(String expected, String query) throws Exception{
+    private void assertTimestampTtQuery(String expected, String query) throws Exception {
         assertQueryWithConditions(query, expected, "nts");
         String dtsQuery = query.replace("nts", "dts");
         assertQueryWithConditions(dtsQuery, expected, "dts");
     }
 
-    private int compareNowRange(String query, List<Object[]> dates, LongPredicate filter) throws SqlException {
+    private int compareNowRange(String query, List<Object[]> dates, LongPredicate filter) throws Exception {
         String queryPlan = "Interval forward scan on: xts";
         StringSink text = getPlanSink(query).getSink();
         Assert.assertTrue(text.toString(), Chars.contains(text, queryPlan));
@@ -1981,7 +2160,10 @@ public class TimestampQueryTest extends AbstractCairoTest {
                 + dates.stream().filter(arr -> filter.test((long) arr[0]))
                 .map(arr -> arr[1] + "\n")
                 .collect(Collectors.joining());
-        printSqlResult(expected, query, "ts", true, false);
+        assertQuery(query)
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns(expected);
         return (int) expectedCount;
     }
 }

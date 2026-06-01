@@ -147,7 +147,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("count\n" +
-                    expectedTxnCount + "\n");
+                            expectedTxnCount + "\n");
 
             drainWalQueue();
 
@@ -156,7 +156,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("count\n" +
-                    expectedTxnCount + "\n");
+                            expectedTxnCount + "\n");
 
             drainPurgeJob();
 
@@ -165,7 +165,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("count\n" +
-                    (expectedTxnCount - (expectedTxnCount - 1) / chunkSize * chunkSize) + "\n");
+                            (expectedTxnCount - (expectedTxnCount - 1) / chunkSize * chunkSize) + "\n");
         });
     }
 
