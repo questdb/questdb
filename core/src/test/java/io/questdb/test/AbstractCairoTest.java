@@ -1659,6 +1659,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    // todo: remove
     protected static void printSqlResult(CharSequence expected, CharSequence query, CharSequence expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
         printSqlResult(() -> expected, query, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false, null);
     }
