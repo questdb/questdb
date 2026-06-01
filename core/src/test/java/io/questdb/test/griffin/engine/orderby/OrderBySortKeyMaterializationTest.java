@@ -1960,4 +1960,86 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    @Test
+    public void testMaterializationCapHonoredForSingleColumn() throws Exception {
+        // The 64 KiB sort.key.max.bytes budget is owned in full by the one materialized buffer
+        // (eight 8 KiB pages = 64 KiB = 8192 DOUBLEs), so 5000 deterministic rows fit. Together
+        // with testMaterializationCapSplitAcrossColumns and testMaterializationCapWeightedByColumnSize
+        // this demonstrates the cap behaves as an operator-wide ceiling, not a per-buffer one.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64L * 1024);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t SELECT x::DOUBLE, (x+1)::DOUBLE, (x+2)::DOUBLE, (x+3)::DOUBLE," +
+                    " (x * 1_000_000)::TIMESTAMP FROM long_sequence(5000)");
+
+            final String query = "SELECT (a + b) * (c + d) AS x FROM t ORDER BY x";
+
+            // Plan check confirms the materializing factory is exercised (drops out if LIMIT is
+            // added, since that routes through LimitedSizeSortedLightRecordCursorFactory instead).
+            assertPlanNoLeakCheck(query, """
+                    Sort light
+                      keys: [x]
+                        Materialize sort keys
+                            VirtualRecord
+                              functions: [a+b*c+d]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                    """);
+
+            // Drain the cursor to actually exercise materialization. The test fails if the cap
+            // fires here.
+            printSql(query);
+        });
+    }
+
+    @Test
+    public void testMaterializationCapSplitAcrossColumns() throws Exception {
+        // Two equal-width materialized sort columns over the same 64 KiB budget: each
+        // DOUBLE buffer's size-weighted share is half (4 pages = 32 KiB = 4096 DOUBLEs).
+        // 5000 rows per buffer exceeds that and the cap fires. Under the previous
+        // per-buffer interpretation the same query would have succeeded because each
+        // buffer would have had the full 64 KiB to itself.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64L * 1024);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t SELECT x::DOUBLE, (x+1)::DOUBLE, (x+2)::DOUBLE, (x+3)::DOUBLE," +
+                    " (x * 1_000_000)::TIMESTAMP FROM long_sequence(5000)");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT (a + b) * (c + d) AS x, (a + c) * (b + d) AS y FROM t ORDER BY x, y",
+                    0,
+                    "breached in VirtualMemory (raise cairo.sql.sort.key.max.bytes)"
+            );
+        });
+    }
+
+    @Test
+    public void testMaterializationCapWeightedByColumnSize() throws Exception {
+        // Mixed-width materialized sort columns (BYTE=1 + LONG=8, totalWeight=9) over a
+        // 64 KiB budget. The size-weighted split gives the BYTE buffer 1 page (~7 KiB
+        // share, floored to 8 KiB = 8192 rows) and the LONG buffer 7 pages (56 KiB =
+        // 7168 rows). Both can absorb 5000 rows, so the query succeeds. Under an
+        // even per-buffer split each buffer would receive 4 pages (32 KiB): the BYTE
+        // side would still fit (32 768 rows of room) but the LONG side would cap at
+        // 4096 rows and fire before 5000. The test pins the weighted split's higher
+        // operator-wide ceiling for schemas with skewed column widths. The sort tree's
+        // key heap at 5000 rows fits within its initial 128 KiB page so the tree cap
+        // does not pre-empt the materialiser caps that this test is exercising.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64L * 1024);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (b BYTE, l LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t SELECT (x % 100)::BYTE, x::LONG," +
+                    " (x * 1_000_000)::TIMESTAMP FROM long_sequence(5000)");
+
+            // Drain the cursor: the LONG-side cap fires here under an even split,
+            // succeeds under the weighted split.
+            printSql("SELECT (b * b + b)::BYTE AS narrow, (l * l + l)::LONG AS wide" +
+                    " FROM t ORDER BY narrow, wide");
+        });
+    }
 }
