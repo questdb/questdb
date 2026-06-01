@@ -4146,13 +4146,13 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     public void testSampleByAllowsPredicatePushDownWhenTsIsNotIncludedInColumnList() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp_ns, ts2 timestamp_ns, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select * from (" +
+            assertQuery("select * from (" +
                             "select ts2 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar ) " +
-                            "where tstmp >= '2022-12-01T00:00:00.000000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0",
-                    """
+                            "where tstmp >= '2022-12-01T00:00:00.000000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Encode sort light
                                   keys: [ts1]
@@ -4164,8 +4164,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -4366,9 +4365,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             2022-12-01T02:06:00.000000000Z\t6\tB
                             """);
 
-            assertPlanNoLeakCheck(
-                    "select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B'",
-                    """
+            assertQuery("select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Filter filter: s='B'
                                     Sample By
@@ -4378,8 +4377,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery("select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B' ")
                     .noLeakCheck()
@@ -4401,9 +4399,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     select dateadd('m', 10*x::int, '2022-12-01T01:00:00.000000000Z') ts, x v
                     from long_sequence(6) ) timestamp(ts)""");
 
-            assertPlanNoLeakCheck(
-                    "select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000000Z'",
-                    """
+            assertQuery("select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000000Z'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Filter filter: 2022-12-01T01:10:00.000000000Z<ts
                                 Sample By
                                   fill: prev
@@ -4411,8 +4409,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tab
-                            """
-            );
+                            """);
 
             assertQuery("select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000000Z' ")
                     .noLeakCheck()
@@ -4509,11 +4506,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "  geo6 GEOHASH(6c)" +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlanNoLeakCheck(
-                    "select time, last(lat) lat, last(lon) lon " +
+            assertQuery("select time, last(lat) lat, last(lon) lon " +
                             " from pos " +
-                            " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    """
+                            " where id = 'A' sample by 15m ALIGN to CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
@@ -4523,8 +4520,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         Index forward scan on: id deferred: true
                                           filter: id='A'
                                         Frame forward scan on: pos
-                            """
-            );
+                            """);
         });
     }
 
@@ -4540,11 +4536,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "  geo6 GEOHASH(6c)" +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlanNoLeakCheck(
-                    "select   id, time, ts, last(lat) lat, last(lon) lon " +
+            assertQuery("select   id, time, ts, last(lat) lat, last(lon) lon " +
                             " from pos " +
-                            " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    """
+                            " where id = 'A' sample by 15m ALIGN to CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
@@ -4554,8 +4550,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         Index forward scan on: id deferred: true
                                           filter: id='A'
                                         Frame forward scan on: pos
-                            """
-            );
+                            """);
         });
     }
 
@@ -4571,11 +4566,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "  type SYMBOL " +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlanNoLeakCheck(
-                    "select time, type, last(lat) lat, last(lon) lon " +
+            assertQuery("select time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
-                            " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    """
+                            " where id = 'A' sample by 15m ALIGN to CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
@@ -4585,14 +4580,13 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         Index forward scan on: id deferred: true
                                           filter: id='A'
                                         Frame forward scan on: pos
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select   id, time, type, last(lat) lat, last(lon) lon " +
+            assertQuery("select   id, time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
-                            " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    """
+                            " where id = 'A' sample by 15m ALIGN to CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
@@ -4602,8 +4596,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         Index forward scan on: id deferred: true
                                           filter: id='A'
                                         Frame forward scan on: pos
-                            """
-            );
+                            """);
         });
     }
 
@@ -4618,11 +4611,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "  geo6 GEOHASH(6c)" +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlanNoLeakCheck(
-                    "select   id, time, geo6, last(lat) lat, last(lon) lon " +
+            assertQuery("select   id, time, geo6, last(lat) lat, last(lon) lon " +
                             " from pos " +
-                            " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    """
+                            " where id = 'A' sample by 15m ALIGN to CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
@@ -4632,14 +4625,13 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         Index forward scan on: id deferred: true
                                           filter: id='A'
                                         Frame forward scan on: pos
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select   id, time, lat, last(lat) lastlat, last(lon) lon " +
+            assertQuery("select   id, time, lat, last(lat) lastlat, last(lon) lon " +
                             " from pos " +
-                            " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    """
+                            " where id = 'A' sample by 15m ALIGN to CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
@@ -4649,8 +4641,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         Index forward scan on: id deferred: true
                                           filter: id='A'
                                         Frame forward scan on: pos
-                            """
-            );
+                            """);
         });
     }
 
@@ -4896,9 +4887,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01' align to calendar with offset '10:00'",
-                    """
+            assertQuery("select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01' align to calendar with offset '10:00'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
@@ -4910,12 +4901,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         Row forward scan
                                         Interval forward scan on: tbl
                                           intervals: [("2018-01-01T00:00:00.000000000Z","2018-12-31T23:59:59.999999999Z")]
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m from '2018-01-01' align to calendar with offset '10:00'",
-                    """
+            assertQuery("select ts, avg(price) from tbl sample by 5m from '2018-01-01' align to calendar with offset '10:00'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
@@ -4927,12 +4917,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         Row forward scan
                                         Interval forward scan on: tbl
                                           intervals: [("2018-01-01T00:00:00.000000000Z","MAX")]
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m to '2019-01-01' align to calendar with offset '10:00'",
-                    """
+            assertQuery("select ts, avg(price) from tbl sample by 5m to '2019-01-01' align to calendar with offset '10:00'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
@@ -4944,12 +4933,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         Row forward scan
                                         Interval forward scan on: tbl
                                           intervals: [("MIN","2018-12-31T23:59:59.999999999Z")]
-                            """
-            );
+                            """);
 
-            assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m align to calendar with offset '10:00'",
-                    """
+            assertQuery("select ts, avg(price) from tbl sample by 5m align to calendar with offset '10:00'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
@@ -4960,8 +4948,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tbl
-                            """
-            );
+                            """);
         });
     }
 
@@ -5646,16 +5633,16 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     public void testSampleByRewriteJoinNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp_ns, ts2 timestamp_ns, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select * from " +
+            assertQuery("select * from " +
                             "(select sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar) a " +
                             " left join " +
                             "(select sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
-                            "sample by 1m align to calendar) b on(sym) ",
-                    """
+                            "sample by 1m align to calendar) b on(sym) ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Hash Left Outer Join Light
                                   condition: b.sym=a.sym
@@ -5683,8 +5670,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -5692,16 +5678,16 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     public void testSampleByRewriteJoinTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp_ns, ts2 timestamp_ns, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select * from " +
+            assertQuery("select * from " +
                             "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar) a " +
                             " asof join " +
                             "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
-                            "sample by 1m align to calendar) b ",
-                    """
+                            "sample by 1m align to calendar) b ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 AsOf Join
                                     Encode sort light
@@ -5724,8 +5710,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -5771,11 +5756,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     public void testSampleByRewriteMultipleTimestamps1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp_ns, ts2 timestamp_ns, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select ts1 a, ts1 b, sym, first(val), avg(val), last(val), max(val) " +
+            assertQuery("select ts1 a, ts1 b, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
-                            "sample by 1m align to calendar ",
-                    """
+                            "sample by 1m align to calendar ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [b]
                                 SelectedRecord
@@ -5787,8 +5772,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -5796,11 +5780,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     public void testSampleByRewriteMultipleTimestamps1NotKeyed() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp_ns, ts2 timestamp_ns, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select ts1 a, ts1 b, first(val), avg(val), last(val), max(val) " +
+            assertQuery("select ts1 a, ts1 b, first(val), avg(val), last(val), max(val) " +
                             "from x " +
-                            "sample by 1m align to calendar ",
-                    """
+                            "sample by 1m align to calendar ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [b]
                                 SelectedRecord
@@ -5812,8 +5796,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -5821,11 +5804,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     public void testSampleByRewriteMultipleTimestamps2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp_ns, ts2 timestamp_ns, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
+            assertQuery("select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
                             "from x " +
-                            "sample by 1m align to calendar ",
-                    """
+                            "sample by 1m align to calendar ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [d]
                                 SelectedRecord
@@ -5837,8 +5820,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -5846,11 +5828,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     public void testSampleByRewriteUTCOffset() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp_ns, ts2 timestamp_ns, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select ts1, sym, min(val), avg(val), max(val) " +
+            assertQuery("select ts1, sym, min(val), avg(val), max(val) " +
                             "from x " +
-                            "sample by 1m align to calendar time zone 'UTC'",
-                    """
+                            "sample by 1m align to calendar time zone 'UTC'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [ts1]
                                 Async Group By workers: 1
@@ -5861,8 +5843,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -5870,15 +5851,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     public void testSampleByRewriteUnionNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp_ns, ts2 timestamp_ns, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select sym, first(val), avg(val), last(val), max(val) " +
+            assertQuery("select sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar " +
                             " union all " +
                             "select sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
-                            "sample by 1m align to calendar ",
-                    """
+                            "sample by 1m align to calendar ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Union All
                                 SelectedRecord
                                     Encode sort light
@@ -5902,8 +5883,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -5911,15 +5891,15 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     public void testSampleByRewriteUnionTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table if not exists x (  ts1 timestamp_ns, ts2 timestamp_ns, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select ts1 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
+            assertQuery("select ts1 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar " +
                             " union all " +
                             "select ts1 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
-                            "sample by 1m align to calendar ",
-                    """
+                            "sample by 1m align to calendar ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Union All
                                 Encode sort light
                                   keys: [tstmp]
@@ -5941,8 +5921,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -5950,11 +5929,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     public void testSampleByRewriteWith() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table if not exists x (ts1 timestamp_ns, ts2 timestamp_ns, sym symbol, val long) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "with y as (select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
+            assertQuery("with y as (select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
                             "from x " +
-                            "sample by 1m align to calendar) select * from y ",
-                    """
+                            "sample by 1m align to calendar) select * from y ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [d]
                                 SelectedRecord
@@ -5966,8 +5945,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -5991,7 +5969,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
             SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd");
             formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
-            assertPlanNoLeakCheck(query, "Sample By\n" +
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("Sample By\n" +
                     "  fill: null\n" +
                     "  range: (timestamp_floor('day',now()),)\n" +
                     "  values: [count(*)]\n" +
@@ -6352,9 +6332,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
             String query = "select ts, s, first(v) from tab where s = 'B' and ts > '2022-12-01T00:00:00.000000000Z' sample by 30m fill(prev) align to first observation";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Sample By
                               fill: prev
                               keys: [ts,s]
@@ -6365,8 +6345,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         Row forward scan
                                         Interval forward scan on: tab
                                           intervals: [("2022-12-01T00:00:00.000000001Z","MAX")]
-                            """
-            );
+                            """);
 
             assertQuery(query)
                     .noLeakCheck()
@@ -9454,9 +9433,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " long_sequence(30)" +
                     ") timestamp(k) partition by NONE");
 
-            assertPlanNoLeakCheck(
-                    "select last(n) s from x sample by 30m fill(null)",
-                    """
+            assertQuery("select last(n) s from x sample by 30m fill(null)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Sample By Fill
                                   stride: '30m'
@@ -9471,8 +9450,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
-                            """
-            );
+                            """);
         });
     }
 
@@ -15289,7 +15267,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m " + fillOpt + " " + alignTo + " ) " +
                     "where tstmp >= '2022-12-01T00:00:00.000000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0  ";
             String actualPlan = plan.replace("#TABLE#", "x");
-            assertPlanNoLeakCheck(query, actualPlan);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan(actualPlan);
         });
     }
 
@@ -15303,7 +15283,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m " + fillOpt + " " + alignTo + " ) " +
                     "where tstmp >= '2022-12-01T00:00:00.000000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0  ";
             String actualPlan = plan.replace("#TABLE#", "y");
-            assertPlanNoLeakCheck(query, actualPlan);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan(actualPlan);
         });
     }
 }
