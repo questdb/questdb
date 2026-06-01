@@ -76,14 +76,18 @@ public class DoubleArrayReverseFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // double-reverse preserves all values, so sum must be identical
                         String original = "SELECT sym, round(sum(array_sum(book)), 2) s FROM tmp GROUP BY sym ORDER BY 1";
                         TestUtils.printSql(engine, sqlExecutionContext, original, sink);
                         String expected = sink.toString();
 
                         String reversed = "SELECT sym, round(sum(array_sum(array_reverse(array_reverse(book)))), 2) s FROM tmp GROUP BY sym ORDER BY 1";
-                        TestUtils.assertSql(engine, sqlExecutionContext, reversed, sink, expected);
+                        assertQuery(reversed)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce(expected);
                     },
                     configuration,
                     LOG

@@ -139,8 +139,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
                 TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
-                    TestUtils.assertSql(engine, sqlExecutionContext, sql, sink,
-                            """
+                    assertQuery(sql)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     sym\ttwap
                                     A\tnull
                                     B\tnull
@@ -190,8 +193,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                 TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     // constant price => twap = 42.0 for all groups
-                    TestUtils.assertSql(engine, sqlExecutionContext, sql, sink,
-                            """
+                    assertQuery(sql)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     sym\ttwap
                                     A\t42.0
                                     B\t42.0

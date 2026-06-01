@@ -70,28 +70,27 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
                 "FROM long_sequence(10000))");
 
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
 
                 // Verify the query plan shows parallel execution
-                TestUtils.assertSql(
-                        engine,
-                        sqlExecutionContext,
-                        "EXPLAIN " + sql,
-                        sink,
-                        """
-                                QUERY PLAN
-                                Encode sort light
-                                  keys: [sym]
-                                    Async Group By workers: 4
-                                      keys: [sym]
-                                      values: [arg_max(value,key)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                assertQuery(sql)
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .assertsPlan(
                                 """
-                );
+                                        Encode sort light
+                                          keys: [sym]
+                                            Async Group By workers: 4
+                                              keys: [sym]
+                                              values: [arg_max(value,key)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                        """
+                        );
             }, configuration, LOG);
         }
     }
@@ -100,9 +99,13 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testArgMaxParallelAllNullKeys() throws Exception {
         execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, CAST(null AS long) key FROM long_sequence(100000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
-                TestUtils.assertSql(engine, sqlExecutionContext, sql, sink, "sym\targ_max\nA\t\nB\t\nC\t\nD\t\nE\t\n");
+                assertQuery(sql)
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .returnsOnce("sym\targ_max\nA\t\nB\t\nC\t\nD\t\nE\t\n");
             }, configuration, LOG);
         }
     }
@@ -111,7 +114,7 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testArgMaxParallelChunky() throws Exception {
         execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, rnd_long() key FROM long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -122,7 +125,7 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testArgMaxParallelMergeNullDestValidSrc() throws Exception {
         execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, CASE WHEN x <= 1000000 THEN CAST(null AS long) ELSE rnd_long() END key FROM long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -133,7 +136,7 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testArgMaxParallelWithNullKeys() throws Exception {
         execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, CASE WHEN x % 2 = 0 THEN CAST(null AS long) ELSE rnd_long() END key FROM long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);

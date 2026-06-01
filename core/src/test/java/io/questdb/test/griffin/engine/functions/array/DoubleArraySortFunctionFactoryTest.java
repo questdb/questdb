@@ -140,14 +140,18 @@ public class DoubleArraySortFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // sorting preserves all values, so sum must be identical to unsorted
                         String unsorted = "SELECT sym, round(sum(array_sum(book)), 2) s FROM tmp GROUP BY sym ORDER BY 1";
                         TestUtils.printSql(engine, sqlExecutionContext, unsorted, sink);
                         String expected = sink.toString();
 
                         String sorted = "SELECT sym, round(sum(array_sum(array_sort(book))), 2) s FROM tmp GROUP BY sym ORDER BY 1";
-                        TestUtils.assertSql(engine, sqlExecutionContext, sorted, sink, expected);
+                        assertQuery(sorted)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce(expected);
                     },
                     configuration,
                     LOG

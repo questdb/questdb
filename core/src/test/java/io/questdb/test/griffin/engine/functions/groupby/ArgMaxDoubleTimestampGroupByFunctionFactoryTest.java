@@ -92,24 +92,23 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
                         // Verify the query plan shows parallel execution
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "explain " + sql,
-                                sink,
-                                """
-                                        QUERY PLAN
-                                        Encode sort light
-                                          keys: [sym]
-                                            Async Group By workers: 4
-                                              keys: [sym]
-                                              values: [arg_max(value,key)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tab
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .assertsPlan(
                                         """
-                        );
+                                                Encode sort light
+                                                  keys: [sym]
+                                                    Async Group By workers: 4
+                                                      keys: [sym]
+                                                      values: [arg_max(value,key)]
+                                                      filter: null
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: tab
+                                                """
+                                );
                     },
                     configuration,
                     LOG
@@ -132,20 +131,20 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                     (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, arg_max(value, key) from tab group by sym order by sym";
 
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                sql,
-                                sink,
-                                """
-                                        sym\targ_max
-                                        A\tnull
-                                        B\tnull
-                                        C\tnull
-                                        D\tnull
-                                        E\tnull
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce(
                                         """
-                        );
+                                                sym\targ_max
+                                                A\tnull
+                                                B\tnull
+                                                C\tnull
+                                                D\tnull
+                                                E\tnull
+                                                """
+                                );
                     },
                     configuration,
                     LOG

@@ -91,16 +91,14 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
             );
             TestUtils.execute(
                     pool,
-                    (CustomisableRunnable) (engine, _, sqlExecutionContext) -> TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select sum(v) sum from x",
-                            sink,
-                            """
+                    (CustomisableRunnable) (engine, _, sqlExecutionContext) -> assertQuery("select sum(v) sum from x")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     sum
                                     999999999999999999999999999999999999990000000
-                                    """
-                    ),
+                                    """),
                     configuration,
                     LOG
             );
@@ -137,16 +135,14 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
             );
             TestUtils.execute(
                     pool,
-                    (CustomisableRunnable) (engine, _, sqlExecutionContext) -> TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select sum(v) sum_dec from (x)",
-                            sink,
-                            """
+                    (CustomisableRunnable) (engine, _, sqlExecutionContext) -> assertQuery("select sum(v) sum_dec from (x)")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     sum_dec
                                     900000000000000000000000000000494999595
-                                    """
-                    ),
+                                    """),
                     configuration,
                     LOG
             );
@@ -182,16 +178,14 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
             );
             TestUtils.execute(
                     pool,
-                    (CustomisableRunnable) (engine, _, sqlExecutionContext) -> TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select sum(v) sum from x",
-                            sink,
-                            """
+                    (CustomisableRunnable) (engine, _, sqlExecutionContext) -> assertQuery("select sum(v) sum from x")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     sum
                                     999999999999990000000
-                                    """
-                    ),
+                                    """),
                     configuration,
                     LOG
             );
@@ -213,16 +207,14 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
             );
             TestUtils.execute(
                     pool,
-                    (CustomisableRunnable) (engine, _, sqlExecutionContext) -> TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select sum(v) sum_dec, ksum(v::double) sum_d from (x)",
-                            sink,
-                            """
+                    (CustomisableRunnable) (engine, _, sqlExecutionContext) -> assertQuery("select sum(v) sum_dec, ksum(v::double) sum_d from (x)")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     sum_dec	sum_d
                                     19000000000494999090	1.9000000000494998E19
-                                    """
-                    ),
+                                    """),
                     configuration,
                     LOG
             );

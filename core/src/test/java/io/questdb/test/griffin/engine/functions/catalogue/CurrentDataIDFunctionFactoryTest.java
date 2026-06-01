@@ -49,13 +49,11 @@ public class CurrentDataIDFunctionFactoryTest extends AbstractBootstrapTest {
                 Assert.assertTrue(serverMain.getEngine().getDataID().isInitialized());
                 sink.put(serverMain.getEngine().getDataID().get());
                 final String expected = sink.toString();
-                TestUtils.assertSql(
-                        serverMain.getEngine(),
-                        executionContext,
-                        "select current_data_id();",
-                        sink,
-                        "current_data_id\n" + expected + "\n"
-                );
+                assertQuery("select current_data_id();")
+                        .withEngine(serverMain.getEngine())
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("current_data_id\n" + expected + "\n");
             }
 
             // Now that we have a full DB, we can remove the data id and make restart it as read-only.
@@ -69,13 +67,11 @@ public class CurrentDataIDFunctionFactoryTest extends AbstractBootstrapTest {
                 sink.clear();
 
                 Assert.assertFalse(serverMain.getEngine().getDataID().isInitialized());
-                TestUtils.assertSql(
-                        serverMain.getEngine(),
-                        executionContext,
-                        "select current_data_id();",
-                        sink,
-                        "current_data_id\n\n"
-                );
+                assertQuery("select current_data_id();")
+                        .withEngine(serverMain.getEngine())
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("current_data_id\n\n");
             }
         });
     }

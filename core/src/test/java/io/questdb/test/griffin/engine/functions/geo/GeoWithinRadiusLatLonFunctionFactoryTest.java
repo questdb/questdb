@@ -290,21 +290,18 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
                         // 5km radius around Times Square
                         String sql = "select count(*) from points where geo_within_radius_latlon(lat, lon, 40.758, -73.9855, 5000.0)";
 
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "explain " + sql,
-                                sink,
-                                """
-                                        QUERY PLAN
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .assertsPlan("""
                                         Count
                                             Async Filter workers: 4
                                               filter: geo_within_radius_latlon(lat,lon,40.758,-73.9855,5000.0)
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: points
-                                        """
-                        );
+                                        """);
 
                         // Run query and verify results are consistent
                         TestUtils.assertSqlCursors(
