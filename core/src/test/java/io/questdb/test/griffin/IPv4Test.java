@@ -6029,8 +6029,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testRndIPv42() throws Exception {
         assertMemoryLeak(() -> assertQuery("select rnd_ipv4('12.6.8/16', 0) from long_sequence(10)")
-        .noLeakCheck()
-        .returnsOnce("""
+                .noLeakCheck()
+                .returnsOnce("""
                         rnd_ipv4
                         12.6.96.238
                         12.6.50.227
