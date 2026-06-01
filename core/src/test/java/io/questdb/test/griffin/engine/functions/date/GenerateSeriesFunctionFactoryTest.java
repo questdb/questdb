@@ -537,7 +537,9 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
         bindVariableService.setTimestamp("t2", 5);
         bindVariableService.setTimestamp("t3", 1);
 
-        assertSql("""
+        assertQuery("generate_series(:t1, :t2, :t3);")
+                .noLeakCheck()
+                .returnsOnce("""
                 generate_series
                 1969-12-31T23:59:59.999995Z
                 1969-12-31T23:59:59.999996Z
@@ -550,17 +552,19 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 1970-01-01T00:00:00.000003Z
                 1970-01-01T00:00:00.000004Z
                 1970-01-01T00:00:00.000005Z
-                """, "generate_series(:t1, :t2, :t3);");
+                """);
 
         bindVariableService.setLong("t3", 3);
 
-        assertSql("""
+        assertQuery("generate_series(:t1, :t2, :t3);")
+                .noLeakCheck()
+                .returnsOnce("""
                 generate_series
                 1969-12-31T23:59:59.999995Z
                 1969-12-31T23:59:59.999998Z
                 1970-01-01T00:00:00.000001Z
                 1970-01-01T00:00:00.000004Z
-                """, "generate_series(:t1, :t2, :t3);");
+                """);
     }
 
     @Test
@@ -776,7 +780,9 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
         bindVariableService.setTimestampNano("t2", 5);
         bindVariableService.setTimestampNano("t3", 1);
 
-        assertSql("""
+        assertQuery("generate_series(:t1, :t2, :t3);")
+                .noLeakCheck()
+                .returnsOnce("""
                 generate_series
                 1969-12-31T23:59:59.999999995Z
                 1969-12-31T23:59:59.999999996Z
@@ -789,17 +795,19 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 1970-01-01T00:00:00.000000003Z
                 1970-01-01T00:00:00.000000004Z
                 1970-01-01T00:00:00.000000005Z
-                """, "generate_series(:t1, :t2, :t3);");
+                """);
 
         bindVariableService.setLong("t3", 3);
 
-        assertSql("""
+        assertQuery("generate_series(:t1, :t2, :t3);")
+                .noLeakCheck()
+                .returnsOnce("""
                 generate_series
                 1969-12-31T23:59:59.999999995Z
                 1969-12-31T23:59:59.999999998Z
                 1970-01-01T00:00:00.000000001Z
                 1970-01-01T00:00:00.000000004Z
-                """, "generate_series(:t1, :t2, :t3);");
+                """);
     }
 
     @Test
@@ -808,7 +816,9 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
         bindVariableService.setStr("t2", "2025-02-01");
         bindVariableService.setStr("t3", "5d");
 
-        assertSql("""
+        assertQuery("generate_series(:t1, :t2, :t3);")
+                .noLeakCheck()
+                .returnsOnce("""
                 generate_series
                 2025-01-01T00:00:00.000000000Z
                 2025-01-06T00:00:00.000000000Z
@@ -817,18 +827,20 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 2025-01-21T00:00:00.000000000Z
                 2025-01-26T00:00:00.000000000Z
                 2025-01-31T00:00:00.000000000Z
-                """, "generate_series(:t1, :t2, :t3);");
+                """);
 
         bindVariableService.setStr("t3", "1w");
 
-        assertSql("""
+        assertQuery("generate_series(:t1, :t2, :t3);")
+                .noLeakCheck()
+                .returnsOnce("""
                 generate_series
                 2025-01-01T00:00:00.000000000Z
                 2025-01-08T00:00:00.000000000Z
                 2025-01-15T00:00:00.000000000Z
                 2025-01-22T00:00:00.000000000Z
                 2025-01-29T00:00:00.000000000Z
-                """, "generate_series(:t1, :t2, :t3);");
+                """);
     }
 
     @Test

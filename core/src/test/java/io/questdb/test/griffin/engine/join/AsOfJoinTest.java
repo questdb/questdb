@@ -5878,8 +5878,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     """,
                             rightTableTimestampType.getTypeName()
                     ));
-            assertSql(
-                    """
+            assertQuery("explain " + sql)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             SelectedRecord
                                 AsOf Join Light
@@ -5892,9 +5893,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: dyn_slave_src
-                            """,
-                    "explain " + sql
-            );
+                            """);
         });
     }
 

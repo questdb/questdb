@@ -62,13 +62,12 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
             execute("create table points (lat double, lon double)");
             execute("insert into points values (40.0, -73.0)");
 
-            assertSql(
-                    """
+            assertQuery("explain select * from points where geo_within_radius_latlon(lat, lon, NaN, -73.0, 1000.0)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Empty table
-                            """,
-                    "explain select * from points where geo_within_radius_latlon(lat, lon, NaN, -73.0, 1000.0)"
-            );
+                            """);
         });
     }
 
@@ -78,17 +77,16 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
             execute("create table points (lat double, lon double)");
 
             // Plan should show constant center and radius values
-            assertSql(
-                    """
+            assertQuery("explain select * from points where geo_within_radius_latlon(lat, lon, 40.0, -73.0, 1000.0)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: geo_within_radius_latlon(lat,lon,40.0,-73.0,1000.0)
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: points
-                            """,
-                    "explain select * from points where geo_within_radius_latlon(lat, lon, 40.0, -73.0, 1000.0)"
-            );
+                            """);
         });
     }
 
@@ -98,13 +96,12 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
             execute("create table points (lat double, lon double)");
             execute("insert into points values (40.0, -73.0)");
 
-            assertSql(
-                    """
+            assertQuery("explain select * from points where geo_within_radius_latlon(lat, lon, 40.0, -73.0, -100.0)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Empty table
-                            """,
-                    "explain select * from points where geo_within_radius_latlon(lat, lon, 40.0, -73.0, -100.0)"
-            );
+                            """);
         });
     }
 

@@ -31,12 +31,11 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAll() throws Exception {
-        assertMemoryLeak(() -> assertSql("""
+        assertQuery("select vwap(rnd_double(), rnd_double()) from long_sequence(10)")
+                .returnsOnce("""
                         vwap
                         0.4601797676425299
-                        """,
-                "select vwap(rnd_double(), rnd_double()) from long_sequence(10)"
-        ));
+                        """);
     }
 
     @Test

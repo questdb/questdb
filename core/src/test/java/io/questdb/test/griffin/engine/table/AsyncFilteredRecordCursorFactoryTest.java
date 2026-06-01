@@ -335,8 +335,12 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getMessage(), "unexpected reduce error");
                     }
 
-                    assertSql(
-                            """
+                    assertQuery("explain select timestamp, count() as trades" +
+                            " from x" +
+                            " where symbol like '%_ETH' and (row_id != 100)" +
+                            " sample by 1h")
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     QUERY PLAN
                                     Encode sort light
                                       keys: [timestamp]
@@ -348,12 +352,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
-                                    """,
-                            "explain select timestamp, count() as trades" +
-                                    " from x" +
-                                    " where symbol like '%_ETH' and (row_id != 100)" +
-                                    " sample by 1h"
-                    );
+                                    """);
                 }, 4, 4
         );
     }

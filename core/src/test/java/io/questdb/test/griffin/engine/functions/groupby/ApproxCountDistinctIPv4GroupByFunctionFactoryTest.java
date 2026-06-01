@@ -379,15 +379,13 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
 
     @Test
     public void testSampleFillNone() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                """
+        assertQuery("with x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
+                "select ts, approx_count_distinct(s) from x sample by 2s align to first observation")
+                .returnsOnce("""
                         ts\tapprox_count_distinct
                         1970-01-01T00:00:00.050000Z\t16
                         1970-01-01T00:00:02.050000Z\t16
-                        """,
-                "with x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
-                        "select ts, approx_count_distinct(s) from x sample by 2s align to first observation"
-        ));
+                        """);
     }
 
     @Test

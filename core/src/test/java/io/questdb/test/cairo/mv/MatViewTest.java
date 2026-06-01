@@ -3441,16 +3441,15 @@ public class MatViewTest extends AbstractCairoTest {
                             2
                             """);
 
-            assertSql(
-                    """
+            assertQuery("explain " + sql)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: sym
                                   filter: sym=2
                                 Frame forward scan on: price_1h
-                            """,
-                    "explain " + sql
-            );
+                            """);
 
             execute("alter materialized view price_1h alter column sym drop index");
 
@@ -3466,45 +3465,42 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             if (JitUtil.isJitSupported()) {
-                assertSql(
-                        """
+                assertQuery("explain " + sql)
+                        .noLeakCheck()
+                        .returnsOnce("""
                                 QUERY PLAN
                                 Async JIT Filter workers: 1
                                   filter: sym='eurusd'
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: price_1h
-                                """,
-                        "explain " + sql
-                );
+                                """);
             } else {
-                assertSql(
-                        """
+                assertQuery("explain " + sql)
+                        .noLeakCheck()
+                        .returnsOnce("""
                                 QUERY PLAN
                                 Async Filter workers: 1
                                   filter: sym='eurusd'
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: price_1h
-                                """,
-                        "explain " + sql
-                );
+                                """);
             }
 
             execute("alter materialized view price_1h alter column sym add index");
 
             drainQueues();
 
-            assertSql(
-                    """
+            assertQuery("explain " + sql)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: sym
                                   filter: sym=2
                                 Frame forward scan on: price_1h
-                            """,
-                    "explain " + sql
-            );
+                            """);
         });
     }
 
@@ -3555,16 +3551,15 @@ public class MatViewTest extends AbstractCairoTest {
                             eurusd\t1.314\t2024-09-14T13:00:00.000000Z
                             """);
 
-            assertSql(
-                    """
+            assertQuery("explain " + sql)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: sym
                                   filter: sym=2
                                 Frame forward scan on: price_1h
-                            """,
-                    "explain " + sql
-            );
+                            """);
 
             assertQuery("select indexBlockCapacity from (show columns from price_1h) where column = 'sym'")
                     .noRandomAccess()
@@ -4336,7 +4331,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns(replaceExpectedTimestamp(initial));
 
             // Validating REFRESH must not enqueue a refresh, so the new row stays invisible.
-            validateOnly("refresh materialized view price_1h incremental;");
+            validateOnly();
             drainMatViewTimerQueue(timerJob);
             drainQueues();
             assertQuery("price_1h order by sym")
@@ -8300,11 +8295,11 @@ public class MatViewTest extends AbstractCairoTest {
         execute("drop materialized view price_1h;");
     }
 
-    private void validateOnly(String sql) throws SqlException {
+    private void validateOnly() throws SqlException {
         final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) sqlExecutionContext;
         ctx.setValidationOnly(true);
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.compile(sql, ctx);
+            compiler.compile("refresh materialized view price_1h incremental;", ctx);
         } finally {
             ctx.setValidationOnly(false);
         }

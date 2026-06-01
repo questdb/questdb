@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
@@ -322,16 +321,15 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
     }
 
     @Test
-    public void testSimplePlan() throws SqlException {
-        assertSql(
-                """
+    public void testSimplePlan() throws Exception {
+        assertQuery("explain select dateadd('U', -5, now, 'Europe/Bratislava') from long_sequence(1)")
+                .noLeakCheck()
+                .returnsOnce("""
                         QUERY PLAN
                         VirtualRecord
                           functions: [dateadd('U',-5,now(),'Europe/Bratislava')]
                             long_sequence count: 1
-                        """,
-                "explain select dateadd('U', -5, now, 'Europe/Bratislava') from long_sequence(1)"
-        );
+                        """);
     }
 
     @Test
@@ -348,25 +346,23 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
         assertQuery("select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '03:00') from long_sequence(2)")
                 .fails(20, "`null` is not a valid stride");
 
-        assertSql(
-                """
+        assertQuery("explain select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '03:00') from long_sequence(2)")
+                .noLeakCheck()
+                .returnsOnce("""
                         QUERY PLAN
                         VirtualRecord
                           functions: [dateadd('y',1587275359886758L,case([x::int,null,x]),'03:00')]
                             long_sequence count: 2
-                        """,
-                "explain select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '03:00') from long_sequence(2)"
-        );
+                        """);
 
-        assertSql(
-                """
+        assertQuery("explain select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758000L::timestamp_ns, '03:00') from long_sequence(2)")
+                .noLeakCheck()
+                .returnsOnce("""
                         QUERY PLAN
                         VirtualRecord
                           functions: [dateadd('y',2020-04-19T05:49:19.886758000Z,case([x::int,null,x]),'03:00')]
                             long_sequence count: 2
-                        """,
-                "explain select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758000L::timestamp_ns, '03:00') from long_sequence(2)"
-        );
+                        """);
 
         assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n",
                 String.format("select dateadd('M', cast(x as int), null, '%s') from long_sequence(2)",

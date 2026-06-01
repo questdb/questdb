@@ -115,9 +115,9 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
                     ML\t563832
                     """;
 
-            assertSql(
-                    expected, "select instrument, sum(price) from tanc2  where instrument = 'ML' and side = rnd_char()"
-            );
+            assertQuery("select instrument, sum(price) from tanc2  where instrument = 'ML' and side = rnd_char()")
+                    .noLeakCheck()
+                    .returnsOnce(expected);
         });
     }
 
@@ -140,9 +140,9 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
                     ML\t2617153
                     """;
 
-            assertSql(
-                    expected, "select instrument, sum(price) from tanc2  where instrument = 'ML' and rnd_symbol('A', 'B', 'C') = 'B'"
-            );
+            assertQuery("select instrument, sum(price) from tanc2  where instrument = 'ML' and rnd_symbol('A', 'B', 'C') = 'B'")
+                    .noLeakCheck()
+                    .returnsOnce(expected);
         });
     }
 

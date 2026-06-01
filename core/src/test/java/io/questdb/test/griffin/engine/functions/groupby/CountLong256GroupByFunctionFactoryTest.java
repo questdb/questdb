@@ -203,13 +203,15 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractCairoTest {
             Rnd rnd = sqlExecutionContext.getRandom();
             long so = rnd.getSeed0();
             long s1 = rnd.getSeed1();
-            assertSql(expected,
-                    "with x as (select * from (select rnd_long256(8) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
-                            "select ts, count_distinct(s) from x sample by 2s align to first observation"
-            );
+            assertQuery("with x as (select * from (select rnd_long256(8) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
+                    "select ts, count_distinct(s) from x sample by 2s align to first observation")
+                    .noLeakCheck()
+                    .returnsOnce(expected);
             rnd.reset(so, s1);
-            assertSql(expected, "with x as (select * from (select rnd_long256(8) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
-                    "select ts, count(distinct s) from x sample by 2s align to first observation");
+            assertQuery("with x as (select * from (select rnd_long256(8) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
+                    "select ts, count(distinct s) from x sample by 2s align to first observation")
+                    .noLeakCheck()
+                    .returnsOnce(expected);
         });
     }
 

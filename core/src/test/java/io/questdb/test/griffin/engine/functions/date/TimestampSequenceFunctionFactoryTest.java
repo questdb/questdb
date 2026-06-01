@@ -55,14 +55,13 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
                 2021-04-25T00:00:03.800000Z
                 """;
 
-        assertSql(
-                expected,
-                """
+        assertQuery("""
                         SELECT timestamp_sequence(
                                  to_timestamp('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),
                                  rnd_long(1,10,0) * 100000L
-                        ) ts from long_sequence(10, 900, 800)"""
-        );
+                ) ts from long_sequence(10, 900, 800)""")
+                .noLeakCheck()
+                .returnsOnce(expected);
     }
 
     @Test
@@ -81,14 +80,13 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
                 2021-04-25T00:00:03.800000000Z
                 """;
 
-        assertSql(
-                expected,
-                """
+        assertQuery("""
                         SELECT timestamp_sequence_ns(
                                  to_timestamp_ns('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),
                                  rnd_long(1,10,0) * 100000000L
-                        ) ts from long_sequence(10, 900, 800)"""
-        );
+                ) ts from long_sequence(10, 900, 800)""")
+                .noLeakCheck()
+                .returnsOnce(expected);
     }
 
     @Test

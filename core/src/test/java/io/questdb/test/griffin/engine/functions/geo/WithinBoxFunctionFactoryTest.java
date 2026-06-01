@@ -150,13 +150,12 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (5.0, 5.0)");
 
             // Query plan should show constant false (the function is optimized away)
-            assertSql(
-                    """
+            assertQuery("explain select * from points where within_box(x, y, 10.0, 0.0, 0.0, 10.0)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Empty table
-                            """,
-                    "explain select * from points where within_box(x, y, 10.0, 0.0, 0.0, 10.0)"
-            );
+                            """);
         });
     }
 
@@ -328,13 +327,12 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (5.0, 5.0)");
 
             // Query plan should show constant false (the function is optimized away)
-            assertSql(
-                    """
+            assertQuery("explain select * from points where within_box(x, y, NaN, 0.0, 10.0, 10.0)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Empty table
-                            """,
-                    "explain select * from points where within_box(x, y, NaN, 0.0, 10.0, 10.0)"
-            );
+                            """);
 
             // Should return no rows
             assertQuery("select * from points where within_box(x, y, NaN, 0.0, 10.0, 10.0)")
@@ -352,17 +350,16 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("create table points (x double, y double)");
 
             // Plan should show constant box values, not function references
-            assertSql(
-                    """
+            assertQuery("explain select * from points where within_box(x, y, 0.0, 0.0, 10.0, 10.0)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             Async Filter workers: 1
                               filter: within_box(x,y,0.0,0.0,10.0,10.0)
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: points
-                            """,
-                    "explain select * from points where within_box(x, y, 0.0, 0.0, 10.0, 10.0)"
-            );
+                            """);
         });
     }
 
@@ -415,7 +412,7 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // Query with within_box filter - box from (0,0) to (50,50)
                         String sql = "select count(*) from points where within_box(x, y, 0.0, 0.0, 50.0, 50.0)";
 
@@ -463,7 +460,7 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // Compare within_box result with equivalent manual bounds check
                         String geoWithinBoxQuery = "select count(*) from points where within_box(x, y, 0.0, 0.0, 50.0, 50.0)";
                         String manualBoundsQuery = "select count(*) from points where x >= 0.0 and x <= 50.0 and y >= 0.0 and y <= 50.0";
@@ -495,7 +492,7 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select count(*) from points where within_box(x, y, 0.0, 0.0, 50.0, 50.0)";
 
                         // Run query and verify results are consistent

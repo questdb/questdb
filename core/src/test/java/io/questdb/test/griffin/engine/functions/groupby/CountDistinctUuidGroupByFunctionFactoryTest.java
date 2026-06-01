@@ -242,13 +242,13 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 1970-01-01T00:00:00.050000Z\t8
                 1970-01-01T00:00:02.050000Z\t8
                 """;
-        assertMemoryLeak(() -> assertSql(
-                expected,
-                "with x as (select * from (select to_uuid(rnd_long(1, 8, 0), 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
-                        "select ts, count_distinct(s) from x sample by 2s align to first observation"
-        ));
-        assertSql(expected, "with x as (select * from (select to_uuid(rnd_long(1, 8, 0), 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
-                "select ts, count(distinct s) from x sample by 2s align to first observation");
+        assertQuery("with x as (select * from (select to_uuid(rnd_long(1, 8, 0), 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
+                "select ts, count_distinct(s) from x sample by 2s align to first observation")
+                .returnsOnce(expected);
+        assertQuery("with x as (select * from (select to_uuid(rnd_long(1, 8, 0), 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
+                "select ts, count(distinct s) from x sample by 2s align to first observation")
+                .noLeakCheck()
+                .returnsOnce(expected);
     }
 
     @Test
