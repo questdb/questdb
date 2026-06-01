@@ -200,6 +200,43 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSingleKeyFilterDropTopSubFrameNegativeLimit() throws Exception {
+        // Single-key backward path with a 2-row frame cap: the residual filter
+        // (price > 5) drops rows inside the surviving top descending sub-frame,
+        // exactly where a descending-accumulation off-by-one under a negative
+        // limit would hide. Cross-checked against the oracle across the full tail
+        // matrix (incl. LIMIT -3/-7/-100).
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(2);
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE t_fdsf (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL");
+                execute("INSERT INTO t_fdsf " +
+                        "SELECT dateadd('h', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(10)");
+                execute("ALTER TABLE t_fdsf ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+                assertCoveringMatchesOracle("t_fdsf", "price", "sym = 'A' AND price > 5", TS_ORDER_TAILS);
+            });
+        } finally {
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+        }
+    }
+
+    @Test
+    public void testSingleKeyNegativeLimitLargePartitionRealloc() throws Exception {
+        // 10k rows in a single partition with the default (large) frame cap: the
+        // single descending sub-frame starts at INITIAL_CAPACITY and reallocs
+        // mid-fill via growFrameBuffers as it accumulates rows -- a relocation the
+        // <=10-row negative-limit tests never reach. LIMIT -5000 returns the last
+        // 5000 rows by timestamp; cross-checked against the oracle.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_big (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_big " +
+                    "SELECT dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), 'A', x::DOUBLE FROM long_sequence(10_000)");
+            execute("ALTER TABLE t_big ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+            assertOneShapeMatchesOracle("t_big", "price", "sym = 'A' AND price > 0", "LIMIT -5000");
+        });
+    }
+
+    @Test
     public void testSingleKeyNegativeLimitRegression() throws Exception {
         // Single-key covering is globally timestamp-ordered. Cross-check every
         // shape against the oracle: plain and ORDER BY ts limits (both signs) and
@@ -234,6 +271,31 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
             assertResult("price\n10.0\n9.0\n8.0\n", "SELECT price FROM t_skd" + pred + " ORDER BY ts DESC LIMIT 3");
             // Negative limit must take the last 3 of DESC order (the three oldest).
             assertResult("price\n3.0\n2.0\n1.0\n", "SELECT price FROM t_skd" + pred + " ORDER BY ts DESC LIMIT -3");
+        });
+    }
+
+    @Test
+    public void testSingleKeyVarWidthNegativeLimitCrossCheck() throws Exception {
+        // Single-key backward (descending) scan projecting var-width covered
+        // columns -- a VARCHAR with a NULL and a DOUBLE[] -- under the full tail
+        // matrix incl. LIMIT -3/-7/-100. Exercises var-data offset and sentinel
+        // handling on the backward path, both as one frame (default cap) and
+        // split into 2-row descending sub-frames. Every existing negative-limit
+        // test covers fixed-width DOUBLE only.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_skvw (ts TIMESTAMP, sym SYMBOL, price DOUBLE, vc VARCHAR, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_skvw " +
+                    "SELECT dateadd('h', (x * 6)::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), 'A', x::DOUBLE, " +
+                    "CASE WHEN x = 4 THEN NULL::VARCHAR ELSE ('row_' || x)::VARCHAR END, " +
+                    "ARRAY[x::DOUBLE, (x + 1)::DOUBLE] FROM long_sequence(20)");
+            execute("ALTER TABLE t_skvw ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, vc, arr)");
+            assertCoveringMatchesOracle("t_skvw", "ts, price, vc, arr", "sym = 'A' AND price > 0", TS_ORDER_TAILS);
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(2);
+            try {
+                assertCoveringMatchesOracle("t_skvw", "ts, price, vc, arr", "sym = 'A' AND price > 0", TS_ORDER_TAILS);
+            } finally {
+                CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+            }
         });
     }
 
@@ -293,6 +355,25 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
                     "CASE WHEN x % 3 = 1 THEN 'A' WHEN x % 3 = 2 THEN 'B' ELSE 'C' END, x::DOUBLE FROM long_sequence(21)");
             execute("ALTER TABLE t_3k ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
             assertCoveringMatchesOracle("t_3k", "price", "sym IN ('A','B','C') AND price > 0", TS_ORDER_TAILS);
+        });
+    }
+
+    @Test
+    public void testVarWidthCoveredColumnsNegativeLimitCrossCheck() throws Exception {
+        // Interleaved multi-key scan projecting var-width covered columns -- a
+        // VARCHAR with a NULL and a DOUBLE[]. Positive/bare limits exercise the
+        // forward k-way merge var-data reads; negative limits route through the
+        // serial fallback. Full tail matrix incl. LIMIT -3/-7/-100, cross-checked
+        // against the oracle.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_mkvw (ts TIMESTAMP, sym SYMBOL, price DOUBLE, vc VARCHAR, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL");
+            execute("INSERT INTO t_mkvw " +
+                    "SELECT dateadd('h', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), " +
+                    "CASE WHEN x % 2 = 1 THEN 'A' ELSE 'B' END, x::DOUBLE, " +
+                    "CASE WHEN x = 3 THEN NULL::VARCHAR ELSE ('row_' || x)::VARCHAR END, " +
+                    "ARRAY[x::DOUBLE, (x + 1)::DOUBLE] FROM long_sequence(10)");
+            execute("ALTER TABLE t_mkvw ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, vc, arr)");
+            assertCoveringMatchesOracle("t_mkvw", "ts, sym, price, vc, arr", "sym IN ('A','B') AND price > 0", TS_ORDER_TAILS);
         });
     }
 

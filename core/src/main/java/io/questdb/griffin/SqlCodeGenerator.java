@@ -10130,7 +10130,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // below code block generates index-based filter
             final boolean intervalHitsOnlyOnePartition;
             final int order = model.isForceBackwardScan() ? ORDER_DESC : ORDER_ASC;
-            final PartitionFrameCursorFactory dfcFactory;
+            // Non-final: covering paths null this after handing it to the
+            // covering factory, so the outer catch will not double-free it.
+            PartitionFrameCursorFactory dfcFactory;
 
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
@@ -10292,6 +10294,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 false,
                                                 null
                                         );
+                                        // coveringFactory now owns dfcFactory and symbolFunc; clear our
+                                        // references so the outer catch and finally do not double-free them.
+                                        dfcFactory = null;
                                         symbolFunc = null;
                                         if (filter != null) {
                                             return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
@@ -10393,6 +10398,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         false,
                                         null
                                 );
+                                // coveringFactory now owns dfcFactory; clear our reference so the
+                                // outer catch does not double-free it.
+                                dfcFactory = null;
                                 if (filter != null) {
                                     return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
                                 }
@@ -11370,71 +11378,87 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IQueryModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
-            final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
-            // A pushed-down LIMIT lets the async filter stop early (positive limit)
-            // or scan the tail backward (negative limit). Both are correct only
-            // when the covering forward scan order is the query's final order; if
-            // an ORDER BY forces a downstream sort, a truncated scan would feed the
-            // sort the wrong rows, so we leave the limit to the outer
-            // LimitRecordCursorFactory that runs after the sort.
-            boolean pushLimit = limitLoFunction != null && coveringScanOrderMatchesQuery(model);
-            // A possibly-negative limit makes the async filter drive its backward
-            // page-frame path, which requires the base to honor ORDER_DESC. The
-            // covering factory only serves a correct backward scan for single-key
-            // queries; for multi-key it cannot, so fall back to the serial path
-            // where LimitRecordCursorFactory computes last-N via size + skip.
-            boolean serialFallback = false;
-            if (pushLimit
-                    && !coveringFactory.supportsNegativeLimitPageFrame()
-                    && mayBeNegativeLimit(limitLoFunction, executionContext)) {
-                pushLimit = false;
-                serialFallback = true;
-            }
-            if (!serialFallback) {
-                final Function asyncLimitLoFunction;
-                final int limitLoPos;
-                if (pushLimit) {
-                    asyncLimitLoFunction = limitLoFunction;
-                    limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
-                } else {
-                    // Not pushed: either there is no limit, or a downstream sort
-                    // reorders our output. Drop the function we created so it does
-                    // not leak (generateLimit applies its own limit on top).
-                    Misc.free(limitLoFunction);
-                    asyncLimitLoFunction = null;
-                    limitLoPos = 0;
+        // The caller transferred dfcFactory ownership into coveringFactory and
+        // cleared its own reference, so any throw below leaves this method to free
+        // coveringFactory (which closes dfcFactory, the index cursors, and the key
+        // functions), the filter, and the limit function we may create here.
+        Function limitLoFunction = null;
+        try {
+            if (executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
+                limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                // A pushed-down LIMIT lets the async filter stop early (positive limit)
+                // or scan the tail backward (negative limit). Both are correct only
+                // when the covering forward scan order is the query's final order; if
+                // an ORDER BY forces a downstream sort, a truncated scan would feed the
+                // sort the wrong rows, so we leave the limit to the outer
+                // LimitRecordCursorFactory that runs after the sort.
+                boolean pushLimit = limitLoFunction != null && coveringScanOrderMatchesQuery(model);
+                // A possibly-negative limit makes the async filter drive its backward
+                // page-frame path, which requires the base to honor ORDER_DESC. The
+                // covering factory only serves a correct backward scan for single-key
+                // queries; for multi-key it cannot, so fall back to the serial path
+                // where LimitRecordCursorFactory computes last-N via size + skip.
+                boolean serialFallback = false;
+                if (pushLimit
+                        && !coveringFactory.supportsNegativeLimitPageFrame()
+                        && mayBeNegativeLimit(limitLoFunction, executionContext)) {
+                    pushLimit = false;
+                    serialFallback = true;
                 }
-                IntHashSet filterUsedColumnIndexes = new IntHashSet();
-                collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
-                return new AsyncFilteredRecordCursorFactory(
-                        executionContext.getCairoEngine(),
-                        configuration,
-                        executionContext.getMessageBus(),
-                        coveringFactory,
-                        filter,
-                        filterUsedColumnIndexes,
-                        reduceTaskFactory,
-                        compileWorkerFiltersConditionally(
-                                executionContext,
-                                filter,
-                                executionContext.getSharedQueryWorkerCount(),
-                                filterExpr,
-                                queryMeta
-                        ),
-                        deepClone(expressionNodePool, filterExpr),
-                        asyncLimitLoFunction,
-                        limitLoPos,
-                        executionContext.getSharedQueryWorkerCount(),
-                        SqlHints.hasEnablePreTouchHint(model, model.getName())
-                );
+                if (!serialFallback) {
+                    final Function asyncLimitLoFunction;
+                    final int limitLoPos;
+                    if (pushLimit) {
+                        asyncLimitLoFunction = limitLoFunction;
+                        limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+                    } else {
+                        // Not pushed: either there is no limit, or a downstream sort
+                        // reorders our output. Drop the function we created so it does
+                        // not leak (generateLimit applies its own limit on top).
+                        limitLoFunction = Misc.free(limitLoFunction);
+                        asyncLimitLoFunction = null;
+                        limitLoPos = 0;
+                    }
+                    IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                    collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
+                    return new AsyncFilteredRecordCursorFactory(
+                            executionContext.getCairoEngine(),
+                            configuration,
+                            executionContext.getMessageBus(),
+                            coveringFactory,
+                            filter,
+                            filterUsedColumnIndexes,
+                            reduceTaskFactory,
+                            compileWorkerFiltersConditionally(
+                                    executionContext,
+                                    filter,
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    filterExpr,
+                                    queryMeta
+                            ),
+                            deepClone(expressionNodePool, filterExpr),
+                            asyncLimitLoFunction,
+                            limitLoPos,
+                            executionContext.getSharedQueryWorkerCount(),
+                            SqlHints.hasEnablePreTouchHint(model, model.getName())
+                    );
+                }
+                // Serial fallback owns no limit function; drop the one we created so
+                // it does not leak (generateLimit wraps the result in its own
+                // LimitRecordCursorFactory).
+                limitLoFunction = Misc.free(limitLoFunction);
             }
-            // Serial fallback owns no limit function; drop the one we created so
-            // it does not leak (generateLimit wraps the result in its own
-            // LimitRecordCursorFactory).
+            return new FilteredRecordCursorFactory(coveringFactory, filter);
+        } catch (Throwable th) {
+            // The factory constructors do not free their inputs on failure, and the
+            // outer catch no longer owns dfcFactory, so release everything this
+            // method is responsible for. limitLoFunction is null once freed above or
+            // transferred to the returned factory, keeping this free idempotent.
             Misc.free(limitLoFunction);
+            Misc.free(filter);
+            Misc.free(coveringFactory);
+            throw th;
         }
-        return new FilteredRecordCursorFactory(coveringFactory, filter);
     }
 
     // used in tests
