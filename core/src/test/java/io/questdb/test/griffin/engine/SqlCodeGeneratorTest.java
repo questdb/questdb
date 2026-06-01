@@ -750,7 +750,66 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCursorForLatestByOnSubQueryOutputNotOrderedByTimestamp() throws Exception {
+        // Companion to testCursorForLatestByOnSubQueryWithRandomAccessSupport. That test's random
+        // dataset happens to land in ascending timestamp order, which hides the fact that
+        // LatestByLightRecordCursorFactory does NOT emit rows in designated-timestamp order. The
+        // cursor iterates its latest-by map in partition-key INSERTION order -- the order each key
+        // first appears in the ascending base scan -- while the row it emits for a key carries that
+        // key's MAX timestamp. Those two orderings are unrelated.
+        //
+        // The dataset below makes the gap visible. Scanning x ascending by k, the keys first appear
+        // in the order CC (day 1), BB (day 2), so the map emits CC then BB. But CC's latest k is
+        // day 4 and BB's latest k is day 3, so the emitted timestamps come out DESCENDING. The
+        // factory therefore advertises no designated timestamp. Adding ORDER BY k re-sorts the very
+        // same two rows into ascending order, proving the raw output was not timestamp-sorted to
+        // begin with.
+        assertMemoryLeak(() -> {
+            execute("create table x (a double, b symbol, k timestamp) timestamp(k) partition by DAY");
+            execute(
+                    """
+                            insert into x values
+                            (10.0, 'CC', '1970-01-01T00:00:00.000000Z'),
+                            (20.0, 'BB', '1970-01-02T00:00:00.000000Z'),
+                            (30.0, 'BB', '1970-01-03T00:00:00.000000Z'),
+                            (40.0, 'CC', '1970-01-04T00:00:00.000000Z')"""
+            );
+
+            // Raw latest-by output, no ORDER BY: map order is CC, BB and their latest k descends.
+            try (RecordCursorFactory factory = select("(x where b in ('BB','CC')) where a > 0 latest on k partition by b")) {
+                // Unordered output advertises no designated timestamp.
+                Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
+                assertCursor(
+                        """
+                                a\tb\tk
+                                40.0\tCC\t1970-01-04T00:00:00.000000Z
+                                30.0\tBB\t1970-01-03T00:00:00.000000Z
+                                """,
+                        factory,
+                        true,
+                        true
+                );
+            }
+
+            // The same two rows, this time actually sorted: ORDER BY k yields ascending timestamps.
+            assertQuery("(x where b in ('BB','CC')) where a > 0 latest on k partition by b order by k")
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
+                            a\tb\tk
+                            30.0\tBB\t1970-01-03T00:00:00.000000Z
+                            40.0\tCC\t1970-01-04T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testCursorForLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
+        // LATEST ON over a random-access sub-query compiles to LatestByLightRecordCursorFactory, which
+        // emits rows in partition-key (map) order rather than designated-timestamp order. It therefore
+        // advertises no designated timestamp (expectedTimestamp == null). This data happens to come out
+        // ascending by k, but that is not guaranteed -- see testCursorForLatestByOnSubQueryOutputNotOrderedByTimestamp.
         assertQuery("(x where b in ('BB','CC')) where a > 0 latest on k partition by b")
                 .ddl("create table x as " +
                         "(" +
@@ -760,7 +819,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(20)" +
                         ") timestamp(k) partition by DAY")
-                .timestamp("k")
                 .expectSize()
                 .returns("""
                         a\tb\tk

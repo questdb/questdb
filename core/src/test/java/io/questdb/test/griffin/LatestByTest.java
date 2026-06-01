@@ -298,6 +298,34 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByLightSubQueryOrderByTimestampNotElided() throws Exception {
+        // A LATEST ON ... over a derived sub-query compiles to LatestByLightRecordCursorFactory,
+        // which emits one row per partition key in map order, NOT in designated-timestamp order.
+        // It must report SCAN_DIRECTION_OTHER so an explicit ORDER BY timestamp is honored with a
+        // real sort instead of being elided as already-sorted. Here key-insertion order (A, B) is
+        // the reverse of latest-timestamp order, so without the sort the rows come back descending.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (i INT, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a VALUES
+                    (1, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (1, 'B', '2024-01-01T00:00:10.000000Z'),
+                    (1, 'B', '2024-01-01T00:00:50.000000Z'),
+                    (1, 'A', '2024-01-01T00:01:40.000000Z')
+                    """);
+            assertQuery("SELECT ts FROM (SELECT ts, sym, i AS i1 FROM a) WHERE i1 > 0 LATEST ON ts PARTITION BY sym ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts
+                            2024-01-01T00:00:50.000000Z
+                            2024-01-01T00:01:40.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testLatestByMultipleChangedColSymbols() throws Exception {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));

@@ -32,6 +32,28 @@ import org.junit.Test;
 public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testTwapAcceptsDesignatedTimestampCast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO tbl VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:00:10.000000Z'),
+                    (30.0, '2024-01-01T00:00:30.000000Z')
+                    """);
+            // ts::timestamp is an identity cast on the designated timestamp.
+            // The cast factory returns the column unwrapped, so twap() still
+            // recognizes it as the designated timestamp and the query is
+            // accepted, matching plain twap(price, ts) in testTwapBasic.
+            assertQuery("SELECT twap(price, ts::timestamp) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\n16.666666666666668\n");
+        });
+    }
+
+    @Test
     public void testTwapAllNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -102,29 +124,6 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTwapNullTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP)");
-            execute("""
-                    INSERT INTO tbl VALUES
-                    (10.0, null),
-                    (20.0, '2024-01-01T00:00:10.000000Z'),
-                    (30.0, null),
-                    (40.0, '2024-01-01T00:00:30.000000Z')
-                    """);
-            // only rows with ts 10s and 30s are considered
-            // weighted_sum = 20 * 20_000_000 = 400_000_000
-            // total_duration = 20_000_000
-            // twap = 400_000_000 / 20_000_000 = 20.0
-            assertQuery("SELECT twap(price, ts) FROM tbl")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("twap\n20.0\n");
-        });
-    }
-
-    @Test
     public void testTwapParallelAllNullPrices() throws Exception {
         assertMemoryLeak((TestUtils.LeakProneCode) () -> {
             execute("""
@@ -137,13 +136,14 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts)
                     """);
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     assertQuery(sql)
-                            .withEngine(engine)
+                            .withCompiler(compiler)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce("""
+                            .expectSize()
+                            .returns("""
                                     sym\ttwap
                                     A\tnull
                                     B\tnull
@@ -190,14 +190,15 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts)
                     """);
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     // constant price => twap = 42.0 for all groups
                     assertQuery(sql)
-                            .withEngine(engine)
+                            .withCompiler(compiler)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce("""
+                            .expectSize()
+                            .returns("""
                                     sym\ttwap
                                     A\t42.0
                                     B\t42.0
@@ -359,6 +360,246 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
                 }, configuration, LOG);
             }
+        });
+    }
+
+    @Test
+    public void testTwapRejectedInHorizonJoin() throws Exception {
+        // A HORIZON JOIN groups its output by horizon offset (and join key), so
+        // the group-by aggregator does not receive rows in ascending
+        // designated-timestamp order. The join callsite therefore reports the
+        // base as non-ascending, and twap() - which relies on each page frame's
+        // rows already being sorted by the timestamp argument - is rejected at
+        // compile time. The timestamp argument here is the master's designated
+        // timestamp, so the rejection is on scan direction, not on the
+        // timestamp argument itself.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(
+                    "SELECT t.sym, twap(p.price, t.ts) FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) RANGE FROM 0s TO 2s STEP 1s AS h",
+                    14,
+                    "twap() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testTwapRejectedInMultiHorizonJoin() throws Exception {
+        // Same reasoning as the single-slave HORIZON JOIN, but routed through
+        // the multi-slave code path (RANGE on the last HORIZON JOIN only).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(
+                    "SELECT t.sym, twap(p.price, t.ts) FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) HORIZON JOIN prices p2 ON (t.sym = p2.sym) RANGE FROM 0s TO 2s STEP 1s AS h",
+                    14,
+                    "twap() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testTwapRejectedInWindowJoin() throws Exception {
+        // A WINDOW JOIN aggregates slave rows within a time window around each
+        // master row, so the aggregator does not see rows in ascending
+        // designated-timestamp order. The join callsite reports the base as
+        // non-ascending and twap() is rejected at compile time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(
+                    "SELECT t.sym, twap(p.price, t.ts) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING",
+                    14,
+                    "twap() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testTwapRejectsConvertingTimestampCast() throws Exception {
+        // ts is a microsecond timestamp, so ts::timestamp_ns is a *converting*
+        // cast: CastTimestampToTimestampFunctionFactory wraps the column in a
+        // Func that rescales micros to nanos. Unlike the identity ts::timestamp
+        // cast (see testTwapAcceptsDesignatedTimestampCast), ColumnFunction.unwrap
+        // cannot see the designated-timestamp column through that wrapper, so
+        // twap() rejects the argument as not being the designated timestamp.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertExceptionNoLeakCheck(
+                    "SELECT twap(price, ts::timestamp_ns) FROM tbl",
+                    7,
+                    "twap() requires the table's designated timestamp as the second argument",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testTwapRejectsDescendingScan() throws Exception {
+        // The aggregate appends rows in scan order using the timestamp as the
+        // sort key and treats each per-frame batch as already key-sorted. A
+        // backward scan delivers rows in reverse order within a page frame,
+        // breaking that invariant and producing wrong output silently. This is
+        // a distinct rejection path from the metadata-mismatch reorder tests:
+        // here the base reports SCAN_DIRECTION_BACKWARD while still carrying the
+        // designated timestamp, so the timestamp-argument check passes and only
+        // the scan-direction check fires.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, grp SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'a', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'a', '2024-01-01T01:00:00.000000Z')
+                    """);
+            // ORDER BY ts DESC inside the inner SELECT compiles to a backward
+            // page-frame scan when paired with LIMIT - the inner SELECT
+            // without LIMIT is dropped by the optimiser.
+            assertExceptionNoLeakCheck(
+                    "SELECT twap(price, ts) FROM (SELECT * FROM t ORDER BY ts DESC LIMIT 10)",
+                    7,
+                    "twap() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT grp, twap(price, ts) FROM (SELECT * FROM t ORDER BY ts DESC LIMIT 10) GROUP BY grp",
+                    12,
+                    "twap() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testTwapRejectsNonDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            // 'ts' is the designated timestamp; 'ts2' is an ordinary timestamp column.
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts)");
+            // A non-designated timestamp column is rejected.
+            assertExceptionNoLeakCheck(
+                    "SELECT twap(price, ts2) FROM tbl",
+                    7,
+                    "twap() requires the table's designated timestamp as the second argument",
+                    false
+            );
+            // A table with no designated timestamp at all is rejected too.
+            execute("CREATE TABLE no_ts (price DOUBLE, ts TIMESTAMP)");
+            assertExceptionNoLeakCheck(
+                    "SELECT twap(price, ts) FROM no_ts",
+                    7,
+                    "twap() requires the table's designated timestamp as the second argument",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testTwapRejectsOrderByNonTimestampSubquery() throws Exception {
+        // A sort by a non-timestamp column reports SCAN_DIRECTION_FORWARD but
+        // delivers rows out of designated-timestamp order. The sort drops the
+        // designated timestamp from its metadata; a `timestamp(ts)` clause on
+        // the outer subquery re-attaches the column by name. The compiler
+        // must still reject the query because the rows are not actually in
+        // ascending timestamp order.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP, key SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tbl VALUES
+                    (5.0,  '2024-01-01T00:00:00.000000Z', 'A'),
+                    (50.0, '2024-01-01T00:00:30.000000Z', 'A'),
+                    (10.0, '2024-01-01T00:01:00.000000Z', 'A')
+                    """);
+            assertExceptionNoLeakCheck(
+                    "SELECT key, twap(price, ts) FROM (SELECT * FROM tbl ORDER BY price ASC) timestamp(ts) GROUP BY key",
+                    12,
+                    "twap() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testTwapRejectsSampleByFillOverNonTimestampOrderedBase() throws Exception {
+        // A SAMPLE BY ... FILL(...) query takes the serial SAMPLE BY path, where TWAP was
+        // previously validated against a hardcoded "ascending timestamp" assumption. A base
+        // ordered by a non-timestamp column reports SCAN_DIRECTION_FORWARD but delivers rows
+        // out of designated-timestamp order: the sort drops the designated timestamp from its
+        // metadata and an outer timestamp(ts) clause re-attaches it by name. Feeding such rows
+        // to TWAP silently produced the plain average instead of the step-function value, so
+        // the compiler must reject the query on every fill mode.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tbl VALUES
+                    (30.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:00:10.000000Z'),
+                    (10.0, '2024-01-01T00:00:30.000000Z')
+                    """);
+            // Oracle: over the real ts-ordered base the step-function TWAP for the single
+            // bucket is (30*10 + 20*20) / 30 = 23.333..., not the plain average (30+20+10)/3
+            // = 20.0 that the reordered base silently produced before the fix.
+            assertQuery("SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ttwap\n2024-01-01T00:00:00.000000Z\t23.333333333333332\n");
+            // FILL(linear) reaches the interpolated branch; FILL(null)/FILL(prev) reach the
+            // other serial branch. Every fill mode must reject the price-ordered base.
+            final String reorderedBase = "FROM (SELECT price, ts FROM tbl ORDER BY price ASC LIMIT 10) timestamp(ts) SAMPLE BY 1m ";
+            for (String fill : new String[]{"FILL(null)", "FILL(prev)", "FILL(linear)"}) {
+                assertExceptionNoLeakCheck(
+                        "SELECT twap(price, ts) " + reorderedBase + fill,
+                        7,
+                        "twap() requires the base query to provide ascending designated timestamp order",
+                        false
+                );
+            }
+            // The same query shape with a genuinely ts-ordered base (timestamp re-attached by
+            // name) is still accepted and returns the correct value -- the fix does not
+            // over-reject legitimate SAMPLE BY FILL queries.
+            assertQuery("SELECT ts, twap(price, ts) FROM (SELECT price, ts FROM tbl ORDER BY ts ASC) timestamp(ts) SAMPLE BY 1m FILL(null)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\ttwap\n2024-01-01T00:00:00.000000Z\t23.333333333333332\n");
+        });
+    }
+
+    @Test
+    public void testTwapRejectsSampleByOverLatestByLightSubQuery() throws Exception {
+        // A LATEST ON ... over a derived sub-query compiles to LatestByLightRecordCursorFactory,
+        // which emits one row per partition key in map order -- NOT in designated-timestamp order.
+        // It therefore advertises no designated timestamp at all, so SAMPLE BY/twap must reject it
+        // instead of silently averaging out-of-order rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (i INT, sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a VALUES
+                    (1, 'A', 10.0, '2024-01-01T00:00:00.000000Z'),
+                    (1, 'B', 20.0, '2024-01-01T00:00:10.000000Z'),
+                    (1, 'B', 40.0, '2024-01-01T00:00:50.000000Z'),
+                    (1, 'A', 30.0, '2024-01-01T00:01:40.000000Z')
+                    """);
+            final String latestByLight = "FROM (SELECT ts, sym, price, i AS i1 FROM a) WHERE i1 > 0 LATEST ON ts PARTITION BY sym ";
+            // No-FILL rewrites to a keyed group-by; twap validation rejects it because its second
+            // argument is no longer a designated timestamp (the light sub-query advertises none).
+            assertExceptionNoLeakCheck(
+                    "SELECT twap(price, ts) " + latestByLight + "SAMPLE BY 1d",
+                    7,
+                    "twap() requires the table's designated timestamp as the second argument",
+                    false
+            );
+            // FILL stays on the serial SAMPLE BY path; it rejects because the light sub-query
+            // provides no designated timestamp to sample by.
+            assertExceptionNoLeakCheck(
+                    "SELECT twap(price, ts) " + latestByLight + "SAMPLE BY 1d FILL(null)",
+                    0,
+                    "base query does not provide designated TIMESTAMP column",
+                    false
+            );
         });
     }
 
