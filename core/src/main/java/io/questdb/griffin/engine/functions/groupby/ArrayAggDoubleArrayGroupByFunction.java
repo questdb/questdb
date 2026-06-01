@@ -53,12 +53,12 @@ public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGr
         ArrayView arr = arg.getArray(record);
         // NULL and empty inputs contribute zero elements (concat identity).
         if (arr.isNull()) {
-            mapValue.putLong(valueIndex, 0);
+            setNull(mapValue);
             return;
         }
         int len = arr.getFlatViewLength();
         if (len == 0) {
-            mapValue.putLong(valueIndex, 0);
+            setNull(mapValue);
             return;
         }
         checkCapacityLimit(len);
@@ -68,6 +68,7 @@ public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGr
         Unsafe.putInt(ptr + CAPACITY_OFFSET, capacity);
         copyArrayElements(arr, len, ptr + HEADER_SIZE, rowId);
         mapValue.putLong(valueIndex, ptr);
+        initRunState(mapValue, rowId);
     }
 
     @Override
@@ -93,6 +94,9 @@ public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGr
         checkCapacityLimit(len);
         int newCount = count + len;
         checkCapacityLimit(newCount);
+        // All of this row's elements share one rowId, so they form a single
+        // batch starting at the current entry offset.
+        appendFrameIfNeeded(mapValue, rowId, count);
         if (newCount > capacity) {
             int newCapacity = Numbers.ceilPow2(newCount);
             long oldSize = HEADER_SIZE + (long) capacity * ENTRY_SIZE;
