@@ -75,83 +75,6 @@ import static io.questdb.cairo.TableUtils.setPathForNativePartition;
  */
 public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
-    @Test
-    public void testO3PostingIndexRecoveryAfterPurgedCommittedSeal() throws Exception {
-        FailAppendPositionLengthFacade ff = new FailAppendPositionLengthFacade();
-        assertMemoryLeak(ff, () -> {
-            final String tableName = "posting_o3_recovery";
-
-            // Set up the shape produced by the fuzz failure: a non-WAL table
-            // with a POSTING symbol index, a renamed indexed column, and a
-            // symbol-capacity change before the O3/replace-style insert.
-            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING, sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute(insertPostingRowsSql(tableName, -85, 0));
-            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO new_col_11");
-            execute(insertPostingRowsSql(tableName, 0, 10));
-            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
-            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
-
-            // This first committed seal contains the boundary XPHI row at
-            // rowid 34. It must remain readable if a later in-flight seal is
-            // rolled back during recovery.
-            execute(insertPostingRowsSql(tableName, 0, 35));
-
-            // The next O3 batch publishes a newer posting seal before the
-            // table _txn is durable. Fail later, in setAppendPosition(), so
-            // the table data is on disk but the commit is not completed.
-            final String retryBatch = insertPostingRowsSql(tableName, 35, 92);
-            ff.arm();
-            try {
-                execute(retryBatch);
-                Assert.fail("expected append-position failure");
-            } catch (CairoException | CairoError e) {
-                Assert.assertEquals(1, ff.getFailureCount());
-            }
-
-            // Exercise the race explicitly: the unfixed code already queued a
-            // purge for the previous committed seal, even though the replacing
-            // seal belongs to the failed future transaction.
-            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
-                runPostingSealPurgeJob(purgeJob);
-            }
-
-            // Reopen after the distressed writer. Recovery drops/trims the
-            // failed future posting chain entry and should fall back to the
-            // prior committed seal that still contains rowid 34.
-            engine.releaseAllWriters();
-            execute(retryBatch);
-            execute(insertPostingRowsSql(tableName, 92, 139));
-            engine.releaseAllWriters();
-
-            // Full scan is the source of truth: all XPHI rows are present in
-            // the column data after the failed batch is retried.
-            assertQueryNoLeakCheck(
-                    """
-                            count
-                            105
-                            """,
-                    "SELECT /*+ no_index */ count() FROM " + tableName + " WHERE new_col_11 = 'XPHI'",
-                    null,
-                    false,
-                    false,
-                    true
-            );
-            // Indexed scan must agree. The bug loses the boundary row from the
-            // recovered posting index when the committed seal file was purged.
-            assertQueryNoLeakCheck(
-                    """
-                            count
-                            105
-                            """,
-                    "SELECT count() FROM " + tableName + " WHERE new_col_11 = 'XPHI'",
-                    null,
-                    false,
-                    false,
-                    true
-            );
-        });
-    }
-
     /**
      * Review C2: the full-partition SELECT DISTINCT path calls
      * collectDistinctKeys(), not collectDistinctKeysInRange(). The no-range
@@ -197,6 +120,48 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     );
                 }
             }
+        });
+    }
+
+    @Test
+    public void testConvertPartitionToParquetLinksReaderVisibleSealWhenHeadIsFutureTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_parquet_future_head (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_parquet_future_head VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.getTableTokenIfExists("t_parquet_future_head");
+            Assert.assertNotNull("test table must exist", token);
+            final long currentTxn;
+            final long firstPartitionTimestamp;
+            final long firstPartitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                currentTxn = reader.getTxn();
+                firstPartitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            appendFuturePostingHead(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
+
+            execute("ALTER TABLE t_parquet_future_head CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            assertSql(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            """,
+                    "SELECT ts, sym, price FROM t_parquet_future_head WHERE sym = 'A'"
+            );
         });
     }
 
@@ -490,6 +455,77 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3PostingIndexRecoveryAfterPurgedCommittedSeal() throws Exception {
+        FailAppendPositionLengthFacade ff = new FailAppendPositionLengthFacade();
+        assertMemoryLeak(ff, () -> {
+            final String tableName = "posting_o3_recovery";
+
+            // Set up the shape produced by the fuzz failure: a non-WAL table
+            // with a POSTING symbol index, a renamed indexed column, and a
+            // symbol-capacity change before the O3/replace-style insert.
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING, sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO new_col_11");
+            execute(insertPostingRowsSql(0, 10));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            // This first committed seal contains the boundary XPHI row at
+            // rowid 34. It must remain readable if a later in-flight seal is
+            // rolled back during recovery.
+            execute(insertPostingRowsSql(0, 35));
+
+            // The next O3 batch publishes a newer posting seal before the
+            // table _txn is durable. Fail later, in setAppendPosition(), so
+            // the table data is on disk but the commit is not completed.
+            final String retryBatch = insertPostingRowsSql(35, 92);
+            ff.arm();
+            try {
+                execute(retryBatch);
+                Assert.fail("expected append-position failure");
+            } catch (CairoException | CairoError e) {
+                Assert.assertEquals(1, ff.getFailureCount());
+            }
+
+            // Exercise the race explicitly: the unfixed code already queued a
+            // purge for the previous committed seal, even though the replacing
+            // seal belongs to the failed future transaction.
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            // Reopen after the distressed writer. Recovery drops/trims the
+            // failed future posting chain entry and should fall back to the
+            // prior committed seal that still contains rowid 34.
+            engine.releaseAllWriters();
+            execute(retryBatch);
+            execute(insertPostingRowsSql(92, 139));
+            engine.releaseAllWriters();
+
+            // Full scan is the source of truth: all XPHI rows are present in
+            // the column data after the failed batch is retried.
+            assertQuery("SELECT /*+ no_index */ count() FROM " + tableName + " WHERE new_col_11 = 'XPHI'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            count
+                            105
+                            """);
+            // Indexed scan must agree. The bug loses the boundary row from the
+            // recovered posting index when the committed seal file was purged.
+            assertQuery("SELECT count() FROM " + tableName + " WHERE new_col_11 = 'XPHI'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            count
+                            105
+                            """);
+        });
+    }
+
+    @Test
     public void testOpenFromO3ContextPropagatesUpcomingTxn() throws Exception {
         assertMemoryLeak(() -> {
             final String name = "posting_o3_upcoming_txn";
@@ -728,57 +764,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Review C1: once readers clamp iteration to the chain entry's MAX_VALUE,
-     * RowCursor.size() must not keep advertising the unclamped encoded count.
-     * Returning -1 is acceptable because the SQL count fast path will then
-     * fall back to hasNext()/next() iteration.
-     */
-    @Test
-    public void testReaderSizeDoesNotOutrunEntryMaxValueClamp() throws Exception {
-        assertMemoryLeak(() -> {
-            final String name = "posting_size_max_value_clamp";
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                    for (long rowId = 0; rowId < 100; rowId++) {
-                        writer.add((int) (rowId % 5), rowId);
-                    }
-                    writer.setMaxValue(99);
-                    writer.commit();
-                    writer.setMaxValue(49);
-                }
-
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), name,
-                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
-                    long advertisedSize;
-                    long iterated = 0;
-                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
-                        advertisedSize = cursor.size();
-                        while (cursor.hasNext()) {
-                            cursor.next();
-                            iterated++;
-                        }
-                    }
-
-                    Assert.assertEquals(
-                            "test setup gap: key 0 has rowids 0,5,...,45 at or below MAX_VALUE=49",
-                            10,
-                            iterated
-                    );
-                    Assert.assertTrue(
-                            "RowCursor.size() must either decline the fast path or match clamped iteration "
-                                    + "[size=" + advertisedSize + ", iterated=" + iterated + "]",
-                            advertisedSize < 0 || advertisedSize == iterated
-                    );
-                }
-            }
-        });
-    }
-
     @Test
     public void testReaderHidesHeadEntryTailGensAbovePin() throws Exception {
         assertMemoryLeak(() -> {
@@ -892,6 +877,57 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     Assert.assertEquals(2, reader.collectDistinctKeys(foundKeys));
                     Assert.assertTrue(foundKeys.get(0));
                     Assert.assertTrue(foundKeys.get(1));
+                }
+            }
+        });
+    }
+
+    /**
+     * Review C1: once readers clamp iteration to the chain entry's MAX_VALUE,
+     * RowCursor.size() must not keep advertising the unclamped encoded count.
+     * Returning -1 is acceptable because the SQL count fast path will then
+     * fall back to hasNext()/next() iteration.
+     */
+    @Test
+    public void testReaderSizeDoesNotOutrunEntryMaxValueClamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_max_value_clamp";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add((int) (rowId % 5), rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long advertisedSize;
+                    long iterated = 0;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertisedSize = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+
+                    Assert.assertEquals(
+                            "test setup gap: key 0 has rowids 0,5,...,45 at or below MAX_VALUE=49",
+                            10,
+                            iterated
+                    );
+                    Assert.assertTrue(
+                            "RowCursor.size() must either decline the fast path or match clamped iteration "
+                                    + "[size=" + advertisedSize + ", iterated=" + iterated + "]",
+                            advertisedSize < 0 || advertisedSize == iterated
+                    );
                 }
             }
         });
@@ -1148,7 +1184,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
             }
 
-            appendFuturePostingHead(token, "sym", COLUMN_NAME_TXN_NONE, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
+            appendFuturePostingHead(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
 
             execute("ALTER TABLE t_rename_future_head RENAME COLUMN sym TO new_sym");
 
@@ -1158,48 +1194,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             2024-01-01T00:00:00.000000Z\tA\t1.0
                             """,
                     "SELECT ts, new_sym, price FROM t_rename_future_head WHERE new_sym = 'A'"
-            );
-        });
-    }
-
-    @Test
-    public void testConvertPartitionToParquetLinksReaderVisibleSealWhenHeadIsFutureTxn() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_parquet_future_head (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING,
-                        price DOUBLE
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_parquet_future_head VALUES
-                    ('2024-01-01T00:00:00', 'A', 1.0),
-                    ('2024-01-02T00:00:00', 'B', 2.0)
-                    """);
-            engine.releaseAllWriters();
-
-            final TableToken token = engine.getTableTokenIfExists("t_parquet_future_head");
-            Assert.assertNotNull("test table must exist", token);
-            final long currentTxn;
-            final long firstPartitionTimestamp;
-            final long firstPartitionNameTxn;
-            try (TableReader reader = engine.getReader(token)) {
-                currentTxn = reader.getTxn();
-                firstPartitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
-                firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
-            }
-
-            appendFuturePostingHead(token, "sym", COLUMN_NAME_TXN_NONE, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
-
-            execute("ALTER TABLE t_parquet_future_head CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-
-            assertSql(
-                    """
-                            ts\tsym\tprice
-                            2024-01-01T00:00:00.000000Z\tA\t1.0
-                            """,
-                    "SELECT ts, sym, price FROM t_parquet_future_head WHERE sym = 'A'"
             );
         });
     }
@@ -3593,9 +3587,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
-    private static String insertPostingRowsSql(String tableName, int lo, int hi) {
+    private static String insertPostingRowsSql(int lo, int hi) {
         StringBuilder sql = new StringBuilder();
-        sql.append("INSERT INTO ").append(tableName).append(" VALUES ");
+        sql.append("INSERT INTO ").append("posting_o3_recovery").append(" VALUES ");
         for (int row = hi - 1; row >= lo; row--) {
             if (row < hi - 1) {
                 sql.append(',');
@@ -3607,34 +3601,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     .append(')');
         }
         return sql.toString();
-    }
-
-    private void appendFuturePostingHead(
-            TableToken token,
-            CharSequence columnName,
-            long columnNameTxn,
-            long partitionTimestamp,
-            long partitionNameTxn,
-            long currentTxn
-    ) {
-        try (Path path = new Path().of(configuration.getDbRoot()).concat(token);
-             PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
-            setPathForNativePartition(path, ColumnType.TIMESTAMP, io.questdb.cairo.PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
-            final int plen = path.size();
-
-            writer.setCurrentTableTxn(currentTxn);
-            writer.of(path.trimTo(plen), columnName, columnNameTxn, false);
-
-            // Manufacture the state left by a partially-published posting
-            // index update: .pk has a new head tagged with a future table txn,
-            // while committed readers pinned at currentTxn must skip it and
-            // use the previous seal.
-            writer.setNextTxnAtSeal(currentTxn + 2);
-            writer.discardForRebuild();
-            writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), 0);
-            writer.setMaxValue(0);
-            writer.commit();
-        }
     }
 
     private static void runPostingSealPurgeJob(PostingSealPurgeJob purgeJob) {
@@ -3664,19 +3630,36 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         return timestamp.toString();
     }
 
+    private void appendFuturePostingHead(
+            TableToken token,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long currentTxn
+    ) {
+        try (Path path = new Path().of(configuration.getDbRoot()).concat(token);
+             PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, io.questdb.cairo.PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
+            final int plen = path.size();
+
+            writer.setCurrentTableTxn(currentTxn);
+            writer.of(path.trimTo(plen), "sym", io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE, false);
+
+            // Manufacture the state left by a partially-published posting
+            // index update: .pk has a new head tagged with a future table txn,
+            // while committed readers pinned at currentTxn must skip it and
+            // use the previous seal.
+            writer.setNextTxnAtSeal(currentTxn + 2);
+            writer.discardForRebuild();
+            writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), 0);
+            writer.setMaxValue(0);
+            writer.commit();
+        }
+    }
+
     private static class FailAppendPositionLengthFacade extends TestFilesFacadeImpl {
         private boolean armed;
         private int failureCount;
         private int setColumnLengthCalls;
-
-        void arm() {
-            armed = true;
-            setColumnLengthCalls = 0;
-        }
-
-        int getFailureCount() {
-            return failureCount;
-        }
 
         @Override
         public long length(long fd) {
@@ -3699,6 +3682,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 }
             }
             return false;
+        }
+
+        void arm() {
+            armed = true;
+            setColumnLengthCalls = 0;
+        }
+
+        int getFailureCount() {
+            return failureCount;
         }
     }
 }
