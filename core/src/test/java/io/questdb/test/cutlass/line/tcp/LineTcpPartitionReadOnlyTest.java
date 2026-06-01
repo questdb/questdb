@@ -29,12 +29,11 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.client.cutlass.line.AbstractLineTcpSender;
 import io.questdb.client.cutlass.line.LineTcpSenderV2;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
-import io.questdb.std.Misc;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cutlass.line.AbstractLinePartitionReadOnlyTest;
 import io.questdb.test.tools.TestUtils;
@@ -58,7 +57,6 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
                     SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -92,16 +90,14 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 // check read only state
                 checkPartitionReadOnlyState(engine, tableToken, partitionIsReadOnly);
 
-                assertSql(
-                        compiler,
-                        context,
-                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalSink(),
-                        TABLE_START_CONTENT);
+                new QueryAssertion(engine, context, () -> {
+                }, "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
+                        .noLeakCheck()
+                        .returnsOnce(TABLE_START_CONTENT);
 
                 // so that we know when the table writer is returned to the pool
                 final SOCountDownLatch tableWriterReturnedToPool = new SOCountDownLatch(1);
-                engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
+                engine.setPoolListener((factoryType, _, token, event, _, _) -> {
                     if (token != null && Chars.equalsNc(tableName, token.getTableName()) && PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                         tableWriterReturnedToPool.countDown();
                     }
@@ -118,12 +114,10 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 checkPartitionReadOnlyState(engine, tableToken, partitionIsReadOnly);
 
                 // check expected results
-                assertSql(
-                        compiler,
-                        context,
-                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalSink(),
-                        finallyExpected);
+                new QueryAssertion(engine, context, () -> {
+                }, "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
+                        .noLeakCheck()
+                        .returnsOnce(finallyExpected);
             }
         });
     }

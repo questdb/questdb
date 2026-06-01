@@ -54,12 +54,13 @@ public class CovarParallelGroupByTest extends AbstractCairoTest {
     public void testParallelCovarPopSparseNulls() throws Exception {
         runWithPool((compiler, ctx) -> {
             createSparseTable(compiler, ctx);
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "covar_pop\n16.5\n",
-                    "SELECT covar_pop(y, x) FROM tbl",
-                    null, ctx, false, true
-            );
+            assertQuery("SELECT covar_pop(y, x) FROM tbl")
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(ctx)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("covar_pop\n16.5\n");
         });
     }
 
@@ -67,12 +68,13 @@ public class CovarParallelGroupByTest extends AbstractCairoTest {
     public void testParallelCovarSampSparseNulls() throws Exception {
         runWithPool((compiler, ctx) -> {
             createSparseTable(compiler, ctx);
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "covar_samp\n18.333333333333332\n",
-                    "SELECT covar_samp(y, x) FROM tbl",
-                    null, ctx, false, true
-            );
+            assertQuery("SELECT covar_samp(y, x) FROM tbl")
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(ctx)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("covar_samp\n18.333333333333332\n");
         });
     }
 
@@ -90,16 +92,18 @@ public class CovarParallelGroupByTest extends AbstractCairoTest {
                             ")",
                     ctx
             );
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "grp\tcovar_pop\tcovar_samp\n" +
-                            "0\t21.333333333333332\t32.0\n" +
-                            "1\t21.333333333333332\t32.0\n" +
-                            "2\t8.0\t16.0\n" +
-                            "3\t8.0\t16.0\n",
-                    "SELECT grp, covar_pop(y_val, x_val), covar_samp(y_val, x_val) FROM tbl ORDER BY grp",
-                    null, ctx, true, true
-            );
+            assertQuery("SELECT grp, covar_pop(y_val, x_val), covar_samp(y_val, x_val) FROM tbl ORDER BY grp")
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(ctx)
+                    .expectSize()
+                    .returns("""
+                            grp\tcovar_pop\tcovar_samp
+                            0\t21.333333333333332\t32.0
+                            1\t21.333333333333332\t32.0
+                            2\t8.0\t16.0
+                            3\t8.0\t16.0
+                            """);
         });
     }
 

@@ -103,6 +103,18 @@ public class AbstractTest {
         SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
     }
 
+    /**
+     * Builds a {@link QueryAssertion} for tests that have no ambient {@link CairoEngine} (e.g. those
+     * that drive a {@link TestServerMain}). The caller MUST supply the engine and execution context
+     * via {@link QueryAssertion#withEngine} / {@link QueryAssertion#withContext} before the terminal,
+     * typically from {@code serverMain.getEngine()} / {@code serverMain.getSqlExecutionContext()}.
+     * {@link AbstractCairoTest} overrides this with a variant bound to its own static engine.
+     */
+    protected QueryAssertion assertQuery(CharSequence query) {
+        return new QueryAssertion(null, null, () -> {
+        }, query);
+    }
+
     protected static MatViewRefreshJob createMatViewRefreshJob(CairoEngine engine) {
         return new MatViewRefreshJob(0, engine, 1);
     }

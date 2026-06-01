@@ -111,8 +111,27 @@ public class FirstFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select b, first(a), k from x sample by 3h fill(linear)")
+                .ddl("create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_float(0) a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE")
+                .mutateWith("insert into x select * from (" +
+                        "select" +
+                        " rnd_float(0) a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(277200000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(35)" +
+                        ") timestamp(k)")
+                .timestamp("k")
+                .expectSize()
+                .returns("""
                         b\tfirst\tk
                         HYRX\t0.11427981\t1970-01-03T00:00:00.000000Z
                         PEHN\t0.42177683\t1970-01-03T00:00:00.000000Z
@@ -138,27 +157,7 @@ public class FirstFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         PEHN\t0.25353473\t1970-01-03T09:00:00.000000Z
                         HYRX\t0.04001695\t1970-01-03T09:00:00.000000Z
                         VTJW\t-0.41588497\t1970-01-03T09:00:00.000000Z
-                        """,
-                "select b, first(a), k from x sample by 3h fill(linear)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_float(0) a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_float(0) a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(35)" +
-                        ") timestamp(k)",
-                """
+                        """, """
                         b\tfirst\tk
                         HYRX\t0.11427981\t1970-01-03T00:00:00.000000Z
                         PEHN\t0.42177683\t1970-01-03T00:00:00.000000Z
@@ -281,10 +280,6 @@ public class FirstFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         VTJW\t-4.9112864\t1970-01-04T06:00:00.000000Z
                         CPSW\t0.6784055\t1970-01-04T06:00:00.000000Z
                         RXGZ\t-1.3064327\t1970-01-04T06:00:00.000000Z
-                        """,
-                true,
-                true,
-                false
-        );
+                        """);
     }
 }
