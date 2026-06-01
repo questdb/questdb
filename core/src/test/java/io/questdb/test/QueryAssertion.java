@@ -210,6 +210,7 @@ public class QueryAssertion {
      */
     public QueryAssertion mutateWith(CharSequence ddl2) {
         this.ddl2 = ddl2;
+        this.ddl2More = null;
         return this;
     }
 
