@@ -108,11 +108,13 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
                 return Double.NaN;
             }
 
-            // Compute sqrt(sumY) * sqrt(sumX) rather than sqrt(sumY * sumX) to avoid
-            // intermediate overflow to +Infinity when both sums are very large
-            // (e.g. inputs near +/-1e153). sumX and sumY are sums of squared deviations
-            // produced by Welford's algorithm, so they are always >= 0.
-            double denom = Math.sqrt(sumY) * Math.sqrt(sumX);
+            // Prefer sqrt(sumY * sumX) when the product is finite, since it is more
+            // numerically accurate than sqrt(sumY) * sqrt(sumX) (one rounding vs. two).
+            // Fall back to the split form only when sumY * sumX would overflow to +Infinity
+            // (inputs of very large magnitude, e.g. near +/-1e153). sumX and sumY are sums
+            // of squared deviations produced by Welford's algorithm, so they are always >= 0.
+            double prod = sumY * sumX;
+            double denom = Double.isFinite(prod) ? Math.sqrt(prod) : Math.sqrt(sumY) * Math.sqrt(sumX);
             if (denom == 0) {
                 return Double.NaN;
             }
