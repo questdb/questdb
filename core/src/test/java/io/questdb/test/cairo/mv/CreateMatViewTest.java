@@ -791,6 +791,21 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewNoPartitionByInvalidMonthsTtl() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            // sample by 2h derives a YEAR partition; 7 months is not a whole number of years,
+            // so the months-based (negative) TTL must be rejected at build time.
+            assertExceptionNoLeakCheck(
+                    "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 2h) ttl 7 months",
+                    82,
+                    "TTL value must be an integer multiple of the partition size (its time interval)"
+            );
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewNoPartitionByNoParentheses() throws Exception {
         testCreateMatViewNoPartitionBy(false);
     }
