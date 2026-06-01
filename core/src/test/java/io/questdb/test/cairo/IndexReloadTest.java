@@ -62,17 +62,15 @@ public class IndexReloadTest extends AbstractCairoTest {
             drainWalQueue();
 
             // assert plan to ensure we're using index lookup
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select * from test_table where code = 'MLLEOYPHR' and ts in '2023-01-01T01'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: code
                                   filter: code=53
                                 Interval forward scan on: test_table
                                   intervals: [("2023-01-01T01:00:00.000000Z","2023-01-01T01:59:59.999999Z")]
-                            """,
-                    "explain select * from test_table where code = 'MLLEOYPHR' and ts in '2023-01-01T01'"
-            );
+                            """);
 
             String expectedBeforePartitionUpdate = """
                     ts\tcode\tcol1\tcol2\tcol3\tcol4\tcol5
@@ -209,17 +207,15 @@ public class IndexReloadTest extends AbstractCairoTest {
             drainWalQueue();
 
             // assert plan to ensure we're using index lookup
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select * from test_table where code = 'MLLEOYPHR' and ts in '2023-01-01T01'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: code
                                   filter: code=53
                                 Interval forward scan on: test_table
                                   intervals: [("2023-01-01T01:00:00.000000Z","2023-01-01T01:59:59.999999Z")]
-                            """,
-                    "explain select * from test_table where code = 'MLLEOYPHR' and ts in '2023-01-01T01'"
-            );
+                            """);
 
             String expectedBeforePartitionUpdate = """
                     ts\tcode\tcol1\tcol2\tcol3\tcol4\tcol5
