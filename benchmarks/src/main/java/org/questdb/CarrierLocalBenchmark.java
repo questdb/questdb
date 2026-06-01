@@ -86,14 +86,15 @@ public class CarrierLocalBenchmark {
     }
 
     @Benchmark
-    public void testCarrierLocalGetSet(Blackhole bh) {
-        bh.consume(carrierLocal.get());
+    public Object testCarrierLocalGetSet() {
+        carrierLocal.set(value);
+        return carrierLocal.get();
     }
 
     @Benchmark
-    public Object testCarrierLocalSet() {
+    public void testCarrierLocalSet(Blackhole bh) {
         carrierLocal.set(value);
-        return carrierLocal.get();
+        bh.consume(value);
     }
 
     @Benchmark
