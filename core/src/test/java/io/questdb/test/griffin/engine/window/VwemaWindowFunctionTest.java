@@ -78,16 +78,15 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaAlphaModeExplainPlan() throws Exception {
         // VwemaOverUnboundedRowsFrameFunction
         execute("create table tab (ts timestamp, price double, volume double) timestamp(ts)");
-        assertPlanNoLeakCheck(
-                "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab",
-                """
+        assertQuery("select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab")
+                .noLeakCheck()
+                .assertsPlan("""
                         Window
                           functions: [avg(price, 'alpha', 0.5, volume) over (rows between unbounded preceding and current row)]
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
-                        """
-        );
+                        """);
     }
 
     @Test
@@ -178,16 +177,15 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaAlphaPartitionExplainPlan() throws Exception {
         // VwemaOverPartitionFunction
         execute("create table tab (ts timestamp, sym symbol, price double, volume double) timestamp(ts)");
-        assertPlanNoLeakCheck(
-                "select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab",
-                """
+        assertQuery("select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab")
+                .noLeakCheck()
+                .assertsPlan("""
                         Window
                           functions: [avg(price, 'alpha', 0.5, volume) over (partition by [sym] rows between unbounded preceding and current row)]
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
-                        """
-        );
+                        """);
     }
 
     @Test
@@ -611,16 +609,15 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaTimeWeightedModeExplainPlan() throws Exception {
         // VwemaTimeWeightedOverUnboundedRowsFrameFunction
         execute("create table tab (ts timestamp, price double, volume double) timestamp(ts)");
-        assertPlanNoLeakCheck(
-                "select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab",
-                """
+        assertQuery("select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab")
+                .noLeakCheck()
+                .assertsPlan("""
                         Window
                           functions: [avg(price, 'second', 1.0, volume) over (rows between unbounded preceding and current row)]
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
-                        """
-        );
+                        """);
     }
 
     @Test
@@ -965,16 +962,15 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaTimeWeightedPartitionExplainPlan() throws Exception {
         // VwemaTimeWeightedOverPartitionFunction
         execute("create table tab (ts timestamp, sym symbol, price double, volume double) timestamp(ts)");
-        assertPlanNoLeakCheck(
-                "select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab",
-                """
+        assertQuery("select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab")
+                .noLeakCheck()
+                .assertsPlan("""
                         Window
                           functions: [avg(price, 'second', 1.0, volume) over (partition by [sym] rows between unbounded preceding and current row)]
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
-                        """
-        );
+                        """);
     }
 
     @Test
