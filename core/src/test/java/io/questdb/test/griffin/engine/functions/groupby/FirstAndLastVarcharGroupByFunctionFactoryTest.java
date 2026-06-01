@@ -104,7 +104,7 @@ public class FirstAndLastVarcharGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testGroupByOverUnion() throws Exception {
         assertQuery("select first(s) first, last(s) last, first_not_null(s) first_nn, last_not_null(s) last_nn " +
-                        "from (x union select x::varchar s, x::timestamp ts from long_sequence(10))")
+                "from (x union select x::varchar s, x::timestamp ts from long_sequence(10))")
                 .ddl("create table x as (" +
                         "select * from (" +
                         "   select " +
@@ -143,11 +143,11 @@ public class FirstAndLastVarcharGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testGroupKeyedManyRows() throws Exception {
         assertQuery("select sum(length(first) + length(last) + length(first_nn) + length(last_nn)) " +
-                        "from " +
-                        "( " +
-                        "   select a, first(s) first, last(s) last, first_not_null(s) first_nn, last_not_null(s) last_nn " +
-                        "   from x " +
-                        ")")
+                "from " +
+                "( " +
+                "   select a, first(s) first, last(s) last, first_not_null(s) first_nn, last_not_null(s) last_nn " +
+                "   from x " +
+                ")")
                 .ddl("create table x as (" +
                         "select * from (" +
                         "   select " +

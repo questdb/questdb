@@ -570,10 +570,10 @@ public class ParquetTest extends AbstractCairoTest {
 
                 // Verify data matches expected
                 assertQuery("select count(*) as diff_count from (" +
-                                "select * from x " +
-                                "except " +
-                                "select * from expected" +
-                                ")")
+                        "select * from x " +
+                        "except " +
+                        "select * from expected" +
+                        ")")
                         .noLeakCheck()
                         .expectSize()
                         .noRandomAccess()
@@ -582,10 +582,10 @@ public class ParquetTest extends AbstractCairoTest {
                 // Round-trip: convert back to native and verify again
                 execute("alter table x convert partition to native where ts >= 0");
                 assertQuery("select count(*) as diff_count from (" +
-                                "select * from x " +
-                                "except " +
-                                "select * from expected" +
-                                ")")
+                        "select * from x " +
+                        "except " +
+                        "select * from expected" +
+                        ")")
                         .noLeakCheck()
                         .expectSize()
                         .noRandomAccess()
@@ -731,10 +731,10 @@ public class ParquetTest extends AbstractCairoTest {
 
                 // Compare each row - join and check for differences
                 assertQuery("select count(*) as diff_count from (" +
-                                "select * from x " +
-                                "except " +
-                                "select * from expected" +
-                                ")")
+                        "select * from x " +
+                        "except " +
+                        "select * from expected" +
+                        ")")
                         .noLeakCheck()
                         .expectSize()
                         .noRandomAccess()
@@ -743,10 +743,10 @@ public class ParquetTest extends AbstractCairoTest {
                 // Convert back to native and verify again
                 execute("alter table x convert partition to native where ts >= 0");
                 assertQuery("select count(*) as diff_count from (" +
-                                "select * from x " +
-                                "except " +
-                                "select * from expected" +
-                                ")")
+                        "select * from x " +
+                        "except " +
+                        "select * from expected" +
+                        ")")
                         .noLeakCheck()
                         .expectSize()
                         .noRandomAccess()
@@ -804,10 +804,10 @@ public class ParquetTest extends AbstractCairoTest {
 
                 // Verify data matches
                 assertQuery("select count(*) as diff_count from (" +
-                                "select * from x " +
-                                "except " +
-                                "select * from expected" +
-                                ")")
+                        "select * from x " +
+                        "except " +
+                        "select * from expected" +
+                        ")")
                         .noLeakCheck()
                         .expectSize()
                         .noRandomAccess()
@@ -818,10 +818,10 @@ public class ParquetTest extends AbstractCairoTest {
                 execute("alter table x convert partition to parquet where ts >= 0");
 
                 assertQuery("select count(*) as diff_count from (" +
-                                "select * from x " +
-                                "except " +
-                                "select * from expected" +
-                                ")")
+                        "select * from x " +
+                        "except " +
+                        "select * from expected" +
+                        ")")
                         .noLeakCheck()
                         .expectSize()
                         .noRandomAccess()
@@ -924,11 +924,11 @@ public class ParquetTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tts
-                    1\t2020-01-01T00:00:00.000000Z
-                    2\t2020-01-02T00:00:00.000000Z
-                    3\t2020-01-03T00:00:00.000000Z
-                    """);
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-02T00:00:00.000000Z
+                            3\t2020-01-03T00:00:00.000000Z
+                            """);
 
             drainWalQueue();
 
@@ -938,11 +938,11 @@ public class ParquetTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tts
-                    1\t2020-01-01T00:00:00.000000Z
-                    2\t2020-01-02T00:00:00.000000Z
-                    3\t2020-01-03T00:00:00.000000Z
-                    """);
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-02T00:00:00.000000Z
+                            3\t2020-01-03T00:00:00.000000Z
+                            """);
 
             drainWalQueue();
 
@@ -959,14 +959,14 @@ public class ParquetTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tts
-                    1\t2020-01-01T00:00:00.000000Z
-                    11\t2020-01-01T00:00:00.000000Z
-                    2\t2020-01-02T00:00:00.000000Z
-                    22\t2020-01-02T00:00:00.000000Z
-                    3\t2020-01-03T00:00:00.000000Z
-                    33\t2020-01-03T00:00:00.000000Z
-                    """);
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            11\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-02T00:00:00.000000Z
+                            22\t2020-01-02T00:00:00.000000Z
+                            3\t2020-01-03T00:00:00.000000Z
+                            33\t2020-01-03T00:00:00.000000Z
+                            """);
         });
     }
 
@@ -986,11 +986,11 @@ public class ParquetTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tts
-                    1\t2020-01-01T00:00:00.000000Z
-                    2\t2020-01-02T00:00:00.000000Z
-                    3\t2020-01-03T00:00:00.000000Z
-                    """);
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-02T00:00:00.000000Z
+                            3\t2020-01-03T00:00:00.000000Z
+                            """);
 
             drainWalQueue();
 
@@ -1000,11 +1000,11 @@ public class ParquetTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tts
-                    1\t2020-01-01T00:00:00.000000Z
-                    2\t2020-01-02T00:00:00.000000Z
-                    3\t2020-01-03T00:00:00.000000Z
-                    """);
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-02T00:00:00.000000Z
+                            3\t2020-01-03T00:00:00.000000Z
+                            """);
 
             drainWalQueue();
 
@@ -1019,11 +1019,11 @@ public class ParquetTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    x\tts
-                    11\t2020-01-01T00:00:00.000000Z
-                    22\t2020-01-02T00:00:00.000000Z
-                    33\t2020-01-03T00:00:00.000000Z
-                    """);
+                            x\tts
+                            11\t2020-01-01T00:00:00.000000Z
+                            22\t2020-01-02T00:00:00.000000Z
+                            33\t2020-01-03T00:00:00.000000Z
+                            """);
         });
     }
 

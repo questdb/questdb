@@ -112,7 +112,7 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
                     // 99999.0 should overflow DECIMAL(4)
                     assertQuery("select cast(99999.0f" +
-                                    " as DECIMAL(4,0))")
+                            " as DECIMAL(4,0))")
                             .fails(12, "decimal '99999.0f' requires precision of 5 but is limited to 4");
                 }
         );
@@ -196,14 +196,14 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
                 () -> {
                     // Runtime cast from float column
                     assertQuery("""
-                                    WITH data AS (
-                                     SELECT 123.45f value UNION ALL
-                                     SELECT -67.89f UNION ALL
-                                     SELECT 0.0f UNION ALL
-                                     SELECT cast('NaN' as float)
-                                    )
-                                    SELECT value, cast(value as DECIMAL(5,2)) as decimal_value FROM data
-                                    """)
+                            WITH data AS (
+                             SELECT 123.45f value UNION ALL
+                             SELECT -67.89f UNION ALL
+                             SELECT 0.0f UNION ALL
+                             SELECT cast('NaN' as float)
+                            )
+                            SELECT value, cast(value as DECIMAL(5,2)) as decimal_value FROM data
+                            """)
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
@@ -217,14 +217,14 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
                     // Runtime cast from float column
                     assertQuery("""
-                                    WITH data AS (
-                                     SELECT 123.45f value UNION ALL
-                                     SELECT -67.89f UNION ALL
-                                     SELECT 0.0f UNION ALL
-                                     SELECT cast('NaN' as float)
-                                    )
-                                    SELECT value, cast(value as DECIMAL(25,2)) as decimal_value FROM data
-                                    """)
+                            WITH data AS (
+                             SELECT 123.45f value UNION ALL
+                             SELECT -67.89f UNION ALL
+                             SELECT 0.0f UNION ALL
+                             SELECT cast('NaN' as float)
+                            )
+                            SELECT value, cast(value as DECIMAL(25,2)) as decimal_value FROM data
+                            """)
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
@@ -238,14 +238,14 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
                     // Runtime cast from float column
                     assertQuery("""
-                                    WITH data AS (
-                                     SELECT 123.45f value UNION ALL
-                                     SELECT -67.89f UNION ALL
-                                     SELECT 0.0f UNION ALL
-                                     SELECT cast('NaN' as float)
-                                    )
-                                    SELECT value, cast(value as DECIMAL(55,2)) as decimal_value FROM data
-                                    """)
+                            WITH data AS (
+                             SELECT 123.45f value UNION ALL
+                             SELECT -67.89f UNION ALL
+                             SELECT 0.0f UNION ALL
+                             SELECT cast('NaN' as float)
+                            )
+                            SELECT value, cast(value as DECIMAL(55,2)) as decimal_value FROM data
+                            """)
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()

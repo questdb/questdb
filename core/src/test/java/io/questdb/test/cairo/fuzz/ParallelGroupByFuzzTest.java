@@ -145,9 +145,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             }
 
             assertQuery("""
-                            SELECT count(1)
-                            FROM t as T1 JOIN t as T2 ON T1.created = T2.created
-                            WHERE T1.event = 1.0""")
+                    SELECT count(1)
+                    FROM t as T1 JOIN t as T2 ON T1.created = T2.created
+                    WHERE T1.event = 1.0""")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -183,10 +183,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             }
 
             assertQuery("""
-                            SELECT count()
-                            FROM t
-                            WHERE origin = 'c'
-                            LATEST ON created PARTITION BY event""")
+                    SELECT count()
+                    FROM t
+                    WHERE origin = 'c'
+                    LATEST ON created PARTITION BY event""")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
@@ -231,7 +231,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             }
 
             assertQuery("SELECT event, count()\n" +
-                            "FROM (t1 UNION t2) WHERE origin = 1")
+                    "FROM (t1 UNION t2) WHERE origin = 1")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""

@@ -149,16 +149,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             ") timestamp(time)", leftTableTimestampType.getTypeName());
 
             assertQuery("""
-                            select t1.time1 + 1 as time, t1.x, t2.x, t1.x - t2.x
-                            from\s
-                            (
-                                (
-                                    select time - 1 as time1, x
-                                    from positions2
-                                )
-                                timestamp(time1)
-                            ) t1
-                            asof join positions2 t2""")
+                    select t1.time1 + 1 as time, t1.x, t2.x, t1.x - t2.x
+                    from\s
+                    (
+                        (
+                            select time - 1 as time1, x
+                            from positions2
+                        )
+                        timestamp(time1)
+                    ) t1
+                    asof join positions2 t2""")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1063,23 +1063,23 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            WITH trades_yday AS (
-                                SELECT timestamp, trade_id, symbol
-                                FROM fx_trades
-                                WHERE symbol = 'EURUSD'
-                                    AND timestamp >= '2026-04-14T00:00:00Z'
-                                    AND timestamp < '2026-04-15T00:00:00Z'
-                                LIMIT 2
-                            ),
-                            market_data_p30 AS (
-                                SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
-                                FROM market_data
-                                WHERE symbol = 'EURUSD'
-                            )
-                            SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
-                            FROM trades_yday t
-                            ASOF JOIN market_data_p30 md
-                            """)
+                    WITH trades_yday AS (
+                        SELECT timestamp, trade_id, symbol
+                        FROM fx_trades
+                        WHERE symbol = 'EURUSD'
+                            AND timestamp >= '2026-04-14T00:00:00Z'
+                            AND timestamp < '2026-04-15T00:00:00Z'
+                        LIMIT 2
+                    ),
+                    market_data_p30 AS (
+                        SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
+                        FROM market_data
+                        WHERE symbol = 'EURUSD'
+                    )
+                    SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
+                    FROM trades_yday t
+                    ASOF JOIN market_data_p30 md
+                    """)
                     .timestamp("timestamp")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -3130,23 +3130,23 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                            WITH trades_yday AS (
-                                SELECT timestamp, trade_id, symbol
-                                FROM fx_trades
-                                WHERE symbol = 'EURUSD'
-                                    AND timestamp >= '2026-04-14T00:00:00Z'
-                                    AND timestamp < '2026-04-15T00:00:00Z'
-                                LIMIT 2
-                            ),
-                            market_data_p30 AS (
-                                SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
-                                FROM market_data
-                                WHERE symbol = 'EURUSD'
-                            )
-                            SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
-                            FROM trades_yday t
-                            ASOF JOIN market_data_p30 md ON (symbol)
-                            """)
+                    WITH trades_yday AS (
+                        SELECT timestamp, trade_id, symbol
+                        FROM fx_trades
+                        WHERE symbol = 'EURUSD'
+                            AND timestamp >= '2026-04-14T00:00:00Z'
+                            AND timestamp < '2026-04-15T00:00:00Z'
+                        LIMIT 2
+                    ),
+                    market_data_p30 AS (
+                        SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
+                        FROM market_data
+                        WHERE symbol = 'EURUSD'
+                    )
+                    SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
+                    FROM trades_yday t
+                    ASOF JOIN market_data_p30 md ON (symbol)
+                    """)
                     .timestamp("timestamp")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -3193,15 +3193,15 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                                    WITH trades_p30 AS (
-                                        SELECT dateadd('s', -30, timestamp) AS timestamp, trade_id, symbol
-                                        FROM fx_trades
-                                        WHERE symbol = 'EURUSD'
-                                    )
-                                    SELECT t.trade_id, md.best_bid
-                                    FROM trades_p30 t
-                                    ASOF JOIN market_data md ON (symbol)
-                            """)
+                            WITH trades_p30 AS (
+                                SELECT dateadd('s', -30, timestamp) AS timestamp, trade_id, symbol
+                                FROM fx_trades
+                                WHERE symbol = 'EURUSD'
+                            )
+                            SELECT t.trade_id, md.best_bid
+                            FROM trades_p30 t
+                            ASOF JOIN market_data md ON (symbol)
+                    """)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -3374,9 +3374,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     .timestamp("bid_ts")
                     .noRandomAccess()
                     .returns("""
-                    bid_ts	symbol	bid_size	ask_price	ask_size
-                    2025-11-01T02:00:00.000000Z	HRK	3.0	2.22	2.0
-                    """);
+                            bid_ts	symbol	bid_size	ask_price	ask_size
+                            2025-11-01T02:00:00.000000Z	HRK	3.0	2.22	2.0
+                            """);
         });
     }
 
@@ -5066,15 +5066,15 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """);
 
             assertQuery("""
-                                    WITH market_data_p30 AS (
-                                        SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
-                                        FROM market_data
-                                        WHERE symbol = 'EURUSD'
-                                    )
-                                    SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
-                                    FROM fx_trades t
-                                    LT JOIN market_data_p30 md ON (symbol)
-                            """)
+                            WITH market_data_p30 AS (
+                                SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
+                                FROM market_data
+                                WHERE symbol = 'EURUSD'
+                            )
+                            SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
+                            FROM fx_trades t
+                            LT JOIN market_data_p30 md ON (symbol)
+                    """)
                     .timestamp("timestamp")
                     .noRandomAccess()
                     .expectSize()
@@ -5914,11 +5914,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             );
 
             assertQuery("""
-                            select * from trades
-                            asof join (
-                              select * from trades
-                              where ts in '2000-03'
-                            ) t;""")
+                    select * from trades
+                    asof join (
+                      select * from trades
+                      where ts in '2000-03'
+                    ) t;""")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()
@@ -6034,9 +6034,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {
         assertQuery("select * from " +
-                        "(select * from (select * from x where y = 10 order by ts desc limit 20) order by ts ) a " +
-                        joinType +
-                        "(select * from x order by ts limit 5) b")
+                "(select * from (select * from x where y = 10 order by ts desc limit 20) order by ts ) a " +
+                joinType +
+                "(select * from x order by ts limit 5) b")
                 .ddl("create table x (ts timestamp, y int) timestamp(ts)")
                 .timestamp(timestamp)
                 .noRandomAccess()

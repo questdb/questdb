@@ -155,8 +155,8 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                 LOG.info().$("asserting view ").$(viewName).$(" against ").$(viewSql).$();
                 // check that the view exists and it is valid
                 assertQuery("select view_status " +
-                                "from views() " +
-                                "where view_name = '" + viewName + "'")
+                        "from views() " +
+                        "where view_name = '" + viewName + "'")
                         .noLeakCheck()
                         .noRandomAccess()
                         .returns("""

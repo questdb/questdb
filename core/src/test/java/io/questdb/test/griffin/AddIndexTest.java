@@ -89,9 +89,9 @@ public class AddIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("""
-                    count
-                    175654
-                    """);
+                            count
+                            175654
+                            """);
         });
     }
 

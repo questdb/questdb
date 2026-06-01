@@ -569,11 +569,11 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    ddl
-                    CREATE TABLE 'tango' (\s
-                    \tts TIMESTAMP
-                    ) timestamp(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL;
-                    """);
+                            ddl
+                            CREATE TABLE 'tango' (\s
+                            \tts TIMESTAMP
+                            ) timestamp(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL;
+                            """);
         });
     }
 
@@ -585,11 +585,11 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    ddl
-                    CREATE TABLE 'tango' (\s
-                    \tts TIMESTAMP
-                    ) timestamp(ts) PARTITION BY HOUR TTL 1 HOUR BYPASS WAL;
-                    """);
+                            ddl
+                            CREATE TABLE 'tango' (\s
+                            \tts TIMESTAMP
+                            ) timestamp(ts) PARTITION BY HOUR TTL 1 HOUR BYPASS WAL;
+                            """);
         });
     }
 
@@ -601,11 +601,11 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    ddl
-                    CREATE TABLE 'tango' (\s
-                    \tts TIMESTAMP
-                    ) timestamp(ts) PARTITION BY HOUR TTL 1 MONTH BYPASS WAL;
-                    """);
+                            ddl
+                            CREATE TABLE 'tango' (\s
+                            \tts TIMESTAMP
+                            ) timestamp(ts) PARTITION BY HOUR TTL 1 MONTH BYPASS WAL;
+                            """);
         });
     }
 
@@ -617,11 +617,11 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    ddl
-                    CREATE TABLE 'tango' (\s
-                    \tts TIMESTAMP
-                    ) timestamp(ts) PARTITION BY HOUR TTL 1 WEEK BYPASS WAL;
-                    """);
+                            ddl
+                            CREATE TABLE 'tango' (\s
+                            \tts TIMESTAMP
+                            ) timestamp(ts) PARTITION BY HOUR TTL 1 WEEK BYPASS WAL;
+                            """);
         });
     }
 
@@ -633,11 +633,11 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    ddl
-                    CREATE TABLE 'tango' (\s
-                    \tts TIMESTAMP
-                    ) timestamp(ts) PARTITION BY HOUR TTL 1 YEAR BYPASS WAL;
-                    """);
+                            ddl
+                            CREATE TABLE 'tango' (\s
+                            \tts TIMESTAMP
+                            ) timestamp(ts) PARTITION BY HOUR TTL 1 YEAR BYPASS WAL;
+                            """);
         });
     }
 
@@ -649,11 +649,11 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    ddl
-                    CREATE TABLE 'tango' (\s
-                    \tts TIMESTAMP
-                    ) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS BYPASS WAL;
-                    """);
+                            ddl
+                            CREATE TABLE 'tango' (\s
+                            \tts TIMESTAMP
+                            ) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS BYPASS WAL;
+                            """);
         });
     }
 
@@ -665,11 +665,11 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    ddl
-                    CREATE TABLE 'tango' (\s
-                    \tts TIMESTAMP
-                    ) timestamp(ts) PARTITION BY HOUR TTL 2 WEEKS BYPASS WAL;
-                    """);
+                            ddl
+                            CREATE TABLE 'tango' (\s
+                            \tts TIMESTAMP
+                            ) timestamp(ts) PARTITION BY HOUR TTL 2 WEEKS BYPASS WAL;
+                            """);
         });
     }
 
@@ -681,11 +681,11 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    ddl
-                    CREATE TABLE 'tango' (\s
-                    \tts TIMESTAMP
-                    ) timestamp(ts) PARTITION BY HOUR TTL 2 YEARS BYPASS WAL;
-                    """);
+                            ddl
+                            CREATE TABLE 'tango' (\s
+                            \tts TIMESTAMP
+                            ) timestamp(ts) PARTITION BY HOUR TTL 2 YEARS BYPASS WAL;
+                            """);
         });
     }
 

@@ -194,8 +194,8 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     "  from long_sequence(360)" +
                     "), index(sym capacity 128) timestamp(ts) partition by week;");
             assertQuery("WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
-                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
-                            "  LIMiT 10")
+                    "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                    "  LIMiT 10")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -215,8 +215,8 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
             execute("ALTER TABLE trade DROP PARTITION LIST '2023-W51', '2023-W50', '2023-12-05T23:47:21.038145Z'", sqlExecutionContext);
 
             assertQuery("WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
-                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
-                            "  LIMiT 10")
+                    "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                    "  LIMiT 10")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""

@@ -60,10 +60,10 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // dense_rank():  1, 1, 2, 3, 3
             // percent_rank(): (1-1)/4=0.0, (1-1)/4=0.0, (3-1)/4=0.5, (4-1)/4=0.75, (4-1)/4=0.75
             assertQuery("select ts, v, " +
-                            "rank() over (order by v) as rank, " +
-                            "dense_rank() over (order by v) as dense_rank, " +
-                            "percent_rank() over (order by v) as percent_rank " +
-                            "from tab")
+                    "rank() over (order by v) as rank, " +
+                    "dense_rank() over (order by v) as dense_rank, " +
+                    "percent_rank() over (order by v) as percent_rank " +
+                    "from tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
@@ -267,8 +267,8 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // percent_rank() over (partition by) - no order by, all rows are peers with rank 1
             // percent_rank = (1-1)/(n-1) = 0 for all rows
             assertQuery("select ts, " +
-                            "percent_rank() over (partition by s) " +
-                            "from tab ")
+                    "percent_rank() over (partition by s) " +
+                    "from tab ")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -291,8 +291,8 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
 
             // percent_rank() over () - no order by, all rows have percent_rank = 0
             assertQuery("select ts, " +
-                            "percent_rank() over () " +
-                            "from tab ")
+                    "percent_rank() over () " +
+                    "from tab ")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -328,9 +328,9 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // percent_rank() over () returns 0 for all rows (ZERO_PASS, no ORDER BY means all peers)
             // percent_rank() over (order by ts) is TWO_PASS and computes actual percent ranks
             assertQuery("select ts, " +
-                            "percent_rank() over () as no_order, " +
-                            "percent_rank() over (order by ts) as with_order " +
-                            "from tab")
+                    "percent_rank() over () as no_order, " +
+                    "percent_rank() over (order by ts) as with_order " +
+                    "from tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
@@ -615,8 +615,8 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // rank 12 at ts=3 (1 row): (12-1)/(12-1) = 11/11 = 1.0
             // TWO_PASS function uses CachedWindowRecordCursorFactory which supports random access
             assertQuery("select ts," +
-                            "percent_rank() over (order by ts) " +
-                            "from tab")
+                    "percent_rank() over (order by ts) " +
+                    "from tab")
                     .noLeakCheck()
                     .timestamp("ts")
                     .expectSize()
@@ -650,8 +650,8 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // percent_rank = (rank - 1) / (total_rows - 1)
             // TWO_PASS function uses CachedWindowRecordCursorFactory which supports random access
             assertQuery("select ts, s," +
-                            "percent_rank() over (partition by s order by ts) " +
-                            "from tab order by s, ts")
+                    "percent_rank() over (partition by s order by ts) " +
+                    "from tab order by s, ts")
                     .noLeakCheck()
                     .timestamp("")
                     .expectSize()

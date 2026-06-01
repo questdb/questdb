@@ -190,9 +190,9 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("wal_tables() order by name")
                     .noLeakCheck()
                     .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                    "B\ttrue\t1\t0\t3\t\tcould not open read-write [file=" + root + SEPARATOR + "B~2" + SEPARATOR + "2022-12-05" + SEPARATOR + "x.d.1]\t0\n" +
-                    "C\tfalse\t2\t0\t2\t\t\t0\n" +
-                    "D\tfalse\t1\t0\t1\t\t\t0\n");
+                            "B\ttrue\t1\t0\t3\t\tcould not open read-write [file=" + root + SEPARATOR + "B~2" + SEPARATOR + "2022-12-05" + SEPARATOR + "x.d.1]\t0\n" +
+                            "C\tfalse\t2\t0\t2\t\t\t0\n" +
+                            "D\tfalse\t1\t0\t1\t\t\t0\n");
 
             assertQuery("select name, suspended, writerTxn from wal_tables() order by name")
                     .noLeakCheck()
@@ -272,7 +272,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                    "B\ttrue\t1\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\n");
+                            "B\ttrue\t1\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\n");
 
             execute("alter table B resume wal");
 

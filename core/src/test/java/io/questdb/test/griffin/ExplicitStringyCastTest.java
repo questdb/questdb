@@ -84,7 +84,7 @@ public class ExplicitStringyCastTest extends AbstractCairoTest {
     @Test
     public void testCastToString() throws Exception {
         assertQuery(String.format("select a, typeOf(a) typeOf from" +
-                        " (select cast(a_%s as string) a from cast_table)", castType))
+                " (select cast(a_%s as string) a from cast_table)", castType))
                 .ddl(castTableDdl)
                 .expectSize()
                 .returns("a\ttypeOf\n" +
@@ -94,7 +94,7 @@ public class ExplicitStringyCastTest extends AbstractCairoTest {
     @Test
     public void testCastToVarchar() throws Exception {
         assertQuery(String.format("select a, typeOf(a) typeOf from" +
-                        " (select cast(a_%s as varchar) a from cast_table)", castType))
+                " (select cast(a_%s as varchar) a from cast_table)", castType))
                 .ddl(castTableDdl)
                 .expectSize()
                 .returns("a\ttypeOf\n" +

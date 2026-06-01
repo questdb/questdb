@@ -1445,11 +1445,11 @@ public class CreateTableTest extends AbstractCairoTest {
                     .expectSize()
                     .timestamp("ts")
                     .returns("""
-                    ts\ts
-                    2024-01-01T00:00:00.000000Z\tA
-                    2024-01-01T01:00:00.000000Z\tB
-                    2024-01-01T02:00:00.000000Z\tA
-                    """);
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\tA
+                            2024-01-01T01:00:00.000000Z\tB
+                            2024-01-01T02:00:00.000000Z\tA
+                            """);
         });
     }
 
@@ -1490,9 +1490,9 @@ public class CreateTableTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("""
-                    count
-                    6
-                    """);
+                            count
+                            6
+                            """);
         });
     }
 
@@ -1518,11 +1518,11 @@ public class CreateTableTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
-                    ts\ts
-                    2024-01-01T00:00:00.000000Z\tA
-                    2024-01-01T02:00:00.000000Z\tA
-                    2024-01-01T05:00:00.000000Z\tA
-                    """);
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\tA
+                            2024-01-01T02:00:00.000000Z\tA
+                            2024-01-01T05:00:00.000000Z\tA
+                            """);
 
             // Release writers (triggers seal)
             engine.releaseAllWriters();
@@ -1534,11 +1534,11 @@ public class CreateTableTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
-                    ts\ts
-                    2024-01-01T00:00:00.000000Z\tA
-                    2024-01-01T02:00:00.000000Z\tA
-                    2024-01-01T05:00:00.000000Z\tA
-                    """);
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\tA
+                            2024-01-01T02:00:00.000000Z\tA
+                            2024-01-01T05:00:00.000000Z\tA
+                            """);
 
             assertQuery("SELECT * FROM t WHERE s = 'B'")
                     .noLeakCheck()
@@ -1546,10 +1546,10 @@ public class CreateTableTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
-                    ts\ts
-                    2024-01-01T01:00:00.000000Z\tB
-                    2024-01-01T04:00:00.000000Z\tB
-                    """);
+                            ts\ts
+                            2024-01-01T01:00:00.000000Z\tB
+                            2024-01-01T04:00:00.000000Z\tB
+                            """);
 
             assertQuery("SELECT * FROM t WHERE s = 'C'")
                     .noLeakCheck()
@@ -1557,9 +1557,9 @@ public class CreateTableTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
-                    ts\ts
-                    2024-01-01T03:00:00.000000Z\tC
-                    """);
+                            ts\ts
+                            2024-01-01T03:00:00.000000Z\tC
+                            """);
 
             // Non-existent symbol returns no rows
             assertQuery("SELECT * FROM t WHERE s = 'Z'")
@@ -1567,8 +1567,8 @@ public class CreateTableTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
-                    ts\ts
-                    """);
+                            ts\ts
+                            """);
         });
     }
 
@@ -1595,11 +1595,11 @@ public class CreateTableTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
-                    ts\ts
-                    2024-01-01T00:00:00.000000Z\tA
-                    2024-01-01T02:00:00.000000Z\tA
-                    2024-01-01T05:00:00.000000Z\tA
-                    """);
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\tA
+                            2024-01-01T02:00:00.000000Z\tA
+                            2024-01-01T05:00:00.000000Z\tA
+                            """);
         });
     }
 
@@ -1617,10 +1617,10 @@ public class CreateTableTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                    ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                    s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
-                    """);
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                            """);
         });
     }
 

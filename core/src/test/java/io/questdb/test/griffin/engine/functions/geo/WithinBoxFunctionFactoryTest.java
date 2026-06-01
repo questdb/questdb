@@ -532,9 +532,9 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
 
             // Join points with zones using within_box
             assertQuery("select p.point_id, p.x, p.y, z.zone_name " +
-                            "from points p " +
-                            "join zones z on within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
-                            "order by p.point_id")
+                    "from points p " +
+                    "join zones z on within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
+                    "order by p.point_id")
                     .noLeakCheck()
                     .returns("""
                             point_id\tx\ty\tzone_name
@@ -562,9 +562,9 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
 
             // Cross join with filter - point on boundary should appear in both zones
             assertQuery("select p.point_id, z.zone_name " +
-                            "from points p, zones z " +
-                            "where within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
-                            "order by p.point_id, z.zone_name")
+                    "from points p, zones z " +
+                    "where within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
+                    "order by p.point_id, z.zone_name")
                     .noLeakCheck()
                     .returns("""
                             point_id\tzone_name
@@ -590,9 +590,9 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
 
             // Left join to see which points have matching zones
             assertQuery("select p.point_id, z.zone_name " +
-                            "from points p " +
-                            "left join zones z on within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
-                            "order by p.point_id")
+                    "from points p " +
+                    "left join zones z on within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
+                    "order by p.point_id")
                     .noLeakCheck()
                     .returns("""
                             point_id\tzone_name

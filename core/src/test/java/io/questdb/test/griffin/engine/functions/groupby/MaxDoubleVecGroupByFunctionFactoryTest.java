@@ -40,12 +40,12 @@ public class MaxDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                avg
-                0.511848387
-                """, """
-                avg
-                0.511848387
-                """);
+                        avg
+                        0.511848387
+                        """, """
+                        avg
+                        0.511848387
+                        """);
 
         assertQuery("select round(avg(f),6) avg, max(b) max from tab")
                 .ddl("insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)")
@@ -65,12 +65,12 @@ public class MaxDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                max
-                null
-                """, """
-                max
-                99092.008234
-                """);
+                        max
+                        null
+                        """, """
+                        max
+                        99092.008234
+                        """);
     }
 
     @Test

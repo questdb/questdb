@@ -63,11 +63,11 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
             //   2. t_plain: Jan 2 (C, 99)
             //   3. Both rows survive → wrong!
             assertQuery("""
-                            SELECT * FROM (
-                                SELECT ts, sym, x FROM t_sym LATEST ON ts PARTITION BY sym
-                                UNION ALL
-                                SELECT ts, sym, x FROM t_plain
-                            ) WHERE ts <= '2024-01-02'""")
+                    SELECT * FROM (
+                        SELECT ts, sym, x FROM t_sym LATEST ON ts PARTITION BY sym
+                        UNION ALL
+                        SELECT ts, sym, x FROM t_plain
+                    ) WHERE ts <= '2024-01-02'""")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
@@ -106,11 +106,11 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
             //   2. Branch 2: Jan 3 (30)
             //   3. All 3 rows pass outer WHERE → wrong!
             assertQuery("""
-                            SELECT * FROM (
-                                SELECT * FROM (SELECT ts, x FROM t1 LIMIT 2)
-                                UNION ALL
-                                SELECT ts, x FROM t2
-                            ) WHERE ts >= '2024-01-03'""")
+                    SELECT * FROM (
+                        SELECT * FROM (SELECT ts, x FROM t1 LIMIT 2)
+                        UNION ALL
+                        SELECT ts, x FROM t2
+                    ) WHERE ts >= '2024-01-03'""")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
@@ -153,12 +153,12 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
             //   4. LIMIT 3: all 3
             //   5. WHERE ts >= Jan 3: all 3 → wrong!
             assertQuery("""
-                            SELECT * FROM (
-                                SELECT ts, x FROM t1
-                                UNION ALL
-                                SELECT ts, x FROM t2
-                                LIMIT 3
-                            ) WHERE ts >= '2024-01-03'""")
+                    SELECT * FROM (
+                        SELECT ts, x FROM t1
+                        UNION ALL
+                        SELECT ts, x FROM t2
+                        LIMIT 3
+                    ) WHERE ts >= '2024-01-03'""")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
@@ -196,10 +196,10 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
             //   3. UNION ALL: (9.0), (8.0)
             //   4. WHERE x > 5: both kept — wrong! t2 bucket should not appear
             assertQuery("select * from (" +
-                            "select ts, x from t1 " +
-                            "union all " +
-                            "select ts, avg(x) x from t2 sample by 1h align to first observation" +
-                            ") where x > 5")
+                    "select ts, x from t1 " +
+                    "union all " +
+                    "select ts, avg(x) x from t2 sample by 1h align to first observation" +
+                    ") where x > 5")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""

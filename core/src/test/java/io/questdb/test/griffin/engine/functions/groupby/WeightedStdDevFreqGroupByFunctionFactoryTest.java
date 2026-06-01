@@ -264,11 +264,11 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
                             null
                             """);
             assertQuery("""
-                            SELECT weighted_stddev_freq(
-                                x,
-                                CASE WHEN x < 3 THEN 1 ELSE 0 END
-                            ) FROM long_sequence(10)
-                            """)
+                    SELECT weighted_stddev_freq(
+                        x,
+                        CASE WHEN x < 3 THEN 1 ELSE 0 END
+                    ) FROM long_sequence(10)
+                    """)
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()

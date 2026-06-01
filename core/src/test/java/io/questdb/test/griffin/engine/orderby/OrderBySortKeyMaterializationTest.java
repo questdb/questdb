@@ -61,11 +61,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t[1.0,2.0]
-                    15.0\t[3.0,4.0]
-                    20.0\t[5.0,6.0]
-                    """);
+                            x\tv
+                            10.0\t[1.0,2.0]
+                            15.0\t[3.0,4.0]
+                            20.0\t[5.0,6.0]
+                            """);
         });
     }
 
@@ -94,11 +94,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\ttrue
-                    15.0\tfalse
-                    20.0\ttrue
-                    """);
+                            x\tv
+                            10.0\ttrue
+                            15.0\tfalse
+                            20.0\ttrue
+                            """);
         });
     }
 
@@ -127,11 +127,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t10
-                    15.0\t20
-                    20.0\t30
-                    """);
+                            x\tv
+                            10.0\t10
+                            15.0\t20
+                            20.0\t30
+                            """);
         });
     }
 
@@ -160,11 +160,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\tA
-                    15.0\tB
-                    20.0\tC
-                    """);
+                            x\tv
+                            10.0\tA
+                            15.0\tB
+                            20.0\tC
+                            """);
         });
     }
 
@@ -193,11 +193,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t2024-01-01T00:00:00.000Z
-                    15.0\t2024-06-15T00:00:00.000Z
-                    20.0\t2024-12-31T00:00:00.000Z
-                    """);
+                            x\tv
+                            10.0\t2024-01-01T00:00:00.000Z
+                            15.0\t2024-06-15T00:00:00.000Z
+                            20.0\t2024-12-31T00:00:00.000Z
+                            """);
         });
     }
 
@@ -227,11 +227,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t1.23
-                    15.0\t4.56
-                    20.0\t7.89
-                    """);
+                            x\tv
+                            10.0\t1.23
+                            15.0\t4.56
+                            20.0\t7.89
+                            """);
         });
     }
 
@@ -261,11 +261,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t12.34
-                    15.0\t56.78
-                    20.0\t90.12
-                    """);
+                            x\tv
+                            10.0\t12.34
+                            15.0\t56.78
+                            20.0\t90.12
+                            """);
         });
     }
 
@@ -295,11 +295,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t1.23
-                    15.0\t4.56
-                    20.0\t7.89
-                    """);
+                            x\tv
+                            10.0\t1.23
+                            15.0\t4.56
+                            20.0\t7.89
+                            """);
         });
     }
 
@@ -329,11 +329,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t1234.56
-                    15.0\t7890.12
-                    20.0\t3456.78
-                    """);
+                            x\tv
+                            10.0\t1234.56
+                            15.0\t7890.12
+                            20.0\t3456.78
+                            """);
         });
     }
 
@@ -363,11 +363,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t1234567890.12
-                    15.0\t9876543210.34
-                    20.0\t5555555555.56
-                    """);
+                            x\tv
+                            10.0\t1234567890.12
+                            15.0\t9876543210.34
+                            20.0\t5555555555.56
+                            """);
         });
     }
 
@@ -397,11 +397,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t1.2
-                    15.0\t3.4
-                    20.0\t5.6
-                    """);
+                            x\tv
+                            10.0\t1.2
+                            15.0\t3.4
+                            20.0\t5.6
+                            """);
         });
     }
 
@@ -430,11 +430,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t1.11
-                    15.0\t2.22
-                    20.0\t3.33
-                    """);
+                            x\tv
+                            10.0\t1.11
+                            15.0\t2.22
+                            20.0\t3.33
+                            """);
         });
     }
 
@@ -463,11 +463,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t1.5
-                    15.0\t2.5
-                    20.0\t3.5
-                    """);
+                            x\tv
+                            10.0\t1.5
+                            15.0\t2.5
+                            20.0\t3.5
+                            """);
         });
     }
 
@@ -496,11 +496,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\ts
-                    15.0\tu
-                    20.0\tz
-                    """);
+                            x\tv
+                            10.0\ts
+                            15.0\tu
+                            20.0\tz
+                            """);
         });
     }
 
@@ -529,11 +529,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\tsp052w
-                    15.0\tu33d8b
-                    20.0\tzzzzzz
-                    """);
+                            x\tv
+                            10.0\tsp052w
+                            15.0\tu33d8b
+                            20.0\tzzzzzz
+                            """);
         });
     }
 
@@ -562,11 +562,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\tsp052w92p1p8
-                    15.0\tu33d8b12b5s0
-                    20.0\tzzzzzzzzzzzz
-                    """);
+                            x\tv
+                            10.0\tsp052w92p1p8
+                            15.0\tu33d8b12b5s0
+                            20.0\tzzzzzzzzzzzz
+                            """);
         });
     }
 
@@ -595,11 +595,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\tsp0
-                    15.0\tu33
-                    20.0\tzzz
-                    """);
+                            x\tv
+                            10.0\tsp0
+                            15.0\tu33
+                            20.0\tzzz
+                            """);
         });
     }
 
@@ -628,11 +628,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t192.168.1.1
-                    15.0\t10.0.0.1
-                    20.0\t172.16.0.1
-                    """);
+                            x\tv
+                            10.0\t192.168.1.1
+                            15.0\t10.0.0.1
+                            20.0\t172.16.0.1
+                            """);
         });
     }
 
@@ -661,11 +661,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t11111111-1111-1111-1111-111111111111
-                    15.0\t22222222-2222-2222-2222-222222222222
-                    20.0\t33333333-3333-3333-3333-333333333333
-                    """);
+                            x\tv
+                            10.0\t11111111-1111-1111-1111-111111111111
+                            15.0\t22222222-2222-2222-2222-222222222222
+                            20.0\t33333333-3333-3333-3333-333333333333
+                            """);
         });
     }
 
@@ -694,11 +694,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t0x01
-                    15.0\t0x02
-                    20.0\t0x03
-                    """);
+                            x\tv
+                            10.0\t0x01
+                            15.0\t0x02
+                            20.0\t0x03
+                            """);
         });
     }
 
@@ -727,11 +727,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t100
-                    15.0\t200
-                    20.0\t300
-                    """);
+                            x\tv
+                            10.0\t100
+                            15.0\t200
+                            20.0\t300
+                            """);
         });
     }
 
@@ -760,11 +760,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\thello
-                    15.0\tworld
-                    20.0\tfoo
-                    """);
+                            x\tv
+                            10.0\thello
+                            15.0\tworld
+                            20.0\tfoo
+                            """);
         });
     }
 
@@ -793,11 +793,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\talpha
-                    15.0\tbeta
-                    20.0\tgamma
-                    """);
+                            x\tv
+                            10.0\talpha
+                            15.0\tbeta
+                            20.0\tgamma
+                            """);
         });
     }
 
@@ -826,11 +826,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\t2024-06-01T12:00:00.000000Z
-                    15.0\t2024-07-15T08:30:00.000000Z
-                    20.0\t2024-08-20T16:45:00.000000Z
-                    """);
+                            x\tv
+                            10.0\t2024-06-01T12:00:00.000000Z
+                            15.0\t2024-07-15T08:30:00.000000Z
+                            20.0\t2024-08-20T16:45:00.000000Z
+                            """);
         });
     }
 
@@ -860,11 +860,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\tv
-                    10.0\thello
-                    15.0\tworld
-                    20.0\tfoo
-                    """);
+                            x\tv
+                            10.0\thello
+                            15.0\tworld
+                            20.0\tfoo
+                            """);
         });
     }
 
@@ -898,13 +898,13 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\ta
-                    39\t3
-                    50\t5
-                    95\t4
-                    105\t1
-                    128\t2
-                    """);
+                            x\ta
+                            39\t3
+                            50\t5
+                            95\t4
+                            105\t1
+                            128\t2
+                            """);
         });
     }
 
@@ -934,11 +934,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x
-                    128.0
-                    105.0
-                    39.0
-                    """);
+                            x
+                            128.0
+                            105.0
+                            39.0
+                            """);
         });
     }
 
@@ -968,11 +968,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x
-                    10.0
-                    15.0
-                    20.0
-                    """);
+                            x
+                            10.0
+                            15.0
+                            20.0
+                            """);
         });
     }
 
@@ -1024,11 +1024,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x
-                    10.0
-                    15.0
-                    20.0
-                    """);
+                            x
+                            10.0
+                            15.0
+                            20.0
+                            """);
         });
     }
 
@@ -1059,11 +1059,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\ta
-                    39\t3
-                    105\t1
-                    128\t2
-                    """);
+                            x\ta
+                            39\t3
+                            105\t1
+                            128\t2
+                            """);
         });
     }
 
@@ -1095,11 +1095,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\ta
-                    39\t1
-                    39\t3
-                    128\t2
-                    """);
+                            x\ta
+                            39\t1
+                            39\t3
+                            128\t2
+                            """);
         });
     }
 
@@ -1132,12 +1132,12 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\ty
-                    21\t11
-                    45\t20
-                    49\t25
-                    105\t50
-                    """);
+                            x\ty
+                            21\t11
+                            45\t20
+                            49\t25
+                            105\t50
+                            """);
         });
     }
 
@@ -1162,9 +1162,9 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x
-                    39.0
-                    """);
+                            x
+                            39.0
+                            """);
         });
     }
 
@@ -1195,11 +1195,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\ta
-                    null\tnull
-                    39\t3
-                    128\t2
-                    """);
+                            x\ta
+                            null\tnull
+                            39\t3
+                            128\t2
+                            """);
         });
     }
 
@@ -1232,11 +1232,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\ts
-                    10.0\talpha
-                    10.0\tbeta
-                    15.0\tgamma
-                    """);
+                            x\ts
+                            10.0\talpha
+                            10.0\tbeta
+                            15.0\tgamma
+                            """);
         });
     }
 
@@ -1289,11 +1289,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x
-                    aa
-                    bb
-                    cc
-                    """);
+                            x
+                            aa
+                            bb
+                            cc
+                            """);
         });
     }
 
@@ -1324,11 +1324,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    false\t2
-                    true\t-1
-                    true\t1
-                    """);
+                            x\te
+                            false\t2
+                            true\t-1
+                            true\t1
+                            """);
         });
     }
 
@@ -1359,11 +1359,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    5\t-1
-                    10\t1
-                    15\t2
-                    """);
+                            x\te
+                            5\t-1
+                            10\t1
+                            15\t2
+                            """);
         });
     }
 
@@ -1394,11 +1394,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    b\t-1
-                    x\t1
-                    y\t2
-                    """);
+                            x\te
+                            b\t-1
+                            x\t1
+                            y\t2
+                            """);
         });
     }
 
@@ -1429,11 +1429,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    2024-01-01T00:00:01.000Z\t1
-                    2024-01-01T00:00:02.000Z\t-1
-                    2024-01-01T00:00:05.000Z\t2
-                    """);
+                            x\te
+                            2024-01-01T00:00:01.000Z\t1
+                            2024-01-01T00:00:02.000Z\t-1
+                            2024-01-01T00:00:05.000Z\t2
+                            """);
         });
     }
 
@@ -1464,11 +1464,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    5.00\t-1
-                    10.00\t1
-                    15.00\t2
-                    """);
+                            x\te
+                            5.00\t-1
+                            10.00\t1
+                            15.00\t2
+                            """);
         });
     }
 
@@ -1498,11 +1498,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    5.00\t-1
-                    10.00\t1
-                    15.00\t2
-                    """);
+                            x\te
+                            5.00\t-1
+                            10.00\t1
+                            15.00\t2
+                            """);
         });
     }
 
@@ -1533,11 +1533,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    5.00\t-1
-                    10.00\t1
-                    15.00\t2
-                    """);
+                            x\te
+                            5.00\t-1
+                            10.00\t1
+                            15.00\t2
+                            """);
         });
     }
 
@@ -1567,11 +1567,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    5.00\t-1
-                    10.00\t1
-                    15.00\t2
-                    """);
+                            x\te
+                            5.00\t-1
+                            10.00\t1
+                            15.00\t2
+                            """);
         });
     }
 
@@ -1602,11 +1602,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    5.00\t-1
-                    10.00\t1
-                    15.00\t2
-                    """);
+                            x\te
+                            5.00\t-1
+                            10.00\t1
+                            15.00\t2
+                            """);
         });
     }
 
@@ -1636,11 +1636,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    0.5\t-1
-                    1.0\t1
-                    1.5\t2
-                    """);
+                            x\te
+                            0.5\t-1
+                            1.0\t1
+                            1.5\t2
+                            """);
         });
     }
 
@@ -1673,11 +1673,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    7\t2
-                    s\t1
-                    w\t3
-                    """);
+                            x\te
+                            7\t2
+                            s\t1
+                            w\t3
+                            """);
         });
     }
 
@@ -1708,11 +1708,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    e
-                    2
-                    1
-                    3
-                    """);
+                            e
+                            2
+                            1
+                            3
+                            """);
         });
     }
 
@@ -1743,11 +1743,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    e
-                    2
-                    1
-                    3
-                    """);
+                            e
+                            2
+                            1
+                            3
+                            """);
         });
     }
 
@@ -1778,11 +1778,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    e
-                    2
-                    1
-                    3
-                    """);
+                            e
+                            2
+                            1
+                            3
+                            """);
         });
     }
 
@@ -1812,11 +1812,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    1.1.1.1\t1
-                    2.2.2.2\t-1
-                    5.5.5.5\t2
-                    """);
+                            x\te
+                            1.1.1.1\t1
+                            2.2.2.2\t-1
+                            5.5.5.5\t2
+                            """);
         });
     }
 
@@ -1847,11 +1847,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    50\t-1
-                    100\t1
-                    150\t2
-                    """);
+                            x\te
+                            50\t-1
+                            100\t1
+                            150\t2
+                            """);
         });
     }
 
@@ -1881,11 +1881,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    abc\t2
-                    bar\t-1
-                    hello\t1
-                    """);
+                            x\te
+                            abc\t2
+                            bar\t-1
+                            hello\t1
+                            """);
         });
     }
 
@@ -1953,11 +1953,11 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x\te
-                    11111111-1111-1111-1111-111111111111\t1
-                    22222222-2222-2222-2222-222222222222\t-1
-                    55555555-5555-5555-5555-555555555555\t2
-                    """);
+                            x\te
+                            11111111-1111-1111-1111-111111111111\t1
+                            22222222-2222-2222-2222-222222222222\t-1
+                            55555555-5555-5555-5555-555555555555\t2
+                            """);
         });
     }
 }

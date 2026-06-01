@@ -62,9 +62,9 @@ public class AvgDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAvgKeyed() throws Exception {
         assertQuery("select id%5 key, avg(d8) a8, avg(d16) a16, avg(d32) a32, " +
-                        "avg(d64) a64, avg(d128) a128, avg(d256) a256 " +
-                        "from x " +
-                        "order by key desc")
+                "avg(d64) a64, avg(d128) a128, avg(d256) a256 " +
+                "from x " +
+                "order by key desc")
                 .ddl("create table x as (" +
                         "select" +
                         " x id," +

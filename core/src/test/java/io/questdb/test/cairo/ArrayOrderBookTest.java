@@ -111,10 +111,10 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "(1, ARRAY[ [10.0, 10.02, 10.04, 10.10, 10.12, 10.14], [10.0,  5,  3, 12, 18, 20] ], NULL)"
             );
             assertQuery("SELECT " +
-                            "array_cum_sum(asks[2]) cum_volumes, " +
-                            "insertion_point(cum_volumes, 30.0, true) target_level, " +
-                            "asks[1, target_level] price " +
-                            "FROM order_book")
+                    "array_cum_sum(asks[2]) cum_volumes, " +
+                    "insertion_point(cum_volumes, 30.0, true) target_level, " +
+                    "asks[1, target_level] price " +
+                    "FROM order_book")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -168,13 +168,13 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "(3_000_000, ARRAY[ [0.0], [ 4.0] ], ARRAY[ [0.0], [ 4.0] ])"
             );
             assertQuery("SELECT * FROM (SELECT " +
-                            "ts ts, " +
-                            "lag(asks[2, 1]) OVER () prev_ask_vol, " +
-                            "asks[2, 1] curr_ask_vol, " +
-                            "lag(bids[2, 1]) OVER () prev_bid_vol, " +
-                            "bids[2, 1] curr_bid_vol " +
-                            "FROM order_book)" +
-                            "WHERE prev_bid_vol > curr_bid_vol * 1.5 OR prev_ask_vol > curr_ask_vol * 1.5")
+                    "ts ts, " +
+                    "lag(asks[2, 1]) OVER () prev_ask_vol, " +
+                    "asks[2, 1] curr_ask_vol, " +
+                    "lag(bids[2, 1]) OVER () prev_bid_vol, " +
+                    "bids[2, 1] curr_bid_vol " +
+                    "FROM order_book)" +
+                    "WHERE prev_bid_vol > curr_bid_vol * 1.5 OR prev_ask_vol > curr_ask_vol * 1.5")
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
@@ -202,7 +202,7 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("insertion_point\n5\n3\n");
             assertQuery("SELECT array_sum(asks[2, 1:insertion_point(asks[1], asks[1,1] + 0.1)]) volume" +
-                            " FROM order_book")
+                    " FROM order_book")
                     .noLeakCheck()
                     .expectSize()
                     .returns("volume\n50.0\n6.0\n");
@@ -225,8 +225,8 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("insertion_point\n5\n7\n");
             assertQuery("SELECT array_sum(" +
-                            "asks[2, 1:insertion_point(asks[1], 1.01 * asks[1, 1])]" +
-                            ") volume FROM order_book")
+                    "asks[2, 1:insertion_point(asks[1], 1.01 * asks[1, 1])]" +
+                    ") volume FROM order_book")
                     .noLeakCheck()
                     .expectSize()
                     .returns("volume\n50.0\n29.0\n");

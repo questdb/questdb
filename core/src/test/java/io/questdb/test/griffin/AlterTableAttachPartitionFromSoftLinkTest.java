@@ -911,7 +911,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     .noRandomAccess()
                     .expectSize()
                     .returns(replaceTimestampSuffix1("min\tmax\tcount\n" +
-                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName));
+                            expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName));
 
             // detach all partitions but last two and them from soft link
             path.of(configuration.getDbRoot()).concat(tableToken);
@@ -945,7 +945,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     .noRandomAccess()
                     .expectSize()
                     .returns(replaceTimestampSuffix1("min\tmax\tcount\n" +
-                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName));
+                            expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName));
 
             // create a reader, which will prevent partitions from being immediately purged
             try (TableReader ignore = engine.getReader(tableToken)) {
@@ -1353,7 +1353,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     .noRandomAccess()
                     .expectSize()
                     .returns(replaceTimestampSuffix1("min\tmax\tcount\n" +
-                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName));
+                            expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName));
 
             // detach partition and attach it from soft link
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
@@ -1378,7 +1378,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     .noRandomAccess()
                     .expectSize()
                     .returns(replaceTimestampSuffix1("min\tmax\tcount\n" +
-                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName));
+                            expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName));
             test.apply(tableToken);
         });
     }
@@ -1463,7 +1463,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     .noRandomAccess()
                     .expectSize()
                     .returns(replaceTimestampSuffix1("min\tmax\tcount\n" +
-                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName));
+                            expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName));
             test.apply(tableToken);
         });
     }

@@ -786,7 +786,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
             preparePartitionPerRowTableWithLongNames();
 
             assertQuery("select rectype, creaton from " +
-                            "( select record_Type as rectype, CREATED_ON creaton from trips order by created_on desc limit 5)")
+                    "( select record_Type as rectype, CREATED_ON creaton from trips order by created_on desc limit 5)")
                     .ddl(null)
                     .timestampDesc("creaton")
                     .expectSize()
@@ -800,10 +800,10 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
             preparePartitionPerRowTableWithLongNames();
 
             assertQuery("select rectype, creaton from " +
-                            "( select record_Type as rectype, CREATED_ON creaton " +
-                            "from trips " +
-                            "order by created_on desc) " +
-                            "limit 5")
+                    "( select record_Type as rectype, CREATED_ON creaton " +
+                    "from trips " +
+                    "order by created_on desc) " +
+                    "limit 5")
                     .ddl(null)
                     .timestampDesc("creaton")
                     .expectSize()
@@ -817,8 +817,8 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
             preparePartitionPerRowTableWithLongNames();
             // order by advice is not available in the sub-query ... sort performed by limitRecordCursor
             assertQuery("select rectype, creaton from " +
-                            "( select record_Type as rectype, CREATED_ON creaton from trips) " +
-                            "order by creaton desc limit 5")
+                    "( select record_Type as rectype, CREATED_ON creaton from trips) " +
+                    "order by creaton desc limit 5")
                     .noLeakCheck()
                     .ddl(null)
                     .timestampDesc("creaton")

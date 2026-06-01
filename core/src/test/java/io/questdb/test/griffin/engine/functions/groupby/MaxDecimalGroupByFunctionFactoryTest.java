@@ -62,9 +62,9 @@ public class MaxDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMaxKeyed() throws Exception {
         assertQuery("select id%5 key, max(d8) m8, max(d16) m16, max(d32) m32, " +
-                        "max(d64) m64, max(d128) m128, max(d256) m256 " +
-                        "from x " +
-                        "order by key desc")
+                "max(d64) m64, max(d128) m128, max(d256) m256 " +
+                "from x " +
+                "order by key desc")
                 .ddl("create table x as (" +
                         "select" +
                         " x id," +

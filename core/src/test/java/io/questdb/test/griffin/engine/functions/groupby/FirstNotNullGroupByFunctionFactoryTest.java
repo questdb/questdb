@@ -37,21 +37,21 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAllNull() throws Exception {
         assertQuery("select first_not_null(a0) a0," +
-                        "     first_not_null(a1) a1," +
-                        "     first_not_null(a2) a2," +
-                        "     first_not_null(a3) a3," +
-                        "     first_not_null(a4) a4," +
-                        "     first_not_null(a5) a5," +
-                        "     first_not_null(a6) a6," +
-                        "     first_not_null(a7) a7," +
-                        "     first_not_null(a8) a8," +
-                        "     first_not_null(a9) a9, " +
-                        "     first_not_null(a10) a10, " +
-                        "     first_not_null(a11) a11, " +
-                        "     first_not_null(a12) a12, " +
-                        "     first_not_null(a13) a13, " +
-                        "     first_not_null(a14) a14 " +
-                        "from tab")
+                "     first_not_null(a1) a1," +
+                "     first_not_null(a2) a2," +
+                "     first_not_null(a3) a3," +
+                "     first_not_null(a4) a4," +
+                "     first_not_null(a5) a5," +
+                "     first_not_null(a6) a6," +
+                "     first_not_null(a7) a7," +
+                "     first_not_null(a8) a8," +
+                "     first_not_null(a9) a9, " +
+                "     first_not_null(a10) a10, " +
+                "     first_not_null(a11) a11, " +
+                "     first_not_null(a12) a12, " +
+                "     first_not_null(a13) a13, " +
+                "     first_not_null(a14) a14 " +
+                "from tab")
                 .ddl("create table tab as ( " +
                         "select cast(null as char) a0," +
                         "       cast(null as date) a1," +
@@ -137,21 +137,21 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                 ")");
 
         assertQuery("select first_not_null(a0) a0," +
-                        "     first_not_null(a1) a1," +
-                        "     first_not_null(a2) a2," +
-                        "     first_not_null(a3) a3," +
-                        "     first_not_null(a4) a4," +
-                        "     first_not_null(a5) a5," +
-                        "     first_not_null(a6) a6," +
-                        "     first_not_null(a7) a7," +
-                        "     first_not_null(a8) a8," +
-                        "     first_not_null(a9) a9, " +
-                        "     first_not_null(a10) a10, " +
-                        "     first_not_null(a11) a11, " +
-                        "     first_not_null(a12) a12, " +
-                        "     first_not_null(a13) a13, " +
-                        "     first_not_null(a14) a14 " +
-                        "from tab")
+                "     first_not_null(a1) a1," +
+                "     first_not_null(a2) a2," +
+                "     first_not_null(a3) a3," +
+                "     first_not_null(a4) a4," +
+                "     first_not_null(a5) a5," +
+                "     first_not_null(a6) a6," +
+                "     first_not_null(a7) a7," +
+                "     first_not_null(a8) a8," +
+                "     first_not_null(a9) a9, " +
+                "     first_not_null(a10) a10, " +
+                "     first_not_null(a11) a11, " +
+                "     first_not_null(a12) a12, " +
+                "     first_not_null(a13) a13, " +
+                "     first_not_null(a14) a14 " +
+                "from tab")
                 .noRandomAccess()
                 .expectSize()
                 .returns("a0\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\n" +

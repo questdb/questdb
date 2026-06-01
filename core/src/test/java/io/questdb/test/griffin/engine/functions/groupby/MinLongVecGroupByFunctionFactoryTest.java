@@ -40,12 +40,12 @@ public class MinLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                avg
-                5261.376146789
-                """, """
-                avg
-                5261.376146789
-                """);
+                        avg
+                        5261.376146789
+                        """, """
+                        avg
+                        5261.376146789
+                        """);
 
         assertQuery("select round(avg(f),6) avg, min(b) min from tab")
                 .ddl("insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)")
@@ -65,12 +65,12 @@ public class MinLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                min
-                null
-                """, """
-                min
-                99999999999999999
-                """);
+                        min
+                        null
+                        """, """
+                        min
+                        99999999999999999
+                        """);
     }
 
     @Test
@@ -81,12 +81,12 @@ public class MinLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                min
-                null
-                """, """
-                min
-                9223372036854775807
-                """);
+                        min
+                        null
+                        """, """
+                        min
+                        9223372036854775807
+                        """);
     }
 
     @Test

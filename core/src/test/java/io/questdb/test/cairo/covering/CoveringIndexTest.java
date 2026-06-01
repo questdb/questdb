@@ -353,10 +353,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // 25 sym='A0' rows per partition (75 total). qty/tag null on the two
             // back-filled partitions (50 rows) and populated on the third (25).
             assertQuery("SELECT count(*) rows, " +
-                            "sum(CASE WHEN qty IS NULL THEN 1 ELSE 0 END) null_qty, " +
-                            "sum(CASE WHEN tag IS NULL THEN 1 ELSE 0 END) null_tag, " +
-                            "sum(CASE WHEN tag = 'V0' THEN 1 ELSE 0 END) v0_tag " +
-                            "FROM t_allnull_native WHERE sym = 'A0'")
+                    "sum(CASE WHEN qty IS NULL THEN 1 ELSE 0 END) null_qty, " +
+                    "sum(CASE WHEN tag IS NULL THEN 1 ELSE 0 END) null_tag, " +
+                    "sum(CASE WHEN tag = 'V0' THEN 1 ELSE 0 END) v0_tag " +
+                    "FROM t_allnull_native WHERE sym = 'A0'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -586,8 +586,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // Parquet schema) must read back null on every row -- column_top
             // semantics, not data smuggled in from a zero-filled sidecar.
             assertQuery("SELECT count(*) rows, sum(price) sum_price, " +
-                            "sum(CASE WHEN tag IS NULL THEN 1 ELSE 0 END) null_tag " +
-                            "FROM t_repro_added WHERE sym = 'A0'")
+                    "sum(CASE WHEN tag IS NULL THEN 1 ELSE 0 END) null_tag " +
+                    "FROM t_repro_added WHERE sym = 'A0'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -631,8 +631,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // Identical assertion shape to the Parquet variant: 25 sym='A0'
             // rows, sum=1300, all-null tag.
             assertQuery("SELECT count(*) rows, sum(price) sum_price, " +
-                            "sum(CASE WHEN tag IS NULL THEN 1 ELSE 0 END) null_tag " +
-                            "FROM t_repro_added_n WHERE sym = 'A0'")
+                    "sum(CASE WHEN tag IS NULL THEN 1 ELSE 0 END) null_tag " +
+                    "FROM t_repro_added_n WHERE sym = 'A0'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -681,8 +681,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // 25 sym='A0' rows, sum(price)=1300, all-null qty -- identical shape
             // to the VARCHAR sibling test above.
             assertQuery("SELECT count(*) rows, sum(price) sum_price, " +
-                            "sum(CASE WHEN qty IS NULL THEN 1 ELSE 0 END) null_qty " +
-                            "FROM t_added_fixed_n WHERE sym = 'A0'")
+                    "sum(CASE WHEN qty IS NULL THEN 1 ELSE 0 END) null_qty " +
+                    "FROM t_added_fixed_n WHERE sym = 'A0'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -771,9 +771,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // tag is NULL on the two parquet partitions, 'V0' on the native one,
             // so exactly 50 nulls and 25 'V0's.
             assertQuery("SELECT count(*) rows, sum(price) sum_price, " +
-                            "sum(CASE WHEN tag IS NULL THEN 1 ELSE 0 END) null_tag, " +
-                            "sum(CASE WHEN tag = 'V0' THEN 1 ELSE 0 END) v0_tag " +
-                            "FROM t_repro_post_add WHERE sym = 'A0'")
+                    "sum(CASE WHEN tag IS NULL THEN 1 ELSE 0 END) null_tag, " +
+                    "sum(CASE WHEN tag = 'V0' THEN 1 ELSE 0 END) v0_tag " +
+                    "FROM t_repro_post_add WHERE sym = 'A0'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1105,9 +1105,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // correct null pattern for the parquet legs without reading
             // any scratch file.
             assertQuery("SELECT count(*) rows, "
-                            + "sum(CASE WHEN tag IS NULL THEN 1 ELSE 0 END) null_tag, "
-                            + "sum(CASE WHEN tag = 'V0' THEN 1 ELSE 0 END) v0_tag "
-                            + "FROM t_null_parquet_skip WHERE sym = 'A0'")
+                    + "sum(CASE WHEN tag IS NULL THEN 1 ELSE 0 END) null_tag, "
+                    + "sum(CASE WHEN tag = 'V0' THEN 1 ELSE 0 END) v0_tag "
+                    + "FROM t_null_parquet_skip WHERE sym = 'A0'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -1610,11 +1610,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym\tqty\tprice
-                    A\t10\tnull
-                    A\t30\t100.5
-                    A\t50\t300.5
-                    """);
+                            sym\tqty\tprice
+                            A\t10\tnull
+                            A\t30\t100.5
+                            A\t50\t300.5
+                            """);
         });
     }
 
@@ -1670,12 +1670,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT sym, qty, gb, gs, gi, gl, ip FROM t_ct_geo WHERE sym = 'A' ORDER BY ts")
                     .noLeakCheck()
                     .returns("""
-                    sym\tqty\tgb\tgs\tgi\tgl\tip
-                    A\t10\t\t\t\t\t
-                    A\t20\t\t\t\t\t
-                    A\t30\ty\tyz\tyzbc\tyzbc1234\t10.0.0.1
-                    A\t40\tb\tbc\tbcde\tbcde1234\t10.0.0.2
-                    """);
+                            sym\tqty\tgb\tgs\tgi\tgl\tip
+                            A\t10\t\t\t\t\t
+                            A\t20\t\t\t\t\t
+                            A\t30\ty\tyz\tyzbc\tyzbc1234\t10.0.0.1
+                            A\t40\tb\tbc\tbcde\tbcde1234\t10.0.0.2
+                            """);
         });
     }
 
@@ -1717,18 +1717,18 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    6
-                    """);
+                            count
+                            6
+                            """);
 
             // Covering LATEST ON after O3 — sidecar rebuilt by rebuildSidecars()
             assertQuery("SELECT price, qty FROM t_o3dup WHERE sym = 'A' LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    6.5\t60
-                    """);
+                            price\tqty
+                            6.5\t60
+                            """);
         });
     }
 
@@ -1766,12 +1766,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym\tprice\tqty
-                    2024-01-01T09:00:00.000000Z\tA\t1.5\t10
-                    2024-01-01T09:00:00.000000Z\tA\t1.5\t10
-                    2024-01-02T09:00:00.000000Z\tA\t3.5\t30
-                    2024-01-02T09:00:00.000000Z\tA\t3.5\t30
-                    """);
+                            ts\tsym\tprice\tqty
+                            2024-01-01T09:00:00.000000Z\tA\t1.5\t10
+                            2024-01-01T09:00:00.000000Z\tA\t1.5\t10
+                            2024-01-02T09:00:00.000000Z\tA\t3.5\t30
+                            2024-01-02T09:00:00.000000Z\tA\t3.5\t30
+                            """);
         });
     }
 
@@ -1845,10 +1845,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    1.5\t10
-                    3.5\t30
-                    """);
+                            price\tqty
+                            1.5\t10
+                            3.5\t30
+                            """);
         });
     }
 
@@ -1986,9 +1986,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym\tprice\tqty
-                    2024-01-01T00:00:00.000000Z\tA\t1.5\t10
-                    """);
+                            ts\tsym\tprice\tqty
+                            2024-01-01T00:00:00.000000Z\tA\t1.5\t10
+                            """);
         });
     }
 
@@ -2055,20 +2055,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    """);
+                            price\tqty
+                            10.5\t100
+                            30.5\t300
+                            """);
 
             execute("ALTER TABLE t_alter_cov ALTER COLUMN qty TYPE LONG");
 
             assertQuery("SELECT price, qty FROM t_alter_cov WHERE sym = 'A'")
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    """);
+                            price\tqty
+                            10.5\t100
+                            30.5\t300
+                            """);
 
             execute("""
                     INSERT INTO t_alter_cov VALUES
@@ -2079,11 +2079,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price, qty FROM t_alter_cov WHERE sym = 'A'")
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    40.5\t400
-                    """);
+                            price\tqty
+                            10.5\t100
+                            30.5\t300
+                            40.5\t400
+                            """);
         });
     }
 
@@ -2280,9 +2280,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym\tcount\tsum_p
-                    A\t3750\t1.40625E7
-                    """);
+                            sym\tcount\tsum_p
+                            A\t3750\t1.40625E7
+                            """);
         });
     }
 
@@ -2377,10 +2377,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tprice
-                    2024-01-01T00:00:00.000000Z\t10.0
-                    2024-01-01T01:00:00.000000Z\t20.0
-                    """);
+                            ts\tprice
+                            2024-01-01T00:00:00.000000Z\t10.0
+                            2024-01-01T01:00:00.000000Z\t20.0
+                            """);
         });
     }
 
@@ -2454,10 +2454,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tprice
-                    2024-01-01T00:00:00.000000Z\t10.0
-                    2024-01-01T02:00:00.000000Z\t30.0
-                    """);
+                            ts\tprice
+                            2024-01-01T00:00:00.000000Z\t10.0
+                            2024-01-01T02:00:00.000000Z\t30.0
+                            """);
         });
     }
 
@@ -2506,10 +2506,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tprice
-                    2024-01-01T00:00:00.000000Z\t10.0
-                    2024-01-01T02:00:00.000000Z\t30.0
-                    """);
+                            ts\tprice
+                            2024-01-01T00:00:00.000000Z\t10.0
+                            2024-01-01T02:00:00.000000Z\t30.0
+                            """);
         });
     }
 
@@ -2576,10 +2576,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tprice
-                    2024-01-01T00:00:00.000000Z\t10.0
-                    2024-01-01T02:00:00.000000Z\t30.0
-                    """);
+                            ts\tprice
+                            2024-01-01T00:00:00.000000Z\t10.0
+                            2024-01-01T02:00:00.000000Z\t30.0
+                            """);
         });
     }
 
@@ -2678,9 +2678,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    1000000
-                    """);
+                            count
+                            1000000
+                            """);
 
             // Verify index is usable — covering and non-covering must agree
             assertSqlCursors(
@@ -2930,9 +2930,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    329
-                    """);
+                            count
+                            329
+                            """);
 
             // Multi-partition
             execute("""
@@ -2949,9 +2949,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    668
-                    """);
+                            count
+                            668
+                            """);
         });
     }
 
@@ -2971,9 +2971,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    0
-                    """);
+                            count
+                            0
+                            """);
         });
     }
 
@@ -2999,9 +2999,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    0
-                    """);
+                            count
+                            0
+                            """);
         });
     }
 
@@ -3030,9 +3030,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    43
-                    """);
+                            count
+                            43
+                            """);
         });
     }
 
@@ -3062,9 +3062,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    654
-                    """);
+                            count
+                            654
+                            """);
         });
     }
 
@@ -3360,7 +3360,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // Fetch all three covered columns to walk getVarSidecarStr,
             // getVarSidecarBin/getVarSidecarBinLen and getVarSidecarArray.
             assertQuery("SELECT count() c FROM t_str_bin_arr " +
-                            "WHERE sym = 'A' AND s LIKE 'abcdefgh%' AND length(b) > 0 AND a[1] > 0")
+                    "WHERE sym = 'A' AND s LIKE 'abcdefgh%' AND length(b) > 0 AND a[1] > 0")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -3453,9 +3453,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    msg
-                    order_confirmation_alpha_beta_gamma_delta_epsilon_zeta_eta_theta_iota_kappa_200
-                    """);
+                            msg
+                            order_confirmation_alpha_beta_gamma_delta_epsilon_zeta_eta_theta_iota_kappa_200
+                            """);
         });
     }
 
@@ -3797,13 +3797,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    1.0\t10
-                    2.0\t20
-                    3.0\t30
-                    4.0\t40
-                    5.0\t50
-                    """);
+                            price\tqty
+                            1.0\t10
+                            2.0\t20
+                            3.0\t30
+                            4.0\t40
+                            5.0\t50
+                            """);
         });
     }
 
@@ -3830,11 +3830,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    label
-                    hello
-                    foo
-                    world
-                    """);
+                            label
+                            hello
+                            foo
+                            world
+                            """);
         });
     }
 
@@ -3864,11 +3864,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    name\tprice
-                    alice\t10.0
-                    anna\t30.0
-                    bob\t20.0
-                    """);
+                            name\tprice
+                            alice\t10.0
+                            anna\t30.0
+                            bob\t20.0
+                            """);
         });
     }
 
@@ -3907,9 +3907,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    3
-                    """);
+                            count
+                            3
+                            """);
         });
     }
 
@@ -3946,11 +3946,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    B
-                    C
-                    """);
+                            sym
+                            A
+                            B
+                            C
+                            """);
         });
     }
 
@@ -3982,11 +3982,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    B
-                    C
-                    """);
+                            sym
+                            A
+                            B
+                            C
+                            """);
 
             // The interval [00:00, 01:00) carves out only row 0 (sym='A'),
             // so only 'A' is reachable. The bug returns A, B, C because the
@@ -3995,9 +3995,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    """);
+                            sym
+                            A
+                            """);
 
             // Sanity: the bitmap fallback path (with /*+ no_index */)
             // produces the correct result, confirming the bug is specific
@@ -4006,9 +4006,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    """);
+                            sym
+                            A
+                            """);
         });
     }
 
@@ -4034,21 +4034,21 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    B
-                    C
-                    D
-                    """);
+                            sym
+                            A
+                            B
+                            C
+                            D
+                            """);
 
             assertQuery("SELECT DISTINCT sym FROM (SELECT sym FROM t_dist_lim LIMIT 2) order by sym")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    B
-                    """);
+                            sym
+                            A
+                            B
+                            """);
         });
     }
 
@@ -4453,9 +4453,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    40.0
-                    """);
+                            price
+                            40.0
+                            """);
         });
     }
 
@@ -4485,18 +4485,18 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    1.0\t10
-                    3.0\t30
-                    """);
+                            price\tqty
+                            1.0\t10
+                            3.0\t30
+                            """);
 
             // Nonexistent key should return empty across both partitions
             assertQuery("SELECT price, qty FROM t_null_part WHERE sym = 'nonexistent'")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    """);
+                            price\tqty
+                            """);
         });
     }
 
@@ -4538,22 +4538,22 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    5.5\t50
-                    10.5\t100
-                    25.5\t250
-                    30.5\t300
-                    """);
+                            price\tqty
+                            5.5\t50
+                            10.5\t100
+                            25.5\t250
+                            30.5\t300
+                            """);
 
             assertQuery("SELECT price, qty FROM t_o3_cover WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    15.5\t150
-                    20.5\t200
-                    """);
+                            price\tqty
+                            15.5\t150
+                            20.5\t200
+                            """);
         });
     }
 
@@ -4591,22 +4591,22 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    val
-                    0.5
-                    1.0
-                    2.0
-                    2.5
-                    """);
+                            val
+                            0.5
+                            1.0
+                            2.0
+                            2.5
+                            """);
 
             assertQuery("SELECT val FROM t_o3_mp WHERE sym = 'Y'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    val
-                    1.5
-                    3.0
-                    """);
+                            val
+                            1.5
+                            3.0
+                            """);
         });
     }
 
@@ -4654,21 +4654,21 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    50.0
-                    100.0
-                    150.0
-                    """);
+                            price
+                            50.0
+                            100.0
+                            150.0
+                            """);
 
             assertQuery("SELECT price FROM t_o3_repeat WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.0
-                    200.0
-                    """);
+                            price
+                            10.0
+                            200.0
+                            """);
         });
     }
 
@@ -4707,22 +4707,22 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    1.5\t10
-                    1.5\t10
-                    3.5\t30
-                    3.5\t30
-                    """);
+                            price\tqty
+                            1.5\t10
+                            1.5\t10
+                            3.5\t30
+                            3.5\t30
+                            """);
 
             assertQuery("SELECT price, qty FROM t_o3_dup WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    2.5\t20
-                    2.5\t20
-                    """);
+                            price\tqty
+                            2.5\t20
+                            2.5\t20
+                            """);
         });
     }
 
@@ -4764,21 +4764,21 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    d1\td2\td3\ti1\tl1
-                    0.1\t0.2\t0.3\t10\t100
-                    1.1\t2.2\t3.3\t100\t1000
-                    7.7\t8.8\t9.9\t300\t3000
-                    """);
+                            d1\td2\td3\ti1\tl1
+                            0.1\t0.2\t0.3\t10\t100
+                            1.1\t2.2\t3.3\t100\t1000
+                            7.7\t8.8\t9.9\t300\t3000
+                            """);
 
             assertQuery("SELECT d1, d2, d3, i1, l1 FROM t_many_cols WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    d1\td2\td3\ti1\tl1
-                    3.3\t3.4\t3.5\t150\t1500
-                    4.4\t5.5\t6.6\t200\t2000
-                    """);
+                            d1\td2\td3\ti1\tl1
+                            3.3\t3.4\t3.5\t150\t1500
+                            4.4\t5.5\t6.6\t200\t2000
+                            """);
         });
     }
 
@@ -4815,11 +4815,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    val
-                    10.0
-                    15.0
-                    30.0
-                    """);
+                            val
+                            10.0
+                            15.0
+                            30.0
+                            """);
         });
     }
 
@@ -4855,12 +4855,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    0.5
-                    1.0
-                    2.0
-                    3.0
-                    """);
+                            price
+                            0.5
+                            1.0
+                            2.0
+                            3.0
+                            """);
         });
     }
 
@@ -4898,11 +4898,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.0
-                    30.0
-                    50.0
-                    """);
+                            price
+                            10.0
+                            30.0
+                            50.0
+                            """);
         });
     }
 
@@ -5069,9 +5069,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price FROM t_resid_uncov WHERE sym = 'A' AND extra > 150")
                     .noLeakCheck()
                     .returns("""
-                    price
-                    30.0
-                    """);
+                            price
+                            30.0
+                            """);
         });
     }
 
@@ -5103,20 +5103,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    1.0\t10
-                    3.0\t30
-                    """);
+                            price\tqty
+                            1.0\t10
+                            3.0\t30
+                            """);
 
             assertQuery("SELECT price, qty FROM t_alter_mp WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    2.0\t20
-                    4.0\t40
-                    """);
+                            price\tqty
+                            2.0\t20
+                            4.0\t40
+                            """);
         });
     }
 
@@ -5155,21 +5155,21 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    1.5\t10
-                    3.5\t30
-                    4.5\t40
-                    """);
+                            price\tqty
+                            1.5\t10
+                            3.5\t30
+                            4.5\t40
+                            """);
 
             assertQuery("SELECT price, qty FROM t_switch WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    2.5\t20
-                    5.5\t50
-                    """);
+                            price\tqty
+                            2.5\t20
+                            5.5\t50
+                            """);
         });
     }
 
@@ -5208,11 +5208,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    1.5\t10
-                    3.5\t30
-                    4.5\t40
-                    """);
+                            price\tqty
+                            1.5\t10
+                            3.5\t30
+                            4.5\t40
+                            """);
         });
     }
 
@@ -5245,10 +5245,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    1.5\t10
-                    3.5\t30
-                    """);
+                            price\tqty
+                            1.5\t10
+                            3.5\t30
+                            """);
         });
     }
 
@@ -5279,10 +5279,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    1.5\t10
-                    3.5\t30
-                    """);
+                            price\tqty
+                            1.5\t10
+                            3.5\t30
+                            """);
         });
     }
 
@@ -5323,19 +5323,19 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price FROM t_resid WHERE sym = 'A' AND price > 15")
                     .noLeakCheck()
                     .returns("""
-                    price
-                    30.0
-                    50.0
-                    """);
+                            price
+                            30.0
+                            50.0
+                            """);
 
             // Must match non-covering path
             assertQuery("SELECT /*+ no_covering */ price FROM t_resid WHERE sym = 'A' AND price > 15")
                     .noLeakCheck()
                     .returns("""
-                    price
-                    30.0
-                    50.0
-                    """);
+                            price
+                            30.0
+                            50.0
+                            """);
         });
     }
 
@@ -5363,17 +5363,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price FROM t_resid_in WHERE sym IN ('A', 'B') AND price > 25")
                     .noLeakCheck()
                     .returns("""
-                    price
-                    30.0
-                    40.0
-                    """);
+                            price
+                            30.0
+                            40.0
+                            """);
             assertQuery("SELECT /*+ no_covering */ price FROM t_resid_in WHERE sym IN ('A', 'B') AND price > 25")
                     .noLeakCheck()
                     .returns("""
-                    price
-                    30.0
-                    40.0
-                    """);
+                            price
+                            30.0
+                            40.0
+                            """);
         });
     }
 
@@ -5401,9 +5401,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    2.0
-                    """);
+                            price
+                            2.0
+                            """);
 
             // Re-execute with different value
             bindVariableService.clear();
@@ -5412,9 +5412,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    3.0
-                    """);
+                            price
+                            3.0
+                            """);
         });
     }
 
@@ -5471,10 +5471,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    6.0
-                    5.0
-                    """);
+                            price
+                            6.0
+                            5.0
+                            """);
         });
     }
 
@@ -5501,10 +5501,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym\ttag\tprice
-                    A\twarm\t3.0
-                    B\thot\t2.0
-                    """);
+                            sym\ttag\tprice
+                            A\twarm\t3.0
+                            B\thot\t2.0
+                            """);
         });
     }
 
@@ -5533,18 +5533,18 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    30.0\t300
-                    """);
+                            price\tqty
+                            30.0\t300
+                            """);
 
             // Latest B is in partition 2024-01-03
             assertQuery("SELECT price, qty FROM t_latest_mp WHERE sym = 'B' LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    40.0\t400
-                    """);
+                            price\tqty
+                            40.0\t400
+                            """);
         });
     }
 
@@ -5568,8 +5568,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    """);
+                            price
+                            """);
         });
     }
 
@@ -5598,9 +5598,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    5.0
-                    """);
+                            price
+                            5.0
+                            """);
         });
     }
 
@@ -5627,9 +5627,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    label
-                    world
-                    """);
+                            label
+                            world
+                            """);
         });
     }
 
@@ -5658,17 +5658,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    name\tprice
-                    anna\t30.0
-                    """);
+                            name\tprice
+                            anna\t30.0
+                            """);
 
             assertQuery("SELECT name, price FROM t_latest_varchar WHERE sym = 'B' LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    name\tprice
-                    bea\t40.0
-                    """);
+                            name\tprice
+                            bea\t40.0
+                            """);
         });
     }
 
@@ -5696,9 +5696,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym\tprice
-                    2024-01-02T00:00:00.000000Z\tA\t3.0
-                    """);
+                            ts\tsym\tprice
+                            2024-01-02T00:00:00.000000Z\tA\t3.0
+                            """);
         });
     }
 
@@ -5725,9 +5725,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym\ttag\tprice
-                    A\twarm\t3.0
-                    """);
+                            sym\ttag\tprice
+                            A\twarm\t3.0
+                            """);
         });
     }
 
@@ -5755,10 +5755,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.5
-                    11.5
-                    """);
+                            price
+                            10.5
+                            11.5
+                            """);
 
             execute("ALTER TABLE t_alter ADD COLUMN extra INT");
             engine.releaseAllReaders();
@@ -5777,10 +5777,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.5
-                    11.5
-                    """);
+                            price
+                            10.5
+                            11.5
+                            """);
         });
     }
 
@@ -5808,21 +5808,21 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    d\ti
-                    1.5\t10
-                    3.5\t30
-                    5.5\t50
-                    """);
+                            d\ti
+                            1.5\t10
+                            3.5\t30
+                            5.5\t50
+                            """);
 
             assertQuery("SELECT d, i FROM t_mc_offset WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    d\ti
-                    2.5\t20
-                    4.5\t40
-                    """);
+                            d\ti
+                            2.5\t20
+                            4.5\t40
+                            """);
         });
     }
 
@@ -5850,11 +5850,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    l\ti\ts
-                    100000\t10\t1
-                    300000\t30\t3
-                    500000\t50\t5
-                    """);
+                            l\ti\ts
+                            100000\t10\t1
+                            300000\t30\t3
+                            500000\t50\t5
+                            """);
         });
     }
 
@@ -5880,10 +5880,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.0
-                    11.0
-                    """);
+                            price
+                            10.0
+                            11.0
+                            """);
         });
     }
 
@@ -6185,10 +6185,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    null\tnull
-                    null\tnull
-                    """);
+                            price\tqty
+                            null\tnull
+                            null\tnull
+                            """);
         });
     }
 
@@ -6231,14 +6231,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    vals\textra
-                    [0.19202208853547864,0.5093827001617407,0.11427984775756228,0.5243722859289777,0.8072372233384567,null,0.6276954028373309,0.6778564558839208,0.8756771741121929,0.8799634725391621,0.5249321062686694]\t2
-                    [0.9038068796506872,null]\t4
-                    [0.16474369169931913,0.931192737286751]\t6
-                    [0.7588175403454873,0.5778947915182423,0.9269068519549879,0.5449155021518948,0.1202416087573498,0.9640289041849747,null,null,0.6359144993891355,null,0.4971342426836798,0.48558682958070665,0.9047642416961028,0.03167026265669903,0.14830552335848957]\t8
-                    [null,0.053594208204197136]\t10
-                    [null,0.021189232728939578,0.7777024823107295]\t12
-                    """);
+                            vals\textra
+                            [0.19202208853547864,0.5093827001617407,0.11427984775756228,0.5243722859289777,0.8072372233384567,null,0.6276954028373309,0.6778564558839208,0.8756771741121929,0.8799634725391621,0.5249321062686694]\t2
+                            [0.9038068796506872,null]\t4
+                            [0.16474369169931913,0.931192737286751]\t6
+                            [0.7588175403454873,0.5778947915182423,0.9269068519549879,0.5449155021518948,0.1202416087573498,0.9640289041849747,null,null,0.6359144993891355,null,0.4971342426836798,0.48558682958070665,0.9047642416961028,0.03167026265669903,0.14830552335848957]\t8
+                            [null,0.053594208204197136]\t10
+                            [null,0.021189232728939578,0.7777024823107295]\t12
+                            """);
         });
     }
 
@@ -6269,14 +6269,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    vals\textra
-                    [0.19202208853547864,0.5093827001617407,0.11427984775756228]\t2
-                    [null,0.1985581797355932,null]\t4
-                    [0.12503042190293423,0.9038068796506872,null]\t6
-                    [0.022965637512889825,null]\t8
-                    [0.18769708157331322,null,null]\t10
-                    [0.45659895188239796,0.9566236549439661,0.5406709846540508]\t12
-                    """);
+                            vals\textra
+                            [0.19202208853547864,0.5093827001617407,0.11427984775756228]\t2
+                            [null,0.1985581797355932,null]\t4
+                            [0.12503042190293423,0.9038068796506872,null]\t6
+                            [0.022965637512889825,null]\t8
+                            [0.18769708157331322,null,null]\t10
+                            [0.45659895188239796,0.9566236549439661,0.5406709846540508]\t12
+                            """);
         });
     }
 
@@ -6307,11 +6307,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    11.5\t150
-                    12.5\t120
-                    """);
+                            price\tqty
+                            10.5\t100
+                            11.5\t150
+                            12.5\t120
+                            """);
         });
     }
 
@@ -6354,13 +6354,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    data\textra
-                    \t2
-                    \t4
-                    00000000 1b c7 88 de a0 79 3c\t6
-                    \t8
-                    00000000 49 b4 59 7e 3b 08\t10
-                    """);
+                            data\textra
+                            \t2
+                            \t4
+                            00000000 1b c7 88 de a0 79 3c\t6
+                            \t8
+                            00000000 49 b4 59 7e 3b 08\t10
+                            """);
         });
     }
 
@@ -6391,12 +6391,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    data\textra
-                    00000000 3b 72 db f3 04 1b c7 88\t3
-                    00000000 08 a1 1e 38 8d 1b 9e f4\t6
-                    \t9
-                    00000000 f0 2d 40 e2 4b\t12
-                    """);
+                            data\textra
+                            00000000 3b 72 db f3 04 1b c7 88\t3
+                            00000000 08 a1 1e 38 8d 1b 9e f4\t6
+                            \t9
+                            00000000 f0 2d 40 e2 4b\t12
+                            """);
         });
     }
 
@@ -6425,10 +6425,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.5
-                    11.5
-                    """);
+                            price
+                            10.5
+                            11.5
+                            """);
 
             // Re-execute with different bind variable value
             bindVariableService.clear();
@@ -6438,9 +6438,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    20.5
-                    """);
+                            price
+                            20.5
+                            """);
         });
     }
 
@@ -6466,8 +6466,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    """);
+                            price
+                            """);
         });
     }
 
@@ -6589,11 +6589,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    flag\textra
-                    true\t1
-                    false\t3
-                    true\t4
-                    """);
+                            flag\textra
+                            true\t1
+                            false\t3
+                            true\t4
+                            """);
         });
     }
 
@@ -6622,11 +6622,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    d\ti
-                    1.7976931348623157E308\t2147483647
-                    -1.7976931348623157E308\tnull
-                    0.0\t0
-                    """);
+                            d\ti
+                            1.7976931348623157E308\t2147483647
+                            -1.7976931348623157E308\tnull
+                            0.0\t0
+                            """);
         });
     }
 
@@ -6654,10 +6654,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    b\textra
-                    42\t1
-                    -1\t3
-                    """);
+                            b\textra
+                            42\t1
+                            -1\t3
+                            """);
         });
     }
 
@@ -6685,10 +6685,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    d\textra
-                    2020-06-15T00:00:00.000Z\t1
-                    2022-03-01T00:00:00.000Z\t3
-                    """);
+                            d\textra
+                            2020-06-15T00:00:00.000Z\t1
+                            2022-03-01T00:00:00.000Z\t3
+                            """);
         });
     }
 
@@ -6723,21 +6723,21 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    d128
-                    1234567890.1234567890
-                    -9999999999.9999999999
-                    0.0000000001
-                    
-                    42.0000000000
-                    """);
+                            d128
+                            1234567890.1234567890
+                            -9999999999.9999999999
+                            0.0000000001
+                            
+                            42.0000000000
+                            """);
             assertQuery("SELECT d128 FROM t_d128 WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    d128
-                    99999999999999999999999999.9999999999
-                    """);
+                            d128
+                            99999999999999999999999999.9999999999
+                            """);
         });
     }
 
@@ -6792,30 +6792,30 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    d8\td16\td32\td64\td128\td256
-                    \t70.80\t\t40863994239165.1703\t1787280113583629108167793234.9373449732\t18888715180791238225928221362458460.92766
-                    7.0\t\t2538903.64\t16664082490389.7958\t1641632316967050245515388573.3440205453\t14875755943028931385865395098236153.96808
-                    3.1\t78.26\t5751353.94\t23804269374864.1413\t810081242630250895698426776.6927411277\t8583077020202156956218481394266599.02389
-                    7.5\t\t\t86605238667466.9519\t956563306327071686987346799.6830377222\t22724816918678007437269485083139146.44429
-                    1.7\t92.66\t8823714.73\t13188254446200.8274\t1207097311830897670430779224.2024504775\t29150523193729163716100989803355305.47666
-                    6.5\t66.70\t5446956.70\t14417228720079.2492\t1418531814025018706708158328.3816287698\t5732543185464093840813081895232786.18866
-                    1.8\t\t8892248.06\t39899107525936.1297\t1016253333977104912056699053.5900116824\t1732803907904724146465147103771127.97855
-                    """);
+                            d8\td16\td32\td64\td128\td256
+                            \t70.80\t\t40863994239165.1703\t1787280113583629108167793234.9373449732\t18888715180791238225928221362458460.92766
+                            7.0\t\t2538903.64\t16664082490389.7958\t1641632316967050245515388573.3440205453\t14875755943028931385865395098236153.96808
+                            3.1\t78.26\t5751353.94\t23804269374864.1413\t810081242630250895698426776.6927411277\t8583077020202156956218481394266599.02389
+                            7.5\t\t\t86605238667466.9519\t956563306327071686987346799.6830377222\t22724816918678007437269485083139146.44429
+                            1.7\t92.66\t8823714.73\t13188254446200.8274\t1207097311830897670430779224.2024504775\t29150523193729163716100989803355305.47666
+                            6.5\t66.70\t5446956.70\t14417228720079.2492\t1418531814025018706708158328.3816287698\t5732543185464093840813081895232786.18866
+                            1.8\t\t8892248.06\t39899107525936.1297\t1016253333977104912056699053.5900116824\t1732803907904724146465147103771127.97855
+                            """);
 
             assertQuery("SELECT d8, d16, d32, d64, d128, d256 FROM t_dec WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    d8\td16\td32\td64\td128\td256
-                    3.9\t\t735757.01\t61184357814108.3005\t1205323264613915778464177818.0211586008\t1386075460267063369330913776166802.31153
-                    5.8\t57.62\t1018221.05\t47578458180646.1665\t693332620165057781283181359.2820666308\t15151479461332606562822538694713052.93139
-                    3.9\t5.57\t1379694.58\t20559518411576.0695\t601247527511781476692712681.1373876190\t1948200433546889932354865222990931.08533
-                    3.4\t37.66\t6273933.81\t31612360735939.2493\t315864032070159436143241665.0969926445\t29659946948645594828374741791005525.18833
-                    2.4\t12.38\t9505528.43\t21423064588439.9731\t645239438434308363262983650.6793302617\t7927075818711980216168116892213920.99887
-                    0.9\t\t7953593.56\t91590662830857.7949\t751262867641396953441858009.1969477517\t13167451642297942276784652339229868.67664
-                    8.4\t\t9429993.84\t62429987870713.5916\t822752991025940024709620990.3877240957\t28031524510998509335616827333341238.08766
-                    """);
+                            d8\td16\td32\td64\td128\td256
+                            3.9\t\t735757.01\t61184357814108.3005\t1205323264613915778464177818.0211586008\t1386075460267063369330913776166802.31153
+                            5.8\t57.62\t1018221.05\t47578458180646.1665\t693332620165057781283181359.2820666308\t15151479461332606562822538694713052.93139
+                            3.9\t5.57\t1379694.58\t20559518411576.0695\t601247527511781476692712681.1373876190\t1948200433546889932354865222990931.08533
+                            3.4\t37.66\t6273933.81\t31612360735939.2493\t315864032070159436143241665.0969926445\t29659946948645594828374741791005525.18833
+                            2.4\t12.38\t9505528.43\t21423064588439.9731\t645239438434308363262983650.6793302617\t7927075818711980216168116892213920.99887
+                            0.9\t\t7953593.56\t91590662830857.7949\t751262867641396953441858009.1969477517\t13167451642297942276784652339229868.67664
+                            8.4\t\t9429993.84\t62429987870713.5916\t822752991025940024709620990.3877240957\t28031524510998509335616827333341238.08766
+                            """);
         });
     }
 
@@ -6891,8 +6891,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    """);
+                            price\tqty
+                            """);
         });
     }
 
@@ -6949,10 +6949,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    f\textra
-                    1.5\t1
-                    3.5\t3
-                    """);
+                            f\textra
+                            1.5\t1
+                            3.5\t3
+                            """);
         });
     }
 
@@ -6980,11 +6980,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.5
-                    11.5
-                    20.5
-                    """);
+                            price
+                            10.5
+                            11.5
+                            20.5
+                            """);
 
             // Verify plan shows CoveringIndex
             assertPlanNoLeakCheck(
@@ -7024,13 +7024,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    1.0
-                    2.0
-                    3.0
-                    6.0
-                    5.0
-                    """);
+                            price
+                            1.0
+                            2.0
+                            3.0
+                            6.0
+                            5.0
+                            """);
         });
     }
 
@@ -7056,17 +7056,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.5
-                    """);
+                            price
+                            10.5
+                            """);
 
             // All non-existent keys — empty result
             assertQuery("SELECT price FROM t_in_ne WHERE sym IN ('X', 'Y')")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    """);
+                            price
+                            """);
         });
     }
 
@@ -7093,9 +7093,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.5
-                    """);
+                            price
+                            10.5
+                            """);
         });
     }
 
@@ -7122,11 +7122,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym\tprice
-                    A\t10.5
-                    A\t11.5
-                    B\t20.5
-                    """);
+                            sym\tprice
+                            A\t10.5
+                            A\t11.5
+                            B\t20.5
+                            """);
         });
     }
 
@@ -7155,10 +7155,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    1.5\t10
-                    3.5\t30
-                    """);
+                            price\tqty
+                            1.5\t10
+                            3.5\t30
+                            """);
         });
     }
 
@@ -7186,10 +7186,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    hash\textra
-                    0x0100000000000000020000000000000003000000000000000400000000000000\t1
-                    0x090000000000000000000000000000000b000000000000000c00000000000000\t3
-                    """);
+                            hash\textra
+                            0x0100000000000000020000000000000003000000000000000400000000000000\t1
+                            0x090000000000000000000000000000000b000000000000000c00000000000000\t3
+                            """);
         });
     }
 
@@ -7217,10 +7217,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    big_val\textra
-                    100000000\t1
-                    300000000\t3
-                    """);
+                            big_val\textra
+                            100000000\t1
+                            300000000\t3
+                            """);
         });
     }
 
@@ -7263,11 +7263,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    val\textra
-                    0.5\t0
-                    3.5\t30
-                    6.5\t60
-                    """);
+                            val\textra
+                            0.5\t0
+                            3.5\t30
+                            6.5\t60
+                            """);
         });
     }
 
@@ -7297,10 +7297,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    d\ti\tl\ts
-                    1.5\t10\t100000\t1
-                    3.5\t30\t300000\t3
-                    """);
+                            d\ti\tl\ts
+                            1.5\t10\t100000\t1
+                            3.5\t30\t300000\t3
+                            """);
         });
     }
 
@@ -7331,30 +7331,30 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    11.5\t150
-                    12.5\t120
-                    """);
+                            price\tqty
+                            10.5\t100
+                            11.5\t150
+                            12.5\t120
+                            """);
 
             assertQuery("SELECT price, qty FROM t_keys WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    20.5\t200
-                    21.5\t250
-                    """);
+                            price\tqty
+                            20.5\t200
+                            21.5\t250
+                            """);
 
             assertQuery("SELECT price, qty FROM t_keys WHERE sym = 'C'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    30.5\t300
-                    """);
+                            price\tqty
+                            30.5\t300
+                            """);
         });
     }
 
@@ -7387,11 +7387,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    1.5\t10
-                    3.5\t30
-                    5.5\t50
-                    """);
+                            price\tqty
+                            1.5\t10
+                            3.5\t30
+                            5.5\t50
+                            """);
 
             // Key B has data in partitions 1 and 3
             assertQuery("SELECT price, qty FROM t_parts WHERE sym = 'B'")
@@ -7399,10 +7399,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    2.5\t20
-                    6.5\t60
-                    """);
+                            price\tqty
+                            2.5\t20
+                            6.5\t60
+                            """);
         });
     }
 
@@ -7427,8 +7427,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    """);
+                            price
+                            """);
         });
     }
 
@@ -7458,11 +7458,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    null\tnull
-                    12.5\t120
-                    """);
+                            price\tqty
+                            10.5\t100
+                            null\tnull
+                            12.5\t120
+                            """);
         });
     }
 
@@ -7498,10 +7498,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    20.5\t200
-                    """);
+                            price\tqty
+                            10.5\t100
+                            20.5\t200
+                            """);
         });
     }
 
@@ -7530,10 +7530,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    qty\tprice
-                    100\t10.5
-                    150\t11.5
-                    """);
+                            qty\tprice
+                            100\t10.5
+                            150\t11.5
+                            """);
         });
     }
 
@@ -7562,10 +7562,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    A
-                    """);
+                            sym
+                            A
+                            A
+                            """);
         });
     }
 
@@ -7593,10 +7593,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    small_val\textra
-                    100\t1
-                    300\t3
-                    """);
+                            small_val\textra
+                            100\t1
+                            300\t3
+                            """);
         });
     }
 
@@ -7624,27 +7624,27 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    """);
+                            price\tqty
+                            10.5\t100
+                            """);
 
             assertQuery("SELECT price, qty FROM t_single WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    20.5\t200
-                    """);
+                            price\tqty
+                            20.5\t200
+                            """);
 
             assertQuery("SELECT price, qty FROM t_single WHERE sym = 'C'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    30.5\t300
-                    """);
+                            price\tqty
+                            30.5\t300
+                            """);
         });
     }
 
@@ -7672,10 +7672,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    label
-                    hello
-                    foo
-                    """);
+                            label
+                            hello
+                            foo
+                            """);
         });
     }
 
@@ -7700,10 +7700,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    label
-                    hello
-                    world
-                    """);
+                            label
+                            hello
+                            world
+                            """);
         });
     }
 
@@ -7731,11 +7731,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    label
-                    hello
-                    \n\
-                    foo
-                    """);
+                            label
+                            hello
+                            \n\
+                            foo
+                            """);
         });
     }
 
@@ -7763,10 +7763,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym\tprice
-                    A\t10.5
-                    A\t11.5
-                    """);
+                            sym\tprice
+                            A\t10.5
+                            A\t11.5
+                            """);
         });
     }
 
@@ -7795,19 +7795,19 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    tag\tprice
-                    hot\t10.5
-                    warm\t11.5
-                    """);
+                            tag\tprice
+                            hot\t10.5
+                            warm\t11.5
+                            """);
 
             assertQuery("SELECT tag, price FROM t_sym_incl WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    tag\tprice
-                    cold\t20.5
-                    """);
+                            tag\tprice
+                            cold\t20.5
+                            """);
         });
     }
 
@@ -7836,10 +7836,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym\ttag\tprice
-                    A\thot\t1.0
-                    A\twarm\t3.0
-                    """);
+                            sym\ttag\tprice
+                            A\thot\t1.0
+                            A\twarm\t3.0
+                            """);
         });
     }
 
@@ -7866,11 +7866,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    tag
-                    hot
-                    \n\
-                    cold
-                    """);
+                            tag
+                            hot
+                            \n\
+                            cold
+                            """);
         });
     }
 
@@ -7898,11 +7898,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym\ttag
-                    A\thot
-                    A\twarm
-                    B\tcold
-                    """);
+                            sym\ttag
+                            A\thot
+                            A\twarm
+                            B\tcold
+                            """);
         });
     }
 
@@ -7930,10 +7930,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    event_time\textra
-                    2024-06-15T12:30:00.000000Z\t1
-                    2024-08-25T16:45:00.000000Z\t3
-                    """);
+                            event_time\textra
+                            2024-06-15T12:30:00.000000Z\t1
+                            2024-08-25T16:45:00.000000Z\t3
+                            """);
         });
     }
 
@@ -7962,11 +7962,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    id\textra
-                    11111111-1111-1111-1111-111111111111\t1
-                    33333333-3333-3333-3333-333333333333\t3
-                    \t4
-                    """);
+                            id\textra
+                            11111111-1111-1111-1111-111111111111\t1
+                            33333333-3333-3333-3333-333333333333\t3
+                            \t4
+                            """);
         });
     }
 
@@ -7997,20 +7997,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    name\tprice
-                    alice\t10.0
-                    anna\t30.0
-                    \t40.0
-                    """);
+                            name\tprice
+                            alice\t10.0
+                            anna\t30.0
+                            \t40.0
+                            """);
 
             assertQuery("SELECT name, price FROM t_cover_varchar WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    name\tprice
-                    bob\t20.0
-                    """);
+                            name\tprice
+                            bob\t20.0
+                            """);
 
             // Non-covered column forces fallback — verify no crash
             assertQuery("SELECT ts, name FROM t_cover_varchar WHERE sym = 'A'")
@@ -8019,11 +8019,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tname
-                    2024-01-01T00:00:00.000000Z\talice
-                    2024-01-01T02:00:00.000000Z\tanna
-                    2024-01-01T03:00:00.000000Z\t
-                    """);
+                            ts\tname
+                            2024-01-01T00:00:00.000000Z\talice
+                            2024-01-01T02:00:00.000000Z\tanna
+                            2024-01-01T03:00:00.000000Z\t
+                            """);
         });
     }
 
@@ -8052,11 +8052,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    name\tprice
-                    alice\t10.0
-                    \t20.0
-                    anna\t30.0
-                    """);
+                            name\tprice
+                            alice\t10.0
+                            \t20.0
+                            anna\t30.0
+                            """);
         });
     }
 
@@ -8082,19 +8082,19 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    name\tprice
-                    alice\t10.0
-                    anna\t20.0
-                    """);
+                            name\tprice
+                            alice\t10.0
+                            anna\t20.0
+                            """);
 
             assertQuery("SELECT name, price FROM t_cover_varchar_mc WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    name\tprice
-                    bob\t30.0
-                    """);
+                            name\tprice
+                            bob\t30.0
+                            """);
         });
     }
 
@@ -8124,11 +8124,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    name\tprice
-                    alice\t10.0
-                    anna\t30.0
-                    amy\t50.0
-                    """);
+                            name\tprice
+                            alice\t10.0
+                            anna\t30.0
+                            amy\t50.0
+                            """);
         });
     }
 
@@ -8157,10 +8157,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    11.5\t150
-                    """);
+                            price\tqty
+                            10.5\t100
+                            11.5\t150
+                            """);
         });
     }
 
@@ -8638,13 +8638,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    event_ts\textra
-                    2024-06-15T12:00:01.000000Z\t1
-                    2024-06-15T12:00:03.000000Z\t3
-                    2024-06-15T12:00:05.000000Z\t5
-                    \t6
-                    2024-06-15T12:00:07.000000Z\t7
-                    """);
+                            event_ts\textra
+                            2024-06-15T12:00:01.000000Z\t1
+                            2024-06-15T12:00:03.000000Z\t3
+                            2024-06-15T12:00:05.000000Z\t5
+                            \t6
+                            2024-06-15T12:00:07.000000Z\t7
+                            """);
 
             // Verify covering plan is used
             assertPlanNoLeakCheck(
@@ -8686,12 +8686,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tx
-                    10.0\t1
-                    10.0\t2
-                    11.0\t1
-                    11.0\t2
-                    """);
+                            price\tx
+                            10.0\t1
+                            10.0\t2
+                            11.0\t1
+                            11.0\t2
+                            """);
         });
     }
 
@@ -8726,9 +8726,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    cnt
-                    1
-                    """);
+                            cnt
+                            1
+                            """);
 
             // And the empty filter must match exactly two rows.
             assertQuery("SELECT count() AS cnt FROM t_vc_empty WHERE sym = 'A' AND v = ''")
@@ -8736,9 +8736,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    cnt
-                    2
-                    """);
+                            cnt
+                            2
+                            """);
         });
     }
 
@@ -9070,10 +9070,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym
-                    2024-01-01T00:00:00.000000Z\tGOLD
-                    2024-01-01T00:02:00.000000Z\tGOLD
-                    """);
+                            ts\tsym
+                            2024-01-01T00:00:00.000000Z\tGOLD
+                            2024-01-01T00:02:00.000000Z\tGOLD
+                            """);
 
             // Check that the plan uses CoveringIndex
             assertPlanNoLeakCheck(
@@ -9112,10 +9112,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym
-                    2024-01-01T00:00:00.000000Z\tGOLD
-                    2024-01-01T00:02:00.000000Z\tGOLD
-                    """);
+                            ts\tsym
+                            2024-01-01T00:00:00.000000Z\tGOLD
+                            2024-01-01T00:02:00.000000Z\tGOLD
+                            """);
 
             // Plan should use CoveringIndex
             assertPlanNoLeakCheck(
@@ -9159,10 +9159,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym\texchange
-                    2024-01-01T00:00:00.000000000Z\tGOLD\tCME
-                    2024-01-01T00:02:00.000000000Z\tGOLD\tLME
-                    """);
+                            ts\tsym\texchange
+                            2024-01-01T00:00:00.000000000Z\tGOLD\tCME
+                            2024-01-01T00:02:00.000000000Z\tGOLD\tLME
+                            """);
 
             // ts + sym only — should use CoveringIndex
             assertQuery("SELECT ts, sym FROM t_cover_tsns WHERE sym = 'GOLD'")
@@ -9171,10 +9171,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym
-                    2024-01-01T00:00:00.000000000Z\tGOLD
-                    2024-01-01T00:02:00.000000000Z\tGOLD
-                    """);
+                            ts\tsym
+                            2024-01-01T00:00:00.000000000Z\tGOLD
+                            2024-01-01T00:02:00.000000000Z\tGOLD
+                            """);
 
             // Plan check for ts + sym
             assertPlanNoLeakCheck(
@@ -9224,10 +9224,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym
-                    2024-01-01T00:00:00.000000000Z\tGOLD
-                    2024-01-01T00:02:00.000000000Z\tGOLD
-                    """);
+                            ts\tsym
+                            2024-01-01T00:00:00.000000000Z\tGOLD
+                            2024-01-01T00:02:00.000000000Z\tGOLD
+                            """);
         });
     }
 
@@ -9354,8 +9354,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    """);
+                            sym
+                            """);
         });
     }
 
@@ -9419,10 +9419,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    S0
-                    S1
-                    """);
+                            sym
+                            S0
+                            S1
+                            """);
         });
     }
 
@@ -9457,10 +9457,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    B
-                    """);
+                            sym
+                            A
+                            B
+                            """);
         });
     }
 
@@ -9491,9 +9491,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    C
-                    """);
+                            sym
+                            C
+                            """);
         });
     }
 
@@ -9520,10 +9520,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    B
-                    """);
+                            sym
+                            A
+                            B
+                            """);
 
             // Plan should NOT show PostingIndex distinct
             assertPlanNoLeakCheck(
@@ -9555,8 +9555,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    """);
+                            sym
+                            """);
         });
     }
 
@@ -9612,11 +9612,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    B
-                    C
-                    """);
+                            sym
+                            A
+                            B
+                            C
+                            """);
         });
     }
 
@@ -9651,9 +9651,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    100
-                    """);
+                            count
+                            100
+                            """);
         });
     }
 
@@ -9696,25 +9696,25 @@ public class CoveringIndexTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT count_distinct(sym) FROM t_distinct_range " +
-                            "WHERE ts BETWEEN '2024-01-01T00:30:00' AND '2024-01-01T00:40:00'")
+                    "WHERE ts BETWEEN '2024-01-01T00:30:00' AND '2024-01-01T00:40:00'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("count_distinct\n50\n");
             assertQuery("SELECT count_distinct(sym) FROM t_distinct_range " +
-                            "WHERE ts BETWEEN '2024-01-01T02:00:00' AND '2024-01-01T03:00:00'")
+                    "WHERE ts BETWEEN '2024-01-01T02:00:00' AND '2024-01-01T03:00:00'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("count_distinct\n3\n");
             assertQuery("SELECT count_distinct(sym) FROM t_distinct_range " +
-                            "WHERE ts BETWEEN '2024-01-01T03:00:00' AND '2024-01-01T05:00:00'")
+                    "WHERE ts BETWEEN '2024-01-01T03:00:00' AND '2024-01-01T05:00:00'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("count_distinct\n0\n");
             assertQuery("SELECT count_distinct(sym) FROM t_distinct_range " +
-                            "WHERE ts BETWEEN '2024-01-02T00:00:00' AND '2024-01-02T01:00:00'")
+                    "WHERE ts BETWEEN '2024-01-02T00:00:00' AND '2024-01-02T01:00:00'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -9750,10 +9750,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    B
-                    """);
+                            sym
+                            A
+                            B
+                            """);
         });
     }
 
@@ -9786,9 +9786,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    hasKeys
-                    true
-                    """);
+                            hasKeys
+                            true
+                            """);
         });
     }
 
@@ -9815,11 +9815,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    B
-                    C
-                    """);
+                            sym
+                            A
+                            B
+                            C
+                            """);
         });
     }
 
@@ -9854,11 +9854,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    B
-                    C
-                    A
-                    """);
+                            sym
+                            B
+                            C
+                            A
+                            """);
         });
     }
 
@@ -9888,9 +9888,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    D
-                    """);
+                            sym
+                            D
+                            """);
         });
     }
 
@@ -9922,10 +9922,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    B
-                    """);
+                            sym
+                            A
+                            B
+                            """);
         });
     }
 
@@ -9956,9 +9956,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    B
-                    """);
+                            sym
+                            B
+                            """);
         });
     }
 
@@ -9987,13 +9987,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    S0
-                    S1
-                    S2
-                    S3
-                    S4
-                    """);
+                            sym
+                            S0
+                            S1
+                            S2
+                            S3
+                            S4
+                            """);
 
             // Verify plan uses PostingIndex distinct
             assertPlanNoLeakCheck(
@@ -10077,8 +10077,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    """);
+                            sym
+                            """);
         });
     }
 
@@ -10113,10 +10113,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    A
-                    """);
+                            sym
+                            A
+                            A
+                            """);
         });
     }
 
@@ -10144,10 +10144,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    """);
+                            price\tqty
+                            10.5\t100
+                            30.5\t300
+                            """);
 
             execute("ALTER TABLE t_drop_cov DROP COLUMN qty");
 
@@ -10156,10 +10156,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.5
-                    30.5
-                    """);
+                            price
+                            10.5
+                            30.5
+                            """);
 
             execute("""
                     INSERT INTO t_drop_cov VALUES
@@ -10172,11 +10172,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.5
-                    30.5
-                    40.5
-                    """);
+                            price
+                            10.5
+                            30.5
+                            40.5
+                            """);
         });
     }
 
@@ -10231,10 +10231,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    """);
+                            price\tqty
+                            10.5\t100
+                            30.5\t300
+                            """);
 
             execute("ALTER TABLE t_drop_unrel DROP COLUMN unrelated");
 
@@ -10243,10 +10243,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    """);
+                            price\tqty
+                            10.5\t100
+                            30.5\t300
+                            """);
 
             execute("""
                     INSERT INTO t_drop_unrel VALUES
@@ -10259,11 +10259,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    40.5\t400
-                    """);
+                            price\tqty
+                            10.5\t100
+                            30.5\t300
+                            40.5\t400
+                            """);
         });
     }
 
@@ -10432,11 +10432,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price, extra FROM t_in3 WHERE sym IN ('A', 'B', 'C')")
                     .noLeakCheck()
                     .returns("""
-                    price\textra
-                    1.0\t10
-                    2.0\t20
-                    3.0\t30
-                    """);
+                            price\textra
+                            1.0\t10
+                            2.0\t20
+                            3.0\t30
+                            """);
         });
     }
 
@@ -10468,16 +10468,16 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price, extra FROM t_in5 WHERE sym IN ('A', 'B', 'C', 'D', 'E')")
                     .noLeakCheck()
                     .returns("""
-                    price\textra
-                    1.0\t10
-                    2.0\t20
-                    3.0\t30
-                    4.0\t40
-                    5.0\t50
-                    6.0\t60
-                    7.0\t70
-                    8.0\t80
-                    """);
+                            price\textra
+                            1.0\t10
+                            2.0\t20
+                            3.0\t30
+                            4.0\t40
+                            5.0\t50
+                            6.0\t60
+                            7.0\t70
+                            8.0\t80
+                            """);
         });
     }
 
@@ -10503,11 +10503,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price, extra FROM t_in_wal WHERE sym IN ('A', 'B', 'C')")
                     .noLeakCheck()
                     .returns("""
-                    price\textra
-                    1.0\t10
-                    2.0\t20
-                    3.0\t30
-                    """);
+                            price\textra
+                            1.0\t10
+                            2.0\t20
+                            3.0\t30
+                            """);
         });
     }
 
@@ -10533,10 +10533,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price, extra FROM t_in_fallback WHERE sym IN ('A', 'B')")
                     .noLeakCheck()
                     .returns("""
-                    price\textra
-                    10.5\t1
-                    20.5\t2
-                    """);
+                            price\textra
+                            10.5\t1
+                            20.5\t2
+                            """);
         });
     }
 
@@ -10565,10 +10565,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym\tprice
-                    2024-01-01T00:00:00.000000Z\tA\t10.5
-                    2024-01-01T02:00:00.000000Z\tA\t11.5
-                    """);
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t10.5
+                            2024-01-01T02:00:00.000000Z\tA\t11.5
+                            """);
         });
     }
 
@@ -10596,10 +10596,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT label, extra FROM t_fb_string WHERE sym = 'X'")
                     .noLeakCheck()
                     .returns("""
-                    label\textra
-                    hello\t1
-                    foo\t3
-                    """);
+                            label\textra
+                            hello\t1
+                            foo\t3
+                            """);
         });
     }
 
@@ -10627,10 +10627,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT name, extra FROM t_fb_varchar WHERE sym = 'A'")
                     .noLeakCheck()
                     .returns("""
-                    name\textra
-                    alice\t1
-                    anna\t3
-                    """);
+                            name\textra
+                            alice\t1
+                            anna\t3
+                            """);
         });
     }
 
@@ -10656,10 +10656,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price FROM t_filter WHERE sym = 'A' AND price > 15.0")
                     .noLeakCheck()
                     .returns("""
-                    price
-                    20.5
-                    30.5
-                    """);
+                            price
+                            20.5
+                            30.5
+                            """);
         });
     }
 
@@ -10686,10 +10686,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price, other FROM t_noncov WHERE sym = 'A'")
                     .noLeakCheck()
                     .returns("""
-                    price\tother
-                    10.5\t1
-                    11.5\t3
-                    """);
+                            price\tother
+                            10.5\t1
+                            11.5\t3
+                            """);
         });
     }
 
@@ -11027,10 +11027,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.0
-                    20.0
-                    """);
+                            price
+                            10.0
+                            20.0
+                            """);
         });
     }
 
@@ -11248,10 +11248,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.0
-                    30.0
-                    """);
+                            price
+                            10.0
+                            30.0
+                            """);
 
             // Drop and re-add: new index version created, old files purged
             execute("ALTER TABLE t_rebuild ALTER COLUMN sym DROP INDEX");
@@ -11263,20 +11263,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.0
-                    30.0
-                    """);
+                            price
+                            10.0
+                            30.0
+                            """);
 
             assertQuery("SELECT price FROM t_rebuild WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    20.0
-                    40.0
-                    """);
+                            price
+                            20.0
+                            40.0
+                            """);
 
             execute("DROP TABLE t_rebuild");
         });
@@ -11315,10 +11315,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.5
-                    11.5
-                    """);
+                            price
+                            10.5
+                            11.5
+                            """);
         });
     }
 
@@ -11364,9 +11364,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    v_byte\tv_short\tv_int\tv_long\tv_float\tv_double\tv_bool\tv_date\tv_uuid\tv_ipv4\tv_varchar\tv_string
-                    2\t200\t2000\t20000\t2.5\t3.5\tfalse\t2024-07-01T00:00:00.000Z\t22222222-2222-2222-2222-222222222222\t5.6.7.8\tbye\tearth
-                    """);
+                            v_byte\tv_short\tv_int\tv_long\tv_float\tv_double\tv_bool\tv_date\tv_uuid\tv_ipv4\tv_varchar\tv_string
+                            2\t200\t2000\t20000\t2.5\t3.5\tfalse\t2024-07-01T00:00:00.000Z\t22222222-2222-2222-2222-222222222222\t5.6.7.8\tbye\tearth
+                            """);
         });
     }
 
@@ -11395,9 +11395,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    vals
-                    [3.0,4.0]
-                    """);
+                            vals
+                            [3.0,4.0]
+                            """);
         });
     }
 
@@ -11425,9 +11425,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    1
-                    """);
+                            count
+                            1
+                            """);
         });
     }
 
@@ -11457,9 +11457,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    d128\thash
-                    999.9999999999\t0x0f
-                    """);
+                            d128\thash
+                            999.9999999999\t0x0f
+                            """);
         });
     }
 
@@ -11521,9 +11521,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    8.0
-                    """);
+                            price
+                            8.0
+                            """);
         });
     }
 
@@ -11583,10 +11583,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym\tv_float\tv_short\tv_byte
-                    A\t2.5\t20\t2
-                    B\t4.5\t40\t4
-                    """);
+                            sym\tv_float\tv_short\tv_byte
+                            A\t2.5\t20\t2
+                            B\t4.5\t40\t4
+                            """);
         });
     }
 
@@ -11617,9 +11617,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    v_int\tv_double\tv_varchar
-                    null\tnull\t
-                    """);
+                            v_int\tv_double\tv_varchar
+                            null\tnull\t
+                            """);
         });
     }
 
@@ -11652,7 +11652,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT sym, price, qty FROM t_lb_filter WHERE sym = 'A' AND price < 0 " +
-                            "LATEST ON ts PARTITION BY sym")
+                    "LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("sym\tprice\tqty\n");
@@ -11688,9 +11688,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    20.0\t300
-                    """);
+                            price\tqty
+                            20.0\t300
+                            """);
 
             // Verify covering plan is used for LATEST BY with filter
             assertPlanNoLeakCheck(
@@ -11707,10 +11707,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym\tprice\tqty
-                    A\t20.0\t300
-                    B\t25.0\t600
-                    """);
+                            sym\tprice\tqty
+                            A\t20.0\t300
+                            B\t25.0\t600
+                            """);
         });
     }
 
@@ -11740,11 +11740,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym\tval
-                    A\t3.0
-                    C\t4.0
-                    B\t5.0
-                    """);
+                            sym\tval
+                            A\t3.0
+                            C\t4.0
+                            B\t5.0
+                            """);
         });
     }
 
@@ -11778,22 +11778,22 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym\texchange
-                    2024-01-01T00:03:00.000000Z\tOIL\tNYMEX
-                    2024-01-01T00:04:00.000000Z\tSILVER\tLME
-                    2024-01-01T00:05:00.000000Z\tGOLD\tCME
-                    """);
+                            ts\tsym\texchange
+                            2024-01-01T00:03:00.000000Z\tOIL\tNYMEX
+                            2024-01-01T00:04:00.000000Z\tSILVER\tLME
+                            2024-01-01T00:05:00.000000Z\tGOLD\tCME
+                            """);
 
             // Also verify with covered columns in SELECT
             assertQuery("SELECT sym, price FROM t_latest_all LATEST ON ts PARTITION BY sym")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym\tprice
-                    OIL\t78.2
-                    SILVER\t24.5
-                    GOLD\t2052.0
-                    """);
+                            sym\tprice
+                            OIL\t78.2
+                            SILVER\t24.5
+                            GOLD\t2052.0
+                            """);
         });
     }
 
@@ -11820,10 +11820,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym\tprice
-                    Y\t20.0
-                    X\t30.0
-                    """);
+                            sym\tprice
+                            Y\t20.0
+                            X\t30.0
+                            """);
         });
     }
 
@@ -11855,13 +11855,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.0
-                    2.0
-                    30.0
-                    4.0
-                    50.0
-                    """);
+                            price
+                            10.0
+                            2.0
+                            30.0
+                            4.0
+                            50.0
+                            """);
         });
     }
 
@@ -11891,9 +11891,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    3
-                    """);
+                            count
+                            3
+                            """);
         });
     }
 
@@ -11922,9 +11922,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    3.0
-                    """);
+                            price
+                            3.0
+                            """);
         });
     }
 
@@ -12074,20 +12074,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    bsym\tcount
-                    A\t3
-                    B\t2
-                    """);
+                            bsym\tcount
+                            A\t3
+                            B\t2
+                            """);
             assertQuery("SELECT psym, price FROM t_mixed WHERE psym = 'X'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    psym\tprice
-                    X\t1.0
-                    X\t3.0
-                    X\t5.0
-                    """);
+                            psym\tprice
+                            X\t1.0
+                            X\t3.0
+                            X\t5.0
+                            """);
         });
     }
 
@@ -12150,18 +12150,18 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    2
-                    """);
+                            count
+                            2
+                            """);
             assertQuery("SELECT psym, price FROM t_mixed_alter WHERE psym = 'X'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    psym\tprice
-                    X\t1.0
-                    X\t3.0
-                    """);
+                            psym\tprice
+                            X\t1.0
+                            X\t3.0
+                            """);
         });
     }
 
@@ -12196,18 +12196,18 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    2
-                    """);
+                            count
+                            2
+                            """);
             assertQuery("SELECT psym, price FROM t_mixed_wal WHERE psym = 'X'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    psym\tprice
-                    X\t1.0
-                    X\t3.0
-                    """);
+                            psym\tprice
+                            X\t1.0
+                            X\t3.0
+                            """);
         });
     }
 
@@ -12321,12 +12321,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.0
-                    20.0
-                    30.0
-                    40.0
-                    """);
+                            price
+                            10.0
+                            20.0
+                            30.0
+                            40.0
+                            """);
         });
     }
 
@@ -12946,22 +12946,22 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.0
-                    20.0
-                    30.0
-                    """);
+                            price
+                            10.0
+                            20.0
+                            30.0
+                            """);
 
             assertQuery("SELECT price FROM t_o3_multi WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    11.0
-                    21.0
-                    31.0
-                    """);
+                            price
+                            11.0
+                            21.0
+                            31.0
+                            """);
         });
     }
 
@@ -13058,10 +13058,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    null
-                    20.0
-                    """);
+                            price
+                            null
+                            20.0
+                            """);
         });
     }
 
@@ -13095,10 +13095,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym\ttag\tprice
-                    A\tcold\t10.0
-                    A\thot\t20.0
-                    """);
+                            sym\ttag\tprice
+                            A\tcold\t10.0
+                            A\thot\t20.0
+                            """);
         });
     }
 
@@ -13127,9 +13127,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    2
-                    """);
+                            count
+                            2
+                            """);
         });
     }
 
@@ -13159,10 +13159,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    sym\tavg
-                    A\t49.0
-                    B\t50.0
-                    """);
+                            sym\tavg
+                            A\t49.0
+                            B\t50.0
+                            """);
         });
     }
 
@@ -13433,11 +13433,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    val
-                    1.0
-                    3.0
-                    5.0
-                    """);
+                            val
+                            1.0
+                            3.0
+                            5.0
+                            """);
         });
     }
 
@@ -13532,9 +13532,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    val
-                    1.0
-                    """);
+                            val
+                            1.0
+                            """);
         });
     }
 
@@ -13591,8 +13591,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT count() FROM (" +
-                            "SELECT a.price FROM (SELECT price FROM t_pf_toTop WHERE sym = 'A' AND price > 50) a " +
-                            "JOIN (SELECT price FROM t_pf_toTop WHERE sym = 'B' AND price > 50) b ON a.price = b.price)")
+                    "SELECT a.price FROM (SELECT price FROM t_pf_toTop WHERE sym = 'A' AND price > 50) a " +
+                    "JOIN (SELECT price FROM t_pf_toTop WHERE sym = 'B' AND price > 50) b ON a.price = b.price)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -13835,9 +13835,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count\tavg
-                    750000\t1125001.5
-                    """);
+                            count\tavg
+                            750000\t1125001.5
+                            """);
 
             // B = odd x (1,3,...,1499999), avg(x)=750000, avg(val)=750000*1.5
             assertQuery("SELECT count(), avg(val) FROM t_split_frame WHERE sym = 'B'")
@@ -13845,9 +13845,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count\tavg
-                    750000\t1125000.0
-                    """);
+                            count\tavg
+                            750000\t1125000.0
+                            """);
         });
     }
 
@@ -13883,20 +13883,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price FROM t_o3 WHERE sym = 'A'")
                     .noLeakCheck()
                     .returns("""
-                    price
-                    5.0
-                    10.0
-                    20.0
-                    50.0
-                    """);
+                            price
+                            5.0
+                            10.0
+                            20.0
+                            50.0
+                            """);
 
             assertQuery("SELECT price FROM t_o3 WHERE sym = 'B'")
                     .noLeakCheck()
                     .returns("""
-                    price
-                    30.0
-                    40.0
-                    """);
+                            price
+                            30.0
+                            40.0
+                            """);
         });
     }
 
@@ -13922,10 +13922,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT name, val FROM t_varchar WHERE sym = 'A'")
                     .noLeakCheck()
                     .returns("""
-                    name\tval
-                    alice\t1
-                    alice2\t3
-                    """);
+                            name\tval
+                            alice\t1
+                            alice2\t3
+                            """);
         });
     }
 
@@ -13964,9 +13964,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    6000
-                    """);
+                            count
+                            6000
+                            """);
 
             // Access varchar column via index — verify no crash with var-size column
             assertQuery("SELECT count() FROM (SELECT name, val FROM t_varchar_big WHERE sym = 'A' LIMIT 5)")
@@ -13974,9 +13974,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    5
-                    """);
+                            count
+                            5
+                            """);
         });
     }
 
@@ -14112,11 +14112,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT b, c FROM t_reindex WHERE sym = 'A' ORDER BY ts")
                     .noLeakCheck()
                     .returns("""
-                    b\tc
-                    100\t200
-                    101\t201
-                    102\t202
-                    """);
+                            b\tc
+                            100\t200
+                            101\t201
+                            102\t202
+                            """);
 
             execute("ALTER TABLE t_reindex DROP COLUMN a");
             engine.releaseAllWriters();
@@ -14132,11 +14132,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT b, c FROM t_reindex WHERE sym = 'A' ORDER BY ts")
                     .noLeakCheck()
                     .returns("""
-                    b\tc
-                    100\t200
-                    101\t201
-                    102\t202
-                    """);
+                            b\tc
+                            100\t200
+                            101\t201
+                            102\t202
+                            """);
         });
     }
 
@@ -14167,10 +14167,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT val FROM t_rename WHERE symbol = 'A'")
                     .noLeakCheck()
                     .returns("""
-                    val
-                    10.5
-                    11.5
-                    """);
+                            val
+                            10.5
+                            11.5
+                            """);
         });
     }
 
@@ -14199,19 +14199,19 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    tag\tprice
-                    tag_x\t1.0
-                    tag_y\t2.0
-                    tag_x\t3.0
-                    """);
+                            tag\tprice
+                            tag_x\t1.0
+                            tag_y\t2.0
+                            tag_x\t3.0
+                            """);
 
             assertQuery("SELECT tag, price FROM t_rc_sym WHERE sym = 'A' LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    tag\tprice
-                    tag_x\t3.0
-                    """);
+                            tag\tprice
+                            tag_x\t3.0
+                            """);
         });
     }
 
@@ -14240,10 +14240,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.0
-                    30.0
-                    """);
+                            price
+                            10.0
+                            30.0
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr(0, "NEVER_INSERTED");
@@ -14258,11 +14258,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price FROM t_bind WHERE sym IN ($1, $2) ORDER BY price")
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.0
-                    20.0
-                    30.0
-                    """);
+                            price
+                            10.0
+                            20.0
+                            30.0
+                            """);
 
             bindVariableService.clear();
             bindVariableService.setStr(0, "NEVER_INSERTED");
@@ -14303,11 +14303,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    ts\tsym\tval
-                    2024-01-01T00:00:00.000000Z\tA\t1
-                    2024-01-01T01:00:00.000000Z\tB\t2
-                    2024-01-01T02:00:00.000000Z\tA\t3
-                    """);
+                            ts\tsym\tval
+                            2024-01-01T00:00:00.000000Z\tA\t1
+                            2024-01-01T01:00:00.000000Z\tB\t2
+                            2024-01-01T02:00:00.000000Z\tA\t3
+                            """);
 
             // Index scan
             assertQuery("SELECT count() FROM t_seal WHERE sym = 'A'")
@@ -14315,9 +14315,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    2
-                    """);
+                            count
+                            2
+                            """);
         });
     }
 
@@ -14442,9 +14442,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    1.0
-                    """);
+                            price
+                            1.0
+                            """);
         });
     }
 
@@ -14518,16 +14518,16 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             assertQuery("SELECT count() FROM (" +
-                            "SELECT a.tag, a.label, a.payload, a.l256, b.tag b_tag, b.label b_label, b.payload b_payload, b.l256 b_l256 " +
-                            "FROM (SELECT tag, label, payload, l256, k FROM t_join WHERE sym = 'A') a " +
-                            "JOIN (SELECT tag, label, payload, l256, k FROM t_join WHERE sym = 'A') b ON a.k = b.k)")
+                    "SELECT a.tag, a.label, a.payload, a.l256, b.tag b_tag, b.label b_label, b.payload b_payload, b.l256 b_l256 " +
+                    "FROM (SELECT tag, label, payload, l256, k FROM t_join WHERE sym = 'A') a " +
+                    "JOIN (SELECT tag, label, payload, l256, k FROM t_join WHERE sym = 'A') b ON a.k = b.k)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("count\n2\n");
 
             assertQuery("SELECT a.label, b.label FROM (SELECT label, tag FROM t_join WHERE sym = 'A') a " +
-                            "JOIN (SELECT label, tag FROM t_join WHERE sym = 'B') b ON a.tag = b.tag")
+                    "JOIN (SELECT label, tag FROM t_join WHERE sym = 'B') b ON a.tag = b.tag")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -14587,11 +14587,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                    ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                    sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tBITMAP\t
-                    val\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                    """);
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tBITMAP\t
+                            val\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """);
         });
     }
 
@@ -14614,12 +14614,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                    ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                    sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tPOSTING\tprice,qty,ts
-                    price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                    qty\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                    """);
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tPOSTING\tprice,qty,ts
+                            price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            qty\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """);
         });
     }
 
@@ -14752,14 +14752,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    ddl
-                    CREATE TABLE 't_show' (\s
-                    \tts TIMESTAMP,
-                    \tsym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty, ts),
-                    \tprice DOUBLE,
-                    \tqty INT
-                    ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                    """);
+                            ddl
+                            CREATE TABLE 't_show' (\s
+                            \tts TIMESTAMP,
+                            \tsym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty, ts),
+                            \tprice DOUBLE,
+                            \tqty INT
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """);
         });
     }
 
@@ -15088,9 +15088,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    10.5
-                    """);
+                            price
+                            10.5
+                            """);
 
             execute("TRUNCATE TABLE t_trunc");
 
@@ -15099,8 +15099,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    """);
+                            price
+                            """);
 
             // Insert new data — index should work after truncate
             execute("""
@@ -15115,10 +15115,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price
-                    30.5
-                    31.5
-                    """);
+                            price
+                            30.5
+                            31.5
+                            """);
         });
     }
 
@@ -15150,9 +15150,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    528
-                    """);
+                            count
+                            528
+                            """);
         });
     }
 
@@ -15210,11 +15210,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    name
-                    alpha
-                    delta
-                    beta
-                    """);
+                            name
+                            alpha
+                            delta
+                            beta
+                            """);
         });
     }
 
@@ -15243,11 +15243,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    name\tprice
-                    day1_alpha\t10.0
-                    day2_alpha\t30.0
-                    day3_alpha\t50.0
-                    """);
+                            name\tprice
+                            day1_alpha\t10.0
+                            day2_alpha\t30.0
+                            day3_alpha\t50.0
+                            """);
 
             // Aggregate across partitions
             assertQuery("SELECT count(*), min(price), max(price) FROM t_vw_mp WHERE sym = 'A'")
@@ -15255,9 +15255,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count\tmin\tmax
-                    3\t10.0\t50.0
-                    """);
+                            count\tmin\tmax
+                            3\t10.0\t50.0
+                            """);
         });
     }
 
@@ -15331,9 +15331,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count\tmin\tmax
-                    3\t10.0\t50.0
-                    """);
+                            count\tmin\tmax
+                            3\t10.0\t50.0
+                            """);
         });
     }
 
@@ -15444,10 +15444,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    c0\tc1\tc2\tc3\tc4\tc5\tc6\tc7\tc8\tc9
-                    1\t100\t1.5\t2.5\t10\t3\ttrue\t2024-01-01T00:00:00.000Z\t2024-01-01T00:00:00.000000Z\tx
-                    3\t300\t3.5\t4.5\t30\t5\ttrue\t2024-01-03T00:00:00.000Z\t2024-01-01T02:00:00.000000Z\tz
-                    """);
+                            c0\tc1\tc2\tc3\tc4\tc5\tc6\tc7\tc8\tc9
+                            1\t100\t1.5\t2.5\t10\t3\ttrue\t2024-01-01T00:00:00.000Z\t2024-01-01T00:00:00.000000Z\tx
+                            3\t300\t3.5\t4.5\t30\t5\ttrue\t2024-01-03T00:00:00.000Z\t2024-01-01T02:00:00.000000Z\tz
+                            """);
 
             // Query a subset of covered columns
             assertQuery("SELECT c0, c5, c9 FROM t_wide10 WHERE sym = 'A'")
@@ -15455,10 +15455,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    c0\tc5\tc9
-                    1\t3\tx
-                    3\t5\tz
-                    """);
+                            c0\tc5\tc9
+                            1\t3\tx
+                            3\t5\tz
+                            """);
 
             // Plan should use CoveringIndex (SelectedRecord wraps subset)
             assertPlanNoLeakCheck(
@@ -15499,10 +15499,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    c0\tc19
-                    0\t19.0
-                    200\t219.0
-                    """);
+                            c0\tc19
+                            0\t19.0
+                            200\t219.0
+                            """);
 
             // Query all 20 covered columns
             assertQuery("SELECT c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19 FROM t_wide20 WHERE sym = 'Y'")
@@ -15510,19 +15510,19 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    c0\tc1\tc2\tc3\tc4\tc5\tc6\tc7\tc8\tc9\tc10\tc11\tc12\tc13\tc14\tc15\tc16\tc17\tc18\tc19
-                    100\t101\t102\t103\t104\t105\t106\t107\t108\t109\t110.0\t111.0\t112.0\t113.0\t114.0\t115.0\t116.0\t117.0\t118.0\t119.0
-                    """);
+                            c0\tc1\tc2\tc3\tc4\tc5\tc6\tc7\tc8\tc9\tc10\tc11\tc12\tc13\tc14\tc15\tc16\tc17\tc18\tc19
+                            100\t101\t102\t103\t104\t105\t106\t107\t108\t109\t110.0\t111.0\t112.0\t113.0\t114.0\t115.0\t116.0\t117.0\t118.0\t119.0
+                            """);
 
             // IN-list across wide INCLUDE
             assertQuery("SELECT c0, c10, c19 FROM t_wide20 WHERE sym IN ('X', 'Y') ORDER BY c0")
                     .noLeakCheck()
                     .returns("""
-                    c0\tc10\tc19
-                    0\t10.0\t19.0
-                    100\t110.0\t119.0
-                    200\t210.0\t219.0
-                    """);
+                            c0\tc10\tc19
+                            0\t10.0\t19.0
+                            100\t110.0\t119.0
+                            200\t210.0\t219.0
+                            """);
         });
     }
 
@@ -15565,20 +15565,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    c0\tc9\tc14\tc19
-                    0\t9\t14.0\t19.0
-                    100\t109\t114.0\t119.0
-                    200\t209\t214.0\t219.0
-                    """);
+                            c0\tc9\tc14\tc19
+                            0\t9\t14.0\t19.0
+                            100\t109\t114.0\t119.0
+                            200\t209\t214.0\t219.0
+                            """);
 
             // LATEST ON with wide INCLUDE
             assertQuery("SELECT c0, c19 FROM t_wide20_mp WHERE sym = 'A' LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    c0\tc19
-                    200\t219.0
-                    """);
+                            c0\tc19
+                            200\t219.0
+                            """);
         });
     }
 
@@ -15611,19 +15611,19 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    c0\tc4\tc9
-                    0\t4\t9
-                    10\t14\t19
-                    """);
+                            c0\tc4\tc9
+                            0\t4\t9
+                            10\t14\t19
+                            """);
 
             assertQuery("SELECT c0, c4, c9 FROM t_alter_wide WHERE sym = 'B'")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    c0\tc4\tc9
-                    20\t24\t29
-                    """);
+                            c0\tc4\tc9
+                            20\t24\t29
+                            """);
         });
     }
 
@@ -15652,11 +15652,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym
-                    A
-                    B
-                    C
-                    """);
+                            sym
+                            A
+                            B
+                            C
+                            """);
         });
     }
 
@@ -15685,10 +15685,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    c0\tc3\tc6\tc9
-                    0\t3\t6.0\t9.0
-                    10\t13\t16.0\t19.0
-                    """);
+                            c0\tc3\tc6\tc9
+                            0\t3\t6.0\t9.0
+                            10\t13\t16.0\t19.0
+                            """);
         });
     }
 
@@ -15717,19 +15717,19 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    c0\tc1\tc2\tc3\tc4\tc5\tc6\tc7
-                    100\t200\t300.0\t400.0\t500\t600\t700.0\t800.0
-                    """);
+                            c0\tc1\tc2\tc3\tc4\tc5\tc6\tc7
+                            100\t200\t300.0\t400.0\t500\t600\t700.0\t800.0
+                            """);
 
             // LATEST ON IN-list (ordered by symbol key)
             assertQuery("SELECT sym, c0, c7 FROM t_wide_latest WHERE sym IN ('A', 'B') LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym\tc0\tc7
-                    A\t100\t800.0
-                    B\t10\t80.0
-                    """);
+                            sym\tc0\tc7
+                            A\t100\t800.0
+                            B\t10\t80.0
+                            """);
         });
     }
 
@@ -15769,9 +15769,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    150
-                    """);
+                            count
+                            150
+                            """);
 
             // Verify row count for key B (50 rows: indices divisible by 4)
             assertQuery("SELECT count(*) count FROM t_wide_many WHERE sym = 'B'")
@@ -15779,9 +15779,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    count
-                    50
-                    """);
+                            count
+                            50
+                            """);
 
             // Spot check first row for A (i=1)
             assertQuery("SELECT c0, c1 FROM t_wide_many WHERE sym = 'A' LIMIT 1")
@@ -15789,9 +15789,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    c0\tc1
-                    1\t10
-                    """);
+                            c0\tc1
+                            1\t10
+                            """);
         });
     }
 
@@ -15852,10 +15852,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    i\tl\td\tf\ts\tb\tbl\tdt\tts2\tch
-                    null\tnull\tnull\tnull\t0\t0\tfalse\t\t\t
-                    42\t100\t3.14\t2.7\t10\t5\ttrue\t2024-01-01T00:00:00.000Z\t2024-01-01T01:00:00.000000Z\tz
-                    """);
+                            i\tl\td\tf\ts\tb\tbl\tdt\tts2\tch
+                            null\tnull\tnull\tnull\t0\t0\tfalse\t\t\t
+                            42\t100\t3.14\t2.7\t10\t5\ttrue\t2024-01-01T00:00:00.000Z\t2024-01-01T01:00:00.000000Z\tz
+                            """);
         });
     }
 
@@ -15889,10 +15889,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    id\taddr\tl256
-                    \t\t
-                    11111111-1111-1111-1111-111111111111\t10.0.0.1\t0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
-                    """);
+                            id\taddr\tl256
+                            \t\t
+                            11111111-1111-1111-1111-111111111111\t10.0.0.1\t0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+                            """);
         });
     }
 
@@ -15924,10 +15924,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    c0\tc4\tc9
-                    0\t4\t9.0
-                    10\t14\t19.0
-                    """);
+                            c0\tc4\tc9
+                            0\t4\t9.0
+                            10\t14\t19.0
+                            """);
         });
     }
 
@@ -15961,10 +15961,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty\tlabel\ttag\tnote\textra_d\textra_i
-                    10.5\t100\tlabel_a1\ttag_a\tnote_a1\t1.1\t1
-                    30.5\t300\tlabel_a2\ttag_a\tnote_a2\t3.3\t3
-                    """);
+                            price\tqty\tlabel\ttag\tnote\textra_d\textra_i
+                            10.5\t100\tlabel_a1\ttag_a\tnote_a1\t1.1\t1
+                            30.5\t300\tlabel_a2\ttag_a\tnote_a2\t3.3\t3
+                            """);
 
             // Query only varchar columns
             assertQuery("SELECT label, tag, note FROM t_wide_varchar WHERE sym = 'B'")
@@ -15972,9 +15972,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    label\ttag\tnote
-                    label_b1\ttag_b\tnote_b1
-                    """);
+                            label\ttag\tnote
+                            label_b1\ttag_b\tnote_b1
+                            """);
         });
     }
 
@@ -16090,9 +16090,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             assertQuery("SELECT count() FROM (" +
-                            "SELECT v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, " +
-                            "v_char, v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin " +
-                            "FROM t_pf_wide WHERE sym = 'A' AND v_int > 0)")
+                    "SELECT v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, " +
+                    "v_char, v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin " +
+                    "FROM t_pf_wide WHERE sym = 'A' AND v_int > 0)")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -16145,17 +16145,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    """);
+                            price\tqty
+                            10.5\t100
+                            """);
 
             // Query that includes uncovered columns falls back
             assertQuery("SELECT price, extra_0 FROM t_30col WHERE sym = 'A'")
                     .noLeakCheck()
                     .returns("""
-                    price\textra_0
-                    10.5\t0.0
-                    """);
+                            price\textra_0
+                            10.5\t0.0
+                            """);
         });
     }
 
@@ -16199,28 +16199,28 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                    price\tqty
-                    10.5\t100
-                    30.5\t300
-                    """);
+                            price\tqty
+                            10.5\t100
+                            30.5\t300
+                            """);
 
             // Mixed covered + uncovered — should NOT use CoveringIndex
             assertQuery("SELECT price, uncovered1 FROM t_partial WHERE sym = 'A'")
                     .noLeakCheck()
                     .returns("""
-                    price\tuncovered1
-                    10.5\t99.9
-                    30.5\t77.7
-                    """);
+                            price\tuncovered1
+                            10.5\t99.9
+                            30.5\t77.7
+                            """);
 
             // All uncovered — should NOT use CoveringIndex
             assertQuery("SELECT uncovered1, uncovered3 FROM t_partial WHERE sym = 'A'")
                     .noLeakCheck()
                     .returns("""
-                    uncovered1\tuncovered3
-                    99.9\thello
-                    77.7\ttest
-                    """);
+                            uncovered1\tuncovered3
+                            99.9\thello
+                            77.7\ttest
+                            """);
         });
     }
 

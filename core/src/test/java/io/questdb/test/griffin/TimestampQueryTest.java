@@ -1965,7 +1965,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
                 .fails(errorPos, contains);
     }
 
-    private void assertTimestampTtQuery(String expected, String query) throws Exception{
+    private void assertTimestampTtQuery(String expected, String query) throws Exception {
         assertQueryWithConditions(query, expected, "nts");
         String dtsQuery = query.replace("nts", "dts");
         assertQueryWithConditions(dtsQuery, expected, "dts");

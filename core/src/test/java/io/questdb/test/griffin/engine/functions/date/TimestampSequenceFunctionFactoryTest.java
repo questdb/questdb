@@ -137,10 +137,10 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
                 """;
 
         assertQuery("""
-                        SELECT timestamp_sequence(
-                                 to_timestamp('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),
-                                 300_000_000L
-                        ) ts, dateadd('h', 1, ts) from long_sequence(10)""")
+                SELECT timestamp_sequence(
+                         to_timestamp('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),
+                         300_000_000L
+                ) ts, dateadd('h', 1, ts) from long_sequence(10)""")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
@@ -161,10 +161,10 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
                 """;
 
         assertQuery("""
-                        SELECT timestamp_sequence_ns(
-                                 to_timestamp_ns('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),
-                                 300_000_000_000L
-                        ) ts, dateadd('h', 1, ts) from long_sequence(10)""")
+                SELECT timestamp_sequence_ns(
+                         to_timestamp_ns('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),
+                         300_000_000_000L
+                ) ts, dateadd('h', 1, ts) from long_sequence(10)""")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()

@@ -330,11 +330,11 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
                     "('2024-01-01T00:00:04.000000Z'::timestamp, 4, 'B', 200.0, 1.0)");
 
             assertQuery("select ts, sort_key, sym, price, volume, " +
-                            "avg(price, 'period', 3, volume) over (order by sort_key) vwema_period, " +
-                            "avg(price, 'period', 3, volume) over (partition by sym order by sort_key) vwema_period_part, " +
-                            "avg(price, 'second', 1, volume) over (order by sort_key) vwema_second, " +
-                            "avg(price, 'second', 1, volume) over (partition by sym order by sort_key) vwema_second_part " +
-                            "from tab")
+                    "avg(price, 'period', 3, volume) over (order by sort_key) vwema_period, " +
+                    "avg(price, 'period', 3, volume) over (partition by sym order by sort_key) vwema_period_part, " +
+                    "avg(price, 'second', 1, volume) over (order by sort_key) vwema_second, " +
+                    "avg(price, 'second', 1, volume) over (partition by sym order by sort_key) vwema_second_part " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
@@ -374,9 +374,9 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
             //   partition A: (sk=3,30,1) (sk=4,100,1) (sk=5,50,0)          -> 30, 65, 65
             //   partition B: (sk=1,10,NULL) (sk=2,100,1)                   -> NULL (first row invalid), 100 (first valid)
             assertQuery("select ts, sort_key, sym, price, volume, " +
-                            "avg(price, 'period', 3, volume) over (order by sort_key) vwema_no_part, " +
-                            "avg(price, 'period', 3, volume) over (partition by sym order by sort_key) vwema_part " +
-                            "from tab")
+                    "avg(price, 'period', 3, volume) over (order by sort_key) vwema_no_part, " +
+                    "avg(price, 'period', 3, volume) over (partition by sym order by sort_key) vwema_part " +
+                    "from tab")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()

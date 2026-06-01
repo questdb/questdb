@@ -40,12 +40,12 @@ public class SumLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                avg
-                5261.376146789
-                """, """
-                avg
-                5261.376146789
-                """);
+                        avg
+                        5261.376146789
+                        """, """
+                        avg
+                        5261.376146789
+                        """);
 
         assertQuery("select round(avg(f),6) avg, sum(b) sum from tab")
                 .ddl("insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)")
@@ -65,12 +65,12 @@ public class SumLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
-                sum
-                null
-                """, """
-                sum
-                123
-                """);
+                        sum
+                        null
+                        """, """
+                        sum
+                        123
+                        """);
     }
 
     @Test

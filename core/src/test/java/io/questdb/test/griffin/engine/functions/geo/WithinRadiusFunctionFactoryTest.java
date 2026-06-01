@@ -457,9 +457,9 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
 
             // Join detections with sensors to find which sensor detected each point
             assertQuery("select d.detection_id, s.sensor_id " +
-                            "from detections d " +
-                            "join sensors s on within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
-                            "order by d.detection_id, s.sensor_id")
+                    "from detections d " +
+                    "join sensors s on within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
+                    "order by d.detection_id, s.sensor_id")
                     .noLeakCheck()
                     .returns("""
                             detection_id\tsensor_id
@@ -484,9 +484,9 @@ public class WithinRadiusFunctionFactoryTest extends AbstractCairoTest {
 
             // Should match both sensors
             assertQuery("select d.detection_id, s.sensor_id " +
-                            "from detections d, sensors s " +
-                            "where within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
-                            "order by d.detection_id, s.sensor_id")
+                    "from detections d, sensors s " +
+                    "where within_radius(d.x, d.y, s.center_x, s.center_y, s.range) " +
+                    "order by d.detection_id, s.sensor_id")
                     .noLeakCheck()
                     .returns("""
                             detection_id\tsensor_id

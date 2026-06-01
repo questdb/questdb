@@ -86,30 +86,30 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testAggByHourReoptimization() throws Exception {
         assertQuery("""
-                        SELECT hour(ts), sum(amount)
-                        FROM trades
-                        WHERE symbol = 'BTC-USD' \
-                        AND ts > dateadd('d', -1, to_timestamp('2018-01-02T01:30:40', 'yyyy-MM-ddTHH:mm:ss') )
-                        ORDER BY hour ASC""").ddl("CREATE TABLE trades AS " +
-                        "(select 'BTC-USD'::symbol symbol, 'Buy'::symbol side, 1.0 price, 2.0 amount, to_timestamp('2018-01-01T14:11:40', 'yyyy-MM-ddTHH:mm:ss') as ts " +
-                        " from long_sequence(1) ) " +
-                        " timestamp(ts) ").expectSize().returns("""
-                        hour\tsum
-                        14\t2.0
-                        """);
+                SELECT hour(ts), sum(amount)
+                FROM trades
+                WHERE symbol = 'BTC-USD' \
+                AND ts > dateadd('d', -1, to_timestamp('2018-01-02T01:30:40', 'yyyy-MM-ddTHH:mm:ss') )
+                ORDER BY hour ASC""").ddl("CREATE TABLE trades AS " +
+                "(select 'BTC-USD'::symbol symbol, 'Buy'::symbol side, 1.0 price, 2.0 amount, to_timestamp('2018-01-01T14:11:40', 'yyyy-MM-ddTHH:mm:ss') as ts " +
+                " from long_sequence(1) ) " +
+                " timestamp(ts) ").expectSize().returns("""
+                hour\tsum
+                14\t2.0
+                """);
 
         assertQuery("""
-                        SELECT hour(ts), sum(amount)
-                        FROM trades
-                        WHERE symbol = 'BTC-USD' \
-                        AND ts > dateadd('d', -1, to_timestamp('2018-01-02T01:30:40', 'yyyy-MM-ddTHH:mm:ss') )
-                        ORDER BY hour ASC""").ddl("CREATE TABLE trades_ns AS " +
-                        "(select 'BTC-USD'::symbol symbol, 'Buy'::symbol side, 1.0 price, 2.0 amount, to_timestamp_ns('2018-01-01T14:11:40', 'yyyy-MM-ddTHH:mm:ss') as ts " +
-                        " from long_sequence(1) ) " +
-                        " timestamp(ts) ").expectSize().returns("""
-                        hour\tsum
-                        14\t2.0
-                        """);
+                SELECT hour(ts), sum(amount)
+                FROM trades
+                WHERE symbol = 'BTC-USD' \
+                AND ts > dateadd('d', -1, to_timestamp('2018-01-02T01:30:40', 'yyyy-MM-ddTHH:mm:ss') )
+                ORDER BY hour ASC""").ddl("CREATE TABLE trades_ns AS " +
+                "(select 'BTC-USD'::symbol symbol, 'Buy'::symbol side, 1.0 price, 2.0 amount, to_timestamp_ns('2018-01-01T14:11:40', 'yyyy-MM-ddTHH:mm:ss') as ts " +
+                " from long_sequence(1) ) " +
+                " timestamp(ts) ").expectSize().returns("""
+                hour\tsum
+                14\t2.0
+                """);
     }
 
     @Test
@@ -430,21 +430,21 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testHourDouble() throws Exception {
         assertQuery("select hour(ts), round(sum(val)) sum, round(ksum(val)) ksum, round(nsum(val)) nsum, min(val), max(val), round(avg(val)) avg, max(ts), min(ts) from tab order by 1").ddl("create table tab as (select timestamp_sequence(0, 100000)::" + timestampTypeName + " ts, rnd_double(2) val from long_sequence(100000))").expectSize().returns(replaceTimestampSuffix1("""
-                        hour\tsum\tksum\tnsum\tmin\tmax\tavg\tmax1\tmin1
-                        0\t15105.0\t15105.0\t15105.0\t1.8362081935174857E-5\t0.999916269120484\t1.0\t1970-01-01T00:59:59.900000Z\t1970-01-01T00:00:00.000000Z
-                        1\t15098.0\t15098.0\t15098.0\t3.921217994906634E-5\t0.9999575311567217\t1.0\t1970-01-01T01:59:59.900000Z\t1970-01-01T01:00:00.000000Z
-                        2\t11642.0\t11642.0\t11642.0\t1.8566421983501336E-5\t0.9999768905891359\t1.0\t1970-01-01T02:46:39.900000Z\t1970-01-01T02:00:00.000000Z
-                        """, timestampTypeName));
+                hour\tsum\tksum\tnsum\tmin\tmax\tavg\tmax1\tmin1
+                0\t15105.0\t15105.0\t15105.0\t1.8362081935174857E-5\t0.999916269120484\t1.0\t1970-01-01T00:59:59.900000Z\t1970-01-01T00:00:00.000000Z
+                1\t15098.0\t15098.0\t15098.0\t3.921217994906634E-5\t0.9999575311567217\t1.0\t1970-01-01T01:59:59.900000Z\t1970-01-01T01:00:00.000000Z
+                2\t11642.0\t11642.0\t11642.0\t1.8566421983501336E-5\t0.9999768905891359\t1.0\t1970-01-01T02:46:39.900000Z\t1970-01-01T02:00:00.000000Z
+                """, timestampTypeName));
     }
 
     @Test
     public void testHourFiltered() throws Exception {
         assertQuery("select hour(ts), count() from tab where val < 0.5 order by 1").ddl("create table tab as (select timestamp_sequence(0, 100000)::" + timestampTypeName + " ts, rnd_double() val from long_sequence(100000))").expectSize().returns("""
-                        hour\tcount
-                        0\t17902
-                        1\t17892
-                        2\t14056
-                        """);
+                hour\tcount
+                0\t17902
+                1\t17892
+                2\t14056
+                """);
     }
 
     @Test
@@ -460,91 +460,91 @@ public class AggregateTest extends AbstractCairoTest {
             execute("create table z as (select timestamp_sequence(0, 1000000)::" + timestampTypeName + " ts, rnd_int(0,100,0) val from long_sequence(300))");
 
             assertQuery("select hour(ts), count from " +
-                            "(select z.ts, z.val from x join y on y.val = x.val join z on (val) where x.val > 50)" +
-                            " where val > 70 order by 1").expectSize().returns(expected);
+                    "(select z.ts, z.val from x join y on y.val = x.val join z on (val) where x.val > 50)" +
+                    " where val > 70 order by 1").expectSize().returns(expected);
         });
     }
 
     @Test
     public void testHourFilteredUnion() throws Exception {
         assertQuery("select hour(ts), count from " +
-                        "(select * from tab where ts in '1970-01-01' union all select * from tab where ts in '1970-04-26')" +
-                        "where val < 0.5 order by 1").ddl("create table tab as (select timestamp_sequence(0, 1000000000)::" + timestampTypeName + " ts, rnd_double() val from long_sequence(100000))").expectSize().returns("""
-                        hour\tcount
-                        0\t7
-                        1\t2
-                        2\t4
-                        3\t1
-                        4\t3
-                        5\t4
-                        6\t1
-                        7\t4
-                        8\t3
-                        9\t3
-                        10\t4
-                        11\t2
-                        12\t1
-                        13\t3
-                        14\t5
-                        15\t4
-                        16\t3
-                        18\t3
-                        19\t3
-                        20\t5
-                        21\t4
-                        22\t1
-                        23\t2
-                        """);
+                "(select * from tab where ts in '1970-01-01' union all select * from tab where ts in '1970-04-26')" +
+                "where val < 0.5 order by 1").ddl("create table tab as (select timestamp_sequence(0, 1000000000)::" + timestampTypeName + " ts, rnd_double() val from long_sequence(100000))").expectSize().returns("""
+                hour\tcount
+                0\t7
+                1\t2
+                2\t4
+                3\t1
+                4\t3
+                5\t4
+                6\t1
+                7\t4
+                8\t3
+                9\t3
+                10\t4
+                11\t2
+                12\t1
+                13\t3
+                14\t5
+                15\t4
+                16\t3
+                18\t3
+                19\t3
+                20\t5
+                21\t4
+                22\t1
+                23\t2
+                """);
     }
 
     @Test
     public void testHourInt() throws Exception {
         assertQuery("select hour(ts), count(), sum(val), min(val), max(val), avg(val) from tab order by 1").ddl("create table tab as (select timestamp_sequence(0, 100000)::" + timestampTypeName + " ts, rnd_int(-998, 889991, 2) val from long_sequence(100000))").expectSize().returns("""
-                        hour\tcount\tsum\tmin\tmax\tavg
-                        0\t36000\t13332495967\t-995\t889975\t445441.0466406067
-                        1\t36000\t13360114022\t-950\t889928\t444359.54307190847
-                        2\t28000\t10420189893\t-914\t889980\t444528.3858623779
-                        """);
+                hour\tcount\tsum\tmin\tmax\tavg
+                0\t36000\t13332495967\t-995\t889975\t445441.0466406067
+                1\t36000\t13360114022\t-950\t889928\t444359.54307190847
+                2\t28000\t10420189893\t-914\t889980\t444528.3858623779
+                """);
     }
 
     @Test
     public void testHourLong() throws Exception {
         assertQuery("select hour(ts), count(), sum(val), min(val), max(val), avg(val) from tab order by 1").ddl("create table tab as (select timestamp_sequence(0, 100000)::" + timestampTypeName + " ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))").expectSize().returns("""
-                        hour\tcount\tsum\tmin\tmax\tavg
-                        0\t36000\t13265789485\t-988\t889951\t443212.3712872941
-                        1\t36000\t13359838134\t-997\t889948\t444350.36699261627
-                        2\t28000\t10444993989\t-992\t889982\t445586.53594129946
-                        """);
+                hour\tcount\tsum\tmin\tmax\tavg
+                0\t36000\t13265789485\t-988\t889951\t443212.3712872941
+                1\t36000\t13359838134\t-997\t889948\t444350.36699261627
+                2\t28000\t10444993989\t-992\t889982\t445586.53594129946
+                """);
     }
 
     @Test
     public void testHourLong256() throws Exception {
         assertQuery("select hour(ts), count(), sum(val) from tab order by 1").ddl("create table tab as (select timestamp_sequence(0, 100000) ts, cast(9223372036854775807 as long256) val from long_sequence(100000))").expectSize().returns("""
-                        hour\tcount\tsum
-                        0\t36000\t0x464fffffffffffff7360
-                        1\t36000\t0x464fffffffffffff7360
-                        2\t28000\t0x36afffffffffffff92a0
-                        """);
+                hour\tcount\tsum
+                0\t36000\t0x464fffffffffffff7360
+                1\t36000\t0x464fffffffffffff7360
+                2\t28000\t0x36afffffffffffff92a0
+                """);
     }
 
     @Test
     public void testHourLongMissingFunctions() throws Exception {
         assertQuery("select hour(ts), ksum(val), nsum(val) from tab order by 1").ddl("create table tab as (select timestamp_sequence(0, 100000)::" + timestampTypeName + " ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))").expectSize().returns("""
-                        hour\tksum\tnsum
-                        0\t1.3265789485E10\t1.3265789485E10
-                        1\t1.3359838134E10\t1.3359838134E10
-                        2\t1.0444993989E10\t1.0444993989E10
-                        """);
+                hour\tksum\tnsum
+                0\t1.3265789485E10\t1.3265789485E10
+                1\t1.3359838134E10\t1.3359838134E10
+                2\t1.0444993989E10\t1.0444993989E10
+                """);
     }
 
     @Test
     public void testHourPossibleBugfix() throws Exception {
         assertQuery("select hour(ts), sum(val), ksum(val), nsum(val), min(val), max(val), avg(val) from tab order by 1").ddl("create table tab as (select timestamp_sequence(0, 100000)::" + timestampTypeName + " ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))").expectSize().returns("""
-                        hour\tsum\tksum\tnsum\tmin\tmax\tavg
-                        0\t13265789485\t1.3265789485E10\t1.3265789485E10\t-988\t889951\t443212.3712872941
-                        1\t13359838134\t1.3359838134E10\t1.3359838134E10\t-997\t889948\t444350.36699261627
-                        2\t10444993989\t1.0444993989E10\t1.0444993989E10\t-992\t889982\t445586.53594129946
-                        """);
+                hour\tsum\tksum\tnsum\tmin\tmax\tavg
+                0\t13265789485\t1.3265789485E10\t1.3265789485E10\t-988\t889951\t443212.3712872941
+                1\t13359838134\t1.3359838134E10\t1.3359838134E10\t-997\t889948\t444350.36699261627
+                2\t10444993989\t1.0444993989E10\t1.0444993989E10\t-992\t889982\t445586.53594129946
+                """);
     }
 
     @Test
@@ -1043,12 +1043,12 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testIntSymbolResolution() throws Exception {
         assertQuery("select s2, sum(val) from tab order by s2").ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_symbol('a1','a2','a3', null) s2, rnd_double(2) val from long_sequence(1000000))").expectSize().returns("""
-                        s2	sum
-                        	104119.880948161
-                        a1	103804.62242300605
-                        a2	104433.68659571148
-                        a3	104341.28852517322
-                        """);
+                s2	sum
+                	104119.880948161
+                a1	103804.62242300605
+                a2	104433.68659571148
+                a3	104341.28852517322
+                """);
     }
 
     @Test
@@ -1323,30 +1323,30 @@ public class AggregateTest extends AbstractCairoTest {
 
             // min(ts) should return the first value (due to optimization)
             assertQuery("select min(ts) from tab").timestamp("min").expectSize().returns(replaceTimestampSuffix1(
-                            """
-                                    min
-                                    2024-01-01T00:00:00.000000Z
-                                    """,
-                            timestampTypeName
-                    ));
+                    """
+                            min
+                            2024-01-01T00:00:00.000000Z
+                            """,
+                    timestampTypeName
+            ));
 
             // max(ts) should return the last value (due to optimization)
             assertQuery("select max(ts) from tab").timestampDesc("max").expectSize().returns(replaceTimestampSuffix1(
-                            """
-                                    max
-                                    2024-01-01T02:46:39.000000Z
-                                    """,
-                            timestampTypeName
-                    ));
+                    """
+                            max
+                            2024-01-01T02:46:39.000000Z
+                            """,
+                    timestampTypeName
+            ));
 
             // both min and max together
             assertQuery("select min(ts), max(ts) from tab").noRandomAccess().expectSize().returns(replaceTimestampSuffix1(
-                            """
-                                    min\tmax
-                                    2024-01-01T00:00:00.000000Z\t2024-01-01T02:46:39.000000Z
-                                    """,
-                            timestampTypeName
-                    ));
+                    """
+                            min\tmax
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T02:46:39.000000Z
+                            """,
+                    timestampTypeName
+            ));
         });
     }
 
@@ -1402,12 +1402,12 @@ public class AggregateTest extends AbstractCairoTest {
 
             // Empty table should return nulls
             assertQuery("select min(ts), max(ts) from tab").noRandomAccess().expectSize().returns(replaceTimestampSuffix1(
-                            """
-                                    min\tmax
-                                    \t
-                                    """,
-                            timestampTypeName
-                    ));
+                    """
+                            min\tmax
+                            \t
+                            """,
+                    timestampTypeName
+            ));
         });
     }
 
@@ -1424,30 +1424,30 @@ public class AggregateTest extends AbstractCairoTest {
 
             // min(ts) should return the first value
             assertQuery("select min(ts) from tab").timestamp("min").expectSize().returns(replaceTimestampSuffix1(
-                            """
-                                    min
-                                    2024-01-01T00:00:00.000000Z
-                                    """,
-                            timestampTypeName
-                    ));
+                    """
+                            min
+                            2024-01-01T00:00:00.000000Z
+                            """,
+                    timestampTypeName
+            ));
 
             // max(ts) should return the last value
             assertQuery("select max(ts) from tab").timestampDesc("max").expectSize().returns(replaceTimestampSuffix1(
-                            """
-                                    max
-                                    2024-01-07T22:39:00.000000Z
-                                    """,
-                            timestampTypeName
-                    ));
+                    """
+                            max
+                            2024-01-07T22:39:00.000000Z
+                            """,
+                    timestampTypeName
+            ));
 
             // both together
             assertQuery("select min(ts), max(ts) from tab").noRandomAccess().expectSize().returns(replaceTimestampSuffix1(
-                            """
-                                    min\tmax
-                                    2024-01-01T00:00:00.000000Z\t2024-01-07T22:39:00.000000Z
-                                    """,
-                            timestampTypeName
-                    ));
+                    """
+                            min\tmax
+                            2024-01-01T00:00:00.000000Z\t2024-01-07T22:39:00.000000Z
+                            """,
+                    timestampTypeName
+            ));
         });
     }
 
@@ -1463,12 +1463,12 @@ public class AggregateTest extends AbstractCairoTest {
 
             // min and max should return the same value for single row
             assertQuery("select min(ts), max(ts) from tab").noRandomAccess().expectSize().returns(replaceTimestampSuffix1(
-                            """
-                                    min\tmax
-                                    2024-06-15T12:30:45.000000Z\t2024-06-15T12:30:45.000000Z
-                                    """,
-                            timestampTypeName
-                    ));
+                    """
+                            min\tmax
+                            2024-06-15T12:30:45.000000Z\t2024-06-15T12:30:45.000000Z
+                            """,
+                    timestampTypeName
+            ));
         });
     }
 
@@ -1487,23 +1487,23 @@ public class AggregateTest extends AbstractCairoTest {
 
             // min/max on designated timestamp (ts)
             assertQuery("select min(ts), max(ts) from tab").noRandomAccess().expectSize().returns(replaceTimestampSuffix1(
-                            """
-                                    min\tmax
-                                    2024-01-01T00:00:00.000000Z\t2024-01-01T00:16:39.000000Z
-                                    """,
-                            timestampTypeName
-                    ));
+                    """
+                            min\tmax
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:16:39.000000Z
+                            """,
+                    timestampTypeName
+            ));
 
             // min/max on non-designated timestamp (other_ts) - values are descending
             // other_ts starts at 2024-06-01 and decreases by 500000 microseconds per row
             // So min is at the end (row 1000), max is at the beginning (row 1)
             assertQuery("select min(other_ts), max(other_ts) from tab").noRandomAccess().expectSize().returns(replaceTimestampSuffix1(
-                            """
-                                    min\tmax
-                                    2024-05-31T23:51:40.500000Z\t2024-06-01T00:00:00.000000Z
-                                    """,
-                            timestampTypeName
-                    ));
+                    """
+                            min\tmax
+                            2024-05-31T23:51:40.500000Z\t2024-06-01T00:00:00.000000Z
+                            """,
+                    timestampTypeName
+            ));
         });
     }
 

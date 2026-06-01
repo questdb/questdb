@@ -159,14 +159,14 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest
                                    long physicallyWrittenRows) {
 
         @Override
-            public @NotNull String toString() {
-                return "MetricsSnapshot{" +
-                        "commitCount=" + commitCount +
-                        ", committedRows=" + committedRows +
-                        ", o3CommitCount=" + o3CommitCount +
-                        ", rollbackCount=" + rollbackCount +
-                        ", physicallyWrittenRows=" + physicallyWrittenRows +
-                        '}';
-            }
+        public @NotNull String toString() {
+            return "MetricsSnapshot{" +
+                    "commitCount=" + commitCount +
+                    ", committedRows=" + committedRows +
+                    ", o3CommitCount=" + o3CommitCount +
+                    ", rollbackCount=" + rollbackCount +
+                    ", physicallyWrittenRows=" + physicallyWrittenRows +
+                    '}';
         }
+    }
 }

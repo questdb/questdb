@@ -234,7 +234,7 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "('2024-01-01T04:00:00.000000Z', 102.00m, 2500)");
 
         assertQuery("select price, sum(volume) as total_volume, count(*) as hours " +
-                        "from timeseries group by price order by price")
+                "from timeseries group by price order by price")
                 .expectSize()
                 .returns("price\ttotal_volume\thours\n" +
                         "100.50\t3000\t2\n" +

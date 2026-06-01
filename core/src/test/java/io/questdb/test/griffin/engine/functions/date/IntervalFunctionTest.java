@@ -481,18 +481,18 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     public void testNowNsInInterval() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("select true as result from long_sequence(1)\n" +
-                            "where now_ns() in tomorrow()")
+                    "where now_ns() in tomorrow()")
                     .noLeakCheck()
                     .returns("result\n");
             assertQuery("select true as result from long_sequence(1)\n" +
-                            "where now_ns() in today()")
+                    "where now_ns() in today()")
                     .noLeakCheck()
                     .returns("""
                             result
                             true
                             """);
             assertQuery("select true as result from long_sequence(1)\n" +
-                            "where now_ns() in yesterday()")
+                    "where now_ns() in yesterday()")
                     .noLeakCheck()
                     .returns("result\n");
         });
@@ -502,18 +502,18 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     public void testTimestampInInterval() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("select true as result from long_sequence(1)\n" +
-                            "where now() in tomorrow()")
+                    "where now() in tomorrow()")
                     .noLeakCheck()
                     .returns("result\n");
             assertQuery("select true as result from long_sequence(1)\n" +
-                            "where now() in today()")
+                    "where now() in today()")
                     .noLeakCheck()
                     .returns("""
                             result
                             true
                             """);
             assertQuery("select true as result from long_sequence(1)\n" +
-                            "where now() in yesterday()")
+                    "where now() in yesterday()")
                     .noLeakCheck()
                     .returns("result\n");
         });

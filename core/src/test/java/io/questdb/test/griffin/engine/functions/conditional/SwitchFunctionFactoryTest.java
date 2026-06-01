@@ -32,14 +32,14 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBindVar() throws Exception {
         assertQuery("""
-                        select\s
-                            a,
-                            case a
-                                when '1' then $1
-                                when '2' then $2
-                                else $3
-                            end k
-                        from test""")
+                select\s
+                    a,
+                    case a
+                        when '1' then $1
+                        when '2' then $2
+                        else $3
+                    end k
+                from test""")
                 .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))")
                 .fails(48, "CASE values cannot be bind variables");
     }
@@ -54,16 +54,16 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBooleanDuplicateFalse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when false then 'HELLO'
-                                when false then 'HELLO2'
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when false then 'HELLO'
+                        when false then 'HELLO2'
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_boolean() x," +
                         " rnd_str() a," +
@@ -77,16 +77,16 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBooleanDuplicateTrue() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when true then 'HELLO'
-                                when true then 'HELLO2'
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when true then 'HELLO'
+                        when true then 'HELLO2'
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_boolean() x," +
                         " rnd_str() a," +
@@ -100,17 +100,17 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBooleanDuplicateWayTooManyBranches() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when false then 'HELLO'
-                                when true then 'HELLO2'
-                                when false then 'HELLO3'
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when false then 'HELLO'
+                        when true then 'HELLO2'
+                        when false then 'HELLO3'
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_boolean() x," +
                         " rnd_str() a," +
@@ -124,16 +124,16 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBooleanToStrOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when true then 'HELLO'
-                                else c
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when true then 'HELLO'
+                        else c
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_boolean() x," +
                         " rnd_str() a," +
@@ -170,16 +170,16 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBooleanToStrOrElseReversed() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when false then c
-                                else 'HELLO'
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when false then c
+                        else 'HELLO'
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_boolean() x," +
                         " rnd_str() a," +
@@ -216,16 +216,16 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBooleanToStrOrMoreBranches() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when true then 'HELLO'
-                                when false then c
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when true then 'HELLO'
+                        when false then c
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_boolean() x," +
                         " rnd_str() a," +
@@ -262,16 +262,16 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBooleanToStrOrMoreBranchesReversed() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when false then c
-                                when true then 'HELLO'
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when false then c
+                        when true then 'HELLO'
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_boolean() x," +
                         " rnd_str() a," +
@@ -308,17 +308,17 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBooleanTooManyBranchesIgnoreElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when true then 'HELLO'
-                                when false then 'HELLO2'
-                                else c
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when true then 'HELLO'
+                        when false then 'HELLO2'
+                        else c
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_boolean() x," +
                         " rnd_str() a," +
@@ -362,18 +362,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testByteOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when cast(90 as byte) then a
-                                when cast(57 as byte) then c
-                                when cast(31 as byte) then 'Z'
-                                else b
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when cast(90 as byte) then a
+                        when cast(57 as byte) then c
+                        when cast(31 as byte) then 'Z'
+                        else b
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_byte() x," +
                         " rnd_char() a," +
@@ -412,15 +412,15 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
             assertQuery("""
-                            select\s
-                                x,
-                                ip,
-                                case x
-                                    when 1 then ip
-                                    when 2 then null
-                                    else '127.0.0.1'
-                                end k
-                            from x""")
+                    select\s
+                        x,
+                        ip,
+                        case x
+                            when 1 then ip
+                            when 2 then null
+                            else '127.0.0.1'
+                        end k
+                    from x""")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -439,14 +439,14 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
             assertQuery("""
-                            select\s
-                                x,
-                                ip,
-                                case x
-                                    when 1 then '192.168.1.1'
-                                    else ip
-                                end k
-                            from x""")
+                    select\s
+                        x,
+                        ip,
+                        case x
+                            when 1 then '192.168.1.1'
+                            else ip
+                        end k
+                    from x""")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -473,17 +473,17 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
         );
 
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when -920 then a
-                                when 701 then c
-                                when -714 then 350
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when -920 then a
+                        when 701 then c
+                        when -714 then 350
+                    end k
+                from tanc""")
                 .fails(94, "inconvertible types: LONG256 -> INT [from=LONG256, to=INT]");
     }
 
@@ -501,18 +501,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                             ")"
             );
             assertQuery("""
-                            select\s
-                                x,
-                                a,
-                                b,
-                                c,
-                                d,
-                                case x
-                                    when -920 then a
-                                    when -405 then 350
-                                    when 968 then d
-                                end k
-                            from tanc""")
+                    select\s
+                        x,
+                        a,
+                        b,
+                        c,
+                        d,
+                        case x
+                            when -920 then a
+                            when -405 then 350
+                            when 968 then d
+                        end k
+                    from tanc""")
                     .noLeakCheck()
                     .fails(128, "inconvertible types: UUID -> INT [from=UUID, to=INT]");
         });
@@ -523,16 +523,16 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
             assertQuery("""
-                            select\s
-                                x,
-                                u,
-                                case x
-                                    when 1 then u
-                                    when 2 then 'b5b2159a-2356-4217-965d-4c984f0ffa8a'
-                                    when 3 then null
-                                    else '00000000-0000-0000-0000-000000000000'
-                                end k
-                            from x""")
+                    select\s
+                        x,
+                        u,
+                        case x
+                            when 1 then u
+                            when 2 then 'b5b2159a-2356-4217-965d-4c984f0ffa8a'
+                            when 3 then null
+                            else '00000000-0000-0000-0000-000000000000'
+                        end k
+                    from x""")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -551,14 +551,14 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
             assertQuery("""
-                            select\s
-                                x,
-                                u,
-                                case x
-                                    when 1 then '00000000-0000-0000-0000-000000000000'
-                                    else u
-                                end k
-                            from x""")
+                    select\s
+                        x,
+                        u,
+                        case x
+                            when 1 then '00000000-0000-0000-0000-000000000000'
+                            else u
+                        end k
+                    from x""")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -577,14 +577,14 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
             assertQuery("""
-                            select\s
-                                x,
-                                u,
-                                case x
-                                    when 1 then null
-                                    else u
-                                end k
-                            from x""")
+                    select\s
+                        x,
+                        u,
+                        case x
+                            when 1 then null
+                            else u
+                        end k
+                    from x""")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -601,18 +601,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCharOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when 'L' then a
-                                when 'O' then c
-                                when 'T' then 'Z'
-                                else b
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when 'L' then a
+                        when 'O' then c
+                        when 'T' then 'Z'
+                        else b
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_char() x," +
                         " rnd_char() a," +
@@ -649,18 +649,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDateOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when cast('1970-01-01T00:55:56.086Z' as date) then a
-                                when cast('1970-01-01T00:48:12.010Z' as date) then c
-                                when cast('1970-01-01T00:43:07.029Z' as date) then 'Z'
-                                else b
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when cast('1970-01-01T00:55:56.086Z' as date) then a
+                        when cast('1970-01-01T00:48:12.010Z' as date) then c
+                        when cast('1970-01-01T00:43:07.029Z' as date) then 'Z'
+                        else b
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_date() x," +
                         " rnd_char() a," +
@@ -697,22 +697,22 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDouble() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when  322.0d then a
-                                when -431.0d then c
-                                when -616.0d then 350
-                                when null then 1
-                                when 'Infinity' then 2
-                                when '-Infinity' then 3
-                                when 0.0 then 4
-                                when -0.0 then 5
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when  322.0d then a
+                        when -431.0d then c
+                        when -616.0d then 350
+                        when null then 1
+                        when 'Infinity' then 2
+                        when '-Infinity' then 3
+                        when 0.0 then 4
+                        when -0.0 then 5
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select round(rnd_double() * 2000 - 1000) x," +
                         " rnd_int() a," +
@@ -759,18 +759,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDoubleDuplicateBranch() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when -920.0d then a
-                                when 701.0d then c
-                                when -714.0d then 350
-                                when 701.0d then c
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when -920.0d then a
+                        when 701.0d then c
+                        when -714.0d then 350
+                        when 701.0d then c
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select round(rnd_double() * 2000 - 1000) x," +
                         " rnd_int() a," +
@@ -784,23 +784,23 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDoubleOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when  322.0d then a
-                                when -431.0 then c
-                                when -616.0 then 350
-                                when null then 1
-                                when 'Infinity' then 2
-                                when '-Infinity' then 3
-                                when 0.0 then 4
-                                when -0.0 then 5
-                                else b
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when  322.0d then a
+                        when -431.0 then c
+                        when -616.0 then 350
+                        when null then 1
+                        when 'Infinity' then 2
+                        when '-Infinity' then 3
+                        when 0.0 then 4
+                        when -0.0 then 5
+                        else b
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select round(rnd_double() * 2000 - 1000) x," +
                         " rnd_int() a," +
@@ -847,18 +847,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDuplicateBranchStringToLongCast() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when -920 then a
-                                when 701 then c
-                                when -714 then 350
-                                when '701' then c
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when -920 then a
+                        when 701 then c
+                        when -714 then 350
+                        when '701' then c
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_long() % 1000 x," +
                         " rnd_int() a," +
@@ -872,20 +872,20 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFloat() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when 322.0f then a
-                                when -830.0f then c
-                                when 685.0f then 350
-                                when cast(null as float) then 1
-                                when cast(0.0 as float) then 4
-                                when cast(-0.0 as float) then 5
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when 322.0f then a
+                        when -830.0f then c
+                        when 685.0f then 350
+                        when cast(null as float) then 1
+                        when cast(0.0 as float) then 4
+                        when cast(-0.0 as float) then 5
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select cast(round(rnd_float() * 2000 - 1000) as float) x," +
                         " rnd_int() a," +
@@ -945,21 +945,21 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFloatOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when 322.0f then a
-                                when -830.0f then c
-                                when 685.0f then 350
-                                when cast(null as float) then 1
-                                when cast(0.0 as float) then 4
-                                when cast(-0.0 as float) then 5
-                                else b \
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when 322.0f then a
+                        when -830.0f then c
+                        when 685.0f then 350
+                        when cast(null as float) then 1
+                        when cast(0.0 as float) then 4
+                        when cast(-0.0 as float) then 5
+                        else b \
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select cast(round(rnd_float() * 2000 - 1000) as float) x," +
                         " rnd_int() a," +
@@ -1006,17 +1006,17 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testInt() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when -920 then a
-                                when 701 then c
-                                when -714 then 350
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when -920 then a
+                        when 701 then c
+                        when -714 then 350
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_int() a," +
@@ -1053,18 +1053,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testIntDuplicateBranch() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when -920 then a
-                                when 701 then c
-                                when -714 then 350
-                                when 701 then c
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when -920 then a
+                        when 701 then c
+                        when -714 then 350
+                        when 701 then c
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_int() a," +
@@ -1078,18 +1078,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testIntOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when -920 then a
-                                when 701 then c
-                                when -714 then 350
-                                else b
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when -920 then a
+                        when 701 then c
+                        when -714 then 350
+                        else b
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_int() a," +
@@ -1126,17 +1126,17 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testIntOrElseBinValue() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when -920 then a
-                                when 701 then c
-                                else b
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when -920 then a
+                        when 701 then c
+                        else b
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_bin() a," +
@@ -1253,17 +1253,17 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLong() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when -920 then a
-                                when 701 then c
-                                when -714 then 350
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when -920 then a
+                        when 701 then c
+                        when -714 then 350
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_long() a," +
@@ -1300,18 +1300,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLong256OrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when cast('0x00' as long256) then a
-                                when cast('0x00' as long256) then c
-                                when cast('0x00' as long256) then 350
-                                else b
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when cast('0x00' as long256) then a
+                        when cast('0x00' as long256) then c
+                        when cast('0x00' as long256) then 350
+                        else b
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_long256() x," +
                         " rnd_int() a," +
@@ -1325,18 +1325,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLongDuplicateBranch() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when -920 then a
-                                when 701 then c
-                                when -714 then 350
-                                when 701 then c
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when -920 then a
+                        when 701 then c
+                        when -714 then 350
+                        when 701 then c
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_long() % 1000 x," +
                         " rnd_int() a," +
@@ -1350,18 +1350,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLongOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when -839 then a
-                                when -16 then c
-                                when 57 then 350
-                                else b
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when -839 then a
+                        when -16 then c
+                        when 57 then 350
+                        else b
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_long() % 1000 x," +
                         " rnd_int() a," +
@@ -1398,17 +1398,17 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLongVariableKeyError() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when -920 then a
-                                when 701 then c
-                                when c then 350
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when -920 then a
+                        when 701 then c
+                        when c then 350
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_long() % 1000 x," +
                         " rnd_int() a," +
@@ -1422,13 +1422,13 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testShort() throws Exception {
         assertQuery("""
-                        select\s
-                            a,
-                            case a
-                                when cast(7739 as short) then a
-                                when cast(10900 as short) then b
-                            end k\s
-                        from tanc""")
+                select\s
+                    a,
+                    case a
+                        when cast(7739 as short) then a
+                        when cast(10900 as short) then b
+                    end k\s
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select " +
                         " rnd_short() a," +
@@ -1465,18 +1465,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testShortOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when cast(26745 as short) then a
-                                when cast(4635 as short) then c
-                                when cast(1404 as short) then 350
-                                else b
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when cast(26745 as short) then a
+                        when cast(4635 as short) then c
+                        when cast(1404 as short) then 350
+                        else b
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_short() x," +
                         " rnd_int() a," +
@@ -1520,11 +1520,11 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                     " (null, 2, 20)," +
                     " ('Y', 3, 30)");
             assertQuery("SELECT x, a, b," +
-                            " CASE x" +
-                            " WHEN 'X' THEN a" +
-                            " ELSE b" +
-                            " END k" +
-                            " FROM tanc")
+                    " CASE x" +
+                    " WHEN 'X' THEN a" +
+                    " ELSE b" +
+                    " END k" +
+                    " FROM tanc")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1545,12 +1545,12 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                     " (null, 3, 30)," +
                     " ('Z', 4, 40)");
             assertQuery("SELECT x, a, b," +
-                            " CASE x" +
-                            " WHEN 'X' THEN a" +
-                            " WHEN null THEN -1" +
-                            " ELSE b" +
-                            " END k" +
-                            " FROM tanc")
+                    " CASE x" +
+                    " WHEN 'X' THEN a" +
+                    " WHEN null THEN -1" +
+                    " ELSE b" +
+                    " END k" +
+                    " FROM tanc")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1566,18 +1566,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStrCharOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when 'A' then 'this is A'
-                                when 'B' then 'this is B'
-                                when 'D' then 'this is D'
-                                else 'this is something else'
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when 'A' then 'this is A'
+                        when 'B' then 'this is B'
+                        when 'D' then 'this is D'
+                        else 'this is something else'
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_str('A','B','C','D') x," +
                         " rnd_int() a," +
@@ -1614,18 +1614,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStrOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when 'YSBEOU' then a
-                                when 'CXZO' then c
-                                when 'OTSEDYYCT' then 350
-                                else b
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when 'YSBEOU' then a
+                        when 'CXZO' then c
+                        when 'OTSEDYYCT' then 350
+                        else b
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_str() x," +
                         " rnd_int() a," +
@@ -1662,18 +1662,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStrToStrOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when 'NTO' then a
-                                when 'PRGSXBHYS' then c
-                                when 'XYPO' then 'WORKS!'
-                                else b
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when 'NTO' then a
+                        when 'PRGSXBHYS' then c
+                        when 'XYPO' then 'WORKS!'
+                        else b
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_str() x," +
                         " rnd_str() a," +
@@ -1710,18 +1710,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStrToStrOrElseDuplicateBranch() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when 'NTO' then a
-                                when 'PRGSXBHYS' then c
-                                when 'NTO' then 'WORKS!'
-                                else b
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when 'NTO' then a
+                        when 'PRGSXBHYS' then c
+                        when 'NTO' then 'WORKS!'
+                        else b
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select rnd_str() x," +
                         " rnd_str() a," +
@@ -1910,12 +1910,12 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                     " ('b2', 'C', 'D')," +
                     " ('c3', 'E', 'F')");
             assertQuery("SELECT x, a, b," +
-                            " CASE x" +
-                            " WHEN 'b2' THEN a" +
-                            " WHEN 'zz' THEN 'Z'" +
-                            " ELSE b" +
-                            " END k" +
-                            " FROM tanc")
+                    " CASE x" +
+                    " WHEN 'b2' THEN a" +
+                    " WHEN 'zz' THEN 'Z'" +
+                    " ELSE b" +
+                    " END k" +
+                    " FROM tanc")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -1951,13 +1951,13 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                     " ('a1', 'G', 'H', 'I')," +
                     " ('c3', 'J', 'K', 'L')");
             assertQuery("SELECT x, a, b, c," +
-                            " CASE x::symbol" +
-                            " WHEN 'b2' THEN a" +
-                            " WHEN 'd4' THEN c" +
-                            " WHEN 'a1' THEN 'Z'" +
-                            " ELSE b" +
-                            " END k" +
-                            " FROM tanc")
+                    " CASE x::symbol" +
+                    " WHEN 'b2' THEN a" +
+                    " WHEN 'd4' THEN c" +
+                    " WHEN 'a1' THEN 'Z'" +
+                    " ELSE b" +
+                    " END k" +
+                    " FROM tanc")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2040,13 +2040,13 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                     " FROM long_sequence(20)" +
                     ")");
             assertQuery("SELECT x, a, b, c," +
-                            " CASE x" +
-                            " WHEN 'b2' THEN a" +
-                            " WHEN 'zz' THEN c" +
-                            " WHEN 'yy' THEN 'Z'" +
-                            " ELSE b" +
-                            " END k" +
-                            " FROM tanc")
+                    " CASE x" +
+                    " WHEN 'b2' THEN a" +
+                    " WHEN 'zz' THEN c" +
+                    " WHEN 'yy' THEN 'Z'" +
+                    " ELSE b" +
+                    " END k" +
+                    " FROM tanc")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2142,11 +2142,11 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                     " ('b2', 'C', 'D')," +
                     " ('c3', 'E', 'F')");
             assertQuery("SELECT x, a, b," +
-                            " CASE x" +
-                            " WHEN 'zz' THEN a" +
-                            " ELSE b" +
-                            " END k" +
-                            " FROM tanc")
+                    " CASE x" +
+                    " WHEN 'zz' THEN a" +
+                    " ELSE b" +
+                    " END k" +
+                    " FROM tanc")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -2229,18 +2229,18 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTimestampOrElse() throws Exception {
         assertQuery("""
-                        select\s
-                            x,
-                            a,
-                            b,
-                            c,
-                            case x
-                                when cast('1970-01-01T00:00:00.500Z' as date) then a
-                                when cast('1970-01-01T00:48:12.010Z' as date) then c
-                                when cast('1970-01-01T00:00:01.900Z' as date) then 'Z'
-                                else b
-                            end k
-                        from tanc""")
+                select\s
+                    x,
+                    a,
+                    b,
+                    c,
+                    case x
+                        when cast('1970-01-01T00:00:00.500Z' as date) then a
+                        when cast('1970-01-01T00:48:12.010Z' as date) then c
+                        when cast('1970-01-01T00:00:01.900Z' as date) then 'Z'
+                        else b
+                    end k
+                from tanc""")
                 .ddl("create table tanc as (" +
                         "select timestamp_sequence(0, 100000L) x," +
                         " rnd_char() a," +

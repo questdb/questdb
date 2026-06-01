@@ -286,7 +286,7 @@ public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
                             name
                             file.txt
                             readme
-
+                            
                             """);
         });
     }

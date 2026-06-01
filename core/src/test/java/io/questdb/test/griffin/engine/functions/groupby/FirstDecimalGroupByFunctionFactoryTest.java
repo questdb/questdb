@@ -62,9 +62,9 @@ public class FirstDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFirstKeyed() throws Exception {
         assertQuery("select id%5 key, first(d8) f8, first(d16) f16, first(d32) f32, " +
-                        "first(d64) f64, first(d128) f128, first(d256) f256 " +
-                        "from x " +
-                        "order by key desc")
+                "first(d64) f64, first(d128) f128, first(d256) f256 " +
+                "from x " +
+                "order by key desc")
                 .ddl("create table x as (" +
                         "select" +
                         " x id," +

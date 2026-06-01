@@ -421,7 +421,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
                     .returns("""
                             table_name\ttable_txn\twal_txn
                             test_txn\t""" + writerTxn + "\t" + sequencerTxn + """
-
+                            
                             """);
         });
     }

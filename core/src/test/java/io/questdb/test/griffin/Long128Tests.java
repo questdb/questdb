@@ -307,10 +307,10 @@ public class Long128Tests extends AbstractCairoTest {
     @Test
     public void testReadLong128Column() throws Exception {
         assertQuery("select" +
-                        " to_long128(timestamp_sequence('2022-02-24', 1000000L), x) ts," +
-                        " timestamp_sequence('2022-02-24', 1000000L) ts1," +
-                        " cast(x as int) i" +
-                        " from long_sequence(10)")
+                " to_long128(timestamp_sequence('2022-02-24', 1000000L), x) ts," +
+                " timestamp_sequence('2022-02-24', 1000000L) ts1," +
+                " cast(x as int) i" +
+                " from long_sequence(10)")
                 .noRandomAccess()
                 .expectSize()
                 .returns("""

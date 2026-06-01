@@ -336,9 +336,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertQuery("SELECT val FROM x WHERE val = 1")
                     .noLeakCheck()
                     .returns("""
-                    val
-                    1
-                    """);
+                            val
+                            1
+                            """);
         });
     }
 
@@ -1235,16 +1235,16 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE timestamp >= 0");
 
             assertQuery(tableName).timestamp("timestamp").expectSize().returns(replaceTimestampSuffix("""
-                            id\ttimestamp\ta
-                            1\t2024-11-01T00:00:00.000000Z\tnull
-                            2\t2024-11-02T00:00:00.000000Z\tnull
-                            3\t2024-11-03T00:00:00.000000Z\tnull
-                            4\t2024-11-04T00:00:00.000000Z\tnull
-                            5\t2024-11-05T00:00:00.000000Z\tnull
-                            5\t2024-11-05T00:00:00.000000Z\t5
-                            6\t2024-11-06T00:00:00.000000Z\t6
-                            7\t2024-11-07T00:00:00.000000Z\t7
-                            """, timestampType.getTypeName()));
+                    id\ttimestamp\ta
+                    1\t2024-11-01T00:00:00.000000Z\tnull
+                    2\t2024-11-02T00:00:00.000000Z\tnull
+                    3\t2024-11-03T00:00:00.000000Z\tnull
+                    4\t2024-11-04T00:00:00.000000Z\tnull
+                    5\t2024-11-05T00:00:00.000000Z\tnull
+                    5\t2024-11-05T00:00:00.000000Z\t5
+                    6\t2024-11-06T00:00:00.000000Z\t6
+                    7\t2024-11-07T00:00:00.000000Z\t7
+                    """, timestampType.getTypeName()));
         });
     }
 

@@ -105,8 +105,8 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                                 .expectSize()
                                 .timestamp("timestamp")
                                 .returns(replaceTimestampSuffix(TableHeader +
-                                "1\t2023-10-10T00:00:00.000000Z\n" +
-                                "2\t2023-10-11T00:00:00.000000Z\n"));
+                                        "1\t2023-10-10T00:00:00.000000Z\n" +
+                                        "2\t2023-10-11T00:00:00.000000Z\n"));
                         insert("insert into " + tableName + " values(5, '2023-10-12T00:00:00.000000Z')");
                         insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')");
 
@@ -228,8 +228,8 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                                 .expectSize()
                                 .timestamp("timestamp")
                                 .returns(replaceTimestampSuffix(TableHeader +
-                                "5\t2023-10-15T00:00:00.000000Z\n" +
-                                "1\t2023-10-16T00:00:00.000000Z\n")); // new active partition
+                                        "5\t2023-10-15T00:00:00.000000Z\n" +
+                                        "1\t2023-10-16T00:00:00.000000Z\n")); // new active partition
                         dropPartition(tableName, "2023-10-16");
                         dropPartition(tableName, LastPartitionTs);
                         assertTableX(tableName, TableHeader, EmptyTableMinMaxCount);
@@ -270,8 +270,8 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                                 .expectSize()
                                 .timestamp("timestamp")
                                 .returns(replaceTimestampSuffix(TableHeader +
-                                "1\t2023-10-10T00:00:00.000000Z\n" +
-                                "2\t2023-10-11T00:00:00.000000Z\n"));
+                                        "1\t2023-10-10T00:00:00.000000Z\n" +
+                                        "2\t2023-10-11T00:00:00.000000Z\n"));
 
                         insert("insert into " + tableName + " values(5, '2023-10-12T00:00:17.000000Z')");
                         insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')");

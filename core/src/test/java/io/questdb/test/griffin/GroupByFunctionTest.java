@@ -37,21 +37,21 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testCaseInitsArgs() throws Exception {
         assertQuery("""
-                        SELECT
-                            delivery_start_utc as y_utc_15m,
-                            sum(case
-                                    when seller='sf' then -1.0*volume_mw
-                                    when buyer='sf' then 1.0*volume_mw
-                                    else 0.0
-                                end)
-                            as y_sf_position_mw
-                        FROM (
-                            SELECT delivery_start_utc, seller, buyer, volume_mw FROM trades
-                            WHERE
-                                (seller = 'sf' OR buyer = 'sf')
-                            )
-                        group by y_utc_15m \
-                        order by y_utc_15m""")
+                SELECT
+                    delivery_start_utc as y_utc_15m,
+                    sum(case
+                            when seller='sf' then -1.0*volume_mw
+                            when buyer='sf' then 1.0*volume_mw
+                            else 0.0
+                        end)
+                    as y_sf_position_mw
+                FROM (
+                    SELECT delivery_start_utc, seller, buyer, volume_mw FROM trades
+                    WHERE
+                        (seller = 'sf' OR buyer = 'sf')
+                    )
+                group by y_utc_15m \
+                order by y_utc_15m""")
                 .ddl("create table trades as (" +
                         "select" +
                         " timestamp_sequence(0, 15*60*1000000L) delivery_start_utc," +
@@ -166,10 +166,10 @@ public class GroupByFunctionTest extends AbstractCairoTest {
             );
 
             assertQuery("SELECT sym, " +
-                            "CASE WHEN sym = 'a' THEN sum(val) ELSE avg(val) END as result " +
-                            "FROM test " +
-                            "GROUP BY sym " +
-                            "ORDER BY sym")
+                    "CASE WHEN sym = 'a' THEN sum(val) ELSE avg(val) END as result " +
+                    "FROM test " +
+                    "GROUP BY sym " +
+                    "ORDER BY sym")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -180,10 +180,10 @@ public class GroupByFunctionTest extends AbstractCairoTest {
 
             // Same query, but with additionally SELECTed aggregates
             assertQuery("SELECT sym, sum(val), avg(val), " +
-                            "CASE WHEN sym = 'a' THEN sum(val) ELSE avg(val) END as result " +
-                            "FROM test " +
-                            "GROUP BY sym " +
-                            "ORDER BY sym")
+                    "CASE WHEN sym = 'a' THEN sum(val) ELSE avg(val) END as result " +
+                    "FROM test " +
+                    "GROUP BY sym " +
+                    "ORDER BY sym")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -868,10 +868,10 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testSumOverCrossJoinSubQuery() throws Exception {
         assertQuery("SELECT round(sum(lth*pcp), 10) as sum " +
-                        "from ( " +
-                        "  select (x.lth - avg_x.lth) as lth, (x.pcp - avg_x.pcp) as pcp " +
-                        "  from x cross join (select avg(lth) as lth, avg(pcp) as pcp from x) avg_x " +
-                        ")")
+                "from ( " +
+                "  select (x.lth - avg_x.lth) as lth, (x.pcp - avg_x.pcp) as pcp " +
+                "  from x cross join (select avg(lth) as lth, avg(pcp) as pcp from x) avg_x " +
+                ")")
                 .ddl("create table x as " +
                         "(" +
                         "select" +

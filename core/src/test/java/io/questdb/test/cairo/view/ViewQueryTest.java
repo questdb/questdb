@@ -80,7 +80,7 @@ public class ViewQueryTest extends AbstractViewTest {
             // ASOF JOIN: Get the most recent quote at the time of each trade
             // Using both views with default parameters
             assertQuery("SELECT t.ts as trade_ts, t.symbol, t.price, t.side, q.ts as quote_ts, q.bid, q.ask " +
-                            "FROM " + VIEW2 + " t ASOF JOIN " + VIEW1 + " q ON (symbol)")
+                    "FROM " + VIEW2 + " t ASOF JOIN " + VIEW1 + " q ON (symbol)")
                     .noLeakCheck()
                     .timestamp("trade_ts")
                     .noRandomAccess()
@@ -93,8 +93,8 @@ public class ViewQueryTest extends AbstractViewTest {
 
             // Override to get SELL trades instead
             assertQuery("DECLARE @side := 'SELL' " +
-                            "SELECT t.ts as trade_ts, t.symbol, t.price, t.side, q.ts as quote_ts, q.bid, q.ask " +
-                            "FROM " + VIEW2 + " t ASOF JOIN " + VIEW1 + " q ON (symbol)")
+                    "SELECT t.ts as trade_ts, t.symbol, t.price, t.side, q.ts as quote_ts, q.bid, q.ask " +
+                    "FROM " + VIEW2 + " t ASOF JOIN " + VIEW1 + " q ON (symbol)")
                     .noLeakCheck()
                     .timestamp("trade_ts")
                     .noRandomAccess()
@@ -1202,9 +1202,9 @@ public class ViewQueryTest extends AbstractViewTest {
                     """);
 
             assertQuery("""
-                            select timestamp, count() from view2
-                            sample by 10m
-                            """)
+                    select timestamp, count() from view2
+                    sample by 10m
+                    """)
                     .noLeakCheck()
                     .timestamp("timestamp")
                     .noRandomAccess()

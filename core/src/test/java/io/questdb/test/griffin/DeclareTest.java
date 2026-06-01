@@ -271,9 +271,9 @@ public class DeclareTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                    x
-                    3
-                    """);
+                            x
+                            3
+                            """);
         });
     }
 
@@ -320,9 +320,9 @@ public class DeclareTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareReuseVariable() throws Exception {
         assertQuery("declare " +
-                        "@ts := '2025-07-02T13:00:00.000000Z', " +
-                        "@int := interval(@ts, @ts)" +
-                        "select @int")
+                "@ts := '2025-07-02T13:00:00.000000Z', " +
+                "@int := interval(@ts, @ts)" +
+                "select @int")
                 .noLeakCheck()
                 .expectSize()
                 .returns("interval\n('2025-07-02T13:00:00.000Z', '2025-07-02T13:00:00.000Z')\n");
@@ -399,11 +399,11 @@ public class DeclareTest extends AbstractSqlParserTest {
                 .expectSize()
                 .noRandomAccess()
                 .returns("""
-                QUERY PLAN
-                VirtualRecord
-                  functions: [5]
-                    long_sequence count: 1
-                """);
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [5]
+                            long_sequence count: 1
+                        """);
     }
 
     @Test
@@ -552,11 +552,11 @@ public class DeclareTest extends AbstractSqlParserTest {
                     .expectSize()
                     .timestamp("timestamp")
                     .returns("""
-                    symbol\tside\tprice\tamount\ttimestamp
-                    \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
-                    \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
-                    \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
-                    """);
+                            symbol\tside\tprice\tamount\ttimestamp
+                            \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
+                            \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
+                            \t\t2615.81\t0.001\t2022-03-08T18:04:01.991343Z
+                            """);
         });
     }
 
@@ -724,11 +724,11 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(TRADES_DDL);
             drainWalQueue();
             assertQuery("""
-                            DECLARE
-                                @today := today(),
-                                @start := interval_start(@today),
-                                @end := interval_end(@today)
-                                SELECT @today = interval(@start, @end)""")
+                    DECLARE
+                        @today := today(),
+                        @start := interval_start(@today),
+                        @end := interval_end(@today)
+                        SELECT @today = interval(@start, @end)""")
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
@@ -822,9 +822,9 @@ public class DeclareTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareVariableAsSubQueryWithEmptyLimit() throws Exception {
         assertQuery("declare @pair := (select symbol from fx_trades limit ), " +
-                        "with bids as (select symbol, bids[1,1] from market_data where symbol = @pair), " +
-                        "asks as (select symbol, asks[1,1] from market_data where symbol = @pair) " +
-                        "select symbol, * from bids")
+                "with bids as (select symbol, bids[1,1] from market_data where symbol = @pair), " +
+                "asks as (select symbol, asks[1,1] from market_data where symbol = @pair) " +
+                "select symbol, * from bids")
                 .fails(53, "limit expression expected");
     }
 
@@ -851,7 +851,7 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             assertQuery("DECLARE @symbols := ('ETH-USD', 'BTC-USD') " +
-                            "SELECT * FROM trades WHERE @symbols IN @symbols")
+                    "SELECT * FROM trades WHERE @symbols IN @symbols")
                     .fails(43, "bracket lists");
 
         });

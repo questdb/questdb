@@ -122,29 +122,29 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             String booleanError = "boolean expression expected";
 
             assertQuery("select * from a " +
-                            "join b on a.i - b.i")
+                    "join b on a.i - b.i")
                     .noLeakCheck()
                     .fails(30, booleanError);
 
             assertQuery("select * from a " +
-                            "left join b on a.i - b.i")
+                    "left join b on a.i - b.i")
                     .noLeakCheck()
                     .fails(35, booleanError);
 
             assertQuery("select * from a " +
-                            "join b on a.ts = b.ts and a.i - b.i")
+                    "join b on a.ts = b.ts and a.i - b.i")
                     .noLeakCheck()
                     .fails(46, booleanError);
 
             assertQuery("select * from a " +
-                            "left join b on a.ts = b.ts and a.i - b.i")
+                    "left join b on a.ts = b.ts and a.i - b.i")
                     .noLeakCheck()
                     .fails(51, booleanError);
 
             for (String join : Arrays.asList("ASOF  ", "LT    ", "SPLICE")) {
                 assertQuery("select * " +
-                                "from a " +
-                                "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join))
+                        "from a " +
+                        "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join))
                         .noLeakCheck()
                         .fails(37, "unsupported " + join.trim() + " join expression");
             }
@@ -2270,12 +2270,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testColumnNameWithDot() throws Exception {
         assertMemoryLeak(() -> assertQuery("create table x (" +
-                        "t TIMESTAMP, " +
-                        "`bool.flag` BOOLEAN) " +
-                        "timestamp(t) " +
-                        "partition by MONTH")
-        .noLeakCheck()
-        .fails(29, "new column name contains invalid characters"));
+                "t TIMESTAMP, " +
+                "`bool.flag` BOOLEAN) " +
+                "timestamp(t) " +
+                "partition by MONTH")
+                .noLeakCheck()
+                .fails(29, "new column name contains invalid characters"));
     }
 
     @Test
@@ -3057,7 +3057,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectCharToGeoShort() throws Exception {
         assertQuery("insert into geohash " +
-                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)")
+                "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)")
                 .ddl("create table geohash (geohash geohash(2c))")
                 .fails(27, "inconvertible types: CHAR -> GEOHASH(2c) [from=cast, to=geohash]");
     }
@@ -3065,7 +3065,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectCharToGeoWiderByte() throws Exception {
         assertQuery("insert into geohash " +
-                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)")
+                "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)")
                 .ddl("create table geohash (geohash geohash(6b))")
                 .fails(27, "inconvertible types: CHAR -> GEOHASH(6b) [from=cast, to=geohash]");
     }
@@ -3599,10 +3599,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectInvalidTimestamp() throws Exception {
         assertMemoryLeak(() -> assertQuery("create table y as (" +
-                        "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
-                        ")  timestamp(a) partition by DAY")
-        .noLeakCheck()
-        .fails(97, "TIMESTAMP column expected"));
+                "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
+                ")  timestamp(a) partition by DAY")
+                .noLeakCheck()
+                .fails(97, "TIMESTAMP column expected"));
     }
 
     @Test
@@ -4035,35 +4035,35 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 .fails(7, "cursor function cannot be used as a column [column=query_activity]");
 
         assertQuery("""
-                        select 1 from long_sequence(1)
-                        UNION ALL
-                        select query_activity() from long_sequence(100L);""")
+                select 1 from long_sequence(1)
+                UNION ALL
+                select query_activity() from long_sequence(100L);""")
                 .noLeakCheck()
                 .fails(48, "cursor function cannot be used as a column [column=query_activity]");
 
         assertQuery("""
-                        with q as (
-                          select query_activity() a, 1 as n from long_sequence(1)
-                        )
-                        select a, n from q;""")
+                with q as (
+                  select query_activity() a, 1 as n from long_sequence(1)
+                )
+                select a, n from q;""")
                 .noLeakCheck()
                 .fails(21, "cursor function cannot be used as a column [column=a]");
 
         assertQuery("""
-                        with q as (
-                          select query_activity() a, 1L as n from long_sequence(1)
-                        )
-                        select q.a from long_sequence(10) ls\s
-                        inner join q on ls.x = q.n;""")
+                with q as (
+                  select query_activity() a, 1L as n from long_sequence(1)
+                )
+                select q.a from long_sequence(10) ls\s
+                inner join q on ls.x = q.n;""")
                 .noLeakCheck()
                 .fails(21, "cursor function cannot be used as a column [column=a]");
 
         assertQuery("""
-                        with q as (
-                          select query_activity() a, 1L as n from long_sequence(1)
-                        )
-                        select q.* from long_sequence(10) ls\s
-                        inner join q on ls.x = q.n;""")
+                with q as (
+                  select query_activity() a, 1L as n from long_sequence(1)
+                )
+                select q.* from long_sequence(10) ls\s
+                inner join q on ls.x = q.n;""")
                 .noLeakCheck()
                 .fails(21, "cursor function cannot be used as a column [column=a]");
     }
@@ -4164,10 +4164,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             assertQuery("create table x (" +
-                            "t TIMESTAMP, " +
-                            "y BOOLEAN) " +
-                            "timestamp(t) " +
-                            "partition by MONTH")
+                    "t TIMESTAMP, " +
+                    "y BOOLEAN) " +
+                    "timestamp(t) " +
+                    "partition by MONTH")
                     .noLeakCheck()
                     .fails(13, "table already exists");
         });
@@ -4258,8 +4258,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testExecuteQuery() throws Exception {
         assertMemoryLeak(() -> assertQuery("select * from (select rnd_int() x from long_sequence(20)) timestamp(x)")
-        .noLeakCheck()
-        .fails(68, "not a TIMESTAMP"));
+                .noLeakCheck()
+                .fails(68, "not a TIMESTAMP"));
     }
 
     @Test
@@ -4583,8 +4583,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInLongTypeMismatch() throws Exception {
         assertMemoryLeak(() -> assertQuery("select 1 from long_sequence(1) where x in (123.456)")
-        .noLeakCheck()
-        .fails(43, "cannot compare LONG with type DOUBLE"));
+                .noLeakCheck()
+                .fails(43, "cannot compare LONG with type DOUBLE"));
     }
 
     @Test
@@ -6024,11 +6024,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT * FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT -1) as T1 " +
-                            "LEFT OUTER JOIN tab as T2 ON T1.value::string ~ '[0-9]'  " +
-                            "WHERE T2.created is null or T2.created::long > 0")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT -1) as T1 " +
+                    "LEFT OUTER JOIN tab as T2 ON T1.value::string ~ '[0-9]'  " +
+                    "WHERE T2.created is null or T2.created::long > 0")
                     .timestamp("created")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -6039,12 +6039,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
-                            "LEFT JOIN tab as T3 ON T2.created<T3.created " +
-                            "WHERE T2.created::long > 0")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                    "LEFT JOIN tab as T3 ON T2.created<T3.created " +
+                    "WHERE T2.created::long > 0")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6054,11 +6054,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
-                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T2.value - T3.value = 0")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                    "LEFT JOIN tab as T3 ON T2.created=T3.created and T2.value - T3.value = 0")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6068,11 +6068,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
-                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T2.value = 2 ")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                    "LEFT JOIN tab as T3 ON T2.created=T3.created and T2.value = 2 ")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6082,11 +6082,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
-                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T3.value = 1 ")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                    "LEFT JOIN tab as T3 ON T2.created=T3.created and T3.value = 1 ")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6096,11 +6096,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
-                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T1.value = 0 ")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                    "LEFT JOIN tab as T3 ON T2.created=T3.created and T1.value = 0 ")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6110,11 +6110,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
-                            "LEFT JOIN tab as T3 ON T2.created=T3.created and 1=1 ")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                    "LEFT JOIN tab as T3 ON T2.created=T3.created and 1=1 ")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6124,11 +6124,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created<T2.created " +
-                            "LEFT JOIN tab as T3 ON T2.created=T3.created and T1.created = T1.created ")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "LEFT JOIN tab as T2 ON T1.created<T2.created " +
+                    "LEFT JOIN tab as T3 ON T2.created=T3.created and T1.created = T1.created ")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6198,11 +6198,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("insert into tab values (0, 0), (1, 1)");
 
             assertQuery("SELECT " +
-                            "  count(*) " +
-                            "FROM " +
-                            "  tab as T1 " +
-                            "  JOIN tab as T2 ON T1.created < T2.created " +
-                            "  JOIN tab as T3 ON T2.created = T3.created")
+                    "  count(*) " +
+                    "FROM " +
+                    "  tab as T1 " +
+                    "  JOIN tab as T2 ON T1.created < T2.created " +
+                    "  JOIN tab as T3 ON T2.created = T3.created")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -6212,11 +6212,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT " +
-                            "  count(*) " +
-                            "FROM " +
-                            "  tab as T1 " +
-                            "  JOIN tab as T2 ON T1.created < T2.created " +
-                            "  JOIN tab as T3 ON T2.value = T3.value")
+                    "  count(*) " +
+                    "FROM " +
+                    "  tab as T1 " +
+                    "  JOIN tab as T2 ON T1.created < T2.created " +
+                    "  JOIN tab as T3 ON T2.value = T3.value")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -6284,13 +6284,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             ")", sqlExecutionContext
             );
             assertQuery("SELECT" +
-                            "    sym AS 'sym'," +
-                            "    avg(angle_rad) AS avg_angle_rad," +
-                            "    sum(sine) AS 'SUM(sine)' " +
-                            "FROM trigonometry " +
-                            "GROUP BY sym " +
-                            "ORDER BY 'prefix' || sym, \"SUM(sine)\" DESC " +
-                            "LIMIT 1000")
+                    "    sym AS 'sym'," +
+                    "    avg(angle_rad) AS avg_angle_rad," +
+                    "    sum(sine) AS 'SUM(sine)' " +
+                    "FROM trigonometry " +
+                    "GROUP BY sym " +
+                    "ORDER BY 'prefix' || sym, \"SUM(sine)\" DESC " +
+                    "LIMIT 1000")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -6315,13 +6315,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             ")", sqlExecutionContext
             );
             assertQuery("SELECT" +
-                            "    sym AS 'sym'," +
-                            "    avg(angle_rad) AS avg_angle_rad," +
-                            "    sum(sine) AS \"SUM(sine)\" " +
-                            "FROM trigonometry " +
-                            "GROUP BY sym " +
-                            "ORDER BY 'prefix' || sym, \"SUM(sine)\" DESC " +
-                            "LIMIT 1000")
+                    "    sym AS 'sym'," +
+                    "    avg(angle_rad) AS avg_angle_rad," +
+                    "    sum(sine) AS \"SUM(sine)\" " +
+                    "FROM trigonometry " +
+                    "GROUP BY sym " +
+                    "ORDER BY 'prefix' || sym, \"SUM(sine)\" DESC " +
+                    "LIMIT 1000")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -6716,11 +6716,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT * FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT -1) as T1 " +
-                            "RIGHT OUTER JOIN tab as T2 ON T1.value::string ~ '[0-9]'  " +
-                            "WHERE T2.created is null or T2.created::long > 0")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT -1) as T1 " +
+                    "RIGHT OUTER JOIN tab as T2 ON T1.value::string ~ '[0-9]'  " +
+                    "WHERE T2.created is null or T2.created::long > 0")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6730,12 +6730,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
-                            "RIGHT JOIN tab as T3 ON T2.created<T3.created " +
-                            "WHERE T2.created::long > 0")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                    "RIGHT JOIN tab as T3 ON T2.created<T3.created " +
+                    "WHERE T2.created::long > 0")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6746,11 +6746,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
-                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T2.value - T3.value = 0")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                    "RIGHT JOIN tab as T3 ON T2.created=T3.created and T2.value - T3.value = 0")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6761,11 +6761,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
-                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T2.value = 2 ")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                    "RIGHT JOIN tab as T3 ON T2.created=T3.created and T2.value = 2 ")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6776,11 +6776,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
-                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T3.value = 1 ")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                    "RIGHT JOIN tab as T3 ON T2.created=T3.created and T3.value = 1 ")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6791,11 +6791,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
-                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T1.value = 0 ")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                    "RIGHT JOIN tab as T3 ON T2.created=T3.created and T1.value = 0 ")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6806,11 +6806,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
-                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and 1=1 ")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                    "RIGHT JOIN tab as T3 ON T2.created=T3.created and 1=1 ")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -6821,11 +6821,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT T1.value, T2.value, T3.value FROM " +
-                            "( SELECT * " +
-                            "  FROM tab " +
-                            "  LIMIT 1) as T1 " +
-                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
-                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T1.created = T1.created ")
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 1) as T1 " +
+                    "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                    "RIGHT JOIN tab as T3 ON T2.created=T3.created and T1.created = T1.created ")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -7561,8 +7561,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastByteFail(int castTo) throws Exception {
         assertQuery("create table y as (" +
-                        "select * from (select rnd_byte(2,50) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                "select * from (select rnd_byte(2,50) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")")
                 .fails(89, "unsupported cast");
     }
 
@@ -7588,8 +7588,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastDoubleFail(int castTo) throws Exception {
         assertQuery("create table y as (" +
-                        "select * from (select rnd_double(2) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                "select * from (select rnd_double(2) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")")
                 .fails(88, "unsupported cast");
     }
 
@@ -7605,8 +7605,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastFloatFail(int castTo) throws Exception {
         assertQuery("create table y as (" +
-                        "select * from (select rnd_float(2) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                "select * from (select rnd_float(2) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")")
                 .fails(87, "unsupported cast");
     }
 
@@ -7626,8 +7626,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastIntFail(int castTo) throws Exception {
         assertQuery("create table y as (" +
-                        "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")")
                 .fails(92, "unsupported cast");
     }
 
@@ -7647,8 +7647,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastLongFail(int castTo) throws Exception {
         assertQuery("create table y as (" +
-                        "select * from (select rnd_long(0, 30, 2) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                "select * from (select rnd_long(0, 30, 2) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")")
                 .fails(93, "unsupported cast");
     }
 
@@ -7667,22 +7667,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCastShortFail(int castTo) throws Exception {
         assertQuery("create table y as (" +
-                        "select * from (select rnd_short(2,10) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                "select * from (select rnd_short(2,10) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")")
                 .fails(90, "unsupported cast");
     }
 
     private void assertCastStringFail(int castTo) throws Exception {
         assertQuery("create table y as (" +
-                        "select * from (select rnd_str(5,10,2) a from long_sequence(20))" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                "select * from (select rnd_str(5,10,2) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")")
                 .fails(90, "unsupported cast");
     }
 
     private void assertCastSymbolFail(int castTo) throws Exception {
         assertQuery("create table y as (" +
-                        "select rnd_symbol(4,6,10,2) a from long_sequence(20)" +
-                        "), cast(a as " + ColumnType.nameOf(castTo) + ")")
+                "select rnd_symbol(4,6,10,2) a from long_sequence(20)" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")")
                 .fails(79, "unsupported cast");
     }
 
@@ -7727,8 +7727,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertException(FilesFacade ff, CharSequence sql, CharSequence message) throws Exception {
         assertMemoryLeak(ff, () -> assertQuery(sql)
-        .noLeakCheck()
-        .fails(13, message));
+                .noLeakCheck()
+                .fails(13, message));
     }
 
     private void assertInsertAsSelectIOError(AtomicBoolean inError, FilesFacade ff) throws Exception {
