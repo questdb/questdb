@@ -99,35 +99,35 @@ public class CastDecimalToByteFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     // Runtime value with scale
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT 123.45m AS value) SELECT cast(value as byte) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::byte]
                                         VirtualRecord
                                           functions: [123.45]
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT 123.45m AS value) SELECT cast(value as byte) FROM data");
+                                    """);
 
                     // Runtime value without scale
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT 123m AS value) SELECT cast(value as byte) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::byte]
                                         VirtualRecord
                                           functions: [123]
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT 123m AS value) SELECT cast(value as byte) FROM data");
+                                    """);
 
                     // Expression should be constant folded
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("SELECT cast(123.45m as byte)")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [123]
                                         long_sequence count: 1
-                                    """,
-                            "EXPLAIN SELECT cast(123.45m as byte)");
+                                    """);
                 }
         );
     }
@@ -137,115 +137,115 @@ public class CastDecimalToByteFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     // DECIMAL8 unscaled
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT cast(99m as DECIMAL(2)) AS value) SELECT cast(value as byte) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::byte]
                                         VirtualRecord
                                           functions: [99]
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT cast(99m as DECIMAL(2)) AS value) SELECT cast(value as byte) FROM data");
+                                    """);
 
                     // DECIMAL16 unscaled
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT cast(127m as DECIMAL(3)) AS value) SELECT cast(value as byte) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::byte]
                                         VirtualRecord
                                           functions: [127]
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT cast(127m as DECIMAL(3)) AS value) SELECT cast(value as byte) FROM data");
+                                    """);
 
                     // DECIMAL32 unscaled
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT cast(127m as DECIMAL(3)) AS value) SELECT cast(value as byte) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::byte]
                                         VirtualRecord
                                           functions: [127]
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT cast(127m as DECIMAL(3)) AS value) SELECT cast(value as byte) FROM data");
+                                    """);
 
                     // DECIMAL64 unscaled
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT cast(127m as DECIMAL(10)) AS value) SELECT cast(value as byte) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::byte]
                                         VirtualRecord
                                           functions: [127]
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT cast(127m as DECIMAL(10)) AS value) SELECT cast(value as byte) FROM data");
+                                    """);
 
                     // DECIMAL128 unscaled
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT cast(127m as DECIMAL(19)) AS value) SELECT cast(value as byte) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::byte]
                                         VirtualRecord
                                           functions: [127]
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT cast(127m as DECIMAL(19)) AS value) SELECT cast(value as byte) FROM data");
+                                    """);
 
                     // DECIMAL256 unscaled
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT cast(127m as DECIMAL(40)) AS value) SELECT cast(value as byte) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::byte]
                                         VirtualRecord
                                           functions: [127]
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT cast(127m as DECIMAL(40)) AS value) SELECT cast(value as byte) FROM data");
+                                    """);
 
                     // With scale - tests ScaledDecimalFunction
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("WITH data AS (SELECT cast(99.5m as DECIMAL(4,2)) AS value) SELECT cast(value as byte) FROM data")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [value::byte]
                                         VirtualRecord
                                           functions: [99.50]
                                             long_sequence count: 1
-                                    """,
-                            "EXPLAIN WITH data AS (SELECT cast(99.5m as DECIMAL(4,2)) AS value) SELECT cast(value as byte) FROM data");
+                                    """);
 
                     // Constant folding for all decimal types
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("SELECT cast(99m as byte)")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [99]
                                         long_sequence count: 1
-                                    """,
-                            "EXPLAIN SELECT cast(99m as byte)");
+                                    """);
 
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("SELECT cast(127m as byte)")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [127]
                                         long_sequence count: 1
-                                    """,
-                            "EXPLAIN SELECT cast(127m as byte)");
+                                    """);
 
                     // Constant folding with scale (truncation)
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("SELECT cast(123.45m as byte)")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [123]
                                         long_sequence count: 1
-                                    """,
-                            "EXPLAIN SELECT cast(123.45m as byte)");
+                                    """);
 
-                    assertSql("""
-                                    QUERY PLAN
+                    assertQuery("SELECT cast(99.99m as byte)")
+                            .noLeakCheck()
+                            .assertsPlan("""
                                     VirtualRecord
                                       functions: [99]
                                         long_sequence count: 1
-                                    """,
-                            "EXPLAIN SELECT cast(99.99m as byte)");
+                                    """);
                 }
         );
     }
