@@ -3832,8 +3832,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .returns("""
                             label
                             hello
-                            foo
                             world
+                            foo
                             """);
         });
     }
@@ -3868,7 +3868,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     alice\t10.0
                     bob\t20.0
                     anna\t30.0
-                            """);
+                    """);
         });
     }
 
@@ -7126,7 +7126,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     A\t10.5
                     B\t20.5
                     A\t11.5
-                            """);
+                    """);
         });
     }
 
@@ -7902,7 +7902,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     A\thot
                     B\tcold
                     A\twarm
-                            """);
+                    """);
         });
     }
 
@@ -15212,8 +15212,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .returns("""
                             name
                             alpha
-                            delta
                             beta
+                            delta
                             """);
         });
     }
