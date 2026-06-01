@@ -4538,24 +4538,19 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             execute("create table if not exists test(id uuid)");
             execute("insert into test(id) select rnd_uuid4() from long_sequence(3)");
 
-            try (
-                    RecordCursorFactory factory = select(
-                            "select id " +
-                                    "from test " +
-                                    "group by id " +
-                                    "order by id " +
-                                    "limit 10")
-            ) {
-                String expected = """
-                        id
-                        0010cde8-12ce-40ee-8010-a928bb8b9650
-                        7bcd48d8-c77a-4655-b2a2-15ba0462ad15
-                        9f9b2131-d49f-4d1d-ab81-39815c50d341
-                        """;
-
-                assertCursor(expected, factory, true, true, false);
-                assertCursor(expected, factory, true, true, false);
-            }
+            assertQuery("select id " +
+                    "from test " +
+                    "group by id " +
+                    "order by id " +
+                    "limit 10")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            id
+                            0010cde8-12ce-40ee-8010-a928bb8b9650
+                            7bcd48d8-c77a-4655-b2a2-15ba0462ad15
+                            9f9b2131-d49f-4d1d-ab81-39815c50d341
+                            """);
         });
     }
 
