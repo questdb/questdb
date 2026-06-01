@@ -3864,11 +3864,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    name\tprice
-                    alice\t10.0
-                    bob\t20.0
-                    anna\t30.0
-                    """);
+                            name\tprice
+                            alice\t10.0
+                            bob\t20.0
+                            anna\t30.0
+                            """);
         });
     }
 
@@ -7122,11 +7122,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym\tprice
-                    A\t10.5
-                    B\t20.5
-                    A\t11.5
-                    """);
+                            sym\tprice
+                            A\t10.5
+                            B\t20.5
+                            A\t11.5
+                            """);
         });
     }
 
@@ -7898,11 +7898,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                    sym\ttag
-                    A\thot
-                    B\tcold
-                    A\twarm
-                    """);
+                            sym\ttag
+                            A\thot
+                            B\tcold
+                            A\twarm
+                            """);
         });
     }
 
