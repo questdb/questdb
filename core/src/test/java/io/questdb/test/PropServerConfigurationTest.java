@@ -1510,6 +1510,15 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMemoryUsageLogIntervalAcceptsMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "86_400_000");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(86_400_000, configuration.getMemoryUsageLogInterval());
+    }
+
+    @Test
     public void testMemoryUsageLogIntervalRejectsZero() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "0");
