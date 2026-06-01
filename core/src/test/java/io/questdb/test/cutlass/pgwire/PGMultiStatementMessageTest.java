@@ -25,7 +25,6 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Os;
@@ -1028,13 +1027,11 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 barrier.await();
             }
             drainWalQueue();
-            try (RecordCursorFactory factory = select("select count() from x", sqlExecutionContext)) {
-                assertCursor("count\n" +
-                                "1000\n",
-                        factory,
-                        false, false, true
-                );
-            }
+            assertQuery("select count() from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("count\n1000\n");
         });
     }
 
