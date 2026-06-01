@@ -35,6 +35,7 @@ import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -3278,7 +3279,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
-            linkPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
+            linkPartitionIndexFiles(partitionTimestamp, partitionNameTxn, partitionDirLen, newPartitionDirLen);
 
             final long originalSize = txWriter.getPartitionSize(partitionIndex);
             // used to update txn and bump recordStructureVersion
@@ -5017,7 +5018,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } else {
                     // colTop == 0: no NULL prefix to materialise, just hard-link the
                     // existing index trio (key + value + posting aux).
-                    linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType);
+                    linkColumnIndexFiles(
+                            srcDirLen,
+                            dstDirLen,
+                            columnName,
+                            columnNameTxn,
+                            indexType,
+                            partitionTimestamp,
+                            oldPartitionNameTxn
+                    );
                 }
             }
         } finally {
@@ -6583,6 +6592,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (ColumnType.isVarSize(columnType)) {
             linkFile(ff, iFile(path.trimTo(plen), columnName, columnNameTxn), iFile(other.trimTo(plen), newName, newColumnNameTxn));
         } else if (ColumnType.isSymbol(columnType) && IndexType.isIndexed(indexType)) {
+            if (IndexType.isPosting(indexType)) {
+                dropFuturePostingIndexChainEntriesBeforeLink(plen, columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
+            }
             linkFile(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn), keyFileName(indexType, other.trimTo(plen), newName, newColumnNameTxn));
             if (IndexType.isPosting(indexType)) {
                 // POSTING: link active .pv (resolved from .pk sealTxn) plus .pci and
@@ -7038,10 +7050,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int dstDirLen,
             CharSequence columnName,
             long columnNameTxn,
-            byte indexType
+            byte indexType,
+            long partitionTimestamp,
+            long partitionNameTxn
     ) {
         long linkSealTxn = columnNameTxn;
         if (IndexType.isPosting(indexType)) {
+            dropFuturePostingIndexChainEntriesBeforeLink(srcDirLen, columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
             // Strict read: throw if .pk header is unreadable while .pv files
             // exist in the partition (silent fallback to columnNameTxn would
             // point valueFileName at .pv.<col>.<col>, which never exists).
@@ -7068,7 +7083,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void linkPartitionIndexFiles(long partitionTimestamp, int partitionDirLen, int newPartitionDirLen) {
+    private void linkPartitionIndexFiles(long partitionTimestamp, long partitionNameTxn, int partitionDirLen, int newPartitionDirLen) {
         try {
             final int columnCount = metadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -7084,7 +7099,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         newPartitionDirLen,
                         metadata.getColumnName(columnIndex),
                         getColumnNameTxn(partitionTimestamp, columnIndex),
-                        metadata.getColumnIndexType(columnIndex)
+                        metadata.getColumnIndexType(columnIndex),
+                        partitionTimestamp,
+                        partitionNameTxn
                 );
             }
         } catch (CairoException e) {
@@ -7185,6 +7202,96 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // .pv links are handled separately above.
             }
         });
+    }
+
+    private void dropFuturePostingIndexChainEntriesBeforeLink(
+            int srcDirLen,
+            CharSequence columnName,
+            long columnNameTxn,
+            long partitionTimestamp,
+            long partitionNameTxn
+    ) {
+        try {
+            LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(srcDirLen), columnName, columnNameTxn);
+            if (!ff.exists(keyFile)) {
+                return;
+            }
+            long keyFileSize = ff.length(keyFile);
+            if (keyFileSize < PostingIndexUtils.KEY_FILE_RESERVED) {
+                return;
+            }
+
+            // Rename and parquet partition switch copy the committed source
+            // namespace into a new destination namespace. If the
+            // source chain still has abandoned future heads, copying the raw
+            // head would link the wrong .pv generation: readers pinned at the
+            // destination's committed txn skip that head and choose the
+            // previous visible entry. Run the same recovery trim that
+            // writer-open uses before resolving the live sealTxn for
+            // hard-linking.
+            LongList orphanSealTxns = new LongList();
+            try (MemoryMARW keyMem = Vm.getCMARWInstance(
+                    ff,
+                    keyFile,
+                    configuration.getDataIndexKeyAppendPageSize(),
+                    keyFileSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    CairoConfiguration.O_NONE
+            )) {
+                PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                long currentTableTxn = txWriter.getTxn();
+                chain.openExisting(keyMem);
+                int dropped = chain.recoveryDropAbandoned(keyMem, currentTableTxn, orphanSealTxns);
+                if (dropped > 0 || chain.isHeadTrimmedOnLastRecovery()) {
+                    LOG.info().$("posting index link recovery [table=").$(tableToken)
+                            .$(", column=").$(columnName)
+                            .$(", columnNameTxn=").$(columnNameTxn)
+                            .$(", dropped=").$(dropped)
+                            .$(", isHeadTrimmed=").$(chain.isHeadTrimmedOnLastRecovery())
+                            .I$();
+                }
+                publishAbandonedPostingSealPurges(
+                        columnName,
+                        columnNameTxn,
+                        partitionTimestamp,
+                        partitionNameTxn,
+                        currentTableTxn,
+                        orphanSealTxns
+                );
+            }
+        } finally {
+            path.trimTo(srcDirLen);
+        }
+    }
+
+    private void publishAbandonedPostingSealPurges(
+            CharSequence columnName,
+            long columnNameTxn,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long currentTableTxn,
+            LongList orphanSealTxns
+    ) {
+        if (orphanSealTxns.size() == 0) {
+            return;
+        }
+        for (int i = 0, n = orphanSealTxns.size(); i < n; i++) {
+            PostingSealPurgeTask task = getDeferredPostingSealPurgeTaskPool().next();
+            task.of(
+                    tableToken,
+                    columnName,
+                    columnNameTxn,
+                    orphanSealTxns.getQuick(i),
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    partitionBy,
+                    timestampType,
+                    0L,
+                    currentTableTxn
+            );
+            deferredPostingSealPurges.add(task);
+        }
+        publishDeferredPostingSealPurges(currentTableTxn, true);
     }
 
     private void lock() {

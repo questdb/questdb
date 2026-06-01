@@ -1125,6 +1125,90 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRenameColumnLinksReaderVisibleSealWhenHeadIsFutureTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rename_future_head (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_rename_future_head VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.getTableTokenIfExists("t_rename_future_head");
+            Assert.assertNotNull("test table must exist", token);
+            final long currentTxn;
+            final long firstPartitionTimestamp;
+            final long firstPartitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                currentTxn = reader.getTxn();
+                firstPartitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            appendFuturePostingHead(token, "sym", COLUMN_NAME_TXN_NONE, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
+
+            execute("ALTER TABLE t_rename_future_head RENAME COLUMN sym TO new_sym");
+
+            assertSql(
+                    """
+                            ts\tnew_sym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            """,
+                    "SELECT ts, new_sym, price FROM t_rename_future_head WHERE new_sym = 'A'"
+            );
+        });
+    }
+
+    @Test
+    public void testConvertPartitionToParquetLinksReaderVisibleSealWhenHeadIsFutureTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_parquet_future_head (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_parquet_future_head VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.getTableTokenIfExists("t_parquet_future_head");
+            Assert.assertNotNull("test table must exist", token);
+            final long currentTxn;
+            final long firstPartitionTimestamp;
+            final long firstPartitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                currentTxn = reader.getTxn();
+                firstPartitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            appendFuturePostingHead(token, "sym", COLUMN_NAME_TXN_NONE, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
+
+            execute("ALTER TABLE t_parquet_future_head CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            assertSql(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            """,
+                    "SELECT ts, sym, price FROM t_parquet_future_head WHERE sym = 'A'"
+            );
+        });
+    }
+
     /**
      * Review finding #3 — reader reads past keyMem mmap when the chain
      * header points to an entry beyond the mapped region.
@@ -3527,6 +3611,34 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     .append(')');
         }
         return sql.toString();
+    }
+
+    private void appendFuturePostingHead(
+            TableToken token,
+            CharSequence columnName,
+            long columnNameTxn,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long currentTxn
+    ) {
+        try (Path path = new Path().of(configuration.getDbRoot()).concat(token);
+             PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, io.questdb.cairo.PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
+            final int plen = path.size();
+
+            writer.setCurrentTableTxn(currentTxn);
+            writer.of(path.trimTo(plen), columnName, columnNameTxn, false);
+
+            // Manufacture the state left by a partially-published posting
+            // index update: .pk has a new head tagged with a future table txn,
+            // while committed readers pinned at currentTxn must skip it and
+            // use the previous seal.
+            writer.setNextTxnAtSeal(currentTxn + 2);
+            writer.discardForRebuild();
+            writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), 0);
+            writer.setMaxValue(0);
+            writer.commit();
+        }
     }
 
     private static void runPostingSealPurgeJob(PostingSealPurgeJob purgeJob) {
