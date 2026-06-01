@@ -612,6 +612,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     public long getPageAddress(int columnIndex) {
+        // A column decoded in its pre-conversion source type (e.g. VARCHAR_SLICE for a
+        // STRING->INT cast) has no directly-readable target-typed buffer. Returning 0 makes
+        // raw-address fast paths (e.g. GroupByFunction.computeKeyedBatch) fall through to the
+        // converting record accessors, as they already do for a column top.
+        if (hasTypeCasts && sourceColumnTypes.getQuick(columnIndex) != -1) {
+            return 0;
+        }
         return pageAddresses.get(columnOffset + columnIndex);
     }
 

@@ -1492,6 +1492,82 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Reproducer for the claimed C1 defect: a column is type-converted BEFORE the
+     * partition is encoded to parquet, then converted again AFTER. The claim was that
+     * the encoder stamps each parquet column's field_id with the column's CURRENT
+     * (intermediate) writer index, so a later reader -- which only probes the chain
+     * head (getOriginalWriterIndex) or the current index -- would miss the intermediate
+     * id and silently read every row as NULL.
+     * <p>
+     * In this codebase every encode path stamps field_id = getOriginalWriterIndex()
+     * (the chain head), see TableUtils.java and O3PartitionJob.java. So the column is
+     * always findable by the head, regardless of how deep the conversion chain grows.
+     * This test pins that behaviour: a parquet partition encoded mid-chain must keep
+     * reading the real values, matching the native control table.
+     */
+    @Test
+    public void testColumnEncodedToParquetMidChainThenConvertedAgain() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE nt (c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE pt (c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                String values = """
+                        INSERT INTO %s(c, ts) VALUES
+                        (10, '2024-01-01T00:00:01.000000Z'),
+                        (NULL, '2024-01-01T00:00:02.000000Z'),
+                        (30, '2024-01-01T00:00:03.000000Z')""";
+                execute(values.formatted("nt"));
+                execute(values.formatted("pt"));
+                drainWalQueue();
+
+                // Step 1: re-key c via a type conversion BEFORE parquet. The column now
+                // sits at a fresh writer index with a replacing chain back to index 0.
+                execute("ALTER TABLE nt ALTER COLUMN c TYPE LONG");
+                execute("ALTER TABLE pt ALTER COLUMN c TYPE LONG");
+                drainWalQueue();
+
+                // Step 2: encode to parquet while c is mid-chain. The claim says field_id
+                // gets the intermediate index; the code stamps getOriginalWriterIndex().
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                // Reads after the mid-chain encode must still see the real values.
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+
+                // Step 3: grow the chain again, on top of the mid-chain parquet file.
+                execute("ALTER TABLE nt ALTER COLUMN c TYPE STRING");
+                execute("ALTER TABLE pt ALTER COLUMN c TYPE STRING");
+                drainWalQueue();
+
+                // C1 claim: probing head (idx 0) and current idx both miss the parquet
+                // field_id, so every row reads NULL. If the bug were real, pt would be
+                // all-NULL for c while nt keeps the values.
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+                assertSql(
+                        """
+                                c\tts
+                                10\t2024-01-01T00:00:01.000000Z
+                                \t2024-01-01T00:00:02.000000Z
+                                30\t2024-01-01T00:00:03.000000Z
+                                """,
+                        "SELECT c, ts FROM pt ORDER BY ts"
+                );
+
+                // Eager rewrite to native must also preserve the values (exercises the
+                // ConvertOperatorImpl pre-pass / getParquetColumnType path the claim
+                // says returns UNDEFINED for a mid-chain field_id).
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                drainWalQueue();
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+            } finally {
+                tryDrop("nt");
+                tryDrop("pt");
+            }
+        });
+    }
+
     @Test
     public void testTimestampToOtherFixedTypes() throws Exception {
         assertMemoryLeak(() -> {
@@ -1795,6 +1871,54 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilteredColumnTopNullOverConvertedNoSentinelColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE nt (sel INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE pt (sel INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // Seed rows precede ADD COLUMN v, so v has a column top (NULL) for them.
+                String seed = """
+                        INSERT INTO %s(sel, ts)
+                        SELECT x::INT, timestamp_sequence('2024-01-01T00:00:00.000000Z', 1_000_000)
+                        FROM long_sequence(20)""";
+                execute(seed.formatted("nt"));
+                execute(seed.formatted("pt"));
+                drainWalQueue();
+
+                execute("ALTER TABLE nt ADD COLUMN v SHORT");
+                execute("ALTER TABLE pt ADD COLUMN v SHORT");
+                drainWalQueue();
+
+                // Value rows (v not null), larger sel so the filter below excludes them.
+                String vals = """
+                        INSERT INTO %s(sel, v, ts)
+                        SELECT (x + 1000)::INT, x::SHORT, timestamp_sequence('2024-01-01T01:00:00.000000Z', 1_000_000)
+                        FROM long_sequence(200)""";
+                execute(vals.formatted("nt"));
+                execute(vals.formatted("pt"));
+                drainWalQueue();
+
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                execute("ALTER TABLE nt ALTER COLUMN v TYPE LONG");
+                execute("ALTER TABLE pt ALTER COLUMN v TYPE LONG");
+                drainWalQueue();
+
+                // GROUP BY v with a selective filter on sel routes v through late materialization.
+                // The column-top rows (sel < 10) must group under v = NULL, not v = 0.
+                assertSqlCursors(
+                        "SELECT v, count() c FROM nt WHERE sel < 10 GROUP BY v ORDER BY v",
+                        "SELECT v, count() c FROM pt WHERE sel < 10 GROUP BY v ORDER BY v"
+                );
+            } finally {
+                tryDrop("nt");
+                tryDrop("pt");
+            }
+        });
+    }
+
+    @Test
     public void testShortToIntColumnTopAndNull() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -1979,6 +2103,57 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 ('emoji \ud83e\udd86 \ud83d\ude00 mixed', '2024-01-01T00:00:06.000000Z'),
                 ('ascii then é', '2024-01-01T00:00:07.000000Z'),
                 (NULL, '2024-01-01T00:00:08.000000Z')"""));
+    }
+
+    @Test
+    public void testVectorizedGroupByOverAlteredParquetColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE nt (val STRING, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE pt (val STRING, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                String insert = """
+                        INSERT INTO $T
+                        SELECT x::STRING AS val,
+                               ('s' || (x % 5)::STRING)::SYMBOL AS sym,
+                               timestamp_sequence('2024-01-01T00:00:00.000000Z', 60_000_000) AS ts
+                        FROM long_sequence(200)""";
+                execute(insert.replace("$T", "nt"));
+                execute(insert.replace("$T", "pt"));
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                execute("ALTER TABLE nt ALTER COLUMN val TYPE INT");
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE INT");
+                drainWalQueue();
+
+                // No WHERE clause + single symbol key + sum over a fixed-width column would
+                // pick the vectorized Rosti GroupBy. The parquet-converted-column guard must
+                // force the safe Async path instead (note: NOT "vectorized: true").
+                String query = "SELECT sym, sum(val) s FROM pt GROUP BY sym ORDER BY sym";
+                assertPlanNoLeakCheck(
+                        query,
+                        """
+                                Encode sort light
+                                  keys: [sym]
+                                    Async Group By workers: 1
+                                      keys: [sym]
+                                      values: [sum(val)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: pt
+                                """
+                );
+
+                assertSqlCursors(
+                        "SELECT sym, sum(val) s FROM nt GROUP BY sym ORDER BY sym",
+                        query
+                );
+            } finally {
+                tryDrop("nt");
+                tryDrop("pt");
+            }
+        });
     }
 
     /**

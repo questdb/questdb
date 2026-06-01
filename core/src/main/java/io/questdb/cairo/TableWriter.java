@@ -1450,6 +1450,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         try {
+            // Persist reconstructed column tops before the txn, else _txn references a stale _cv.
+            if (columnVersionWriter.hasChanges()) {
+                columnVersionWriter.commit();
+                txWriter.setColumnVersion(columnVersionWriter.getVersion());
+            }
             txWriter.commit(denseSymbolMapWriters);
 
             // hasParquetPartitions reflects post-commit txWriter state and does not change
