@@ -7643,8 +7643,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillLinearBadType() throws Exception {
+        final String sql = "select b, sum_t(b), k from x sample by 3h fill(linear)";
         assertException(
-                "select b, sum_t(b), k from x sample by 3h fill(linear)",
+                sql,
                 "create table x as " +
                         "(" +
                         "select" +
@@ -7654,7 +7655,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                10,
+                sql.indexOf("linear"),
                 "support for LINEAR fill is not yet implemented"
         );
     }
@@ -14550,8 +14551,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testDecimalInterpolated() throws Exception {
+        final String sql = "select k, first(b) from x sample by 3h fill(linear)";
         assertException(
-                "select k, first(b) from x sample by 3h fill(linear)",
+                sql,
                 "create table x as " +
                         "(" +
                         "select" +
@@ -14561,7 +14563,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                10,
+                sql.indexOf("linear"),
                 "support for LINEAR fill is not yet implemented"
         );
     }
@@ -15692,7 +15694,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     private static String sampleByPushdownPlan(String fill, String align) {
         boolean isFastPath = (fill.equals("null") || fill.equals("prev"))
                 && !"align to first observation".equals(align);
-        boolean isNoneFill = "".equals(fill) || "none".equals(fill);
+        boolean isNoneFill = fill.isEmpty() || "none".equals(fill);
         if (isFastPath) {
             return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By Fill\n" +
@@ -15730,7 +15732,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> workerCount)) {
             assertMemoryLeak(() -> TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         engine.execute(
                                 "create table x (d1 double, d2 double, s symbol index, kms long, k timestamp_ns) timestamp(k) partition by day;",
                                 sqlExecutionContext
