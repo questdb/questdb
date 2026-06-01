@@ -190,14 +190,20 @@ public class FastGroupByAllocator implements GroupByAllocator {
     }
 
     private void _close() {
-        for (int i = 0, n = chunks.capacity(); i < n; i++) {
-            long ptr = chunks.keyAtRaw(i);
-            if (ptr != 0) {
-                long size = chunks.valueAtRaw(i);
-                Unsafe.free(ptr, size, MemoryTag.NATIVE_GROUP_BY_FUNCTION, memoryTracker);
+        // The chunk index is lazy (openOnInit=false). An allocator closed without
+        // ever being reopened -- e.g. a SAMPLE BY subquery factory torn down on a
+        // codegen error path -- has an unallocated index, so guard the raw
+        // iteration that frees the chunks. close() still releases the skeleton.
+        if (chunks.isOpen()) {
+            for (int i = 0, n = chunks.capacity(); i < n; i++) {
+                long ptr = chunks.keyAtRaw(i);
+                if (ptr != 0) {
+                    long size = chunks.valueAtRaw(i);
+                    Unsafe.free(ptr, size, MemoryTag.NATIVE_GROUP_BY_FUNCTION, memoryTracker);
+                }
             }
+            chunks.clear();
         }
-        chunks.clear();
         allocated = 0;
         ptr = lim = 0;
     }

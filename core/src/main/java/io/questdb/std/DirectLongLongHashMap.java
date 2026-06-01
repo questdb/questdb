@@ -100,6 +100,10 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
         return valueAt(keyIndex(key));
     }
 
+    public boolean isOpen() {
+        return ptr != 0;
+    }
+
     public long keyAtRaw(long index) {
         return Unsafe.getLong(ptr + 16 * index);
     }
