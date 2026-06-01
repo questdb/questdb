@@ -140,16 +140,17 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 drainWalQueue();
             }
 
-            assertSql(
-                    """
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             i\tts
                             2\t1970-01-01T00:00:00.000500Z
                             1\t1970-01-01T00:00:00.001000Z
                             3\t1970-01-01T00:00:00.001500Z
                             4\t1970-01-01T00:00:00.001500Z
-                            """,
-                    tableName
-            );
+                            """);
         });
     }
 
@@ -467,15 +468,16 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 drainWalQueue();
             }
 
-            assertSql(
-                    """
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts\tc
                             10\t10\t1970-01-01T00:00:00.000000Z\t10
                             11\t11\t1970-01-01T00:00:00.000000Z\t11
                             12\t12\t1970-01-01T00:00:00.000000Z\t12
-                            """,
-                    tableName
-            );
+                            """);
         });
     }
 
@@ -1089,10 +1091,12 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         return tableId;
     }
 
-    private void assertMaxUncommittedRows(CharSequence tableName, int expectedMaxUncommittedRows) throws SqlException {
+    private void assertMaxUncommittedRows(CharSequence tableName, int expectedMaxUncommittedRows) throws Exception {
         try (TableReader reader = getReader(tableName)) {
-            assertSql("maxUncommittedRows\n" + expectedMaxUncommittedRows + "\n", "SELECT maxUncommittedRows FROM tables() WHERE table_name = '" + tableName + "'"
-            );
+            assertQuery("SELECT maxUncommittedRows FROM tables() WHERE table_name = '" + tableName + "'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("maxUncommittedRows\n" + expectedMaxUncommittedRows + "\n");
             reader.reload();
             assertEquals(expectedMaxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());
         }

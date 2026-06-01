@@ -154,15 +154,15 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                 final String viewSql = viewSqls.getQuick(i);
                 LOG.info().$("asserting view ").$(viewName).$(" against ").$(viewSql).$();
                 // check that the view exists and it is valid
-                assertSql(
-                        """
+                assertQuery("select view_status " +
+                        "from views() " +
+                        "where view_name = '" + viewName + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
                                 view_status
                                 valid
-                                """,
-                        "select view_status " +
-                                "from views() " +
-                                "where view_name = '" + viewName + "'"
-                );
+                                """);
                 TestUtils.assertSqlCursors(
                         compiler,
                         sqlExecutionContext,

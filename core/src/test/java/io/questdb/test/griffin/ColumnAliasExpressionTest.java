@@ -233,7 +233,11 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE, maxSize);
         }
 
-        assertQuery(expected, query, ddl, "", true, true);
+        assertQuery(query)
+                .ddl(ddl)
+                .timestamp("")
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertGeneratedColumnEqual(String expected, String query, int maxSize) throws Exception {

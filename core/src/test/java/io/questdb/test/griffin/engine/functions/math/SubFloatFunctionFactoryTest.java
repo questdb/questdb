@@ -45,41 +45,36 @@ public class SubFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (i INT, f FLOAT)");
             execute("INSERT INTO t VALUES (16777217, 0)");
-            assertQueryNoLeakCheck(
-                    "cast\n16777216\n",
-                    "SELECT (i - f)::INT FROM t",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("SELECT (i - f)::INT FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("cast\n16777216\n");
         });
     }
 
     @Test
     public void testLeftNan() throws Exception {
-        assertQuery(
-                """
+        assertQuery("SELECT null::FLOAT - 1::FLOAT")
+                .expectSize()
+                .returns("""
                         column
                         null
-                        """,
-                "SELECT null::FLOAT - 1::FLOAT"
-        );
+                        """);
     }
 
     @Test
     public void testRightNan() throws Exception {
-        assertQuery(
-                """
+        assertQuery("SELECT 1::FLOAT - null::FLOAT")
+                .expectSize()
+                .returns("""
                         column
                         null
-                        """,
-                "SELECT 1::FLOAT - null::FLOAT"
-        );
+                        """);
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery("column\n2.5\n", "SELECT 5.5::FLOAT - 3.0::FLOAT");
+        assertQuery("SELECT 5.5::FLOAT - 3.0::FLOAT").expectSize().returns("column\n2.5\n");
     }
 
     @Override

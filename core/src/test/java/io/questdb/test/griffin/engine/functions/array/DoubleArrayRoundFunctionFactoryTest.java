@@ -202,41 +202,40 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, round(sum(array_sum(round(book,2))),2) from tmp group by sym order by 1";
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                sql,
-                                sink,
-                                """
-                                        sym\tround
-                                        a\t9688.69
-                                        b\t9938.03
-                                        v\t9898.59
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce(
                                         """
-                        );
+                                                sym\tround
+                                                a\t9688.69
+                                                b\t9938.03
+                                                v\t9898.59
+                                                """
+                                );
 
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "explain " + sql,
-                                sink,
-                                """
-                                        QUERY PLAN
-                                        Encode sort light
-                                          keys: [sym]
-                                            VirtualRecord
-                                              functions: [sym,round(sum,2)]
-                                                Async Group By workers: 4
-                                                  keys: [sym]
-                                                  values: [sum(array_sum(roundbook))]
-                                                  filter: null
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: tmp
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .assertsPlan(
                                         """
-                        );
+                                                Encode sort light
+                                                  keys: [sym]
+                                                    VirtualRecord
+                                                      functions: [sym,round(sum,2)]
+                                                        Async Group By workers: 4
+                                                          keys: [sym]
+                                                          values: [sum(array_sum(roundbook))]
+                                                          filter: null
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: tmp
+                                                """
+                                );
                     },
                     configuration,
                     LOG

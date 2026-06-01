@@ -57,7 +57,6 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -75,7 +74,6 @@ import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFac
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.model.ExplainModel;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -135,7 +133,6 @@ import java.io.File;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Supplier;
 
 @SuppressWarnings("ClassEscapesDefinedScope")
 public abstract class AbstractCairoTest extends AbstractTest {
@@ -145,7 +142,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static final String TIMESTAMP_NS_TYPE_NAME = "TIMESTAMP_NS";
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final StringSink sink = new StringSink();
-    private static final double EPSILON = 0.000001;
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
     public static String exportRoot = null;
@@ -493,14 +489,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return TestUtils.createTable(engine, model);
     }
 
-    public static boolean doubleEquals(double a, double b, double epsilon) {
-        return a == b || Math.abs(a - b) < epsilon;
-    }
-
-    public static boolean doubleEquals(double a, double b) {
-        return doubleEquals(a, b, EPSILON);
-    }
-
     public static void executeWithRewriteTimestamp(CharSequence sqlText, String timestampType) throws SqlException {
         sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType);
         engine.execute(sqlText, sqlExecutionContext);
@@ -621,7 +609,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public static String replaceTimestampSuffix1(String expected, String timestampType) {
-        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replaceAll("00Z", "00000Z").replaceAll("-00000", "-00000000") : expected;
+        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replace("00Z", "00000Z").replace("-00000", "-00000000") : expected;
     }
 
     @BeforeClass
@@ -734,35 +722,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         tearDown(true);
         super.tearDown();
         spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
-    }
-
-    private static void assertCalculateSize(RecordCursorFactory factory) throws SqlException {
-        long size;
-        SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-        RecordCursor.Counter counter = new RecordCursor.Counter();
-
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            cursor.calculateSize(circuitBreaker, counter);
-            Assert.assertFalse("hasNext() returned true after calculateSize exhausted the cursor", cursor.hasNext());
-            size = counter.get();
-            long preComputeStateSize = cursor.preComputedStateSize();
-            cursor.toTop();
-            Assert.assertEquals(preComputeStateSize, cursor.preComputedStateSize());
-            counter.clear();
-            cursor.calculateSize(circuitBreaker, counter);
-            Assert.assertFalse("hasNext() returned true after calculateSize exhausted the cursor", cursor.hasNext());
-            long sizeAfterToTop = counter.get();
-
-            Assert.assertEquals(size, sizeAfterToTop);
-        }
-
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            counter.clear();
-            cursor.calculateSize(circuitBreaker, counter);
-            long sizeAfterReopen = counter.get();
-
-            Assert.assertEquals(size, sizeAfterReopen);
-        }
     }
 
     private static void assertSymbolColumnThreadSafety(int numberOfIterations, int symbolColumnCount, ObjList<SymbolTable> symbolTables, int[] symbolTableKeySnapshot, String[][] symbolTableValueSnapshot) {
@@ -1097,95 +1056,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, sqlExecutionContext);
     }
 
-    protected static void assertCursorRawRecords(Record[] expected, RecordCursorFactory factory, boolean expectSize) throws SqlException {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            if (expected == null) {
-                Assert.assertFalse(cursor.hasNext());
-                cursor.toTop();
-                Assert.assertFalse(cursor.hasNext());
-                return;
-            }
-
-            final long rowsCount = cursor.size();
-            if (expectSize) {
-                Assert.assertEquals(rowsCount, expected.length);
-            }
-
-            RecordMetadata metadata = factory.getMetadata();
-
-            testSymbolAPI(metadata, cursor, factory.fragmentedSymbolTables());
-            cursor.toTop();
-            testStringsLong256AndBinary(metadata, cursor);
-
-            cursor.toTop();
-            final Record record = cursor.getRecord();
-            Assert.assertNotNull(record);
-            int expectedRow = 0;
-            while (cursor.hasNext()) {
-                for (int col = 0, n = metadata.getColumnCount(); col < n; col++) {
-                    switch (ColumnType.tagOf(metadata.getColumnType(col))) {
-                        case ColumnType.BOOLEAN:
-                            Assert.assertEquals(expected[expectedRow].getBool(col), record.getBool(col));
-                            break;
-                        case ColumnType.BYTE:
-                            Assert.assertEquals(expected[expectedRow].getByte(col), record.getByte(col));
-                            break;
-                        case ColumnType.SHORT:
-                            Assert.assertEquals(expected[expectedRow].getShort(col), record.getShort(col));
-                            break;
-                        case ColumnType.CHAR:
-                            Assert.assertEquals(expected[expectedRow].getChar(col), record.getChar(col));
-                            break;
-                        case ColumnType.INT:
-                            Assert.assertEquals(expected[expectedRow].getInt(col), record.getInt(col));
-                            break;
-                        case ColumnType.LONG:
-                            Assert.assertEquals(expected[expectedRow].getLong(col), record.getLong(col));
-                            break;
-                        case ColumnType.DATE:
-                            Assert.assertEquals(expected[expectedRow].getDate(col), record.getDate(col));
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            Assert.assertEquals(expected[expectedRow].getTimestamp(col), record.getTimestamp(col));
-                            break;
-                        case ColumnType.FLOAT:
-                            Assert.assertTrue(doubleEquals(expected[expectedRow].getFloat(col), record.getFloat(col)));
-                            break;
-                        case ColumnType.DOUBLE:
-                            Assert.assertTrue(doubleEquals(expected[expectedRow].getDouble(col), record.getDouble(col)));
-                            break;
-                        case ColumnType.STRING:
-                            TestUtils.assertEquals(expected[expectedRow].getStrA(col), record.getStrA(col));
-                            break;
-                        case ColumnType.SYMBOL:
-                            TestUtils.assertEquals(expected[expectedRow].getSymA(col), record.getSymA(col));
-                            break;
-                        case ColumnType.IPv4:
-                            Assert.assertEquals(expected[expectedRow].getIPv4(col), record.getIPv4(col));
-                            break;
-                        case ColumnType.LONG256:
-                            Long256 l1 = expected[expectedRow].getLong256A(col);
-                            Long256 l2 = record.getLong256A(col);
-                            Assert.assertEquals(l1.getLong0(), l2.getLong0());
-                            Assert.assertEquals(l1.getLong1(), l2.getLong1());
-                            Assert.assertEquals(l1.getLong2(), l2.getLong2());
-                            Assert.assertEquals(l1.getLong3(), l2.getLong3());
-                            break;
-                        case ColumnType.BINARY:
-                            TestUtils.assertEquals(expected[expectedRow].getBin(col), record.getBin(col), record.getBin(col).length());
-                        default:
-                            Assert.fail("Unknown column type");
-                            break;
-                    }
-                }
-                expectedRow++;
-            }
-            Assert.assertTrue((expectSize && rowsCount != -1) || (!expectSize && rowsCount == -1));
-            Assert.assertTrue(rowsCount == -1 || expectedRow == rowsCount);
-        }
-        assertFactoryMemoryUsage();
-    }
-
     protected static void assertException(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
         assertMemoryLeak(() -> assertExceptionNoLeakCheck(sql, errorPos, contains, false));
     }
@@ -1237,7 +1107,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     Assert.fail("position: " + ((FlyweightMessageContainer) e).getPosition() + ", message: " + e.getMessage());
                 }
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
-                Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
+                if (errorPos > -1) {
+                    Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
+                }
             } else {
                 throw e;
             }
@@ -1315,153 +1187,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         });
     }
 
-    protected static void assertQuery(Record[] expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean expectSize) throws Exception {
-        assertQuery(expected, query, ddl, expectedTimestamp, null, null, expectSize);
-    }
-
-    protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp) throws Exception {
-        assertQuery(expected, query, ddl, expectedTimestamp, null, null, true, false, false);
-    }
-
-    protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess) throws Exception {
-        assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, false, false);
-    }
-
-    /**
-     * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
-     */
-    protected static void assertQuery(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess
-    ) throws Exception {
-        assertQuery(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, false, false);
-    }
-
-    protected static void assertQuery(
-            Record[] expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable Record[] expected2,
-            boolean expectSize
-    ) throws Exception {
-        assertMemoryLeak(() -> {
-            if (ddl != null) {
-                execute(ddl);
-            }
-
-            snapshotMemoryUsage();
-
-            RecordCursorFactory factory = select(query);
-            try {
-                assertTimestamp(expectedTimestamp, factory);
-                assertCursorRawRecords(expected, factory, expectSize);
-                // make sure we get the same outcome when we get factory to create new cursor
-                assertCursorRawRecords(expected, factory, expectSize);
-                // make sure strings, binary fields and symbols are compliant with expected record behaviour
-                assertVariableColumns(factory, sqlExecutionContext);
-
-                if (ddl2 != null) {
-                    execute(ddl2, sqlExecutionContext);
-
-                    int count = 3;
-                    while (count > 0) {
-                        try {
-                            assertCursorRawRecords(expected2, factory, expectSize);
-                            // and again
-                            assertCursorRawRecords(expected2, factory, expectSize);
-                            return;
-                        } catch (TableReferenceOutOfDateException e) {
-                            Misc.free(factory);
-                            factory = select(query);
-                            count--;
-                        }
-                    }
-                }
-            } finally {
-                Misc.free(factory);
-            }
-        });
-    }
-
-    protected static void assertQuery(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess,
-            boolean expectSize,
-            boolean sizeCanBeVariable
-    ) throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable));
-    }
-
-    /**
-     * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
-     */
-    protected static void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
-        assertQuery(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false);
-    }
-
-    protected static void assertQueryExpectSize(CharSequence expected, CharSequence query, CharSequence ddl) throws Exception {
-        assertQuery(expected, query, ddl, null, null, null, true, true, false);
-    }
-
-    /**
-     * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
-     */
-    protected static void assertQueryNoLeakCheck(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess
-    ) throws Exception {
-        assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, false, false);
-    }
-
-    protected static void assertQueryNoLeakCheck(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp) throws Exception {
-        assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, null, null, true, false, false);
-    }
-
-    protected static void assertQueryNoLeakCheck(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
-        assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false);
-    }
-
-    protected static void assertQueryNoLeakCheck(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess) throws Exception {
-        assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, false, false);
-    }
-
-    protected static void assertQueryNoLeakCheck(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess,
-            boolean expectSize,
-            boolean sizeCanBeVariable
-    ) throws Exception {
-        if (ddl != null) {
-            execute(ddl);
-            if (configuration.getWalEnabledDefault()) {
-                drainWalQueue();
-            }
-        }
-        printSqlResult(() -> expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable, null);
-    }
-
     protected static void assertSqlCursors(CharSequence expectedSql, CharSequence actualSql) throws SqlException {
         try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
             TestUtils.assertSqlCursors(
@@ -1472,13 +1197,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     LOG
             );
         }
-    }
-
-    /**
-     * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
-     */
-    protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory) throws SqlException {
-        assertTimestamp(expectedTimestamp, factory, sqlExecutionContext);
     }
 
     /**
@@ -1722,65 +1440,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static void printSqlResult(CharSequence expected, CharSequence query, CharSequence expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        printSqlResult(() -> expected, query, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false, null);
-    }
-
-    protected static void printSqlResult(
-            Supplier<? extends CharSequence> expectedSupplier,
-            CharSequence query,
-            CharSequence expectedTimestamp,
-            CharSequence ddl2,
-            CharSequence expected2,
-            boolean supportsRandomAccess,
-            boolean expectSize,
-            boolean sizeCanBeVariable,
-            CharSequence expectedPlan
-    ) throws SqlException {
-        snapshotMemoryUsage();
-        RecordCursorFactory factory = select(query);
-        if (expectedPlan != null) {
-            planSink.clear();
-            factory.toPlan(planSink);
-            assertCursor(expectedPlan, new ExplainPlanFactory(factory, ExplainModel.FORMAT_TEXT), false, expectSize, sizeCanBeVariable);
-        }
-        try {
-            assertTimestamp(expectedTimestamp, factory);
-            CharSequence expected = expectedSupplier.get();
-            assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable);
-            // make sure we get the same outcome when we get factory to create new cursor
-            assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable);
-            // make sure strings, binary fields and symbols are compliant with expected record behaviour
-            assertVariableColumns(factory, sqlExecutionContext);
-
-            if (ddl2 != null) {
-                execute(ddl2);
-                if (configuration.getWalEnabledDefault()) {
-                    drainWalQueue();
-                }
-
-                int count = 3;
-                while (count > 0) {
-                    try {
-                        assertCursor(expected2, factory, supportsRandomAccess, expectSize, sizeCanBeVariable);
-                        // and again
-                        assertCursor(expected2, factory, supportsRandomAccess, expectSize, sizeCanBeVariable);
-                        return;
-                    } catch (TableReferenceOutOfDateException e) {
-                        Misc.free(factory);
-                        factory = select(query);
-                        count--;
-                    }
-                }
-            }
-
-            // make sure calculateSize() produces consistent result
-            assertCalculateSize(factory);
-        } finally {
-            Misc.free(factory);
-        }
-    }
-
     protected static void releaseInactive(CairoEngine engine) {
         engine.releaseInactive();
         engine.releaseInactiveTableSequencers();
@@ -1886,7 +1545,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected void assertFactoryCursor(
+    protected static void assertFactoryCursor(
             CharSequence expected,
             String expectedTimestamp,
             RecordCursorFactory factory,
@@ -1935,163 +1594,25 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected void assertQuery(String expected, String query, boolean expectSize) throws Exception {
-        assertQuery(expected, query, null, null, true, expectSize);
-    }
-
-    protected void assertQuery(CharSequence expected, CharSequence query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
-        assertMemoryLeak(() -> assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false));
-    }
-
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess));
-    }
-
-    protected void assertQuery(String expected, String query, String expectedTimestamp) throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(expected, query, expectedTimestamp, false));
-    }
-
-    protected void assertQuery(String expected, String query, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        assertQueryFullFatNoLeakCheck(expected, query, null, supportsRandomAccess, expectSize, false);
-    }
-
-    protected void assertQueryAndCache(String expected, String query, String expectedTimestamp, boolean expectSize) throws SqlException {
-        assertQueryAndCache(expected, query, expectedTimestamp, false, expectSize);
-    }
-
-    protected void assertQueryAndCache(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        assertQueryAndCacheFullFat(expected, query, expectedTimestamp, supportsRandomAccess, expectSize);
-    }
-
-    protected void assertQueryAndCacheFullFat(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        snapshotMemoryUsage();
-        try (final RecordCursorFactory factory = select(query)) {
-            assertFactoryCursor(
-                    expected,
-                    expectedTimestamp,
-                    factory,
-                    supportsRandomAccess,
-                    sqlExecutionContext,
-                    expectSize,
-                    false
-            );
-        }
-    }
-
-    protected void assertQueryAndPlan(CharSequence expected, CharSequence expectedPlan, CharSequence query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
-        assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck(query, expectedPlan);
-            assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
-        });
-    }
-
-    protected void assertQueryAndPlan(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess,
-            boolean expectSize,
-            boolean sizeCanBeVariable,
-            @Nullable CharSequence expectedPlan
-    ) throws Exception {
-        assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable);
-            assertPlanNoLeakCheck(query, expectedPlan);
-        });
-    }
-
-    protected void assertQueryFullFatNoLeakCheck(CharSequence expected, CharSequence query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean fullFatJoin) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.setFullFatJoins(fullFatJoin);
-            assertQueryNoLeakCheck(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
-        }
-    }
-
-    protected void assertQueryNoLeakCheck(
-            SqlCompiler compiler,
-            CharSequence expected,
-            CharSequence query,
-            String expectedTimestamp,
-            SqlExecutionContext sqlExecutionContext,
-            boolean supportsRandomAccess,
-            boolean expectSize
-    ) throws SqlException {
-        snapshotMemoryUsage();
-        try (final RecordCursorFactory factory = CairoEngine.select(compiler, query, sqlExecutionContext)) {
-            assertFactoryCursor(
-                    expected,
-                    expectedTimestamp,
-                    factory,
-                    supportsRandomAccess,
-                    sqlExecutionContext,
-                    expectSize,
-                    false
-            );
-        }
-    }
-
-    protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            assertQueryNoLeakCheck(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, false);
-        }
-    }
-
-    protected void assertQueryNoLeakCheck(SqlCompiler compiler, String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        assertQueryNoLeakCheck(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, false);
-    }
-
-    protected void assertQueryNoLeakCheck(SqlCompiler compiler, String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext, boolean expectSize) throws SqlException {
-        assertQueryNoLeakCheck(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
-    }
-
-    protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean sizeCanBeVariable) throws SqlException {
-        snapshotMemoryUsage();
-        try (final RecordCursorFactory factory = select(query)) {
-            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, expectSize, sizeCanBeVariable);
-        }
-    }
-
-    protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
-        assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
-    }
-
-    protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp) throws SqlException {
-        assertQueryNoLeakCheck(expected, query, expectedTimestamp, false);
-    }
-
-    protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            assertQueryNoLeakCheck(compiler, expected, query, expectedTimestamp, supportsRandomAccess, sqlExecutionContext);
-        }
-    }
-
-    protected void assertQueryNoLeakCheck(String expected, String query) throws SqlException {
-        assertQueryNoLeakCheck(expected, query, true);
-    }
-
-    protected void assertQueryNoLeakCheck(String expected, String query, boolean expectSize) throws SqlException {
-        snapshotMemoryUsage();
-        try (RecordCursorFactory factory = select(query)) {
-            assertFactoryCursor(
-                    expected,
-                    null,
-                    factory,
-                    true,
-                    sqlExecutionContext,
-                    expectSize,
-                    false
-            );
-        }
-    }
-
-    protected void assertQueryNoLeakCheckWithFatJoin(String sql, String expected, String ts, boolean fullFatJoins, boolean randomAccess, boolean expectedSize) throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.setFullFatJoins(fullFatJoins);
-            assertQueryNoLeakCheck(expected, sql, ts, randomAccess, expectedSize);
-        }
+    /**
+     * Entry point for the fluent query-assertion builder. The expected output is supplied to the
+     * terminal step ({@link QueryAssertion#returns}, {@link QueryAssertion#returnsRecords},
+     * {@link QueryAssertion#fails}), so every chain reads as query -&gt; options -&gt; expectation:
+     * <pre>
+     * assertQuery("select * from x")
+     *         .timestamp("ts")
+     *         .expectSize()
+     *         .returns(expected);
+     *
+     * assertQuery("select foo from bar").fails(12, "Invalid column");
+     * </pre>
+     * Defaults mirror the most common historical behavior: leak checking on,
+     * {@code supportsRandomAccess=true}, {@code expectSize=false}, {@code sizeCanBeVariable=false},
+     * and no designated timestamp (the result is asserted to have no timestamp unless
+     * {@link QueryAssertion#timestamp} is called).
+     */
+    protected QueryAssertion assertQuery(CharSequence query) {
+        return new QueryAssertion(engine, sqlExecutionContext, this::prepareForQueryAssertion, query);
     }
 
     protected File assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
@@ -2118,6 +1639,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertSegmentLocked(tableToken, walId, segmentId);
     }
 
+    // todo: delete
     protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected);
@@ -2244,7 +1766,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected PoolListener createWriterReleaseListener(CharSequence tableName, SOCountDownLatch latch) {
-        return (factoryType, thread, tableToken, event, segment, position) -> {
+        return (factoryType, _, tableToken, event, _, _) -> {
             if (
                     factoryType == PoolListener.SRC_WRITER
                             && event == PoolListener.EV_RETURN
@@ -2277,6 +1799,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus) {
         return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), messageBus, engine);
+    }
+
+    /**
+     * Hook invoked by the {@link QueryAssertion} builder immediately before it runs a query assertion.
+     * The default implementation does nothing. Subclasses override it to bring shared state up to date
+     * before the assertion reads it (for example, draining the WAL apply queue).
+     */
+    protected void prepareForQueryAssertion() {
     }
 
     protected long update(CharSequence updateSql) throws SqlException {

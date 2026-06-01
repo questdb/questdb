@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Misc;
@@ -81,8 +80,8 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getSqlSortKeyMaxPages() {
-                return 2;
+            public long getSqlSortKeyMaxBytes() {
+                return 128;
             }
 
             @Override
@@ -91,8 +90,8 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getSqlSortLightValueMaxPages() {
-                return 1;
+            public long getSqlSortLightValueMaxBytes() {
+                return 32;
             }
 
             @Override
@@ -237,23 +236,20 @@ public class SecurityTest extends AbstractCairoTest {
     public void testAlterTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            memoryRestrictedEngine.reloadTableNames();
 
             execute("insert into balances values (1, 'EUR', 140.6)");
-            assertQuery(
-                    "cust_id\tccy\tbalance\n1\tEUR\t140.6\n",
-                    "select * from balances",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select * from balances")
+                    .expectSize()
+                    .returns("cust_id\tccy\tbalance\n1\tEUR\t140.6\n");
 
-            try {
-                assertExceptionNoLeakCheck("alter table balances add column newcol int", readOnlyExecutionContext);
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("permission denied"));
-            }
-            assertQueryNoLeakCheck("cust_id\tccy\tbalance\n1\tEUR\t140.6\n", "select * from balances");
+            assertQuery("alter table balances add column newcol int")
+                    .withContext(readOnlyExecutionContext)
+                    .noLeakCheck()
+                    .failsWith("permission denied");
+            assertQuery("select * from balances")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("cust_id\tccy\tbalance\n1\tEUR\t140.6\n");
         });
     }
 
@@ -335,36 +331,24 @@ public class SecurityTest extends AbstractCairoTest {
                     " rnd_double(2) d1," +
                     " timestamp_sequence(0, 1000000000) ts1" +
                     " from long_sequence(10000)) timestamp(ts1)");
-            memoryRestrictedEngine.reloadTableNames();
 
-            assertQueryNoLeakCheck(
-                    memoryRestrictedCompiler,
-                    """
+            assertQuery("select sum(d1) from tb1 where d1 < 0.2")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sum
                             165.6121723103405
-                            """,
-                    "select sum(d1) from tb1 where d1 < 0.2",
-                    null,
-                    false,
-                    readOnlyExecutionContext,
-                    true
-            );
+                            """);
             Assert.assertTrue(nCheckInterruptedCalls.get() > 0);
-            try {
-                setMaxCircuitBreakerChecks(2);
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
-                        "select sum(d1) from tb1 where d1 < 0.2",
-                        null,
-                        false,
-                        readOnlyExecutionContext,
-                        true
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("Interrupting SQL processing, max calls is 2"));
-            }
+            setMaxCircuitBreakerChecks(2);
+            assertQuery("select sum(d1) from tb1 where d1 < 0.2")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("Interrupting SQL processing, max calls is 2");
         });
     }
 
@@ -382,41 +366,30 @@ public class SecurityTest extends AbstractCairoTest {
                     " rnd_double(2) d2," +
                     " timestamp_sequence(10000000000, 1000000000) ts2" +
                     " from long_sequence(100)) timestamp(ts2)");
-            assertQueryNoLeakCheck(
-                    memoryRestrictedCompiler,
-                    "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
-                    "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
-                    null,
-                    false,
-                    readOnlyExecutionContext
-            );
+            assertQuery("select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .noRandomAccess()
+                    .returns("sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n");
             Assert.assertTrue(nCheckInterruptedCalls.get() > 0);
-            try {
-                setMaxCircuitBreakerChecks(2);
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
-                        "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("Interrupting SQL processing, max calls is 2"));
-            }
+            setMaxCircuitBreakerChecks(2);
+            assertQuery("select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("Interrupting SQL processing, max calls is 2");
         });
     }
 
     @Test
     public void testCopyDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                execute("create table testDisallowCopySerial (l long)");
-                assertExceptionNoLeakCheck("copy testDisallowCopySerial from '/test-alltypes.csv' with header true", readOnlyExecutionContext);
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.toString(), "permission denied");
-            }
+            execute("create table testDisallowCopySerial (l long)");
+            assertQuery("copy testDisallowCopySerial from '/test-alltypes.csv' with header true")
+                    .withContext(readOnlyExecutionContext)
+                    .noLeakCheck()
+                    .failsWith("permission denied");
         });
     }
 
@@ -442,12 +415,9 @@ public class SecurityTest extends AbstractCairoTest {
             } catch (Exception ex) {
                 TestUtils.assertContains(ex.getMessage(), "permission denied");
             }
-            try {
-                assertQueryNoLeakCheck("count\n1\n", "select count() from balances", null);
-                Assert.fail();
-            } catch (SqlException ex) {
-                Assert.assertTrue(ex.toString().contains("table does not exist"));
-            }
+            assertQuery("select count() from balances")
+                    .noLeakCheck()
+                    .failsWith("table does not exist");
         });
     }
 
@@ -475,7 +445,10 @@ public class SecurityTest extends AbstractCairoTest {
             } catch (Exception ex) {
                 TestUtils.assertContains(ex.getMessage(), "permission denied");
             }
-            assertQuery("count\n0\n", "select count() from balances", null, false, true);
+            assertQuery("select count() from balances")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
         });
     }
 
@@ -483,19 +456,17 @@ public class SecurityTest extends AbstractCairoTest {
     public void testInsertDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            memoryRestrictedEngine.reloadTableNames();
 
-            assertQuery("count\n0\n", "select count() from balances", null, false, true);
+            assertQuery("select count() from balances")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
 
             execute("insert into balances values (1, 'EUR', 140.6)");
-            assertQuery(
-                    "count\n1\n",
-                    "select count() from balances",
-
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select count() from balances")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
 
             try {
                 execute("insert into balances values (2, 'ZAR', 140.6)", readOnlyExecutionContext);
@@ -504,7 +475,10 @@ public class SecurityTest extends AbstractCairoTest {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
 
-            assertQuery("count\n1\n", "select count() from balances", null, false, true);
+            assertQuery("select count() from balances")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
         });
     }
 
@@ -526,9 +500,11 @@ public class SecurityTest extends AbstractCairoTest {
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(1000)) timestamp(ts)");
-            assertQueryNoLeakCheck(
-                    memoryRestrictedCompiler,
-                    """
+            assertQuery("select sym2, d from tb1 where d < 0.01 order by sym2")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .returns("""
                             sym2\td
                             GZ\t0.0011075361080621349
                             GZ\t0.007985454958725269
@@ -540,25 +516,12 @@ public class SecurityTest extends AbstractCairoTest {
                             RX\t6.503932953429992E-4
                             RX\t0.006651203432318287
                             RX\t4.016718301054212E-4
-                            """,
-                    "select sym2, d from tb1 where d < 0.01 order by sym2",
-                    null,
-                    true,
-                    readOnlyExecutionContext
-            );
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym2, d from tb1 order by sym2",
-                        null,
-                        true,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("memory exceeded in EncodedSort"));
-            }
+                            """);
+            assertQuery("select sym2, d from tb1 order by sym2")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("memory exceeded in EncodedSort");
         });
     }
 
@@ -582,27 +545,19 @@ public class SecurityTest extends AbstractCairoTest {
                             " from long_sequence(1000)) timestamp(ts2)"
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                    "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                    null,
-                    false,
-                    true,
-                    true
-            );
+            assertQuery("select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
+                    .noRandomAccess()
+                    .expectSize()
+                    .fullFatJoins()
+                    .noLeakCheck()
+                    .returns("sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n");
             memoryRestrictedCompiler.setFullFatJoins(true);
             try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+                assertQuery("select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
+                        .noLeakCheck()
+                        .withCompiler(memoryRestrictedCompiler)
+                        .withContext(readOnlyExecutionContext)
+                        .failsWith("limit of 2 resizes exceeded");
             } finally {
                 memoryRestrictedCompiler.setFullFatJoins(false);
             }
@@ -628,28 +583,19 @@ public class SecurityTest extends AbstractCairoTest {
                             " from long_sequence(1000)) timestamp(ts2)"
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                    "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                    null,
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
+                    .noRandomAccess()
+                    .fullFatJoins()
+                    .noLeakCheck()
+                    .returns("sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n");
 
             memoryRestrictedCompiler.setFullFatJoins(true);
             try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+                assertQuery("select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
+                        .noLeakCheck()
+                        .withCompiler(memoryRestrictedCompiler)
+                        .withContext(readOnlyExecutionContext)
+                        .failsWith("limit of 2 resizes exceeded");
             } finally {
                 memoryRestrictedCompiler.setFullFatJoins(false);
             }
@@ -670,27 +616,15 @@ public class SecurityTest extends AbstractCairoTest {
                     " rnd_double(2) d2," +
                     " timestamp_sequence(0, 1000000000) ts2" +
                     " from long_sequence(1000)) timestamp(ts2)");
-            assertQuery(
-                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                    "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                    null,
-                    false,
-                    false
-            );
+            assertQuery("select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
+                    .noRandomAccess()
+                    .returns("sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n");
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
+            assertQuery("select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
         });
     }
 
@@ -704,19 +638,11 @@ public class SecurityTest extends AbstractCairoTest {
                     " rnd_long() d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(100)) timestamp(ts)");
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select ts, d from tb1 LATEST ON ts PARTITION BY d",
-                        "ts",
-                        true,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
+            assertQuery("select ts, d from tb1 LATEST ON ts PARTITION BY d")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
         });
     }
 
@@ -745,27 +671,15 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts2" +
                     " from long_sequence(1000)) timestamp(ts2)");
 
-            assertQuery(
-                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                    "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                    null,
-                    false,
-                    false
-            );
+            assertQuery("select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
+                    .noRandomAccess()
+                    .returns("sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n");
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
+            assertQuery("select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
         });
     }
 
@@ -779,35 +693,24 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(20)) timestamp(ts)");
 
-            assertQueryNoLeakCheck(
-                    memoryRestrictedCompiler,
-                    """
+            assertQuery("select sym, d from tb1 where d < 0.2 ORDER BY d")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .returns("""
                             sym\td
                             VTJW\t0.05384400312338511
                             PEHN\t0.16474369169931913
                             HYRX\t0.17370570324289436
                             VTJW\t0.18769708157331322
                             VTJW\t0.1985581797355932
-                            """,
-                    "select sym, d from tb1 where d < 0.2 ORDER BY d",
-                    null,
-                    true,
-                    readOnlyExecutionContext
-            );
+                            """);
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym, d from tb1 ORDER BY d",
-                        null,
-                        true,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("memory exceeded in EncodedSort"));
-            }
+            assertQuery("select sym, d from tb1 ORDER BY d")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("memory exceeded in EncodedSort");
         });
     }
 
@@ -822,33 +725,17 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)");
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear) ALIGN TO FIRST OBSERVATION",
-                        "ts",
-                        true,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
+            assertQuery("select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear) ALIGN TO CALENDAR",
-                        "ts",
-                        true,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
+            assertQuery("select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
         });
     }
 
@@ -863,33 +750,17 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)");
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none) ALIGN TO FIRST OBSERVATION",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                TestUtils.assertContains(ex.getMessage(), "limit of 2 resizes exceeded");
-            }
+            assertQuery("select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none) ALIGN TO CALENDAR",
-                        null,
-                        true,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                TestUtils.assertContains(ex.getMessage(), "limit of 2 resizes exceeded");
-            }
+            assertQuery("select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
         });
     }
 
@@ -904,33 +775,17 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)");
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null) ALIGN TO FIRST OBSERVATION",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
+            assertQuery("select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null) ALIGN TO CALENDAR",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
+            assertQuery("select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
         });
     }
 
@@ -945,33 +800,17 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)");
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev) ALIGN TO FIRST OBSERVATION",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
+            assertQuery("select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev) ALIGN TO CALENDAR",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
+            assertQuery("select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
         });
     }
 
@@ -986,33 +825,17 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 100000000000) ts" +
                     " from long_sequence(1000)) timestamp(ts)");
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0) ALIGN TO FIRST OBSERVATION",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
+            assertQuery("select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0) ALIGN TO CALENDAR",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
+            assertQuery("select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
         });
     }
 
@@ -1031,27 +854,17 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(10000000000, 1000000000) ts2" +
                     " from long_sequence(100)) timestamp(ts2)");
 
-            assertQueryNoLeakCheck(
-                    memoryRestrictedCompiler,
-                    "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
-                    "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
-                    null,
-                    false,
-                    readOnlyExecutionContext
-            );
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
+            assertQuery("select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .noRandomAccess()
+                    .returns("sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n");
+            assertQuery("select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("limit of 2 resizes exceeded");
         });
     }
 
@@ -1070,27 +883,16 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts2" +
                     " from long_sequence(10)) timestamp(ts2)");
 
-            assertQueryNoLeakCheck(
-                    memoryRestrictedCompiler,
-                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                    "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.3 ORDER BY d1",
-                    null,
-                    true,
-                    readOnlyExecutionContext
-            );
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.9 ORDER BY d1",
-                        null,
-                        true,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("memory exceeded in EncodedSort"));
-            }
+            assertQuery("select sym1, sym2 from tb1 asof join tb2 where d1 < 0.3 ORDER BY d1")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .returns("sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n");
+            assertQuery("select sym1, sym2 from tb1 asof join tb2 where d1 < 0.9 ORDER BY d1")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("memory exceeded in EncodedSort");
         });
     }
 
@@ -1098,12 +900,14 @@ public class SecurityTest extends AbstractCairoTest {
     public void testRenameTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
-            try {
-                assertExceptionNoLeakCheck("rename table balances to newname", readOnlyExecutionContext);
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("permission denied"));
-            }
-            assertQuery("count\n0\n", "select count() from balances", null, false, true);
+            assertQuery("rename table balances to newname")
+                    .withContext(readOnlyExecutionContext)
+                    .noLeakCheck()
+                    .failsWith("permission denied");
+            assertQuery("select count() from balances")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
         });
     }
 
@@ -1126,35 +930,22 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(4000)) timestamp(ts)");
 
-            memoryRestrictedEngine.reloadTableNames();
-            assertQueryNoLeakCheck(
-                    memoryRestrictedCompiler,
-                    """
+            assertQuery("select sym2, count() from tb1 order by sym2")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .expectSize()
+                    .returns("""
                             sym2\tcount
                             ED\t1968
                             RQ\t2032
-                            """,
-                    "select sym2, count() from tb1 order by sym2",
-                    null,
-                    true,
-                    readOnlyExecutionContext,
-                    true
-            );
+                            """);
 
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, count() from tb1 order by sym1, count()",
-                        null,
-                        true,
-                        readOnlyExecutionContext,
-                        true
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("memory exceeded in EncodedSort"));
-            }
+            assertQuery("select sym1, count() from tb1 order by sym1, count()")
+                    .noLeakCheck()
+                    .withCompiler(memoryRestrictedCompiler)
+                    .withContext(readOnlyExecutionContext)
+                    .failsWith("memory exceeded in EncodedSort");
         });
     }
 
@@ -1181,26 +972,16 @@ public class SecurityTest extends AbstractCairoTest {
                             " from long_sequence(1000)) timestamp(ts2)"
             );
 
-            assertQuery(
-                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                    "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3",
-                    null,
-                    false,
-                    false
-            );
+            assertQuery("select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3")
+                    .noRandomAccess()
+                    .returns("sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n");
             memoryRestrictedCompiler.setFullFatJoins(fullFat);
             try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3",
-                        null,
-                        false,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+                assertQuery("select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3")
+                        .noLeakCheck()
+                        .withCompiler(memoryRestrictedCompiler)
+                        .withContext(readOnlyExecutionContext)
+                        .failsWith("limit of 2 resizes exceeded");
             } finally {
                 memoryRestrictedCompiler.setFullFatJoins(false);
             }
@@ -1232,23 +1013,7 @@ public class SecurityTest extends AbstractCairoTest {
     }
 
     @Override
-    protected void assertQueryNoLeakCheck(
-            SqlCompiler compiler,
-            String expected,
-            String query,
-            String expectedTimestamp,
-            boolean supportsRandomAccess,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    protected void prepareForQueryAssertion() {
         memoryRestrictedEngine.reloadTableNames();
-        assertQueryNoLeakCheck(
-                compiler,
-                expected,
-                query,
-                expectedTimestamp,
-                supportsRandomAccess,
-                sqlExecutionContext,
-                false
-        );
     }
 }

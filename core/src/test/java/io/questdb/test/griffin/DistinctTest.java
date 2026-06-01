@@ -55,16 +55,8 @@ public class DistinctTest extends AbstractCairoTest {
                         "  from long_sequence(100)" +
                         ") timestamp(created);"
         );
-        assertQueryAndPlan(
-                """
-                        sym\torigin\tlag
-                        foo\t315515118\tnull
-                        foo\t73575701\t315515118
-                        foo\t592859671\t73575701
-                        foo\t-1191262516\t592859671
-                        foo\t-1575378703\t-1191262516
-                        """,
-                """
+        assertQuery("SELECT DISTINCT sym, origin, lag(origin) over() from x limit 5")
+                .withPlan("""
                         Limit value: 5 skip-rows: 0 take-rows: 5
                             Distinct
                               keys: sym,origin,lag
@@ -74,26 +66,20 @@ public class DistinctTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                        """,
-                "SELECT DISTINCT sym, origin, lag(origin) over() from x limit 5",
-                null,
-                false,
-                true
-        );
-
-        assertQueryAndPlan(
-                """
+                        """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sym\torigin\tlag
-                        foo\t2137969456\t264240638
-                        foo\t68265578\t2137969456
-                        foo\t44173540\t68265578
-                        foo\t-2144581835\t44173540
-                        foo\t-1162267908\t-2144581835
-                        foo\t-1575135393\t-1162267908
-                        foo\t326010667\t-1575135393
-                        foo\t-2034804966\t326010667
-                        """,
-                """
+                        foo\t315515118\tnull
+                        foo\t73575701\t315515118
+                        foo\t592859671\t73575701
+                        foo\t-1191262516\t592859671
+                        foo\t-1575378703\t-1191262516
+                        """);
+
+        assertQuery("SELECT DISTINCT sym, origin, lag(origin) over() from x limit 20, 28")
+                .withPlan("""
                         Limit left: 20 right: 28 skip-rows: 20 take-rows: 8
                             Distinct
                               keys: sym,origin,lag
@@ -103,24 +89,24 @@ public class DistinctTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                        """,
-                "SELECT DISTINCT sym, origin, lag(origin) over() from x limit 20, 28",
-                null,
-                false,
-                true
-        );
+                        """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sym\torigin\tlag
+                        foo\t2137969456\t264240638
+                        foo\t68265578\t2137969456
+                        foo\t44173540\t68265578
+                        foo\t-2144581835\t44173540
+                        foo\t-1162267908\t-2144581835
+                        foo\t-1575135393\t-1162267908
+                        foo\t326010667\t-1575135393
+                        foo\t-2034804966\t326010667
+                        """);
 
         // no early exit
-        assertQueryAndPlan(
-                """
-                        sym\torigin\tlag
-                        foo\t874367915\t-1775036711
-                        foo\t1431775887\t874367915
-                        foo\t-1822590290\t1431775887
-                        foo\t957075831\t-1822590290
-                        foo\t-2043541236\t957075831
-                        """,
-                """
+        assertQuery("SELECT DISTINCT sym, origin, lag(origin) over() from x limit -5")
+                .withPlan("""
                         Limit value: -5 skip-rows: 95 take-rows: 5
                             Distinct
                               keys: sym,origin,lag
@@ -129,24 +115,21 @@ public class DistinctTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
-                        """,
-                "SELECT DISTINCT sym, origin, lag(origin) over() from x limit -5",
-                null,
-                false,
-                true
-        );
+                        """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sym\torigin\tlag
+                        foo\t874367915\t-1775036711
+                        foo\t1431775887\t874367915
+                        foo\t-1822590290\t1431775887
+                        foo\t957075831\t-1822590290
+                        foo\t-2043541236\t957075831
+                        """);
 
         // no early exit
-        assertQueryAndPlan(
-                """
-                        sym\torigin\tlag
-                        foo\t315515118\tnull
-                        foo\t73575701\t315515118
-                        foo\t592859671\t73575701
-                        foo\t-1191262516\t592859671
-                        foo\t-1575378703\t-1191262516
-                        """,
-                """
+        assertQuery("SELECT DISTINCT sym, origin, lag(origin) over() from x order by 1 limit 5")
+                .withPlan("""
                         Limit value: 5 skip-rows: 0 take-rows: 5
                             Encode sort
                               keys: [sym]
@@ -157,191 +140,166 @@ public class DistinctTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                        """,
-                "SELECT DISTINCT sym, origin, lag(origin) over() from x order by 1 limit 5",
-                null,
-                true,
-                true
-        );
+                        """)
+                .expectSize()
+                .returns("""
+                        sym\torigin\tlag
+                        foo\t315515118\tnull
+                        foo\t73575701\t315515118
+                        foo\t592859671\t73575701
+                        foo\t-1191262516\t592859671
+                        foo\t-1575378703\t-1191262516
+                        """);
     }
 
     @Test
     public void testDistinctWithAlias() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
-        assertQuery(
-                """
-                        created
-                        1970-01-01T00:00:00.000000Z
-                        """,
-                "SELECT distinct sa.created FROM x sa;",
-                "create table x as (" +
+        assertQuery("SELECT distinct sa.created FROM x sa;")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
                         "    rnd_short() event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(10)" +
-                        ") timestamp(created);",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(created);")
+                .expectSize()
+                .returns("""
+                        created
+                        1970-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
     public void testDuplicateColumn() throws Exception {
-        assertQuery(
-                """
-                        e1\te2
-                        24814\t24814
-                        -13027\t-13027
-                        -22955\t-22955
-                        """,
-                "SELECT DISTINCT event e1, event e2 FROM x order by 1 desc;",
-                "create table x as (" +
+        assertQuery("SELECT DISTINCT event e1, event e2 FROM x order by 1 desc;")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
                         "    rnd_short() event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(3)" +
-                        ") timestamp(created);",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(created);")
+                .expectSize()
+                .returns("""
+                        e1\te2
+                        24814\t24814
+                        -13027\t-13027
+                        -22955\t-22955
+                        """);
     }
 
     @Test
     public void testDuplicateColumnInWhereClauseSubQuery() throws Exception {
-        assertQuery(
-                """
-                        origin\tevent\tcreated
-                        -27056\ta\t1970-01-01T00:00:00.000000Z
-                        -11455\tc\t1970-01-01T00:00:00.000000Z
-                        -21227\tc\t1970-01-01T00:00:00.000000Z
-                        """,
-                "SELECT * FROM x WHERE event IN (SELECT * FROM (SELECT DISTINCT event, event FROM x));",
-                "create table x as (" +
+        assertQuery("SELECT * FROM x WHERE event IN (SELECT * FROM (SELECT DISTINCT event, event FROM x));")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
                         "    rnd_symbol('a','b','c') event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(3)" +
-                        ") timestamp(created);",
-                "created",
-                true,
-                false
-        );
+                        ") timestamp(created);")
+                .timestamp("created")
+                .returns("""
+                        origin\tevent\tcreated
+                        -27056\ta\t1970-01-01T00:00:00.000000Z
+                        -11455\tc\t1970-01-01T00:00:00.000000Z
+                        -21227\tc\t1970-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
     public void testDuplicateColumnWithSubQuery() throws Exception {
-        assertQuery(
-                """
-                        e1\te2
-                        -24814\t-24814
-                        13027\t13027
-                        22955\t22955
-                        """,
-                "SELECT DISTINCT event e1, event e2 FROM (SELECT origin, (-event) event FROM x) order by 1;",
-                "create table x as (" +
+        assertQuery("SELECT DISTINCT event e1, event e2 FROM (SELECT origin, (-event) event FROM x) order by 1;")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
                         "    rnd_short() event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(3)" +
-                        ") timestamp(created);",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(created);")
+                .expectSize()
+                .returns("""
+                        e1\te2
+                        -24814\t-24814
+                        13027\t13027
+                        22955\t22955
+                        """);
     }
 
     @Test
     public void testDuplicateColumnWithUnion() throws Exception {
-        assertQuery(
-                """
+        assertQuery("(SELECT 42 e1, 42 e2) UNION (SELECT DISTINCT event e1, event e2 FROM x order by 1);")
+                .ddl("create table x as (" +
+                        "  select" +
+                        "    rnd_short() origin," +
+                        "    rnd_short() event," +
+                        "    timestamp_sequence(0, 0) created" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(created);")
+                .noRandomAccess()
+                .returns("""
                         e1\te2
                         42\t42
                         -22955\t-22955
                         -13027\t-13027
                         24814\t24814
-                        """,
-                "(SELECT 42 e1, 42 e2) UNION (SELECT DISTINCT event e1, event e2 FROM x order by 1);",
-                "create table x as (" +
-                        "  select" +
-                        "    rnd_short() origin," +
-                        "    rnd_short() event," +
-                        "    timestamp_sequence(0, 0) created" +
-                        "  from long_sequence(3)" +
-                        ") timestamp(created);",
-                null,
-                false,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testDuplicateCount() throws Exception {
-        assertQuery(
-                """
-                        count\tcount1
-                        10\t10
-                        """,
-                "SELECT DISTINCT count(*), count(*) FROM x;",
-                "create table x as (" +
+        assertQuery("SELECT DISTINCT count(*), count(*) FROM x;")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
                         "    rnd_short() event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(10)" +
-                        ") timestamp(created);",
-                null,
-                false,
-                true
-        );
+                        ") timestamp(created);")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count\tcount1
+                        10\t10
+                        """);
     }
 
     @Test
     public void testDuplicateCount2() throws Exception {
-        assertQuery(
-                """
-                        sym\tcount\tcount1
-                        foo\t10\t10
-                        """,
-                "SELECT DISTINCT sym, count(*), count(*) FROM x;",
-                "create table x as (" +
+        assertQuery("SELECT DISTINCT sym, count(*), count(*) FROM x;")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_symbol('foo') sym," +
                         "    rnd_short() origin," +
                         "    rnd_short() event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(10)" +
-                        ") timestamp(created);",
-                null,
-                false,
-                true
-        );
+                        ") timestamp(created);")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        sym\tcount\tcount1
+                        foo\t10\t10
+                        """);
     }
 
     @Test
     public void testDuplicateCountNested() throws Exception {
-        assertQuery(
-                """
-                        count\tcount1
-                        10\t10
-                        """,
-                "SELECT * FROM (SELECT DISTINCT count(*), count(*) FROM x);",
-                "create table x as (" +
+        assertQuery("SELECT * FROM (SELECT DISTINCT count(*), count(*) FROM x);")
+                .ddl("create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
                         "    rnd_short() event," +
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(10)" +
-                        ") timestamp(created);",
-                null,
-                false,
-                true
-        );
+                        ") timestamp(created);")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count\tcount1
+                        10\t10
+                        """);
     }
 
     @Test
@@ -378,14 +336,14 @@ public class DistinctTest extends AbstractCairoTest {
             execute("insert into sensors values ('air', 1, '1970-02-02T10:10:00');");
             execute("insert into sensors values ('air', 1, '1970-02-02T10:10:01');");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select distinct sensors.sensor_id, sensors.apptype " +
+                    "from sensors")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sensor_id\tapptype
                             air\t1
-                            """,
-                    "select distinct sensors.sensor_id, sensors.apptype " +
-                            "from sensors"
-            );
+                            """);
         });
     }
 
@@ -410,15 +368,15 @@ public class DistinctTest extends AbstractCairoTest {
             execute("insert into sensors values ('air', 1, '1970-02-02T10:10:01');");
             execute("insert into samples values ('air', '1970-02-02T10:10:00');");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select distinct samples.sensor_id, sensors.apptype " +
+                    "from samples " +
+                    "inner join sensors on sensors.sensor_id = samples.sensor_id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sensor_id\tapptype
                             air\t1
-                            """,
-                    "select distinct samples.sensor_id, sensors.apptype " +
-                            "from samples " +
-                            "inner join sensors on sensors.sensor_id = samples.sensor_id"
-            );
+                            """);
         });
     }
 
@@ -446,14 +404,14 @@ public class DistinctTest extends AbstractCairoTest {
             execute("insert into samples values ('air', 1, '1970-02-02T10:10:01');");
 
             final String secondAlias = columnAliasExprEnabled ? "apptype_2" : "apptype1";
-            assertQueryNoLeakCheck(
-                    "sensor_id\tapptype\t" + secondAlias + "\n" +
+            assertQuery("select distinct samples.sensor_id, sensors.apptype, samples.apptype " +
+                    "from samples " +
+                    "inner join sensors on sensors.sensor_id = samples.sensor_id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("sensor_id\tapptype\t" + secondAlias + "\n" +
                             "air\t2\t1\n" +
-                            "air\t1\t1\n",
-                    "select distinct samples.sensor_id, sensors.apptype, samples.apptype " +
-                            "from samples " +
-                            "inner join sensors on sensors.sensor_id = samples.sensor_id"
-            );
+                            "air\t1\t1\n");
         });
     }
 }

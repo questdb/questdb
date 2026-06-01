@@ -39,17 +39,16 @@ public class InformationSchemaTablesFunctionFactoryTest extends AbstractCairoTes
             execute("create table " + TelemetryTask.TABLE_NAME + " (i int)");
 
 
-            assertQuery("table_catalog\ttable_schema\ttable_name\ttable_type\tself_referencing_column_name\treference_generation\tuser_defined_type_catalog\tuser_defined_type_schema\tuser_defined_type_name\tis_insertable_into\tis_typed\tcommit_action\n",
-                    "select * from information_schema.tables() order by table_name",
-                    null, true, false);
+            assertQuery("select * from information_schema.tables() order by table_name")
+                    .returns("table_catalog\ttable_schema\ttable_name\ttable_type\tself_referencing_column_name\treference_generation\tuser_defined_type_catalog\tuser_defined_type_schema\tuser_defined_type_name\tis_insertable_into\tis_typed\tcommit_action\n");
         });
     }
 
     @Test
     public void testSelectWhenThereAreNoTables() throws Exception {
-        assertMemoryLeak(() -> assertQuery("table_catalog\ttable_schema\ttable_name\ttable_type\tself_referencing_column_name\treference_generation\tuser_defined_type_catalog\tuser_defined_type_schema\tuser_defined_type_name\tis_insertable_into\tis_typed\tcommit_action\n",
-                "select * from information_schema.tables()",
-                null, false, false));
+        assertMemoryLeak(() -> assertQuery("select * from information_schema.tables()")
+                .noRandomAccess()
+                .returns("table_catalog\ttable_schema\ttable_name\ttable_type\tself_referencing_column_name\treference_generation\tuser_defined_type_catalog\tuser_defined_type_schema\tuser_defined_type_name\tis_insertable_into\tis_typed\tcommit_action\n"));
     }
 
     @Test
@@ -58,11 +57,12 @@ public class InformationSchemaTablesFunctionFactoryTest extends AbstractCairoTes
             execute("create table first_table(i int)");
             execute("create table second_table(i int)");
 
-            assertQuery("table_catalog\ttable_schema\ttable_name\ttable_type\tself_referencing_column_name\treference_generation\tuser_defined_type_catalog\tuser_defined_type_schema\tuser_defined_type_name\tis_insertable_into\tis_typed\tcommit_action\n" +
-                            "qdb\tpublic\tfirst_table\tBASE TABLE\t\t\t\t\t\ttrue\tfalse\t\n" +
-                            "qdb\tpublic\tsecond_table\tBASE TABLE\t\t\t\t\t\ttrue\tfalse\t\n",
-                    "select * from information_schema.tables() order by table_name",
-                    null, true, false);
+            assertQuery("select * from information_schema.tables() order by table_name")
+                    .returns("""
+                            table_catalog\ttable_schema\ttable_name\ttable_type\tself_referencing_column_name\treference_generation\tuser_defined_type_catalog\tuser_defined_type_schema\tuser_defined_type_name\tis_insertable_into\tis_typed\tcommit_action
+                            qdb\tpublic\tfirst_table\tBASE TABLE\t\t\t\t\t\ttrue\tfalse\t
+                            qdb\tpublic\tsecond_table\tBASE TABLE\t\t\t\t\t\ttrue\tfalse\t
+                            """);
         });
     }
 }
