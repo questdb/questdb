@@ -35,6 +35,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -144,7 +145,9 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
 
         public WindowRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
             super(functions, supportsRandomAccess);
-            this.isOpen = true;
+            // Start closed so the first of() binds the per-query tracker on each
+            // window function and reopens its (lazy) per-partition map under it.
+            this.isOpen = false;
         }
 
         @Override
@@ -199,6 +202,12 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             if (!isOpen) {
                 isOpen = true;
                 try {
+                    // Bind the per-query tracker on each window function's per-partition
+                    // map before reopen() allocates the map backing under it.
+                    final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+                    for (int i = 0; i < windowFunctionsCount; i++) {
+                        windowFunctions.getQuick(i).setMemoryTracker(memoryTracker);
+                    }
                     reopen(functions);
                 } catch (Throwable t) {
                     close();

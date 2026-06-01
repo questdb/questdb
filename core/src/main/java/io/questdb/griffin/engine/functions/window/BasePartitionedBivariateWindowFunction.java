@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class BasePartitionedBivariateWindowFunction extends BaseBivariateWindowFunction implements Reopenable {
     protected final Map map;
@@ -50,6 +52,14 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
         this.map = map;
         this.partitionByRecord = partitionByRecord;
         this.partitionBySink = partitionBySink;
+        // Start the map closed (lazy), matching the openOnInit=false pattern used
+        // elsewhere for tracker-aware state: the owning cursor binds a per-query
+        // MemoryTracker via setMemoryTracker() and reopen() then allocates the backing
+        // under it, with reset() freeing it at cursor close -- symmetric on the
+        // per-query counter. Direct callers (e.g. unit tests) must reopen() before use.
+        if (map != null) {
+            map.close();
+        }
     }
 
     @Override
@@ -75,6 +85,13 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     @Override
     public void reset() {
         Misc.free(map);
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (map != null) {
+            map.setMemoryTracker(tracker);
+        }
     }
 
     @Override

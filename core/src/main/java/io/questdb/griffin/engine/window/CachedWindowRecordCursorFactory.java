@@ -46,6 +46,7 @@ import io.questdb.griffin.engine.orderby.LongTreeChain;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -530,6 +531,12 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 isOpen = true;
                 recordChain.setSymbolTableResolver(this);
                 reopenTrees(executionContext);
+                // Bind the per-query tracker on each window function's per-partition
+                // map before reopen() allocates the map backing under it.
+                final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+                for (int i = 0, n = allFunctions.size(); i < n; i++) {
+                    allFunctions.getQuick(i).setMemoryTracker(memoryTracker);
+                }
                 reopen(allFunctions);
             }
             Function.init(allFunctions, this, executionContext, null);
