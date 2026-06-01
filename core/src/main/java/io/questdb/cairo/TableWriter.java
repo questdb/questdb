@@ -7818,6 +7818,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final long partitionNameTxn = txWriter.getTxn() - 1;
                         txWriter.updateAttachedPartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize, partitionNameTxn);
                         txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
+                        // writeFreshParquetFromO3 emits every column from row 0, so no
+                        // column has a top here.
+                        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
                         txWriter.bumpPartitionTableVersion();
                     } else if (isParquet && parquetFileSize > -1) {
                         // Parquet rewrite: new file is in a txn-named directory.
@@ -13022,7 +13025,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int column = 0; column < columnCount; column++) {
             if (metadata.getColumnType(column) > 0) {
                 final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, column);
-                if (zeroAllColumns ? (colTop != 0) : (colTop > 0 && colTop < partitionRowCount)) {
+                boolean midColTop = colTop > 0 && colTop < partitionRowCount;
+                if (colTop != 0 && (zeroAllColumns || midColTop)) {
                     columnVersionWriter.upsertColumnTop(partitionTimestamp, column, 0);
                 }
             }

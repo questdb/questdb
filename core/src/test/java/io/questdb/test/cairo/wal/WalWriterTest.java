@@ -1983,6 +1983,93 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFormatParquetBornParquetPartitionKeepsColumnTopValues() throws Exception {
+        // On a FORMAT PARQUET table, an earlier partition created by a single batched
+        // WAL apply is born parquet in one commit. Columns added after table creation
+        // must keep their values; the bug read them back as NULL once decoded to
+        // native. The split-apply variant below is the control.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (x LONG, s SYMBOL, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO " + tableName + " (x, s, ts) SELECT x, rnd_symbol('a','b'), " +
+                    "timestamp_sequence('2022-02-25T05:00:00.000000Z', 1_000_000L) FROM long_sequence(1000)");
+            drainWalQueue();
+
+            // new_i/new_s get a columnTop on the existing 2022-02-25 partition.
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_i INT");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_s SYMBOL");
+
+            execute("ALTER TABLE " + tableName + " SET FORMAT PARQUET");
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE ts >= '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            // No drain between the inserts so they apply as one block: the earlier
+            // 2022-02-24 partition is born parquet in a single commit.
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 100+x, 'b', x::int, 'z2', " +
+                    "timestamp_sequence('2022-02-24T17:54:46.000000Z', 1_000_000L) FROM long_sequence(523)");
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) VALUES " +
+                    "(1, 'a', -607368144, 'z1', '2022-02-24T16:58:10.458430Z')");
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 1000+x, 'a', x::int, 'z3', " +
+                    "timestamp_sequence('2022-02-24T18:30:00.000000Z', 1_000_000L) FROM long_sequence(500)");
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE WHERE ts < '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            assertSql(
+                    "x\ts\tts\tnew_i\tnew_s\n" +
+                            "1\ta\t2022-02-24T16:58:10.458430Z\t-607368144\tz1\n",
+                    "SELECT * FROM " + tableName + " WHERE ts = '2022-02-24T16:58:10.458430Z'"
+            );
+        });
+    }
+
+    @Test
+    public void testFormatParquetSplitApplyKeepsColumnTopValues() throws Exception {
+        // Same as testFormatParquetBornParquetPartitionKeepsColumnTopValues, but the
+        // inserts are drained one at a time, so 2022-02-24 is created then O3-merged
+        // rather than born parquet in one block. This path was always correct;
+        // it isolates the trigger to the batched apply.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (x LONG, s SYMBOL, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO " + tableName + " (x, s, ts) SELECT x, rnd_symbol('a','b'), " +
+                    "timestamp_sequence('2022-02-25T05:00:00.000000Z', 1_000_000L) FROM long_sequence(1000)");
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_i INT");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_s SYMBOL");
+
+            execute("ALTER TABLE " + tableName + " SET FORMAT PARQUET");
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE ts >= '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 100+x, 'b', x::int, 'z2', " +
+                    "timestamp_sequence('2022-02-24T17:54:46.000000Z', 1_000_000L) FROM long_sequence(523)");
+            drainWalQueue();
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) VALUES " +
+                    "(1, 'a', -607368144, 'z1', '2022-02-24T16:58:10.458430Z')");
+            drainWalQueue();
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 1000+x, 'a', x::int, 'z3', " +
+                    "timestamp_sequence('2022-02-24T18:30:00.000000Z', 1_000_000L) FROM long_sequence(500)");
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE WHERE ts < '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            assertSql(
+                    "x\ts\tts\tnew_i\tnew_s\n" +
+                            "1\ta\t2022-02-24T16:58:10.458430Z\t-607368144\tz1\n",
+                    "SELECT * FROM " + tableName + " WHERE ts = '2022-02-24T16:58:10.458430Z'"
+            );
+        });
+    }
+
+    @Test
     public void testIgnoreNewWalEvents() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "new_wal_events";
