@@ -1142,7 +1142,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testConvertFailsWriterIsOk() throws Exception {
-        assumeNonWal();
         assertMemoryLeak(() -> {
             createX();
 
@@ -1170,6 +1169,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
             assertQuery("select c from x limit -1")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("c\nabc\n");
 
             engine.releaseInactive();
@@ -1177,6 +1177,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("insert into x(c, timestamp) values('def', now())", sqlExecutionContext);
             assertQuery("select c from x limit -1")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("c\ndef\n");
         });
     }
