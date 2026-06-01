@@ -1950,14 +1950,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertQueryNoLeakCheck(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
     }
 
-    // todo: remove
-    protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean sizeCanBeVariable) throws SqlException {
-        snapshotMemoryUsage();
-        try (final RecordCursorFactory factory = select(query)) {
-            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, expectSize, sizeCanBeVariable);
-        }
-    }
-
     protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
     }
