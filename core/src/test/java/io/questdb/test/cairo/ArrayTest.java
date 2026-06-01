@@ -680,23 +680,57 @@ public class ArrayTest extends AbstractCairoTest {
     public void testAddColumnUnsupportedType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (n LONG)");
-            assertException("ALTER TABLE tango ADD COLUMN arr BYTE[]", 33, "unsupported array element type [type=BYTE]");
-            assertException("ALTER TABLE tango ADD COLUMN arr SHORT[]", 33, "unsupported array element type [type=SHORT]");
-            assertException("ALTER TABLE tango ADD COLUMN arr INT[]", 33, "unsupported array element type [type=INT]");
-            assertException("ALTER TABLE tango ADD COLUMN arr LONG[]", 33, "unsupported array element type [type=LONG]");
-            assertException("ALTER TABLE tango ADD COLUMN arr FLOAT[]", 33, "unsupported array element type [type=FLOAT]");
-            assertException("ALTER TABLE tango ADD COLUMN arr BOOLEAN[]", 33, "unsupported array element type [type=BOOLEAN]");
-            assertException("ALTER TABLE tango ADD COLUMN arr CHAR[]", 33, "unsupported array element type [type=CHAR]");
-            assertException("ALTER TABLE tango ADD COLUMN arr STRING[]", 33, "unsupported array element type [type=STRING]");
-            assertException("ALTER TABLE tango ADD COLUMN arr VARCHAR[]", 33, "unsupported array element type [type=VARCHAR]");
-            assertException("ALTER TABLE tango ADD COLUMN arr ARRAY[]", 33, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
-            assertException("ALTER TABLE tango ADD COLUMN arr BINARY[]", 33, "unsupported array element type [type=BINARY]");
-            assertException("ALTER TABLE tango ADD COLUMN arr DATE[]", 33, "unsupported array element type [type=DATE]");
-            assertException("ALTER TABLE tango ADD COLUMN arr TIMESTAMP[]", 33, "unsupported array element type [type=TIMESTAMP]");
-            assertException("ALTER TABLE tango ADD COLUMN arr UUID[]", 33, "unsupported array element type [type=UUID]");
-            assertException("ALTER TABLE tango ADD COLUMN arr LONG128[]", 33, "unsupported array element type [type=LONG128]");
-            assertException("ALTER TABLE tango ADD COLUMN arr GEOHASH[]", 33, "unsupported array element type [type=GEOHASH]");
-            assertException("ALTER TABLE tango ADD COLUMN arr DECIMAL[]", 33, "unsupported array element type [type=DECIMAL]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr BYTE[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=BYTE]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr SHORT[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=SHORT]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr INT[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=INT]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr LONG[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=LONG]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr FLOAT[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=FLOAT]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr BOOLEAN[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=BOOLEAN]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr CHAR[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=CHAR]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr STRING[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=STRING]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr VARCHAR[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=VARCHAR]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr ARRAY[]")
+                    .noLeakCheck()
+                    .fails(33, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr BINARY[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=BINARY]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr DATE[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=DATE]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr TIMESTAMP[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=TIMESTAMP]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr UUID[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=UUID]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr LONG128[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=LONG128]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr GEOHASH[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=GEOHASH]");
+            assertQuery("ALTER TABLE tango ADD COLUMN arr DECIMAL[]")
+                    .noLeakCheck()
+                    .fails(33, "unsupported array element type [type=DECIMAL]");
         });
     }
 
@@ -1547,9 +1581,9 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango1 (a DOUBLE[][], b DOUBLE[])");
             execute("INSERT INTO tango1 VALUES " +
                     "(ARRAY[[1.0, 2.0]], ARRAY[0, 1, 2])");
-            assertException("select a + b from tango1",
-                    7,
-                    "arrays have incompatible shapes [leftShape=[1,2], rightShape=[3]]");
+            assertQuery("select a + b from tango1")
+                    .noLeakCheck()
+                    .fails(7, "arrays have incompatible shapes [leftShape=[1,2], rightShape=[3]]");
         });
     }
 
@@ -1615,16 +1649,16 @@ public class ArrayTest extends AbstractCairoTest {
                             whatever\t2025-01-01T00:00:00.000000Z\t5\t[-1.0,-2.0,-3.0,-4.0,-5.0]
                             """);
 
-            assertException("""
+            assertQuery("""
                             select\s
                               case\s
                                 when ts in '2021' then array[1.0]\s
                                 when ts in '2024' then 1\s
                                 else a\s
                               end, *
-                            from tango;""",
-                    82,
-                    "inconvertible types: INT -> DOUBLE[]");
+                            from tango;""")
+                    .noLeakCheck()
+                    .fails(82, "inconvertible types: INT -> DOUBLE[]");
         });
     }
 
@@ -1632,23 +1666,57 @@ public class ArrayTest extends AbstractCairoTest {
     public void testChangeColumnToUnsupportedType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (n LONG)");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE BYTE[]", 38, "unsupported array element type [type=BYTE]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE SHORT[]", 38, "unsupported array element type [type=SHORT]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE INT[]", 38, "unsupported array element type [type=INT]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE LONG[]", 38, "unsupported array element type [type=LONG]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE FLOAT[]", 38, "unsupported array element type [type=FLOAT]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE BOOLEAN[]", 38, "unsupported array element type [type=BOOLEAN]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE CHAR[]", 38, "unsupported array element type [type=CHAR]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE STRING[]", 38, "unsupported array element type [type=STRING]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE VARCHAR[]", 38, "unsupported array element type [type=VARCHAR]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE ARRAY[]", 38, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE BINARY[]", 38, "unsupported array element type [type=BINARY]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE DATE[]", 38, "unsupported array element type [type=DATE]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE TIMESTAMP[]", 38, "unsupported array element type [type=TIMESTAMP]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE UUID[]", 38, "unsupported array element type [type=UUID]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE LONG128[]", 38, "unsupported array element type [type=LONG128]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE GEOHASH[]", 38, "unsupported array element type [type=GEOHASH]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE DECIMAL[]", 38, "unsupported array element type [type=DECIMAL]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE BYTE[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=BYTE]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE SHORT[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=SHORT]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE INT[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=INT]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE LONG[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=LONG]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE FLOAT[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=FLOAT]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE BOOLEAN[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=BOOLEAN]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE CHAR[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=CHAR]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE STRING[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=STRING]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE VARCHAR[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=VARCHAR]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE ARRAY[]")
+                    .noLeakCheck()
+                    .fails(38, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE BINARY[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=BINARY]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE DATE[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=DATE]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE TIMESTAMP[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=TIMESTAMP]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE UUID[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=UUID]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE LONG128[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=LONG128]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE GEOHASH[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=GEOHASH]");
+            assertQuery("ALTER TABLE tango ALTER COLUMN n TYPE DECIMAL[]")
+                    .noLeakCheck()
+                    .fails(38, "unsupported array element type [type=DECIMAL]");
         });
     }
 
@@ -1701,11 +1769,8 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testConcatFailsGracefully() throws Exception {
-        assertMemoryLeak(() -> assertException(
-                "SELECT ARRAY[1.0] || ARRAY[2.0, 3.0] FROM long_sequence(1)",
-                12,
-                "unsupported type: DOUBLE[]"
-        ));
+        assertQuery("SELECT ARRAY[1.0] || ARRAY[2.0, 3.0] FROM long_sequence(1)")
+                .fails(12, "unsupported type: DOUBLE[]");
     }
 
     @Test
@@ -1784,23 +1849,57 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testCreateTableWithUnsupportedColumnType() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("CREATE TABLE tango (arr BYTE[])", 24, "unsupported array element type [type=BYTE]");
-            assertException("CREATE TABLE tango (arr SHORT[])", 24, "unsupported array element type [type=SHORT]");
-            assertException("CREATE TABLE tango (arr INT[])", 24, "unsupported array element type [type=INT]");
-            assertException("CREATE TABLE tango (arr LONG[])", 24, "unsupported array element type [type=LONG]");
-            assertException("CREATE TABLE tango (arr FLOAT[])", 24, "unsupported array element type [type=FLOAT]");
-            assertException("CREATE TABLE tango (arr BOOLEAN[])", 24, "unsupported array element type [type=BOOLEAN]");
-            assertException("CREATE TABLE tango (arr CHAR[])", 24, "unsupported array element type [type=CHAR]");
-            assertException("CREATE TABLE tango (arr STRING[])", 24, "unsupported array element type [type=STRING]");
-            assertException("CREATE TABLE tango (arr VARCHAR[])", 24, "unsupported array element type [type=VARCHAR]");
-            assertException("CREATE TABLE tango (arr ARRAY[])", 24, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
-            assertException("CREATE TABLE tango (arr BINARY[])", 24, "unsupported array element type [type=BINARY]");
-            assertException("CREATE TABLE tango (arr DATE[])", 24, "unsupported array element type [type=DATE]");
-            assertException("CREATE TABLE tango (arr TIMESTAMP[])", 24, "unsupported array element type [type=TIMESTAMP]");
-            assertException("CREATE TABLE tango (arr UUID[])", 24, "unsupported array element type [type=UUID]");
-            assertException("CREATE TABLE tango (arr LONG128[])", 24, "unsupported array element type [type=LONG128]");
-            assertException("CREATE TABLE tango (arr GEOHASH[])", 24, "unsupported array element type [type=GEOHASH]");
-            assertException("CREATE TABLE tango (arr DECIMAL[])", 24, "unsupported array element type [type=DECIMAL]");
+            assertQuery("CREATE TABLE tango (arr BYTE[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=BYTE]");
+            assertQuery("CREATE TABLE tango (arr SHORT[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=SHORT]");
+            assertQuery("CREATE TABLE tango (arr INT[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=INT]");
+            assertQuery("CREATE TABLE tango (arr LONG[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=LONG]");
+            assertQuery("CREATE TABLE tango (arr FLOAT[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=FLOAT]");
+            assertQuery("CREATE TABLE tango (arr BOOLEAN[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=BOOLEAN]");
+            assertQuery("CREATE TABLE tango (arr CHAR[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=CHAR]");
+            assertQuery("CREATE TABLE tango (arr STRING[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=STRING]");
+            assertQuery("CREATE TABLE tango (arr VARCHAR[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=VARCHAR]");
+            assertQuery("CREATE TABLE tango (arr ARRAY[])")
+                    .noLeakCheck()
+                    .fails(24, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
+            assertQuery("CREATE TABLE tango (arr BINARY[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=BINARY]");
+            assertQuery("CREATE TABLE tango (arr DATE[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=DATE]");
+            assertQuery("CREATE TABLE tango (arr TIMESTAMP[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=TIMESTAMP]");
+            assertQuery("CREATE TABLE tango (arr UUID[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=UUID]");
+            assertQuery("CREATE TABLE tango (arr LONG128[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=LONG128]");
+            assertQuery("CREATE TABLE tango (arr GEOHASH[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=GEOHASH]");
+            assertQuery("CREATE TABLE tango (arr DECIMAL[])")
+                    .noLeakCheck()
+                    .fails(24, "unsupported array element type [type=DECIMAL]");
         });
     }
 
@@ -1915,12 +2014,10 @@ public class ArrayTest extends AbstractCairoTest {
     public void testDudupArrayAsKey() throws Exception {
         // when an array is part of the dedup key
         // it fails gracefully and with an informative error message
-        assertException("CREATE TABLE tango (ts TIMESTAMP, arr DOUBLE[])" +
+        assertQuery("CREATE TABLE tango (ts TIMESTAMP, arr DOUBLE[])" +
                         " TIMESTAMP(ts) PARTITION BY HOUR WAL" +
-                        " DEDUP UPSERT KEYS (ts, arr)",
-                107,
-                "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"
-        );
+                        " DEDUP UPSERT KEYS (ts, arr)")
+                .fails(107, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]");
     }
 
     @Test
@@ -2103,11 +2200,10 @@ public class ArrayTest extends AbstractCairoTest {
                     .returns("cast\n[]\n");
 
             // casting to fewer dimensions is not allowed
-            assertException("SELECT ARRAY[[1.0], [2.0]]::double[]",
-                    26,
-                    "cannot cast array to lower dimension [from=DOUBLE[][] (2D), to=DOUBLE[] (1D)]. " +
-                            "Use array flattening operation (e.g. 'flatten(arr)') instead"
-            );
+            assertQuery("SELECT ARRAY[[1.0], [2.0]]::double[]")
+                    .noLeakCheck()
+                    .fails(26, "cannot cast array to lower dimension [from=DOUBLE[][] (2D), to=DOUBLE[] (1D)]. " +
+                            "Use array flattening operation (e.g. 'flatten(arr)') instead");
         });
     }
 
@@ -3135,11 +3231,9 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByArrayColFailsGracefully() throws Exception {
-        assertException("select * from tab order by arr",
-                "create table tab as (select rnd_double_array(2, 1) arr from long_sequence(10))",
-                27,
-                "DOUBLE[][] is not a supported type in ORDER BY clause"
-        );
+        assertQuery("select * from tab order by arr")
+                .ddl("create table tab as (select rnd_double_array(2, 1) arr from long_sequence(10))")
+                .fails(27, "DOUBLE[][] is not a supported type in ORDER BY clause");
     }
 
     @Test
