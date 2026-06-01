@@ -623,6 +623,25 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         sqlExecutionContext.containsSecret(sqlTextHasSecret);
         try {
             populateBindingServiceForExec(sqlExecutionContext, bindVariableCharacterStore, directUtf8String, binarySequenceParamsPool);
+            // Read-only boundary gate (mirrors QwpIngressProcessorState): engine.isReadOnlyMode()
+            // flips to true as the FIRST step of an in-place PRIMARY->REPLICA switch cascade,
+            // before the security-context factory swaps to the replica side. A write on a
+            // connection whose SecurityContext was resolved while the node was still PRIMARY would
+            // otherwise be authorized and land on a node that is already demoting (its WAL uploader
+            // may have closed), losing the write once the node settles as a replica. Re-checking the
+            // live engine state per statement closes that window for pg-wire, the same way the QWP
+            // ingress path consults isReadOnlyMode() per batch.
+            if (engine.isReadOnlyMode()
+                    && (this.sqlType == CompiledQuery.INSERT
+                    || this.sqlType == CompiledQuery.INSERT_AS_SELECT
+                    || this.sqlType == CompiledQuery.UPDATE
+                    || this.sqlType == CompiledQuery.ALTER
+                    || this.sqlType == CompiledQuery.CREATE_TABLE
+                    || this.sqlType == CompiledQuery.CREATE_TABLE_AS_SELECT
+                    || this.sqlType == CompiledQuery.CREATE_MAT_VIEW
+                    || this.sqlType == CompiledQuery.DROP)) {
+                throw CairoException.authorization().put("replica access is read-only");
+            }
             switch (this.sqlType) {
                 case CompiledQuery.EXPLAIN:
                 case CompiledQuery.SELECT:
