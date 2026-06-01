@@ -69,12 +69,10 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
-import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -1043,17 +1041,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             boolean supportsRandomAccess,
             boolean expectSize
     ) throws SqlException {
-        assertCursor(expected, factory, supportsRandomAccess, expectSize, false);
-    }
-
-    protected static void assertCursor(
-            CharSequence expected,
-            RecordCursorFactory factory,
-            boolean supportsRandomAccess,
-            boolean expectSize,
-            boolean sizeCanBeVariable
-    ) throws SqlException {
-        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, sqlExecutionContext);
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, false, sqlExecutionContext);
     }
 
     protected static void assertException(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
@@ -1530,21 +1518,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertCursor(expected, cursor, metadata, true);
     }
 
-    protected void assertException(CharSequence sql, @NotNull CharSequence ddl, int errorPos, @NotNull CharSequence contains) throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck(sql, ddl, errorPos, contains));
-    }
-
-    protected void assertExceptionNoLeakCheck(CharSequence sql, @NotNull CharSequence ddl, int errorPos, @NotNull CharSequence contains) throws Exception {
-        try {
-            execute(ddl, sqlExecutionContext);
-            assertException(sql, errorPos, contains);
-            Assert.assertEquals(0, engine.getBusyReaderCount());
-            Assert.assertEquals(0, engine.getBusyWriterCount());
-        } finally {
-            engine.clear();
-        }
-    }
-
     protected static void assertFactoryCursor(
             CharSequence expected,
             String expectedTimestamp,
@@ -1563,35 +1536,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
         // make sure strings, binary fields and symbols are compliant with expected record behaviour
         assertVariableColumns(factory, executionContext);
-    }
-
-    // asserts plan without having to prefix a query with 'explain', specify the fixed output header, etc.
-    protected void assertPlanNoLeakCheck(CharSequence query, CharSequence expectedPlan) throws SqlException {
-        StringSink sink = new StringSink();
-        sink.put("EXPLAIN ").put(query);
-        try (
-                ExplainPlanFactory planFactory = getPlanFactory(sink);
-                RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
-        ) {
-            if (!JitUtil.isJitSupported()) {
-                expectedPlan = Chars.toString(expectedPlan).replace("Async JIT", "Async");
-            }
-            TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);
-        }
-    }
-
-    protected void assertPlanNoLeakCheck(SqlCompiler compiler, CharSequence query, CharSequence expectedPlan, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        StringSink sink = new StringSink();
-        sink.put("EXPLAIN ").put(query);
-        try (
-                ExplainPlanFactory planFactory = getPlanFactory(compiler, sink, sqlExecutionContext);
-                RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
-        ) {
-            if (!JitUtil.isJitSupported()) {
-                expectedPlan = Chars.toString(expectedPlan).replace("Async JIT", "Async");
-            }
-            TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);
-        }
     }
 
     /**
@@ -1776,14 +1720,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 latch.countDown();
             }
         };
-    }
-
-    protected ExplainPlanFactory getPlanFactory(CharSequence query) throws SqlException {
-        return (ExplainPlanFactory) select(query);
-    }
-
-    protected ExplainPlanFactory getPlanFactory(SqlCompiler compiler, CharSequence query, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return (ExplainPlanFactory) compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
     }
 
     protected PlanSink getPlanSink(CharSequence query) throws SqlException {
