@@ -79,9 +79,9 @@ public class Decimal64 implements Sinkable, Decimal {
             100000000000000000L,    // 10^17
             1000000000000000000L,   // 10^18
     };
+    private int[] ryuE10;
     private int scale;   // Number of decimal places
     private long value;  // The decimal value as an unscaled long
-
     /**
      * Default constructor - creates zero with scale 0
      */
@@ -770,6 +770,14 @@ public class Decimal64 implements Sinkable, Decimal {
         }
 
         divide(1, 0, targetScale, roundingMode);
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     /**

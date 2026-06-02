@@ -71,7 +71,7 @@ final class AsyncLogRecord implements LogRecord {
     RingQueue<LogRecordUtf8Sink> ring;
     Sequence seq;
     LogRecordUtf8Sink sink;
-
+    private int[] ryuE10;
     AsyncLogRecord(Clock clock, CharSequence name) {
         this.clock = clock;
         this.abandonedLogRecordError = createAbandonedLogError();
@@ -366,6 +366,14 @@ final class AsyncLogRecord implements LogRecord {
     }
 
     @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
+    }
+
+    @Override
     public LogRecord ts() {
         final long us = clock.getTicks();
         if (LogLevel.TIMESTAMP_TIMEZONE_RULES != null) {
@@ -380,22 +388,6 @@ final class AsyncLogRecord implements LogRecord {
         }
 
         return this;
-    }
-
-    /**
-     * Returns the previously-installed abandoned log record if the prior chain
-     * never reached {@code $()}, or {@code null} if the record is in a clean
-     * state. Mirrors {@link AbstractLogRecord}'s former private helper but
-     * operates on this carrier's record fields, avoiding a second {@code tl.get()}.
-     */
-    @Nullable LogError detectAbandonedLogRecord() throws LogError {
-        if (!isLogRecordInProgress) {
-            isLogRecordInProgress = true;
-            abandonedLogRecordError.fillInStackTrace();
-            return null;
-        }
-        $(" #$#$ ABANDONED LOG RECORD #$#$").$();
-        return abandonedLogRecordError;
     }
 
     private static @NotNull LogError createAbandonedLogError() {
@@ -492,6 +484,22 @@ final class AsyncLogRecord implements LogRecord {
             e.printStackTrace(System.out);
             throw e;
         }
+    }
+
+    /**
+     * Returns the previously-installed abandoned log record if the prior chain
+     * never reached {@code $()}, or {@code null} if the record is in a clean
+     * state. Mirrors {@link AbstractLogRecord}'s former private helper but
+     * operates on this carrier's record fields, avoiding a second {@code tl.get()}.
+     */
+    @Nullable LogError detectAbandonedLogRecord() throws LogError {
+        if (!isLogRecordInProgress) {
+            isLogRecordInProgress = true;
+            abandonedLogRecordError.fillInStackTrace();
+            return null;
+        }
+        $(" #$#$ ABANDONED LOG RECORD #$#$").$();
+        return abandonedLogRecordError;
     }
 
     /**

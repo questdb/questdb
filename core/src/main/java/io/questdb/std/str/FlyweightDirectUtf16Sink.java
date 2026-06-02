@@ -33,7 +33,7 @@ public class FlyweightDirectUtf16Sink implements MutableUtf16Sink, DirectCharSeq
     private long hi;
     private long lo;
     private long ptr;
-
+    private int[] ryuE10;
     public FlyweightDirectUtf16Sink() {
         lo = hi = ptr = 0;
     }
@@ -132,6 +132,14 @@ public class FlyweightDirectUtf16Sink implements MutableUtf16Sink, DirectCharSeq
         Unsafe.putChar(lo, c);
         lo += 2;
         return this;
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     @Override

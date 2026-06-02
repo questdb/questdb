@@ -26,11 +26,11 @@ package io.questdb.std.str;
 
 import io.questdb.ParanoiaState;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.SecurePath;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.bytes.Bytes;
@@ -65,8 +65,8 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     private boolean ascii;
     private int capacity;
     private long headPtr;
+    private int[] ryuE10;
     private long tailPtr;
-
     public Path() {
         this(255);
     }
@@ -91,7 +91,6 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         ascii = true;
         creationStackTrace = stackTrace;
     }
-
 
     public static void clearThreadLocals() {
         // It could be PATH.get.close(); but this would generated JDK failures on MacOS (SIGABRT)
@@ -406,6 +405,14 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
             tailPtr = headPtr;
             capacity = initialCapacity;
         }
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     public Path seekZ() {

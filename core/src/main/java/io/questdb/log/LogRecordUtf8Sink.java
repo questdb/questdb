@@ -49,7 +49,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
     protected long _wptr;
     private boolean done = false;
     private int level;
-
+    private int[] ryuE10;
     public LogRecordUtf8Sink(long address, long addressSize) {
         this.address = _wptr = address;
         this.lim = address + addressSize;
@@ -193,6 +193,14 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
             put(Unsafe.getByte(lo + i));
         }
         return this;
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     public void setLevel(int level) {

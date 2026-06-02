@@ -38,8 +38,8 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
     private long hi;
     private long lo;
     private long ptr;
+    private int[] ryuE10;
     private FloatingCharSequence subSequence;
-
     public DirectUtf16Sink(long capacity) {
         ptr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
         this.capacity = capacity;
@@ -139,6 +139,14 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
     public void resetCapacity() {
         resize(initialCapacity);
         clear();
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     @Override

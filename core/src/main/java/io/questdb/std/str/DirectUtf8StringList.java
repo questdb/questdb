@@ -40,12 +40,13 @@ import org.jetbrains.annotations.Nullable;
  * A list of UTF-8 strings backed by native memory.
  */
 public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable, Utf8Sink {
+
     private final BoolList asciiFlags = new BoolList();
     private final DirectLongList offsets;
     private final DirectByteSink sink;
     private final DirectUtf8StringView view = new DirectUtf8StringView();
     private boolean currentElemAscii = true;
-
+    private int[] ryuE10;
     public DirectUtf8StringList(long initialCapacity, long initialElementCount) {
         this(initialCapacity, initialElementCount, false);
     }
@@ -155,6 +156,14 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
         sink.reopen();
         asciiFlags.clear();
         currentElemAscii = true;
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     /**
