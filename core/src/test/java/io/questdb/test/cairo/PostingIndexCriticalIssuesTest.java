@@ -1737,6 +1737,92 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Review M1: link-time chain recovery in
+     * {@code TableWriter.dropFuturePostingIndexChainEntriesBeforeLink} must not
+     * SHRINK the source {@code .pk} below its on-disk size. The source is
+     * hard-linked, not copied, and RENAME COLUMN does not quiesce readers, so a
+     * pre-link reader may still mmap the inode. Posting readers map grow-only
+     * ("File can only have grown" in {@code AbstractPostingIndexReader}) and
+     * bound entry reads against their stale mmap size, dereferencing the head
+     * entry before the {@code stillStable} seqlock re-check; truncating the tail
+     * away under such a reader faults past EOF (SIGBUS).
+     * <p>
+     * The test plants a committed-visible base head plus a page-spanning head
+     * whose entry-level {@code txnAtSeal} is in the future. Link recovery drops
+     * the future head WHOLE, rewinding {@code regionLimit} more than one OS page
+     * below the file size. The fix floors the CMARW append offset at the original
+     * {@code keyFileSize}, so the close must not truncate the linked {@code .pk}
+     * below its pre-link size. The assertion only stats the file length, never
+     * maps the dropped head, so a regressed build fails cleanly instead of
+     * crashing the JVM.
+     */
+    @Test
+    public void testRenameColumnLinkRecoveryFullDropKeepsKeyFileSize() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_link_fulldrop (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_link_fulldrop VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.getTableTokenIfExists("t_link_fulldrop");
+            Assert.assertNotNull("test table must exist", token);
+            final long currentTxn;
+            final long firstPartitionTimestamp;
+            final long firstPartitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                currentTxn = reader.getTxn();
+                firstPartitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            // Plant a committed-visible base head plus a page-spanning fully
+            // future head on the historic first partition.
+            appendPageSpanningFutureHead(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
+
+            // Source .pk size right before the rename links (and recovers) it.
+            final long srcColumnNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                int colIndex = reader.getMetadata().getColumnIndex("sym");
+                int writerIndex = reader.getMetadata().getWriterIndex(colIndex);
+                srcColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(firstPartitionTimestamp, writerIndex);
+            }
+            final long srcKeyFileSize = postingKeyFileSize(
+                    token, firstPartitionTimestamp, firstPartitionNameTxn, "sym", srcColumnNameTxn);
+            Assert.assertTrue(
+                    "test setup: planted .pk must span more than one OS page, was " + srcKeyFileSize,
+                    srcKeyFileSize > io.questdb.std.Files.PAGE_SIZE
+            );
+
+            execute("ALTER TABLE t_link_fulldrop RENAME COLUMN sym TO new_sym");
+
+            final long newColumnNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                int colIndex = reader.getMetadata().getColumnIndex("new_sym");
+                int writerIndex = reader.getMetadata().getWriterIndex(colIndex);
+                newColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(firstPartitionTimestamp, writerIndex);
+            }
+            final long dstKeyFileSize = postingKeyFileSize(
+                    token, firstPartitionTimestamp, firstPartitionNameTxn, "new_sym", newColumnNameTxn);
+
+            Assert.assertTrue(
+                    "link recovery shrank the renamed column's .pk below its pre-link size -- a pre-link"
+                            + " reader mapping the hard-linked inode would fault past EOF (SIGBUS):"
+                            + " dstKeyFileSize=" + dstKeyFileSize + " srcKeyFileSize=" + srcKeyFileSize,
+                    dstKeyFileSize >= srcKeyFileSize
+            );
+        });
+    }
+
+    /**
      * Review C1: link-time chain recovery in
      * {@code TableWriter.dropFuturePostingIndexChainEntriesBeforeLink} must trim
      * the {@code .pk} to {@code chain.getRegionLimit()} before the CMARW closes,
@@ -4682,6 +4768,31 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Returns the on-disk byte length of the posting {@code .pk} key file for the
+     * given column in the given partition. Only stats the file (never maps it),
+     * so it is safe to call on a regressed build whose header points its head
+     * entry past EOF.
+     */
+    private long postingKeyFileSize(
+            TableToken token,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            CharSequence columnName,
+            long columnNameTxn
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token);
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
+            int plen = path.size();
+            LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
+            long size = ff.length(keyFile);
+            Assert.assertTrue(".pk must exist, path=" + keyFile, size > 0);
+            return size;
+        }
+    }
+
     private static boolean isPostingIndexResealCall() {
         for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
             if (TableWriter.class.getName().equals(frame.getClassName())
@@ -4734,6 +4845,67 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), 0);
             writer.setMaxValue(0);
             writer.commit();
+        }
+    }
+
+    /**
+     * Plant a committed-visible base head, then a page-spanning head entry whose
+     * own entry-level {@code txnAtSeal} is in the future, chained on top. Unlike
+     * {@link #appendVisibleHeadWithFutureTailGen} -- which keeps the entry
+     * visible and only trims a future tail gen (the head-trim/grow recovery
+     * branch) -- this future entry is dropped WHOLE by
+     * {@code recoveryDropAbandoned} (the full-drop branch), so link-time recovery
+     * rewinds {@code regionLimit} more than one OS page below the on-disk size.
+     * <p>
+     * Uses the real {@link PostingIndexWriter} so the dropped head's
+     * {@code .pv.{sealTxn}} and the surviving base head's files exist on disk and
+     * the subsequent hard-link does not fail for an unrelated reason.
+     */
+    private void appendPageSpanningFutureHead(
+            TableToken token,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long currentTxn
+    ) {
+        // gens sized so the future head's entry region spans at least one OS
+        // page; dropping it rewinds regionLimit across a page boundary, the
+        // granularity the CMARW close truncates to.
+        final int gens = (int) ((io.questdb.std.Files.PAGE_SIZE - PostingIndexUtils.V2_ENTRY_HEADER_SIZE)
+                / PostingIndexUtils.GEN_DIR_ENTRY_SIZE) + 2;
+        try (Path path = new Path().of(configuration.getDbRoot()).concat(token);
+             PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
+            final int plen = path.size();
+            // No setCurrentTableTxn: recovery must not run on this open, or it
+            // would drop the future head we are about to plant.
+            writer.of(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE, false);
+
+            // Committed-visible base head. discardForRebuild rotates sealTxn so
+            // this commit takes the appendNewEntry branch (a fresh entry chained
+            // onto the existing INSERT head). recoveryDropAbandoned stops here
+            // and keeps it as the surviving head after dropping the future entry.
+            writer.discardForRebuild();
+            writer.setNextTxnAtSeal(currentTxn);
+            writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), 0);
+            writer.setMaxValue(0);
+            writer.commit();
+
+            // Fresh entry whose entry-level txnAtSeal is in the future. The base
+            // commit (after discardForRebuild) sets the entry-level txnAtSeal;
+            // the loop extends the SAME entry with enough gens to span a page.
+            // Because the entry itself is future, recovery takes the full-drop
+            // branch rather than the head-trim branch.
+            writer.discardForRebuild();
+            writer.setNextTxnAtSeal(currentTxn + 1);
+            writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), 1);
+            writer.setMaxValue(1);
+            writer.commit();
+            for (int g = 2; g <= gens; g++) {
+                writer.setNextTxnAtSeal(currentTxn + 1);
+                writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), g);
+                writer.setMaxValue(g);
+                writer.commit();
+            }
         }
     }
 

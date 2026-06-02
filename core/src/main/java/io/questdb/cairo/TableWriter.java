@@ -6200,18 +6200,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         currentTableTxn,
                         linkPostingIndexOrphanSealTxns
                 );
-                // Mirror PostingIndexWriter.close(): trim the .pk to the live
-                // regionLimit before the CMARW close truncates it. The head-trim
-                // branch relocates the trimmed head entry to the old regionLimit
-                // via positional writes that grow the mapping but not the append
-                // offset; without this setSize the close would truncate back to
+                // Mirror PostingIndexWriter.close(): set the CMARW append offset
+                // to the live chain regionLimit so the close trims trailing
+                // slack, but floor it at keyFileSize so the close can never
+                // SHRINK the .pk below its current on-disk size.
+                //
+                // Grow (head-trim recovery): recoveryDropAbandoned relocated the
+                // trimmed head entry to virgin space past the old regionLimit via
+                // positional writes that grow the mapping but not the append
+                // offset. Without this setSize the close would truncate back to
                 // ceilPageSize(keyFileSize) and lop off the relocated head,
-                // leaving the linked .pk header pointing past EOF.
+                // leaving the linked .pk header pointing past EOF. Here liveSize
+                // exceeds keyFileSize, so Math.max keeps the relocated head.
+                //
+                // Shrink (dropped future entries): regionLimit rewinds below the
+                // on-disk size. The source .pk is hard-linked, not copied, and
+                // RENAME COLUMN / CONVERT PARTITION TO PARQUET do not quiesce
+                // readers, so a pre-link reader may still mmap this inode. Posting
+                // readers map grow-only ("File can only have grown" in
+                // AbstractPostingIndexReader) and bound entry reads against their
+                // stale mmap size, dereferencing the head entry before the
+                // stillStable seqlock re-check -- truncating the tail away would
+                // fault those pages past EOF (SIGBUS). The smaller regionLimit is
+                // already republished in the header, so readers pinned at <=
+                // currentTableTxn still select the right entry; the dead tail is
+                // reclaimed by a later writer-close or column/partition purge.
                 long liveSize = chain.getRegionLimit();
                 if (liveSize < PostingIndexUtils.KEY_FILE_RESERVED) {
                     liveSize = PostingIndexUtils.KEY_FILE_RESERVED;
                 }
-                keyMem.setSize(liveSize);
+                keyMem.setSize(Math.max(liveSize, keyFileSize));
                 return chain.getHeadSealTxn();
             }
         } finally {
