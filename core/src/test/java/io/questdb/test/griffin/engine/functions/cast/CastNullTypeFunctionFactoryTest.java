@@ -34,20 +34,14 @@ public class CastNullTypeFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCastNullToNonCastFriendlyTypeShouldFail() throws Exception {
-        assertException(
-                "cast(null as CURSOR)",
-                13,
-                "unsupported cast"
-        );
+        assertQuery("cast(null as CURSOR)")
+                .fails(13, "unsupported cast");
     }
 
     @Test
     public void testCastNullToNonexistentTypeShouldFail() throws Exception {
-        assertException(
-                "cast(null as NON_EXISTING_TYPE)",
-                13,
-                "unsupported cast"
-        );
+        assertQuery("cast(null as NON_EXISTING_TYPE)")
+                .fails(13, "unsupported cast");
     }
 
     @Test

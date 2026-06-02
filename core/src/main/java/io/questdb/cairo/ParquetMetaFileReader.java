@@ -34,6 +34,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * File reader for the _pm files, which are sidecar files for the `.parquet` format.
@@ -130,6 +131,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int HEADER_COLUMN_COUNT_OFF = 24;
     private static final int HEADER_DESIGNATED_TS_OFF = 16;
     private static final int HEADER_FEATURE_FLAGS_OFF = 8;
+    private static final int HEADER_SORTING_COL_CNT_OFF = 20;
     // Feature flag bits 32-63 are required: unknown bits must cause rejection.
     private static final long OPTIONAL_FEATURE_MASK = 0x0000_0000_FFFF_FFFFL;
     // Trailing bytes after a parquet file's footer body: 4-byte footer length + 4-byte PAR1 magic.
@@ -139,6 +141,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int ROW_GROUP_BLOCK_HEADER_SIZE = 8;
     // Each row group entry in the footer is a 4-byte u32 (block offset >> BLOCK_ALIGNMENT_SHIFT).
     private static final int ROW_GROUP_ENTRY_SIZE = 4;
+    // Header FEATURE_FLAGS bit (mirrors qdb-parquet-meta HeaderFeatureFlags::SORTING_IS_DTS_ASC_BIT):
+    // when set, the explicit sorting array is omitted and the lone sort column is the ascending
+    // designated timestamp.
+    private static final long SORTING_IS_DTS_ASC_FEATURE_FLAG = 1L << 2;
     // Stat flag bits within the column chunk stat_flags byte at COLUMN_CHUNK_STAT_FLAGS_OFF.
     // Layout mirrors the Rust writer (see parquet_metadata::types::StatFlags):
     //   bit 0 MIN_PRESENT, bit 1 MIN_INLINED, bit 2 MIN_EXACT,
@@ -493,6 +499,35 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
+     * Effective number of sorting columns. The {@code SORTING_IS_DTS_ASC} flag
+     * omits the explicit array and means a single sort column (the ascending
+     * designated timestamp).
+     */
+    @TestOnly
+    public int getSortingColumnCount() {
+        if ((Unsafe.getLong(addr + HEADER_FEATURE_FLAGS_OFF) & SORTING_IS_DTS_ASC_FEATURE_FLAG) != 0) {
+            return 1;
+        }
+        return Unsafe.getInt(addr + HEADER_SORTING_COL_CNT_OFF);
+    }
+
+    /**
+     * Dense parquet column position of the sort key at {@code sortingColumnIndex}
+     * (the designated timestamp under {@code SORTING_IS_DTS_ASC}, else the explicit
+     * array). {@code sortingColumnIndex} must be in {@code [0, getSortingColumnCount())};
+     * the assertion guards the unchecked native read on the explicit-array branch.
+     */
+    @TestOnly
+    public int getSortingColumnIndex(int sortingColumnIndex) {
+        assert sortingColumnIndex >= 0 && sortingColumnIndex < getSortingColumnCount();
+        if ((Unsafe.getLong(addr + HEADER_FEATURE_FLAGS_OFF) & SORTING_IS_DTS_ASC_FEATURE_FLAG) != 0) {
+            return getDesignatedTimestampColumnIndex();
+        }
+        final long sortingArrayAddr = addr + HEADER_FIXED_SIZE + (long) columnCount * COLUMN_DESCRIPTOR_SIZE;
+        return Unsafe.getInt(sortingArrayAddr + (long) sortingColumnIndex * Integer.BYTES);
+    }
+
+    /**
      * Returns the accumulated dead bytes in the parquet file tracked by the _pm footer.
      */
     public long getUnusedBytes() {
@@ -737,6 +772,15 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
                     .put("unsupported required _pm feature flags [flags=0x")
                     .put(Long.toHexString(unknownRequired))
                     .put(']');
+        }
+        if ((featureFlags & SORTING_IS_DTS_ASC_FEATURE_FLAG) == 0) {
+            long sortingColumnCountLong = Integer.toUnsignedLong(Unsafe.getInt(addr + HEADER_SORTING_COL_CNT_OFF));
+            if (headerEndOffset + sortingColumnCountLong * Integer.BYTES > parquetMetaFileSize) {
+                throw CairoException.critical(0)
+                        .put("invalid _pm sorting column count [count=").put(sortingColumnCountLong)
+                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                        .put(']');
+            }
         }
         long footerFeatureFlags = Unsafe.getLong(footerAddr + FOOTER_FEATURE_FLAGS_OFF);
         long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK;

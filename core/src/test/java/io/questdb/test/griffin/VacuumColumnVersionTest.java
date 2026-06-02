@@ -268,15 +268,18 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                 purgeJobInstance.set(purgeJob);
                 update("UPDATE testPurge SET sym1='123'");
 
-                assertSql(
-                        "ts\tstr\tsym1\tsym2\n" +
-                                "1970-01-01T00:00:00.000000Z\ta\t123\t2\n" +
-                                "1970-01-02T00:00:00.000000Z\td\t123\t4\n" +
-                                "1970-01-03T00:00:00.000000Z\tc\t123\t3\n" +
-                                "1970-01-04T00:00:00.000000Z\ta\t123\t1\n" +
-                                "1970-01-05T00:00:00.000000Z\tc\t123\t2\n",
-                        "testPurge"
-                );
+                assertQuery("testPurge")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tstr\tsym1\tsym2
+                                1970-01-01T00:00:00.000000Z\ta\t123\t2
+                                1970-01-02T00:00:00.000000Z\td\t123\t4
+                                1970-01-03T00:00:00.000000Z\tc\t123\t3
+                                1970-01-04T00:00:00.000000Z\ta\t123\t1
+                                1970-01-05T00:00:00.000000Z\tc\t123\t2
+                                """);
 
                 String[] partitions = new String[]{"1970-01-01", "1970-01-02", "1970-01-03", "1970-01-04", "1970-01-05"};
                 String[] files = {"sym1.d"};

@@ -180,12 +180,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     3
             );
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             first\tts
                             2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z
-                            """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
 
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
@@ -231,26 +233,30 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     3
             );
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             first\tts
                             2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z
-                            """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
 
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertFailure("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", DETACH_ERR_COPY_META.name());
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
 
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             first\tts
                             2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z
                             2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z
                             2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z
-                            """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
         });
     }
 
@@ -289,12 +295,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     3
             );
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             first\tts
                             2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z
-                            """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
 
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
@@ -306,14 +314,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             );
 
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             first\tts
                             2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z
                             2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z
                             2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z
-                            """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
         });
     }
 
@@ -331,8 +341,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             execute("insert into " + tableName + " values ('foobar', '2020-01-02T23:59:59')");
 
-            assertSql(
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+            assertQuery("select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
                             """
                                     first\tsym
                                     2020-01-01T07:59:59.666666Z\tCPSW
@@ -346,9 +358,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2020-01-01T15:59:59.333333332Z\tHYRX
                             2020-01-01T23:59:58.999999998Z\t
                             2020-01-02T23:59:59.000000000Z\tfoobar
-                            """,
-                    "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """);
 
             execute("alter table " + tableName + " detach partition list '2020-01-01'");
 
@@ -358,8 +368,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             execute("alter table " + tableName + " attach partition list '2020-01-01'");
 
             // No symbols are present.
-            assertSql(
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+            assertQuery("select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
                             """
                                     first\tsym
                                     2020-01-01T07:59:59.666666Z\t
@@ -371,9 +383,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2020-01-01T07:59:59.666666666Z\t
                             2020-01-01T15:59:59.333333332Z\t
                             2020-01-01T23:59:58.999999998Z\t
-                            """,
-                    "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """);
         });
     }
 
@@ -393,8 +403,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             execute("insert into " + tableName + " values ('foobar', '2020-01-02T23:59:59')");
 
-            assertSql(
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+            assertQuery("select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
                             """
                                     first\tsym
                                     2020-01-01T07:59:59.666666Z\tCPSW
@@ -408,9 +420,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2020-01-01T15:59:59.333333332Z\tHYRX
                             2020-01-01T23:59:58.999999998Z\t
                             2020-01-02T23:59:59.000000000Z\tfoobar
-                            """,
-                    "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """);
 
             execute("alter table " + tableName + " detach partition list '2020-01-01'");
 
@@ -420,8 +430,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             execute("alter table " + tableName + " attach partition list '2020-01-01'");
 
             // All symbols are kept.
-            assertSql(
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? """
+            assertQuery("select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? """
                             first\tsym
                             2020-01-01T07:59:59.666666Z\tCPSW
                             2020-01-01T15:59:59.333332Z\tHYRX
@@ -432,8 +444,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                     2020-01-01T07:59:59.666666666Z\tCPSW
                                     2020-01-01T15:59:59.333333332Z\tHYRX
                                     2020-01-01T23:59:58.999999998Z\t
-                                    """, "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                                    """);
         });
     }
 
@@ -558,8 +569,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             execute("alter table " + tableName + " detach partition list '2020-01-02', '2020-01-03'");
 
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(replaceTimestampSuffix("""
                             first\tstr
                             2020-01-01T00:28:47.990000Z\t
                             2020-01-04T00:19:59.000000Z\tb
@@ -567,14 +580,15 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2020-01-04T00:59:59.000000Z\tb
                             2020-01-04T01:39:59.000000Z\t
                             2020-01-04T05:19:59.000000Z\tc
-                            """), "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
 
             renameDetachedToAttachable(tableName, "2020-01-02", "2020-01-03");
             execute("alter table " + tableName + " attach partition list '2020-01-02', '2020-01-03'");
 
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(replaceTimestampSuffix("""
                             first\tstr
                             2020-01-01T00:28:47.990000Z\t
                             2020-01-02T00:57:35.480000Z\t
@@ -588,8 +602,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2020-01-04T00:59:59.000000Z\tb
                             2020-01-04T01:39:59.000000Z\t
                             2020-01-04T05:19:59.000000Z\tc
-                            """), "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
         });
     }
 
@@ -684,13 +697,21 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     11\t11\t11\t2022-06-04T15:59:59.083333326Z
                     12\t12\t12\t2022-06-04T23:59:58.999999992Z
                     """;
-            assertQuery(expected, tableName, null, "ts", true, true);
+            assertQuery(tableName)
+                    .ddl(null)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
             renameDetachedToAttachable(tableName, timestampDay);
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
                     "could not attach partition [table=tabTimeTravel2, detachStatus=ATTACH_ERR_PARTITION_EXISTS"
             );
-            assertQuery(expected, tableName, null, "ts", true, true);
+            assertQuery(tableName)
+                    .ddl(null)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -853,23 +874,27 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             3
                     );
                     execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-                    assertSql(
-                            replaceTimestampSuffix("""
+                    assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .timestamp("ts")
+                            .returns(replaceTimestampSuffix("""
                                     first\tts
                                     2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z
-                                    """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-                    );
+                                    """));
 
                     for (int i = 0; i < 2; i++) {
                         execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
-                        assertSql(
-                                replaceTimestampSuffix("""
+                        assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .timestamp("ts")
+                                .returns(replaceTimestampSuffix("""
                                         first\tts
                                         2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z
                                         2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z
                                         2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z
-                                        """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-                        );
+                                        """));
                         execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
 
                     }
@@ -1039,7 +1064,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             assertParquetPmResolvesAgainstTxn(tableName);
 
-            assertSql("count\n10\n", "select count() from " + tableName);
+            assertQuery("select count() from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n10\n");
         });
     }
 
@@ -1105,7 +1134,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             assertParquetPmResolvesAgainstTxn(tableName);
 
             // Row content survived chain + detach + reattach.
-            assertSql("count\n21\n", "select count() from " + tableName);
+            assertQuery("select count() from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n21\n");
         });
     }
 
@@ -1461,23 +1494,27 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     3
             );
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
                             first\tts
                             2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z
-                            """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            """));
 
             for (int i = 0; i < 2; i++) {
                 execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
-                assertSql(
-                        replaceTimestampSuffix("""
+                assertQuery("select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns(replaceTimestampSuffix("""
                                 first\tts
                                 2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z
                                 2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z
                                 2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z
-                                """), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-                );
+                                """));
                 execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
 
             }
@@ -1504,14 +1541,22 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2
                     );
 
-                    assertSql(replaceTimestampSuffix("""
-                            count\tmin\tmax
-                            500\t2022-06-01T00:02:52.799000Z\t2022-06-01T23:59:59.500000Z
-                            """), "select count(1), min(ts), max(ts) from " + tableName + " where ts in '2022-06-01'");
-                    assertSql(replaceTimestampSuffix("""
-                            count\tmin\tmax
-                            500\t2022-06-02T00:02:52.299000Z\t2022-06-02T23:59:59.000000Z
-                            """), "select count(1), min(ts), max(ts) from " + tableName + " where ts in '2022-06-02'");
+                    assertQuery("select count(1), min(ts), max(ts) from " + tableName + " where ts in '2022-06-01'")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns(replaceTimestampSuffix("""
+                                    count\tmin\tmax
+                                    500\t2022-06-01T00:02:52.799000Z\t2022-06-01T23:59:59.500000Z
+                                    """));
+                    assertQuery("select count(1), min(ts), max(ts) from " + tableName + " where ts in '2022-06-02'")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns(replaceTimestampSuffix("""
+                                    count\tmin\tmax
+                                    500\t2022-06-02T00:02:52.299000Z\t2022-06-02T23:59:59.000000Z
+                                    """));
 
                     try (TableReader ignore = getReader(token)) {
                         // Split partition by committing O3 to "2022-06-01"
@@ -1526,10 +1571,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                     renameDetachedToAttachable(tableName, "2022-06-01");
                     execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
-                    assertSql(replaceTimestampSuffix("""
-                            min
-                            2022-06-01T00:02:52.799000Z
-                            """), "select min(ts) from " + tableName);
+                    assertQuery("select min(ts) from " + tableName)
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("min")
+                            .returns(replaceTimestampSuffix("""
+                                    min
+                                    2022-06-01T00:02:52.799000Z
+                                    """));
                 });
     }
 
@@ -2503,8 +2552,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                 writer.commit();
             }
-            assertQuery(
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? """
+            assertQuery(tableName)
+                    .ddl(null)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? """
                             l\ti\tts
                             2802\t2802\t2022-06-01T00:00:00.000000Z
                             137\t137\t2022-06-01T09:59:59.999999Z
@@ -2531,10 +2583,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             10\t10\t2022-06-04T07:59:59.166666660Z
                             11\t11\t2022-06-04T15:59:59.083333326Z
                             12\t12\t2022-06-04T23:59:58.999999992Z
-                            """,
-                    tableName,
-                    null, "ts", true, true
-            );
+                            """);
 
             dropCurrentVersionOfPartition(tableName, timestampDay);
             renameDetachedToAttachable(tableName, timestampDay);
@@ -2821,7 +2870,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     private void assertContent(String expected, String tableName) throws Exception {
         engine.clear();
         expected = replaceTimestampSuffix1(expected, timestampType.getTypeName());
-        assertQuery(expected, tableName, null, "ts", true, true);
+        assertQuery(tableName)
+                .ddl(null)
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertFailedAttachBecauseOfMetadata(

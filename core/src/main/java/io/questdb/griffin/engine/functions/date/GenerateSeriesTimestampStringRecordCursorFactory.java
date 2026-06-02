@@ -67,7 +67,18 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         if (cursor != null && cursor.stride != 0) {
             return cursor.stride > 0 ? SCAN_DIRECTION_FORWARD : SCAN_DIRECTION_BACKWARD;
         }
-        return SCAN_DIRECTION_FORWARD;
+        // The cursor has not been opened yet (getScanDirection() is plan-time metadata).
+        // Determine the order from a constant step: a leading '-' means the series counts
+        // down, so the output descends. A bind-variable step is only known at runtime, so
+        // the order cannot be guaranteed at plan time.
+        if (stepFunc.isConstant()) {
+            final CharSequence step = stepFunc.getStrA(null);
+            if (step != null && !step.isEmpty()) {
+                return step.charAt(0) == '-' ? SCAN_DIRECTION_BACKWARD : SCAN_DIRECTION_FORWARD;
+            }
+            return SCAN_DIRECTION_FORWARD;
+        }
+        return SCAN_DIRECTION_OTHER;
     }
 
     @Override

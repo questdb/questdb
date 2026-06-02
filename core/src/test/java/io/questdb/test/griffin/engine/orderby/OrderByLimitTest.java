@@ -54,49 +54,48 @@ public class OrderByLimitTest extends AbstractCairoTest {
             execute("INSERT INTO 'order_book' VALUES ('2020-01-01T01:00', 1, 1, 2, 2);");
             execute("INSERT INTO 'order_book' VALUES ('2020-01-01T01:01', 3, 3, 4, 4);");
 
-            assertQuery(
-                    "ts\tprice\tsize\tts1\tbid_price\tbid_size\ttask_price\ttask_size\n" +
-                            "2020-01-01T01:01:00.000000Z\t42.0\t42\t2020-01-01T01:01:00.000000Z\t3.0\t3\t4.0\t4\n",
-                    "SELECT * " +
-                            "FROM (" +
-                            "  SELECT *" +
-                            "  FROM (" +
-                            "    SELECT *" +
-                            "    FROM trades" +
-                            "    WHERE price = '42.0'" +
-                            "    ORDER BY price, size, ts" +
-                            "    LIMIT 1" +
-                            "  )" +
-                            "  ORDER BY ts" +
-                            ")" +
-                            "ASOF JOIN order_book",
-                    "ts",
-                    false,
-                    true
-            );
+            assertQuery("SELECT * " +
+                    "FROM (" +
+                    "  SELECT *" +
+                    "  FROM (" +
+                    "    SELECT *" +
+                    "    FROM trades" +
+                    "    WHERE price = '42.0'" +
+                    "    ORDER BY price, size, ts" +
+                    "    LIMIT 1" +
+                    "  )" +
+                    "  ORDER BY ts" +
+                    ")" +
+                    "ASOF JOIN order_book")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tprice\tsize\tts1\tbid_price\tbid_size\ttask_price\ttask_size
+                            2020-01-01T01:01:00.000000Z\t42.0\t42\t2020-01-01T01:01:00.000000Z\t3.0\t3\t4.0\t4
+                            """);
         });
     }
 
     @Test
     public void testNegativeLimitDescOrderBy() throws Exception {
-        assertQuery(
-                "price\tts\n" +
-                        "0.6607777894187332\t2024-01-01T00:00:00.000000Z\n",
-                "select price, ts " +
-                        "from x " +
-                        "where price > 0 AND ts >= '2024-01-01' AND ts <= '2024-12-31' " +
-                        "order by ts desc limit -1",
-                "create table x as " +
+        assertQuery("select price, ts " +
+                "from x " +
+                "where price > 0 AND ts >= '2024-01-01' AND ts <= '2024-12-31' " +
+                "order by ts desc limit -1")
+                .ddl("create table x as " +
                         "(" +
                         "select" +
                         " rnd_double() price," +
                         " timestamp_sequence('2024', 24*60*60*1000*1000) ts" +
                         " from" +
                         " long_sequence(2)" +
-                        ") timestamp(ts) partition by day",
-                "ts###desc",
-                true,
-                true
-        );
+                        ") timestamp(ts) partition by day")
+                .timestamp("ts###desc")
+                .expectSize()
+                .returns("""
+                        price\tts
+                        0.6607777894187332\t2024-01-01T00:00:00.000000Z
+                        """);
     }
 }

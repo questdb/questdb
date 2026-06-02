@@ -51,20 +51,22 @@ public class QueryTracingTest extends AbstractCairoTest {
             workerPool.assign(job);
             workerPool.start(LOG);
             String exampleQuery = "SELECT table_name FROM tables()";
-            assertSql("table_name\n", exampleQuery);
+            assertQuery(exampleQuery)
+                    .noLeakCheck()
+                    .returnsOnce("table_name\n");
             int sleepMillis = 100;
             while (true) {
                 Thread.sleep(sleepMillis);
                 try {
-                    assertSql(
-                            String.format("%s\t%s\n%s\tadmin\n", COLUMN_QUERY_TEXT, COLUMN_PRINCIPAL, exampleQuery),
-                            String.format("SELECT %s, %s from %s WHERE %s='%s' LIMIT 1",
-                                    COLUMN_QUERY_TEXT,
-                                    COLUMN_PRINCIPAL,
-                                    TABLE_NAME,
-                                    COLUMN_QUERY_TEXT,
-                                    exampleQuery
-                            ));
+                    assertQuery(String.format("SELECT %s, %s from %s WHERE %s='%s' LIMIT 1",
+                            COLUMN_QUERY_TEXT,
+                            COLUMN_PRINCIPAL,
+                            TABLE_NAME,
+                            COLUMN_QUERY_TEXT,
+                            exampleQuery
+                    ))
+                            .noLeakCheck()
+                            .returnsOnce(String.format("%s\t%s\n%s\tadmin\n", COLUMN_QUERY_TEXT, COLUMN_PRINCIPAL, exampleQuery));
                     break;
                 } catch (SqlException | AssertionError e) {
                     if (sleepMillis >= 6400) {
