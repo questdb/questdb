@@ -123,7 +123,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         Misc.free(blockFileWriter);
     }
 
-    private static long calculateSkipTransactionCount(long initialSeqTxn, WalTxnDetails walTxnDetails) {
+    private static long calculateSkipTransactionCount(TableToken tableToken, long initialSeqTxn, WalTxnDetails walTxnDetails) {
         // Check all future transactions to see if any fully replace this transaction's range or table is truncated
         final long lastSeqTxn = walTxnDetails.getLastSeqTxn();
 
@@ -142,6 +142,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 txnTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
             }
 
+            long firstNonSkippableTxn = Long.MAX_VALUE;
             boolean seqTxnCanBeSkipped = false;
 
             // Even though it's O(N^2) complexity, the number of transactions we can skip is expected to be small.
@@ -154,20 +155,32 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // check below treats them by walId, so the exact value is irrelevant there.
                 byte futureType = futureWalId > 0 ? walTxnDetails.getWalTxnType(futureSeqTxn) : NONE;
                 if (futureType == TRUNCATE) {
-                    // Truncate fully removes any prior data, no point doing any data apply.
-                    // Everything between seqTxn and the truncate is data (otherwise we would have stopped at
-                    // the barrier below), so we can skip straight to the truncate.
-                    return futureSeqTxn - initialSeqTxn;
+                    // Truncate fully removes any prior data, no point applying it first. Skip straight to the
+                    // truncate, but not past a non-skippable transaction recorded before it. For a regular table
+                    // firstNonSkippableTxn stays MAX (we break at the first barrier below before ever reaching a
+                    // truncate), so this skips everything up to the truncate. For a mat view we scan past
+                    // structural changes (see below), so the clamp prevents skipping past one.
+                    return Math.min(firstNonSkippableTxn, futureSeqTxn) - initialSeqTxn;
                 }
 
                 if (futureWalId < 1 || !isDataType(futureType)) {
                     // Not a data transaction: either an SQL statement (e.g. an UPDATE that uses existing data)
-                    // or a structural change (e.g. a column type conversion). Such transactions can read the
-                    // rows present when they apply, so the transactions before them must be materialised
-                    // identically on every instance and cannot be skipped. A STRING->SYMBOL conversion, for
-                    // instance, builds the column's symbol map from the rows present at conversion time; if the
-                    // primary and a replica skipped different transactions before it, their symbol maps - and
-                    // therefore the replicated data - would diverge. Treat it as a barrier.
+                    // or a structural change (e.g. a column type conversion). Skipping the data before such a
+                    // transaction can diverge across instances - a STRING->SYMBOL conversion builds the column's
+                    // symbol map from the rows present at conversion time, so a primary and a replica that
+                    // skipped different transactions before it would build different maps. So treat it as a
+                    // barrier and stop scanning.
+                    //
+                    // Materialized views are exempt: a column type conversion cannot run on a mat view, so the
+                    // divergence cannot arise, while the optimization is worth keeping - a full mat view refresh
+                    // truncates, and materialising the data only to truncate it immediately afterwards is wasted
+                    // work. So for a mat view, record the barrier and keep scanning (the original behaviour), so
+                    // a later TRUNCATE or covering REPLACE_RANGE can still skip the data before it. An SQL
+                    // transaction stays a hard barrier even for a mat view, as it may read existing data.
+                    if (tableToken.isMatView() && futureType != SQL) {
+                        firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
+                        continue;
+                    }
                     break;
                 }
 
@@ -663,8 +676,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         switch (walTxnType) {
             case DATA:
             case MAT_VIEW_DATA:
-                walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp, txnDetails.getMinTimestamp(seqTxn), txnDetails.getMaxTimestamp(seqTxn));
-                long skipTxnCount = calculateSkipTransactionCount(seqTxn, txnDetails);
+                TableToken tableToken = writer.getTableToken();
+                walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp, txnDetails.getMinTimestamp(seqTxn), txnDetails.getMaxTimestamp(seqTxn));
+                long skipTxnCount = calculateSkipTransactionCount(tableToken, seqTxn, txnDetails);
                 // Ask TableWriter to skip applying transactions entirely when possible
                 boolean skipped = false;
                 if (skipTxnCount > 0) {

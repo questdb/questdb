@@ -33,6 +33,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -321,6 +322,85 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             9\t2022-02-24T00:09:00.000000Z\t1009
                             100\t2022-02-24T05:00:00.000000Z\tnull
                             101\t2022-02-24T05:01:00.000000Z\tnull
+                            """,
+                    "select * from x order by ts"
+            );
+        });
+    }
+
+    @Test
+    public void testReplaceRangeDoesNotSkipInsertBeforeMatViewInvalidate() throws Exception {
+        // Exercises the generalized skip barrier with a MAT_VIEW_INVALIDATE - a non-data transaction with
+        // walId > 0 - as the barrier, in a single apply batch. Unlike the ADD COLUMN / conversion cases
+        // (structural, walId < 1, caught by the futureWalId < 1 arm), this hits the !isDataType(futureType)
+        // arm, the path whose behavior the fix changed for type-4/5 transactions: the old scan walked past a
+        // MAT_VIEW_INVALIDATE, the new scan stops at it. VIEW_DEFINITION (type 5) shares this exact arm.
+        //
+        // WalWriter.resetMatViewState emits a synthetic MAT_VIEW_INVALIDATE without requiring a real mat view
+        // (WalWriter does not validate the table type), the same technique RecentWriteTrackerIntegrationTest
+        // uses to drive this branch deterministically.
+        //
+        // Like the ADD COLUMN case this is path coverage, not a strict regression guard: a MAT_VIEW_INVALIDATE
+        // builds no row-derived state, so a single instance is self-consistent whether or not the insert is
+        // skipped (the covering REPLACE_RANGE overwrites the inserted rows either way). The barrier is
+        // conservative future-proofing; this test pins that the path applies cleanly and returns correct data.
+        assertMemoryLeak(() -> {
+            execute("create table x (id int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
+            final long rangeHi = MicrosTimestampDriver.floor("2022-02-24T01"); // exclusive
+
+            // INSERT covered by the later REPLACE_RANGE - the one at risk of being skipped. Committed first
+            // so its skip would be decided with an empty writer LAG (a non-empty LAG makes the skip bail out).
+            final StringSink insert = new StringSink();
+            insert.put("insert into x values ");
+            for (int i = 0; i < 10; i++) {
+                if (i > 0) {
+                    insert.put(',');
+                }
+                insert.put('(').put(i).put(",'2022-02-24T00:0").put(i).put(":00.000000Z')");
+            }
+            execute(insert.toString());
+
+            // Surviving rows at HIGHER timestamps, outside the REPLACE_RANGE.
+            execute("insert into x values (100,'2022-02-24T05:00:00.000000Z'),(101,'2022-02-24T05:01:00.000000Z')");
+
+            // MAT_VIEW_INVALIDATE - the non-data (walId > 0) barrier between the insert and the replace.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                ww.resetMatViewState(1, 1, true, "test invalidation", Numbers.LONG_NULL, null, -1);
+            }
+
+            // REPLACE_RANGE fully covering the first insert, with new id values.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                final int idIdx = ww.getMetadata().getColumnIndex("id");
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putInt(idIdx, 1000 + i);
+                    row.append();
+                }
+                ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+
+            // Apply insert + mat-view-invalidate + replace in one batch.
+            drainWalQueue();
+
+            // The replaced rows carry their new id values; the surviving rows are untouched.
+            assertSql(
+                    """
+                            id\tts
+                            1000\t2022-02-24T00:00:00.000000Z
+                            1001\t2022-02-24T00:01:00.000000Z
+                            1002\t2022-02-24T00:02:00.000000Z
+                            1003\t2022-02-24T00:03:00.000000Z
+                            1004\t2022-02-24T00:04:00.000000Z
+                            1005\t2022-02-24T00:05:00.000000Z
+                            1006\t2022-02-24T00:06:00.000000Z
+                            1007\t2022-02-24T00:07:00.000000Z
+                            1008\t2022-02-24T00:08:00.000000Z
+                            1009\t2022-02-24T00:09:00.000000Z
+                            100\t2022-02-24T05:00:00.000000Z
+                            101\t2022-02-24T05:01:00.000000Z
                             """,
                     "select * from x order by ts"
             );
@@ -760,6 +840,146 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             lagMinTimestamp: '294247-01-10T04:00:54.775Z', \
                             lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}""",
                     readTxnToString(tableToken, true, true)
+            );
+        });
+    }
+
+    @Test
+    public void testReplaceRangeSkipsInsertBeforeBarrierOnMatView() throws Exception {
+        // Mat-view counterpart of testReplaceRangeDoesNotSkipInsertBeforeMatViewInvalidate. For a regular
+        // table the skip look-ahead stops at the first non-data transaction (the column-conversion divergence
+        // fix). A MATERIALIZED VIEW is exempt: a column type conversion cannot run on a mat view, so the
+        // cross-instance divergence the barrier guards against cannot arise, and disabling the optimization
+        // would make a full mat view refresh (which truncates / replaces) materialise data it is about to
+        // overwrite. So for a mat view the scan passes the MAT_VIEW_INVALIDATE barrier and the INSERT before
+        // it is skipped, exactly as before the fix.
+        //
+        // This is path coverage: the skip is a physical-write optimization, not a data change (the covering
+        // REPLACE_RANGE overwrites the inserted rows either way), so the assertion pins that the mat-view
+        // barrier path applies cleanly and returns correct data, and exercises the isMatView() branch. That
+        // the INSERT is actually skipped (rather than applied then overwritten) shows up as a "skipping
+        // replaced WAL transactions" line in the apply log; a regular table logs no such skip here.
+        assertMemoryLeak(() -> {
+            execute("create table base (s string, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("mv");
+            Assert.assertTrue("mv must be a materialized view", tableToken.isMatView());
+
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
+            final long rangeHi = MicrosTimestampDriver.floor("2022-02-24T01"); // exclusive
+
+            // INSERT covered by the later REPLACE_RANGE - skipped only if the scan passes the barrier.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putStr(0, "old" + i);
+                    row.putDouble(1, i);
+                    row.append();
+                }
+                ww.commit();
+            }
+
+            // MAT_VIEW_INVALIDATE barrier between the insert and the replace. The table genuinely is a mat
+            // view, so isMatView() selects the original (scan-past-the-barrier) behaviour.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                ww.resetMatViewState(1, 1, true, "test invalidation", Numbers.LONG_NULL, null, -1);
+            }
+
+            // REPLACE_RANGE fully covering the insert, with new values.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putStr(0, "new" + i);
+                    row.putDouble(1, 1000 + i);
+                    row.append();
+                }
+                ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+
+            // Apply insert + mat-view-invalidate + replace in one batch.
+            drainWalQueue();
+
+            // Only the replacement values remain.
+            assertSql(
+                    """
+                            s\tv
+                            new0\t1000.0
+                            new1\t1001.0
+                            new2\t1002.0
+                            new3\t1003.0
+                            new4\t1004.0
+                            new5\t1005.0
+                            new6\t1006.0
+                            new7\t1007.0
+                            new8\t1008.0
+                            new9\t1009.0
+                            """,
+                    "select s, v from mv order by ts"
+            );
+        });
+    }
+
+    @Test
+    public void testReplaceRangeSkipsInsertBeforeTruncateAfterBarrierOnMatView() throws Exception {
+        // The TRUNCATE skip-clamp path of the mat-view exemption - the reviewer's exact trace:
+        //   INSERT(0) -> barrier(1) -> TRUNCATE(2)
+        // For a regular table (testReplaceRangeDoesNotSkipInsertBeforeTruncateAfterBarrier) the scan breaks
+        // at the barrier and the INSERT is applied then truncated. For a MATERIALIZED VIEW the scan records
+        // the barrier and continues to the truncate, returning min(barrier, truncate) = barrier, so the
+        // INSERT is skipped - but clamped to the barrier, so the MAT_VIEW_INVALIDATE itself is still applied,
+        // not skipped past. This is the optimization a full mat view refresh relies on: refresh truncates via
+        // WalWriter.truncateSoft() (see MatViewRefreshJob), so the data it is about to wipe is not
+        // materialised first.
+        //
+        // ADD COLUMN (the barrier in the original trace) cannot run on a mat view, so MAT_VIEW_INVALIDATE is
+        // the realistic mat-view barrier. Path coverage on the data - the truncate wipes the insert either
+        // way - so the assertion pins correct data and that the apply path is clean; that the INSERT is
+        // actually skipped (clamped to the barrier) shows up as a "skipping replaced WAL transactions" line in
+        // the apply log.
+        assertMemoryLeak(() -> {
+            execute("create table base (s string, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("mv");
+            Assert.assertTrue("mv must be a materialized view", tableToken.isMatView());
+
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
+
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                // INSERT - skippable only if the scan passes the barrier and reaches the truncate.
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putStr(0, "old" + i);
+                    row.putDouble(1, i);
+                    row.append();
+                }
+                ww.commit();
+
+                // MAT_VIEW_INVALIDATE barrier between the insert and the truncate.
+                ww.resetMatViewState(1, 1, true, "test invalidation", Numbers.LONG_NULL, null, -1);
+
+                // TRUNCATE - the same call a full refresh makes.
+                ww.truncateSoft();
+
+                // One surviving row after the truncate, so there is observable data.
+                TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2022-02-25T00"));
+                row.putStr(0, "kept");
+                row.putDouble(1, 42);
+                row.append();
+                ww.commit();
+            }
+
+            // Apply insert + mat-view-invalidate + truncate + insert in one batch.
+            drainWalQueue();
+
+            // Only the post-truncate row survives.
+            assertSql(
+                    """
+                            s\tv
+                            kept\t42.0
+                            """,
+                    "select s, v from mv order by ts"
             );
         });
     }
