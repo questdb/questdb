@@ -48,6 +48,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -506,6 +508,69 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3DeferredPostingSealPurgePersistsOnCloseWhenJobHoldsLogWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_recovery";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(0, 10));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(0, 35));
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(oldFiles, true);
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+
+            // A live PostingSealPurgeJob owns the sys.posting_seal_purge_log
+            // writer for the entire close, exactly as in a running server. It is
+            // not draining concurrently (CPU-starved or in error backoff), so the
+            // ring stays saturated and the close-time direct-persist fallback
+            // cannot acquire the log writer.
+            try (PostingSealPurgeJob liveJob = new PostingSealPurgeJob(engine)) {
+                Assert.assertTrue("live job must own the log writer", liveJob.isJobAliveForTesting());
+                fillPostingSealPurgeQueue(tableToken);
+
+                // The O3 commit advances _txn so the deferred purge is ready, but
+                // the ring is full so it remains in the TableWriter until close.
+                execute(insertPostingRowsSql(35, 92));
+
+                // Close while liveJob still holds the log writer. The ready purge
+                // intent must survive instead of being dropped and orphaning the
+                // superseded .pv/.pc files for the process lifetime.
+                engine.releaseAllWriters();
+                assertPostingSealFilesExist(oldFiles, true);
+            }
+
+            // Clear the saturating dummy tasks so a recovering job can drain the
+            // real, deferred purge work.
+            drainPostingSealPurgeQueue();
+
+            // Reopen the data table so writer-open recovery can replay the intent
+            // recorded at close, then let a job complete the promised purge.
+            try (TableWriter ignore = engine.getWriter(tableToken, "posting seal purge recovery test")) {
+                Assert.assertNotNull(ignore);
+            }
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            // The superseded seal files must be purged, not orphaned.
+            assertPostingSealFilesExist(oldFiles, false);
+        });
+    }
+
+    @Test
     public void testO3DeferredPostingSealPurgePersistsOnCloseWhenQueueIsFull() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
@@ -558,6 +623,61 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             }
 
             assertPostingSealFilesExist(oldFiles, false);
+        });
+    }
+
+    @Test
+    public void testO3DeferredPostingSealPurgeRecoveryHandlesCorruptPendingFile() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_recovery";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(0, 10));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+            execute(insertPostingRowsSql(0, 35));
+
+            // A live, un-superseded seal: no garbage parsed from a corrupt
+            // pending file may cause its .pv/.pc files to be purged.
+            final PostingSealFileNames liveFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(liveFiles, true);
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+
+            // Each corrupt pending-file shape must be discarded on the next open
+            // without crashing the writer, without replaying garbage purge tasks,
+            // and the file must be removed so it cannot accumulate:
+            //   0 - unknown format marker
+            //   1 - valid header but body truncated mid fixed-part
+            //   2 - valid header + full fixed part but out-of-range name length
+            //   3 - file shorter than the 8-byte header
+            for (int variant = 0; variant < 4; variant++) {
+                engine.releaseAllWriters();
+                writeCorruptPostingSealPurgePendingFile(tableToken, variant);
+                assertPostingSealPurgePendingFileExists(tableToken, true);
+
+                try (TableWriter writer = engine.getWriter(tableToken, "corrupt posting purge recovery test")) {
+                    Assert.assertNotNull("writer must open despite a corrupt pending file [variant=" + variant + ']', writer);
+                }
+
+                assertPostingSealPurgePendingFileExists(tableToken, false);
+                assertPostingSealFilesExist(liveFiles, true);
+            }
+
+            // A purge job run finds no garbage work that touches the live seal.
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            assertPostingSealFilesExist(liveFiles, true);
         });
     }
 
@@ -4130,6 +4250,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
+    // Mirrors TableWriter.POSTING_SEAL_PURGE_PENDING_FILE_NAME.
+    private void assertPostingSealPurgePendingFileExists(TableToken token, boolean expected) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token).concat("_posting_seal_purge_pending.d");
+            Assert.assertEquals("posting seal-purge pending file existence [path=" + path + ']', expected, ff.exists(path.$()));
+        }
+    }
+
     private PostingSealFileNames resolvePostingSealFileNames(
             Path path,
             String tableName,
@@ -4205,6 +4334,50 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
+    // Writes a deliberately corrupt posting seal-purge pending file, truncated to
+    // an exact length (TRUNCATE_TO_POINTER) so the recovery bound-checks see the
+    // intended short/overrunning layout rather than a page-padded file.
+    private void writeCorruptPostingSealPurgePendingFile(TableToken token, int variant) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token).concat("_posting_seal_purge_pending.d");
+            MemoryMARW mem = Vm.getCMARWInstance();
+            try {
+                mem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
+                mem.jumpTo(0);
+                switch (variant) {
+                    case 0: // unknown format marker
+                        mem.putInt(999);
+                        mem.putInt(0);
+                        break;
+                    case 1: // valid header claiming 2 records, body truncated
+                        mem.putInt(1); // POSTING_SEAL_PURGE_PENDING_FORMAT
+                        mem.putInt(2);
+                        mem.putLong(123L); // only 8 bytes, far short of a record
+                        break;
+                    case 2: // valid header + full 56-byte fixed part, bad name length
+                        mem.putInt(1);
+                        mem.putInt(1);
+                        mem.putLong(0L); // postingColumnNameTxn
+                        mem.putLong(0L); // sealTxn
+                        mem.putLong(0L); // partitionTimestamp
+                        mem.putLong(0L); // partitionNameTxn
+                        mem.putInt(0);   // partitionBy
+                        mem.putInt(0);   // timestampType
+                        mem.putLong(0L); // fromTableTxn
+                        mem.putLong(0L); // toTableTxn
+                        mem.putInt(1_000_000); // name length far past EOF
+                        break;
+                    default: // shorter than the 8-byte header
+                        mem.putInt(1);
+                        break;
+                }
+            } finally {
+                mem.close(true, Vm.TRUNCATE_TO_POINTER);
+            }
+        }
+    }
+
     private static class FailAppendPositionLengthFacade extends TestFilesFacadeImpl {
         private boolean armed;
         private int failureCount;
@@ -4243,15 +4416,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
-    private static class PostingSealFileNames {
-        private final String coverFile;
-        private final long sealTxn;
-        private final String valueFile;
-
-        private PostingSealFileNames(long sealTxn, String valueFile, String coverFile) {
-            this.sealTxn = sealTxn;
-            this.valueFile = valueFile;
-            this.coverFile = coverFile;
-        }
+    private record PostingSealFileNames(long sealTxn, String valueFile, String coverFile) {
     }
 }
