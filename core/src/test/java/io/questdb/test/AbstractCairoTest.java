@@ -141,7 +141,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final StringSink sink = new StringSink();
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
-    private static final LongList rows = new LongList();
     public static String exportRoot = null;
     public static StaticOverrides staticOverrides = new StaticOverrides();
     protected static BindVariableService bindVariableService;
@@ -183,28 +182,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
-
-    public static boolean assertCursor(
-            CharSequence expected,
-            boolean supportsRandomAccess,
-            boolean sizeExpected,
-            boolean sizeCanBeVariable,
-            RecordCursor cursor,
-            RecordMetadata metadata,
-            boolean fragmentedSymbolTables
-    ) {
-        return assertCursor(
-                expected,
-                supportsRandomAccess,
-                sizeExpected,
-                sizeCanBeVariable,
-                cursor,
-                metadata,
-                sink,
-                rows,
-                fragmentedSymbolTables
-        );
-    }
 
     // Thread-safe cursor assertion method.
     public static boolean assertCursor(
@@ -1008,42 +985,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         writer.apply(addColumnOp, true);
     }
 
-    protected static void assertCursor(
-            CharSequence expected,
-            RecordCursorFactory factory,
-            boolean supportsRandomAccess,
-            boolean sizeExpected,
-            boolean sizeCanBeVariable, // this means size() can either be -1 in some cases or known in others
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        boolean cursorAsserted;
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            Assert.assertEquals("supports random access", supportsRandomAccess, factory.recordCursorSupportsRandomAccess());
-            cursorAsserted = assertCursor(expected, supportsRandomAccess, sizeExpected, sizeCanBeVariable, cursor, factory.getMetadata(), factory.fragmentedSymbolTables());
-        }
-
-        assertFactoryMemoryUsage();
-
-        if (cursorAsserted) {
-            return;
-        }
-
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            testSymbolAPI(factory.getMetadata(), cursor, factory.fragmentedSymbolTables());
-        }
-
-        assertFactoryMemoryUsage();
-    }
-
-    protected static void assertCursor(
-            CharSequence expected,
-            RecordCursorFactory factory,
-            boolean supportsRandomAccess,
-            boolean expectSize
-    ) throws SqlException {
-        assertCursor(expected, factory, supportsRandomAccess, expectSize, false, sqlExecutionContext);
-    }
-
     protected static void assertException(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
         assertMemoryLeak(() -> assertExceptionNoLeakCheck(sql, errorPos, contains, false));
     }
@@ -1185,71 +1126,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     LOG
             );
         }
-    }
-
-    /**
-     * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
-     */
-    protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (expectedTimestamp == null || expectedTimestamp.isEmpty()) {
-            int timestampIdx = factory.getMetadata().getTimestampIndex();
-            if (timestampIdx != -1) {
-                Assert.fail("Expected no timestamp but found " + factory.getMetadata().getColumnName(timestampIdx) + ", idx=" + timestampIdx);
-            }
-        } else {
-            boolean expectAscendingOrder = true;
-            String tsDesc = expectedTimestamp.toString();
-            int position = tsDesc.indexOf("###");
-            if (position > 0) {
-                expectedTimestamp = tsDesc.substring(0, position);
-                expectAscendingOrder = tsDesc.substring(position + 3).equalsIgnoreCase("asc");
-            }
-
-            if (expectAscendingOrder) {
-                try {
-                    Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, factory.getScanDirection());
-                } catch (AssertionError e) {
-                    throw new AssertionError("expected ASCENDING timestamp", e);
-                }
-            } else {
-                try {
-                    Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_BACKWARD, factory.getScanDirection());
-                } catch (AssertionError e) {
-                    throw new AssertionError("expected DESCENDING timestamp", e);
-                }
-            }
-
-            int index = factory.getMetadata().getColumnIndexQuiet(expectedTimestamp);
-            Assert.assertTrue("Column '" + expectedTimestamp + "' can't be found in metadata", index > -1);
-            Assert.assertNotEquals("Expected non-negative value as timestamp index", -1, index);
-            Assert.assertEquals("Timestamp column index", index, factory.getMetadata().getTimestampIndex());
-            assertTimestampColumnValues(factory, sqlExecutionContext, expectAscendingOrder);
-        }
-    }
-
-    protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext, boolean isAscending) throws SqlException {
-        int index = factory.getMetadata().getTimestampIndex();
-        Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(factory.getMetadata().getColumnType(index)));
-        long timestamp = isAscending ? Long.MIN_VALUE : Long.MAX_VALUE;
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            final Record record = cursor.getRecord();
-            long c = 0;
-            while (cursor.hasNext()) {
-                long ts = record.getTimestamp(index);
-                if ((isAscending && timestamp > ts) || (!isAscending && timestamp < ts)) {
-                    StringSink error = new StringSink();
-                    error.put("record # ").put(c).put(" should have ").put(isAscending ? "bigger" : "smaller").put(" (or equal) timestamp than the row before. Values prior=");
-                    MicrosFormatUtils.appendDateTimeUSec(error, timestamp);
-                    error.put(" current=");
-                    MicrosFormatUtils.appendDateTimeUSec(error, ts);
-
-                    Assert.fail(error.toString());
-                }
-                timestamp = ts;
-                c++;
-            }
-        }
-        assertFactoryMemoryUsage();
     }
 
     protected static void configOverrideRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
@@ -1516,26 +1392,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertCursor(expected, cursor, metadata, true);
         cursor.toTop();
         assertCursor(expected, cursor, metadata, true);
-    }
-
-    protected static void assertFactoryCursor(
-            CharSequence expected,
-            String expectedTimestamp,
-            RecordCursorFactory factory,
-            boolean supportsRandomAccess,
-            SqlExecutionContext executionContext,
-            boolean expectSize,
-            boolean sizeCanBeVariable
-    ) throws SqlException {
-        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
-        // v Please keep this check after ^ that one.
-        // Factories that have a scan order dependent on the bind variable will not test correctly.
-        // See generate_series
-        assertTimestamp(expectedTimestamp, factory, executionContext);
-        // make sure we get the same outcome when we get factory to create new cursor
-        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
-        // make sure strings, binary fields and symbols are compliant with expected record behaviour
-        assertVariableColumns(factory, executionContext);
     }
 
     /**

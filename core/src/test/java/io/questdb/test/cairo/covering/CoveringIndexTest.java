@@ -69,6 +69,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -6445,21 +6446,28 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            bindVariableService.clear();
-            bindVariableService.setStr("sym", "A");
-            try (var factory = select("SELECT count() FROM t_bind_pf WHERE sym = :sym")) {
-                assertCursor("""
-                        count
-                        2
-                        """, factory, false, true);
-
-                bindVariableService.clear();
-                bindVariableService.setStr("sym", "B");
-                assertCursor("""
-                        count
-                        3
-                        """, factory, false, true);
-            }
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "sym=A",
+                    """
+                            count
+                            2
+                            """,
+                    bindVariableService -> bindVariableService.setStr("sym", "A")
+            ));
+            cases.add(BindVarTuple.ok(
+                    "sym=B",
+                    """
+                            count
+                            3
+                            """,
+                    bindVariableService -> bindVariableService.setStr("sym", "B")
+            ));
+            assertQuery("SELECT count() FROM t_bind_pf WHERE sym = :sym")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .assertBinds(cases);
         });
     }
 
@@ -6486,32 +6494,40 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            bindVariableService.clear();
-            bindVariableService.setStr("sym", "A");
-            try (var factory = select("SELECT price FROM t_bind_rebind WHERE sym = :sym")) {
-                assertCursor("""
-                        price
-                        10.5
-                        11.5
-                        """, factory, false, true);
-
-                bindVariableService.clear();
-                bindVariableService.setStr("sym", "B");
-                assertCursor("""
-                        price
-                        20.5
-                        21.5
-                        """, factory, false, true);
-
-                // And back to A to cover both directions of the transition.
-                bindVariableService.clear();
-                bindVariableService.setStr("sym", "A");
-                assertCursor("""
-                        price
-                        10.5
-                        11.5
-                        """, factory, false, true);
-            }
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "sym=A",
+                    """
+                            price
+                            10.5
+                            11.5
+                            """,
+                    bindVariableService -> bindVariableService.setStr("sym", "A")
+            ));
+            cases.add(BindVarTuple.ok(
+                    "sym=B",
+                    """
+                            price
+                            20.5
+                            21.5
+                            """,
+                    bindVariableService -> bindVariableService.setStr("sym", "B")
+            ));
+            // And back to A to cover both directions of the transition.
+            cases.add(BindVarTuple.ok(
+                    "sym=A again",
+                    """
+                            price
+                            10.5
+                            11.5
+                            """,
+                    bindVariableService -> bindVariableService.setStr("sym", "A")
+            ));
+            assertQuery("SELECT price FROM t_bind_rebind WHERE sym = :sym")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .assertBinds(cases);
         });
     }
 

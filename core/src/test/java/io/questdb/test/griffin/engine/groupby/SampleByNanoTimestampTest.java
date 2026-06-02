@@ -46,6 +46,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.nanotime.Nanos;
@@ -55,6 +56,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -1438,76 +1440,62 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
 
-            snapshotMemoryUsage();
-            try (
-                    RecordCursorFactory factory = select(
-                            "select k, s, first(lat) lat, last(lon) lon " +
-                                    "from x " +
-                                    "where s in ('a') " +
-                                    "sample by 1h align to calendar time zone $1 with offset $2"
-                    )
-            ) {
-                String expectedMoscow = """
-                        k\ts\tlat\tlon
-                        2021-03-28T00:15:00.000000000Z\ta\t144.77803379943109\tnull
-                        2021-03-28T01:15:00.000000000Z\ta\t31.267026583720984\tnull
-                        2021-03-28T02:15:00.000000000Z\ta\t103.7167928478985\t128.42101395467057
-                        """;
+            String expectedMoscow = """
+                    k\ts\tlat\tlon
+                    2021-03-28T00:15:00.000000000Z\ta\t144.77803379943109\tnull
+                    2021-03-28T01:15:00.000000000Z\ta\t31.267026583720984\tnull
+                    2021-03-28T02:15:00.000000000Z\ta\t103.7167928478985\t128.42101395467057
+                    """;
+            String expectedPrague = """
+                    k\ts\tlat\tlon
+                    2021-03-28T00:10:00.000000000Z\ta\t144.77803379943109\tnull
+                    2021-03-28T01:10:00.000000000Z\ta\t137.95662156473048\tnull
+                    2021-03-28T02:10:00.000000000Z\ta\tnull\t128.42101395467057
+                    """;
 
-                String expectedPrague = """
-                        k\ts\tlat\tlon
-                        2021-03-28T00:10:00.000000000Z\ta\t144.77803379943109\tnull
-                        2021-03-28T01:10:00.000000000Z\ta\t137.95662156473048\tnull
-                        2021-03-28T02:10:00.000000000Z\ta\tnull\t128.42101395467057
-                        """;
-
-                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Moscow");
-                sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    assertCursor(
-                            expectedMoscow,
-                            cursor,
-                            factory.getMetadata(),
-                            true
-                    );
-                }
-                assertFactoryMemoryUsage();
-
-                // invalid timezone
-                sqlExecutionContext.getBindVariableService().setStr(0, "Oopsie");
-                sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
-                try {
-                    factory.getCursor(sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(108, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oopsie");
-                }
-                assertFactoryMemoryUsage();
-
-                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
-                sqlExecutionContext.getBindVariableService().setStr(1, "uggs");
-                try {
-                    factory.getCursor(sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(123, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: uggs");
-                }
-                assertFactoryMemoryUsage();
-
-                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
-                sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    assertCursor(
-                            expectedPrague,
-                            cursor,
-                            factory.getMetadata(),
-                            true
-                    );
-                }
-                assertFactoryMemoryUsage();
-            }
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "Europe/Moscow offset 00:15",
+                    expectedMoscow,
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "Europe/Moscow");
+                        bindVariableService.setStr(1, "00:15");
+                    }
+            ));
+            cases.add(BindVarTuple.fails(
+                    "invalid timezone",
+                    108,
+                    "invalid timezone: Oopsie",
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "Oopsie");
+                        bindVariableService.setStr(1, "00:15");
+                    }
+            ));
+            cases.add(BindVarTuple.fails(
+                    "invalid offset",
+                    123,
+                    "invalid offset: uggs",
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "Europe/Prague");
+                        bindVariableService.setStr(1, "uggs");
+                    }
+            ));
+            cases.add(BindVarTuple.ok(
+                    "Europe/Prague offset 00:10",
+                    expectedPrague,
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "Europe/Prague");
+                        bindVariableService.setStr(1, "00:10");
+                    }
+            ));
+            assertQuery("select k, s, first(lat) lat, last(lon) lon " +
+                    "from x " +
+                    "where s in ('a') " +
+                    "sample by 1h align to calendar time zone $1 with offset $2")
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .expectSize()
+                    .assertBinds(cases);
         });
     }
 
@@ -4706,34 +4694,25 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL, sqlExecutionContext);
 
-            snapshotMemoryUsage();
-            try (
-                    final RecordCursorFactory factory = select(
-                            "select ts, avg(x) from fromto\n" +
-                                    "sample by 5d from $1 to $2 fill(42)")
-            ) {
-                final String expected = """
-                        ts\tavg
-                        2017-12-20T00:00:00.000000000Z\t42.0
-                        2017-12-25T00:00:00.000000000Z\t42.0
-                        2017-12-30T00:00:00.000000000Z\t72.5
-                        2018-01-04T00:00:00.000000000Z\t264.5
-                        2018-01-09T00:00:00.000000000Z\t432.5
-                        2018-01-14T00:00:00.000000000Z\t42.0
-                        2018-01-19T00:00:00.000000000Z\t42.0
-                        2018-01-24T00:00:00.000000000Z\t42.0
-                        2018-01-29T00:00:00.000000000Z\t42.0
-                        """;
-
-                sqlExecutionContext.getBindVariableService().setStr(0, "2017-12-20");
-                sqlExecutionContext.getBindVariableService().setStr(1, "2018-01-31");
-
-                try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    assertCursor(expected, cursor, factory.getMetadata(), true);
-                }
-
-                assertFactoryMemoryUsage();
-            }
+            sqlExecutionContext.getBindVariableService().setStr(0, "2017-12-20");
+            sqlExecutionContext.getBindVariableService().setStr(1, "2018-01-31");
+            assertQuery("select ts, avg(x) from fromto\n" +
+                    "sample by 5d from $1 to $2 fill(42)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tavg
+                            2017-12-20T00:00:00.000000000Z\t42.0
+                            2017-12-25T00:00:00.000000000Z\t42.0
+                            2017-12-30T00:00:00.000000000Z\t72.5
+                            2018-01-04T00:00:00.000000000Z\t264.5
+                            2018-01-09T00:00:00.000000000Z\t432.5
+                            2018-01-14T00:00:00.000000000Z\t42.0
+                            2018-01-19T00:00:00.000000000Z\t42.0
+                            2018-01-24T00:00:00.000000000Z\t42.0
+                            2018-01-29T00:00:00.000000000Z\t42.0
+                            """);
         });
     }
 
@@ -5504,77 +5483,67 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             ") timestamp(k) partition by NONE"
             );
 
-            snapshotMemoryUsage();
-            try (RecordCursorFactory factory = select("select k, count() from x sample by 90m align to calendar time zone $1 with offset $2")) {
-                String expectedMoscow = """
-                        k\tcount
-                        1970-01-02T22:45:00.000000000Z\t3
-                        1970-01-03T00:15:00.000000000Z\t18
-                        1970-01-03T01:45:00.000000000Z\t18
-                        1970-01-03T03:15:00.000000000Z\t18
-                        1970-01-03T04:45:00.000000000Z\t18
-                        1970-01-03T06:15:00.000000000Z\t18
-                        1970-01-03T07:45:00.000000000Z\t7
-                        """;
+            String expectedMoscow = """
+                    k\tcount
+                    1970-01-02T22:45:00.000000000Z\t3
+                    1970-01-03T00:15:00.000000000Z\t18
+                    1970-01-03T01:45:00.000000000Z\t18
+                    1970-01-03T03:15:00.000000000Z\t18
+                    1970-01-03T04:45:00.000000000Z\t18
+                    1970-01-03T06:15:00.000000000Z\t18
+                    1970-01-03T07:45:00.000000000Z\t7
+                    """;
+            String expectedPrague = """
+                    k\tcount
+                    1970-01-02T23:10:00.000000000Z\t8
+                    1970-01-03T00:40:00.000000000Z\t18
+                    1970-01-03T02:10:00.000000000Z\t18
+                    1970-01-03T03:40:00.000000000Z\t18
+                    1970-01-03T05:10:00.000000000Z\t18
+                    1970-01-03T06:40:00.000000000Z\t18
+                    1970-01-03T08:10:00.000000000Z\t2
+                    """;
 
-                String expectedPrague = """
-                        k\tcount
-                        1970-01-02T23:10:00.000000000Z\t8
-                        1970-01-03T00:40:00.000000000Z\t18
-                        1970-01-03T02:10:00.000000000Z\t18
-                        1970-01-03T03:40:00.000000000Z\t18
-                        1970-01-03T05:10:00.000000000Z\t18
-                        1970-01-03T06:40:00.000000000Z\t18
-                        1970-01-03T08:10:00.000000000Z\t2
-                        """;
-
-                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Moscow");
-                sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    assertCursor(
-                            expectedMoscow,
-                            cursor,
-                            factory.getMetadata(),
-                            true
-                    );
-                }
-                assertFactoryMemoryUsage();
-
-                // invalid timezone
-                sqlExecutionContext.getBindVariableService().setStr(0, "Oopsie");
-                sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
-                try {
-                    factory.getCursor(sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(67, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oopsie");
-                }
-                assertFactoryMemoryUsage();
-
-                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
-                sqlExecutionContext.getBindVariableService().setStr(1, "uggs");
-                try {
-                    factory.getCursor(sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(82, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: uggs");
-                }
-                assertFactoryMemoryUsage();
-
-                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
-                sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    assertCursor(
-                            expectedPrague,
-                            cursor,
-                            factory.getMetadata(),
-                            true
-                    );
-                }
-                assertFactoryMemoryUsage();
-            }
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "Europe/Moscow offset 00:15",
+                    expectedMoscow,
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "Europe/Moscow");
+                        bindVariableService.setStr(1, "00:15");
+                    }
+            ));
+            cases.add(BindVarTuple.fails(
+                    "invalid timezone",
+                    67,
+                    "invalid timezone: Oopsie",
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "Oopsie");
+                        bindVariableService.setStr(1, "00:15");
+                    }
+            ));
+            cases.add(BindVarTuple.fails(
+                    "invalid offset",
+                    82,
+                    "invalid offset: uggs",
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "Europe/Prague");
+                        bindVariableService.setStr(1, "uggs");
+                    }
+            ));
+            cases.add(BindVarTuple.ok(
+                    "Europe/Prague offset 00:10",
+                    expectedPrague,
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "Europe/Prague");
+                        bindVariableService.setStr(1, "00:10");
+                    }
+            ));
+            assertQuery("select k, count() from x sample by 90m align to calendar time zone $1 with offset $2")
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .expectSize()
+                    .assertBinds(cases);
         });
     }
 

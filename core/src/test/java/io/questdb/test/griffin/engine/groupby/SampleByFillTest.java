@@ -18,8 +18,10 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -42,6 +44,35 @@ import static org.junit.Assert.fail;
  * do this are tagged // ORDER BY-safe.
  */
 public class SampleByFillTest extends AbstractCairoTest {
+
+    @Test
+    public void testExplainFillRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (1.0, '2024-01-01T01:00:00.000000Z')");
+            // FROM+TO drive the range attribute in toPlan().
+            assertQuery("SELECT sum(val), ts FROM x " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By Fill
+                              range: ('2024-01-01','2024-01-01T04:00:00.000000Z')
+                              stride: '1h'
+                              fill: null
+                                Encode sort light
+                                  keys: [ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
+                                      values: [sum(val)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: x
+                                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T03:59:59.999999Z")]
+                            """);
+        });
+    }
 
     @Test
     public void testExplainOuterOrderByAggregate() throws Exception {
@@ -169,35 +200,6 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExplainFillRange() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES (1.0, '2024-01-01T01:00:00.000000Z')");
-            // FROM+TO drive the range attribute in toPlan().
-            assertQuery("SELECT sum(val), ts FROM x " +
-                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            Sample By Fill
-                              range: ('2024-01-01','2024-01-01T04:00:00.000000Z')
-                              stride: '1h'
-                              fill: null
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
-                                      values: [sum(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: x
-                                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T03:59:59.999999Z")]
-                            """);
-        });
-    }
-
-    @Test
     public void testFillConstDecimal128Value() throws Exception {
         assertMemoryLeak(() -> {
             // Non-keyed FILL with a DECIMAL128 constant covers
@@ -263,6 +265,25 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillFromEqualsToAccepted() throws Exception {
+        // Companion of testFillFromGreaterThanToRejected: FROM == TO must NOT
+        // raise -- a zero-length range is valid (matches HORIZON JOIN RANGE
+        // and REFRESH RANGE precedents). The TO bound is exclusive in
+        // SAMPLE BY, so FROM == TO yields zero rows; the test asserts empty
+        // result rather than the exception path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1.0, '2024-01-05T12:00:00.000000Z')");
+            assertQuery("SELECT ts, sum(val) FROM t " +
+                    "SAMPLE BY 1d FROM '2024-01-05' TO '2024-01-05' FILL(NULL) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\tsum\n");
+        });
+    }
+
+    @Test
     public void testFillFromGreaterThanToRejected() throws Exception {
         // Pin SAMPLE BY ... FILL ... FROM '<later>' TO '<earlier>' to a
         // position-pointing SqlException at cursor.of() time. Aligns SAMPLE BY
@@ -297,25 +318,6 @@ public class SampleByFillTest extends AbstractCairoTest {
             assertQuery(keyedSql)
                     .noLeakCheck()
                     .fails(keyedSql.indexOf("'2024-01-05'"), "TO timestamp must not be earlier than FROM timestamp");
-        });
-    }
-
-    @Test
-    public void testFillFromEqualsToAccepted() throws Exception {
-        // Companion of testFillFromGreaterThanToRejected: FROM == TO must NOT
-        // raise -- a zero-length range is valid (matches HORIZON JOIN RANGE
-        // and REFRESH RANGE precedents). The TO bound is exclusive in
-        // SAMPLE BY, so FROM == TO yields zero rows; the test asserts empty
-        // result rather than the exception path.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES (1.0, '2024-01-05T12:00:00.000000Z')");
-            assertQuery("SELECT ts, sum(val) FROM t " +
-                    "SAMPLE BY 1d FROM '2024-01-05' TO '2024-01-05' FILL(NULL) ALIGN TO CALENDAR")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("ts\tsum\n");
         });
     }
 
@@ -565,124 +567,43 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillSingleConstantBroadcastFunctionRejected() throws Exception {
+    public void testFillKeyedAsOfJoinConsumesFillCursor() throws Exception {
+        // SAMPLE BY ... FILL(PREV) inside an ASOF JOIN. The fill factory now
+        // exposes recordCursorSupportsRandomAccess=false, a behaviour change
+        // vs master that the plan-only ExplainPlanTest snapshots cannot catch.
+        // Asserts that the join consumer reads every fill and data row,
+        // including rows produced by FILL_PREV emission, and that the ASOF
+        // pairing on (sym, ts) lands the correct rate value per row.
         assertMemoryLeak(() -> {
-            // FUNCTION-typed expressions (function calls, casts, bind variables)
-            // are deliberately not in the broadcast set: per-aggregate type
-            // coercion for those would need to run per target. Pin this boundary
-            // -- a single rnd_int() against multiple aggregates must keep
-            // hitting the "not enough fill values" path, not silently broadcast.
-            execute("CREATE TABLE t (ts TIMESTAMP, a DOUBLE, b DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, 2)");
-            String sql = "SELECT ts, sum(a), sum(b) FROM t SAMPLE BY 1h FILL(rnd_int()) ALIGN TO CALENDAR";
-            assertQuery(sql)
-                    .noLeakCheck()
-                    .fails(sql.indexOf("rnd_int"), "not enough fill values");
-        });
-    }
-
-    @Test
-    public void testFillSingleConstantBroadcastNumeric() throws Exception {
-        assertMemoryLeak(() -> {
-            // A single numeric CONSTANT fills every non-key aggregate. Two
-            // DOUBLE-output aggregates broadcast the INT 0 via the standard
-            // INT->DOUBLE convertibility path; the gap bucket emits 0.0 in both
-            // columns.
-            execute("CREATE TABLE x (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
-                    "(3.0, 30.0, '2024-01-01T02:00:00.000000Z')");
-            assertQuery("SELECT first(a), first(b), ts FROM x SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR")
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (sym SYMBOL, rate DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO prices VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 3.0, '2024-01-01T02:00:00.000000Z')," +
+                    "('B', 4.0, '2024-01-01T02:00:00.000000Z')");
+            execute("INSERT INTO rates VALUES " +
+                    "('A', 1.1, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.2, '2024-01-01T00:00:00.000000Z')");
+            assertQuery("SELECT * FROM (" +
+                    "SELECT f.ts, f.sym, f.fv, r.rate FROM (" +
+                    "SELECT ts, sym, first(price) fv FROM prices " +
+                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
+                    ") f ASOF JOIN rates r ON f.sym = r.sym" +
+                    ") ORDER BY ts, sym")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .noRandomAccess()
                     .returns("""
-                            first\tfirst1\tts
-                            1.0\t10.0\t2024-01-01T00:00:00.000000Z
-                            0.0\t0.0\t2024-01-01T01:00:00.000000Z
-                            3.0\t30.0\t2024-01-01T02:00:00.000000Z
+                            ts\tsym\tfv\trate
+                            2024-01-01T00:00:00.000000Z\tA\t1.0\t1.1
+                            2024-01-01T00:00:00.000000Z\tB\t2.0\t2.2
+                            2024-01-01T01:00:00.000000Z\tA\t1.0\t1.1
+                            2024-01-01T01:00:00.000000Z\tB\t2.0\t2.2
+                            2024-01-01T02:00:00.000000Z\tA\t3.0\t1.1
+                            2024-01-01T02:00:00.000000Z\tB\t4.0\t2.2
                             """);
-        });
-    }
-
-    @Test
-    public void testFillSingleConstantBroadcastString() throws Exception {
-        assertMemoryLeak(() -> {
-            // String CONSTANT broadcasts across two VARCHAR-output aggregates.
-            // Verifies the new fast-path broadcast path correctly threads the
-            // parsed VARCHAR Function through every non-key column.
-            execute("CREATE TABLE x (a VARCHAR, b VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "('one', 'ten', '2024-01-01T00:00:00.000000Z')," +
-                    "('three', 'thirty', '2024-01-01T02:00:00.000000Z')");
-            assertQuery("SELECT first(a), first(b), ts FROM x SAMPLE BY 1h FILL('xx') ALIGN TO CALENDAR")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("""
-                            first\tfirst1\tts
-                            one\tten\t2024-01-01T00:00:00.000000Z
-                            xx\txx\t2024-01-01T01:00:00.000000Z
-                            three\tthirty\t2024-01-01T02:00:00.000000Z
-                            """);
-        });
-    }
-
-    @Test
-    public void testFillSingleConstantBroadcastTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            // Quoted-timestamp CONSTANT broadcasts across two TIMESTAMP-output
-            // aggregates. The TIMESTAMP coercion path runs once per aggregate,
-            // producing a unit-correct TimestampConstant for each target.
-            execute("CREATE TABLE x (a TIMESTAMP, b TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "('2024-02-01T00:00:00.000000Z', '2024-03-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z')," +
-                    "('2024-02-01T05:00:00.000000Z', '2024-03-01T05:00:00.000000Z', '2024-01-01T02:00:00.000000Z')");
-            assertQuery("SELECT first(a), first(b), ts FROM x SAMPLE BY 1h FILL('2024-06-15T00:00:00.000000Z') ALIGN TO CALENDAR")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("""
-                            first\tfirst1\tts
-                            2024-02-01T00:00:00.000000Z\t2024-03-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
-                            2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\t2024-01-01T01:00:00.000000Z
-                            2024-02-01T05:00:00.000000Z\t2024-03-01T05:00:00.000000Z\t2024-01-01T02:00:00.000000Z
-                            """);
-        });
-    }
-
-    @Test
-    public void testFillSingleConstantBroadcastTypeMismatch() throws Exception {
-        assertMemoryLeak(() -> {
-            // INT 0 is convertible to DOUBLE (widening) but not to VARCHAR. A
-            // multi-aggregate broadcast where one target type is incompatible
-            // surfaces a clean upfront error instead of producing garbage at
-            // runtime via the Function dispatch.
-            execute("CREATE TABLE x (a DOUBLE, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "(1.0, 'one', '2024-01-01T00:00:00.000000Z')," +
-                    "(3.0, 'three', '2024-01-01T02:00:00.000000Z')");
-            String sql = "SELECT first(a), first(s), ts FROM x SAMPLE BY 1h FILL(42) ALIGN TO CALENDAR";
-            assertQuery(sql)
-                    .noLeakCheck()
-                    .fails(sql.indexOf("42"), "fill value of type INT cannot fill column of type VARCHAR");
-        });
-    }
-
-    @Test
-    public void testFillSingleConstantBroadcastUnquotedTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            // FILL(0) against a TIMESTAMP-output aggregate must reject in
-            // broadcast mode just as it does per-column. The TIMESTAMP coercion
-            // path requires a quoted literal so a unit-correct value can be
-            // parsed.
-            execute("CREATE TABLE x (a TIMESTAMP, b TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "('2024-02-01T00:00:00.000000Z', '2024-03-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z')");
-            String sql = "SELECT first(a), first(b), ts FROM x SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR";
-            assertQuery(sql)
-                    .noLeakCheck()
-                    .fails(sql.indexOf("FILL(0)") + 5, "Timestamp fill value must be in quotes");
         });
     }
 
@@ -776,6 +697,121 @@ public class SampleByFillTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .returns(expected);
             }
+        });
+    }
+
+    @Test
+    public void testFillKeyedEmptyTableNoFromTo() throws Exception {
+        assertMemoryLeak(() -> {
+            // Keyed SAMPLE BY FILL on an empty table with neither FROM nor TO
+            // emits zero rows; pass 1 discovers no keys and the initialize
+            // short-circuit at keyCount==0 must terminate cleanly.
+            execute("CREATE TABLE x (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT sym, sum(val), ts FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("sym\tsum\tts\n");
+        });
+    }
+
+    @Test
+    public void testFillKeyedInnerJoinConsumesFillCursor() throws Exception {
+        // SAMPLE BY ... FILL(PREV) inside an INNER JOIN against a static
+        // lookup table. Verifies the join consumer iterates the non-random-
+        // access fill cursor without losing rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE labels (sym SYMBOL, name STRING)");
+            execute("INSERT INTO prices VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 3.0, '2024-01-01T02:00:00.000000Z')," +
+                    "('B', 4.0, '2024-01-01T02:00:00.000000Z')");
+            execute("INSERT INTO labels VALUES ('A', 'AAA'), ('B', 'BBB')");
+            assertQuery("SELECT * FROM (" +
+                    "SELECT f.ts, f.sym, f.fv, l.name FROM (" +
+                    "SELECT ts, sym, first(price) fv FROM prices " +
+                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
+                    ") f INNER JOIN labels l ON f.sym = l.sym" +
+                    ") ORDER BY ts, sym")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tfv\tname
+                            2024-01-01T00:00:00.000000Z\tA\t1.0\tAAA
+                            2024-01-01T00:00:00.000000Z\tB\t2.0\tBBB
+                            2024-01-01T01:00:00.000000Z\tA\t1.0\tAAA
+                            2024-01-01T01:00:00.000000Z\tB\t2.0\tBBB
+                            2024-01-01T02:00:00.000000Z\tA\t3.0\tAAA
+                            2024-01-01T02:00:00.000000Z\tB\t4.0\tBBB
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillKeyedLeftJoinConsumesFillCursor() throws Exception {
+        // SAMPLE BY ... FILL(NULL) inside a LEFT JOIN. One key in the fill
+        // result has no matching lookup row -- the LEFT JOIN must still emit
+        // the fill row with NULL on the right side. Differs from INNER JOIN:
+        // the fill cursor's reduced semantics must not collapse the LEFT
+        // JOIN's null-padding behaviour.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE labels (sym SYMBOL, name STRING)");
+            execute("INSERT INTO prices VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 3.0, '2024-01-01T02:00:00.000000Z')," +
+                    "('B', 4.0, '2024-01-01T02:00:00.000000Z')");
+            execute("INSERT INTO labels VALUES ('A', 'AAA')");
+            assertQuery("SELECT * FROM (" +
+                    "SELECT f.ts, f.sym, f.fv, l.name FROM (" +
+                    "SELECT ts, sym, first(price) fv FROM prices " +
+                    "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR" +
+                    ") f LEFT JOIN labels l ON f.sym = l.sym" +
+                    ") ORDER BY ts, sym")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tfv\tname
+                            2024-01-01T00:00:00.000000Z\tA\t1.0\tAAA
+                            2024-01-01T00:00:00.000000Z\tB\t2.0\t
+                            2024-01-01T01:00:00.000000Z\tA\tnull\tAAA
+                            2024-01-01T01:00:00.000000Z\tB\tnull\t
+                            2024-01-01T02:00:00.000000Z\tA\t3.0\tAAA
+                            2024-01-01T02:00:00.000000Z\tB\t4.0\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillKeyedLong() throws Exception {
+        // LONG key column. Exercises FillRecord.getLong's FILL_KEY arm with a
+        // signed-long key carried through gap rows. Two keys, mid-bucket gap,
+        // FILL(NULL) -- gap rows must keep the key value, not zero or LONG_NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k LONG, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1_000_001L, 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(2_000_002L, 20.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(1_000_001L, 11.0, '2024-01-01T02:00:00.000000Z')," +
+                    "(2_000_002L, 21.0, '2024-01-01T02:00:00.000000Z')");
+            assertQuery("SELECT ts, k, sum(v) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tk\tsum
+                            2024-01-01T00:00:00.000000Z\t1000001\t10.0
+                            2024-01-01T00:00:00.000000Z\t2000002\t20.0
+                            2024-01-01T01:00:00.000000Z\t1000001\tnull
+                            2024-01-01T01:00:00.000000Z\t2000002\tnull
+                            2024-01-01T02:00:00.000000Z\t1000001\t11.0
+                            2024-01-01T02:00:00.000000Z\t2000002\t21.0
+                            """);
         });
     }
 
@@ -1189,119 +1225,6 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillKeyedAsOfJoinConsumesFillCursor() throws Exception {
-        // SAMPLE BY ... FILL(PREV) inside an ASOF JOIN. The fill factory now
-        // exposes recordCursorSupportsRandomAccess=false, a behaviour change
-        // vs master that the plan-only ExplainPlanTest snapshots cannot catch.
-        // Asserts that the join consumer reads every fill and data row,
-        // including rows produced by FILL_PREV emission, and that the ASOF
-        // pairing on (sym, ts) lands the correct rate value per row.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
-                    "TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (sym SYMBOL, rate DOUBLE, ts TIMESTAMP) " +
-                    "TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO prices VALUES " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('A', 3.0, '2024-01-01T02:00:00.000000Z')," +
-                    "('B', 4.0, '2024-01-01T02:00:00.000000Z')");
-            execute("INSERT INTO rates VALUES " +
-                    "('A', 1.1, '2024-01-01T00:00:00.000000Z')," +
-                    "('B', 2.2, '2024-01-01T00:00:00.000000Z')");
-            assertQuery("SELECT * FROM (" +
-                    "SELECT f.ts, f.sym, f.fv, r.rate FROM (" +
-                    "SELECT ts, sym, first(price) fv FROM prices " +
-                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
-                    ") f ASOF JOIN rates r ON f.sym = r.sym" +
-                    ") ORDER BY ts, sym")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tsym\tfv\trate
-                            2024-01-01T00:00:00.000000Z\tA\t1.0\t1.1
-                            2024-01-01T00:00:00.000000Z\tB\t2.0\t2.2
-                            2024-01-01T01:00:00.000000Z\tA\t1.0\t1.1
-                            2024-01-01T01:00:00.000000Z\tB\t2.0\t2.2
-                            2024-01-01T02:00:00.000000Z\tA\t3.0\t1.1
-                            2024-01-01T02:00:00.000000Z\tB\t4.0\t2.2
-                            """);
-        });
-    }
-
-    @Test
-    public void testFillKeyedInnerJoinConsumesFillCursor() throws Exception {
-        // SAMPLE BY ... FILL(PREV) inside an INNER JOIN against a static
-        // lookup table. Verifies the join consumer iterates the non-random-
-        // access fill cursor without losing rows.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
-                    "TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE labels (sym SYMBOL, name STRING)");
-            execute("INSERT INTO prices VALUES " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('A', 3.0, '2024-01-01T02:00:00.000000Z')," +
-                    "('B', 4.0, '2024-01-01T02:00:00.000000Z')");
-            execute("INSERT INTO labels VALUES ('A', 'AAA'), ('B', 'BBB')");
-            assertQuery("SELECT * FROM (" +
-                    "SELECT f.ts, f.sym, f.fv, l.name FROM (" +
-                    "SELECT ts, sym, first(price) fv FROM prices " +
-                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
-                    ") f INNER JOIN labels l ON f.sym = l.sym" +
-                    ") ORDER BY ts, sym")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tsym\tfv\tname
-                            2024-01-01T00:00:00.000000Z\tA\t1.0\tAAA
-                            2024-01-01T00:00:00.000000Z\tB\t2.0\tBBB
-                            2024-01-01T01:00:00.000000Z\tA\t1.0\tAAA
-                            2024-01-01T01:00:00.000000Z\tB\t2.0\tBBB
-                            2024-01-01T02:00:00.000000Z\tA\t3.0\tAAA
-                            2024-01-01T02:00:00.000000Z\tB\t4.0\tBBB
-                            """);
-        });
-    }
-
-    @Test
-    public void testFillKeyedLeftJoinConsumesFillCursor() throws Exception {
-        // SAMPLE BY ... FILL(NULL) inside a LEFT JOIN. One key in the fill
-        // result has no matching lookup row -- the LEFT JOIN must still emit
-        // the fill row with NULL on the right side. Differs from INNER JOIN:
-        // the fill cursor's reduced semantics must not collapse the LEFT
-        // JOIN's null-padding behaviour.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
-                    "TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE labels (sym SYMBOL, name STRING)");
-            execute("INSERT INTO prices VALUES " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('A', 3.0, '2024-01-01T02:00:00.000000Z')," +
-                    "('B', 4.0, '2024-01-01T02:00:00.000000Z')");
-            execute("INSERT INTO labels VALUES ('A', 'AAA')");
-            assertQuery("SELECT * FROM (" +
-                    "SELECT f.ts, f.sym, f.fv, l.name FROM (" +
-                    "SELECT ts, sym, first(price) fv FROM prices " +
-                    "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR" +
-                    ") f LEFT JOIN labels l ON f.sym = l.sym" +
-                    ") ORDER BY ts, sym")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tsym\tfv\tname
-                            2024-01-01T00:00:00.000000Z\tA\t1.0\tAAA
-                            2024-01-01T00:00:00.000000Z\tB\t2.0\t
-                            2024-01-01T01:00:00.000000Z\tA\tnull\tAAA
-                            2024-01-01T01:00:00.000000Z\tB\tnull\t
-                            2024-01-01T02:00:00.000000Z\tA\t3.0\tAAA
-                            2024-01-01T02:00:00.000000Z\tB\t4.0\t
-                            """);
-        });
-    }
-
-    @Test
     public void testFillOffsetInvalidString() throws Exception {
         // Bind variable holding an unparseable offset value: SqlException at
         // cursor.of() time (runtime), pointing at the offset bind-variable
@@ -1358,28 +1281,29 @@ public class SampleByFillTest extends AbstractCairoTest {
         // isEmittingFills, isInitialized) must be restored so pass-1 runs cleanly
         // against the already-built SortedRecordCursor chain. A regression that
         // forgets to reset one of these fields would only surface here.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('A', 3.0, '2024-01-01T02:00:00.000000Z')");
-            final String expected = """
-                    ts\tk\tsum
-                    2024-01-01T00:00:00.000000Z\tA\t1.0
-                    2024-01-01T00:00:00.000000Z\tB\t2.0
-                    2024-01-01T01:00:00.000000Z\tA\t1.0
-                    2024-01-01T01:00:00.000000Z\tB\t2.0
-                    2024-01-01T02:00:00.000000Z\tA\t3.0
-                    2024-01-01T02:00:00.000000Z\tB\t2.0
-                    """;
-            try (RecordCursorFactory factory = select(
-                    "SELECT * FROM (SELECT ts, k, sum(val) FROM t " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR) ORDER BY ts, k")) {
-                assertCursor(expected, factory, true, false, false, sqlExecutionContext);
-                assertCursor(expected, factory, true, false, false, sqlExecutionContext);
-            }
-        });
+        final String expected = """
+                ts\tk\tsum
+                2024-01-01T00:00:00.000000Z\tA\t1.0
+                2024-01-01T00:00:00.000000Z\tB\t2.0
+                2024-01-01T01:00:00.000000Z\tA\t1.0
+                2024-01-01T01:00:00.000000Z\tB\t2.0
+                2024-01-01T02:00:00.000000Z\tA\t3.0
+                2024-01-01T02:00:00.000000Z\tB\t2.0
+                """;
+        // returns() re-reads the same factory (assertCursor twice + calculateSize + variable columns),
+        // covering the toTop()/getCursor() state-reset contract this test guards.
+        assertQuery(
+                "SELECT * FROM (SELECT ts, k, sum(val) FROM t " +
+                        "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR) ORDER BY ts, k")
+                .ddl(
+                        "CREATE TABLE t (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO t VALUES " +
+                                "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                                "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
+                                "('A', 3.0, '2024-01-01T02:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .returns(expected);
     }
 
     @Test
@@ -1387,23 +1311,22 @@ public class SampleByFillTest extends AbstractCairoTest {
         // Non-keyed sibling of testFillReExecutionKeyed. No keysMap, so
         // toTop() only needs to reset the non-keyed state fields. Regression
         // guard for simplePrevRowId / hasSimplePrev leakage between runs.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "(3.0, '2024-01-01T02:00:00.000000Z')");
-            final String expected = """
-                    ts\tfv
-                    2024-01-01T00:00:00.000000Z\t1.0
-                    2024-01-01T01:00:00.000000Z\t1.0
-                    2024-01-01T02:00:00.000000Z\t3.0
-                    """;
-            try (RecordCursorFactory factory = select(
-                    "SELECT ts, first(val) fv FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")) {
-                assertCursor(expected, factory, false, false, false, sqlExecutionContext);
-                assertCursor(expected, factory, false, false, false, sqlExecutionContext);
-            }
-        });
+        final String expected = """
+                ts\tfv
+                2024-01-01T00:00:00.000000Z\t1.0
+                2024-01-01T01:00:00.000000Z\t1.0
+                2024-01-01T02:00:00.000000Z\t3.0
+                """;
+        assertQuery("SELECT ts, first(val) fv FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                .ddl(
+                        "CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO t VALUES " +
+                                "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                                "(3.0, '2024-01-01T02:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -1420,45 +1343,47 @@ public class SampleByFillTest extends AbstractCairoTest {
         // unified factory's setOffset call site at
         // SampleByFillRecordCursorFactory.java:831 with a Month sampler in the
         // chain. Three flips: 00:00 -> 05:00 -> 00:00.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY MONTH WAL");
-            execute("INSERT INTO test VALUES " +
-                    "('2024-05-20T12:00:00.000000Z', 1.0)," +
-                    "('2024-08-20T12:00:00.000000Z', 4.0)");
-            drainWalQueue();
-            // OFFSET = 0: GROUP BY floors data to canonical month start at
-            // 00:00. Branch-3 fires (calendarOffset == 0): setStart(firstTs)
-            // anchors at the floored value, round() returns it unchanged.
-            final String expectedZero = """
-                    ts\tavg
-                    2024-05-01T00:00:00.000000Z\t1.0
-                    2024-06-01T00:00:00.000000Z\tnull
-                    2024-07-01T00:00:00.000000Z\tnull
-                    2024-08-01T00:00:00.000000Z\t4.0
-                    """;
-            // OFFSET = 5h: GROUP BY floors data to canonical month start at
-            // 05:00. Branch-1 fires (calendarOffset != 0, no FROM):
-            // setOffset(5h) writes dayMod and -- with the in-flight fix --
-            // also clears startDay. round(firstTs) returns the canonical
-            // YYYY-MM-01T05:00 boundary that matches the floored data row.
-            final String expectedFive = """
-                    ts\tavg
-                    2024-05-01T05:00:00.000000Z\t1.0
-                    2024-06-01T05:00:00.000000Z\tnull
-                    2024-07-01T05:00:00.000000Z\tnull
-                    2024-08-01T05:00:00.000000Z\t4.0
-                    """;
-            bindVariableService.clear();
-            bindVariableService.setStr(0, "00:00");
-            try (RecordCursorFactory factory = select(
-                    "SELECT ts, avg(value) FROM test SAMPLE BY 1M FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1")) {
-                assertCursor(expectedZero, factory, false, false, false, sqlExecutionContext);
-                bindVariableService.setStr(0, "05:00");
-                assertCursor(expectedFive, factory, false, false, false, sqlExecutionContext);
-                bindVariableService.setStr(0, "00:00");
-                assertCursor(expectedZero, factory, false, false, false, sqlExecutionContext);
-            }
-        });
+        // OFFSET = 0: GROUP BY floors data to canonical month start at
+        // 00:00. Branch-3 fires (calendarOffset == 0): setStart(firstTs)
+        // anchors at the floored value, round() returns it unchanged.
+        final String expectedZero = """
+                ts\tavg
+                2024-05-01T00:00:00.000000Z\t1.0
+                2024-06-01T00:00:00.000000Z\tnull
+                2024-07-01T00:00:00.000000Z\tnull
+                2024-08-01T00:00:00.000000Z\t4.0
+                """;
+        // OFFSET = 5h: GROUP BY floors data to canonical month start at
+        // 05:00. Branch-1 fires (calendarOffset != 0, no FROM):
+        // setOffset(5h) writes dayMod and -- with the in-flight fix --
+        // also clears startDay. round(firstTs) returns the canonical
+        // YYYY-MM-01T05:00 boundary that matches the floored data row.
+        final String expectedFive = """
+                ts\tavg
+                2024-05-01T05:00:00.000000Z\t1.0
+                2024-06-01T05:00:00.000000Z\tnull
+                2024-07-01T05:00:00.000000Z\tnull
+                2024-08-01T05:00:00.000000Z\t4.0
+                """;
+        // Three flips on the same compiled factory: 00:00 -> 05:00 -> 00:00.
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok("OFFSET 00:00 (Branch-3, calendarOffset == 0)", expectedZero,
+                bindVariableService -> bindVariableService.setStr(0, "00:00")));
+        cases.add(BindVarTuple.ok("OFFSET 05:00 (Branch-1, calendarOffset != 0)", expectedFive,
+                bindVariableService -> bindVariableService.setStr(0, "05:00")));
+        cases.add(BindVarTuple.ok("back to OFFSET 00:00 (no sticky state)", expectedZero,
+                bindVariableService -> bindVariableService.setStr(0, "00:00")));
+
+        assertQuery("SELECT ts, avg(value) FROM test SAMPLE BY 1M FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1")
+                .ddl(
+                        "CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY MONTH WAL",
+                        "INSERT INTO test VALUES " +
+                                "('2024-05-20T12:00:00.000000Z', 1.0)," +
+                                "('2024-08-20T12:00:00.000000Z', 4.0)"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .assertBinds(cases);
     }
 
     @Test
@@ -1472,40 +1397,42 @@ public class SampleByFillTest extends AbstractCairoTest {
         // unified factory tolerates OFFSET re-execution against a year sampler
         // and is the y-stride entry point on the matrix that the day-stride
         // sibling cannot cover.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY YEAR WAL");
-            execute("INSERT INTO test VALUES " +
-                    "('2024-05-20T12:00:00.000000Z', 1.0)," +
-                    "('2026-05-20T12:00:00.000000Z', 4.0)");
-            drainWalQueue();
-            // OFFSET = 0: GROUP BY floors to canonical year start at 00:00.
-            final String expectedZero = """
-                    ts\tavg
-                    2024-01-01T00:00:00.000000Z\t1.0
-                    2025-01-01T00:00:00.000000Z\tnull
-                    2026-01-01T00:00:00.000000Z\t4.0
-                    """;
-            // OFFSET = 5h: GROUP BY floors to canonical year start at 05:00.
-            // Branch-1 fires; setOffset(5h) writes dayMod and -- with the
-            // in-flight fix -- also clears startMonth and startDay. round()
-            // returns the canonical YYYY-01-01T05:00 boundary.
-            final String expectedFive = """
-                    ts\tavg
-                    2024-01-01T05:00:00.000000Z\t1.0
-                    2025-01-01T05:00:00.000000Z\tnull
-                    2026-01-01T05:00:00.000000Z\t4.0
-                    """;
-            bindVariableService.clear();
-            bindVariableService.setStr(0, "00:00");
-            try (RecordCursorFactory factory = select(
-                    "SELECT ts, avg(value) FROM test SAMPLE BY 1y FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1")) {
-                assertCursor(expectedZero, factory, false, false, false, sqlExecutionContext);
-                bindVariableService.setStr(0, "05:00");
-                assertCursor(expectedFive, factory, false, false, false, sqlExecutionContext);
-                bindVariableService.setStr(0, "00:00");
-                assertCursor(expectedZero, factory, false, false, false, sqlExecutionContext);
-            }
-        });
+        // OFFSET = 0: GROUP BY floors to canonical year start at 00:00.
+        final String expectedZero = """
+                ts\tavg
+                2024-01-01T00:00:00.000000Z\t1.0
+                2025-01-01T00:00:00.000000Z\tnull
+                2026-01-01T00:00:00.000000Z\t4.0
+                """;
+        // OFFSET = 5h: GROUP BY floors to canonical year start at 05:00.
+        // Branch-1 fires; setOffset(5h) writes dayMod and -- with the
+        // in-flight fix -- also clears startMonth and startDay. round()
+        // returns the canonical YYYY-01-01T05:00 boundary.
+        final String expectedFive = """
+                ts\tavg
+                2024-01-01T05:00:00.000000Z\t1.0
+                2025-01-01T05:00:00.000000Z\tnull
+                2026-01-01T05:00:00.000000Z\t4.0
+                """;
+        // Three flips on the same compiled factory: 00:00 -> 05:00 -> 00:00.
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok("OFFSET 00:00 (year sampler, calendarOffset == 0)", expectedZero,
+                bindVariableService -> bindVariableService.setStr(0, "00:00")));
+        cases.add(BindVarTuple.ok("OFFSET 05:00 (year sampler, calendarOffset != 0)", expectedFive,
+                bindVariableService -> bindVariableService.setStr(0, "05:00")));
+        cases.add(BindVarTuple.ok("back to OFFSET 00:00 (no sticky state)", expectedZero,
+                bindVariableService -> bindVariableService.setStr(0, "00:00")));
+
+        assertQuery("SELECT ts, avg(value) FROM test SAMPLE BY 1y FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1")
+                .ddl(
+                        "CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY YEAR WAL",
+                        "INSERT INTO test VALUES " +
+                                "('2024-05-20T12:00:00.000000Z', 1.0)," +
+                                "('2026-05-20T12:00:00.000000Z', 4.0)"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .assertBinds(cases);
     }
 
     @Test
@@ -1518,34 +1445,262 @@ public class SampleByFillTest extends AbstractCairoTest {
         // setStart from a previous execute would corrupt the bucket grid.
         // The fix: every of() must reach a clean bucket grid regardless of the
         // prior bind value. Three flips lock the regression: 0 -> 10 -> 0.
+        final String expectedZero = """
+                ts\tavg
+                2024-01-01T00:00:00.000000Z\t1.0
+                2024-01-02T00:00:00.000000Z\tnull
+                2024-01-03T00:00:00.000000Z\t3.0
+                """;
+        final String expectedTen = """
+                ts\tavg
+                2024-01-01T10:00:00.000000Z\t1.0
+                2024-01-02T10:00:00.000000Z\tnull
+                2024-01-03T10:00:00.000000Z\t3.0
+                """;
+        // Three flips on the same compiled factory: 0 -> 10 -> 0.
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok("OFFSET 00:00 (zero)", expectedZero,
+                bindVariableService -> bindVariableService.setStr(0, "00:00")));
+        cases.add(BindVarTuple.ok("OFFSET 10:00 (non-zero)", expectedTen,
+                bindVariableService -> bindVariableService.setStr(0, "10:00")));
+        cases.add(BindVarTuple.ok("back to OFFSET 00:00 (no stale setStart)", expectedZero,
+                bindVariableService -> bindVariableService.setStr(0, "00:00")));
+
+        assertQuery("SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1")
+                .ddl(
+                        "CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                        "INSERT INTO test VALUES " +
+                                "('2024-01-01T12:00:00.000000Z', 1.0)," +
+                                "('2024-01-03T12:00:00.000000Z', 3.0)"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .assertBinds(cases);
+    }
+
+    @Test
+    public void testFillRejectInvalidOffsetAtRuntime() throws Exception {
+        // Bind-variable OFFSET with an unparseable runtime value on a
+        // keyed FILL(PREV) shape. The rewriteSampleBy path threads the
+        // offset through timestamp_floor_utc as an AGB key function; the
+        // function's init() validates the offset and surfaces SqlException
+        // before SampleByFillCursor.of() gets to evaluate its own offset
+        // copy. Diversifies testFillOffsetInvalidString (WAL + 1d stride)
+        // to a non-WAL keyed shape so the error continuity guarantee
+        // covers both routes through the rewrite.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO test VALUES " +
-                    "('2024-01-01T12:00:00.000000Z', 1.0)," +
-                    "('2024-01-03T12:00:00.000000Z', 3.0)");
-            drainWalQueue();
-            final String expectedZero = """
-                    ts\tavg
-                    2024-01-01T00:00:00.000000Z\t1.0
-                    2024-01-02T00:00:00.000000Z\tnull
-                    2024-01-03T00:00:00.000000Z\t3.0
-                    """;
-            final String expectedTen = """
-                    ts\tavg
-                    2024-01-01T10:00:00.000000Z\t1.0
-                    2024-01-02T10:00:00.000000Z\tnull
-                    2024-01-03T10:00:00.000000Z\t3.0
-                    """;
+            execute("CREATE TABLE x (key SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 2.0, '2024-01-01T01:00:00.000000Z')");
             bindVariableService.clear();
-            bindVariableService.setStr(0, "00:00");
-            try (RecordCursorFactory factory = select(
-                    "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1")) {
-                assertCursor(expectedZero, factory, false, false, false, sqlExecutionContext);
-                bindVariableService.setStr(0, "10:00");
-                assertCursor(expectedTen, factory, false, false, false, sqlExecutionContext);
-                bindVariableService.setStr(0, "00:00");
-                assertCursor(expectedZero, factory, false, false, false, sqlExecutionContext);
+            bindVariableService.setStr(0, "not_an_offset");
+            try {
+                assertExceptionNoLeakCheck(
+                        "SELECT ts, key, sum(val) FROM x " +
+                                "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR WITH OFFSET $1"
+                );
+                fail("expected SqlException for unparseable offset");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: not_an_offset");
             }
+        });
+    }
+
+    @Test
+    public void testFillRejectInvalidQuotedTimestamp() throws Exception {
+        // Quoted-but-malformed timestamp literal hits parseQuotedLiteral's
+        // NumericException catch in generateFill, which rethrows as
+        // SqlException("invalid fill value: ..."). Pins the error path on the
+        // new fast path; testTimestampFillValueUnquoted (in SampleByTest)
+        // covers the unquoted-literal sibling rejection.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, mark TIMESTAMP, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z'::TIMESTAMP, '2024-01-01T00:00:00.000000Z')," +
+                    "(2.0, '2024-01-01T01:00:00.000000Z'::TIMESTAMP, '2024-01-01T01:00:00.000000Z')");
+            String sql = "SELECT ts, first(val), first(mark) " +
+                    "FROM t SAMPLE BY 1h FILL(NULL, 'not-a-timestamp') ALIGN TO CALENDAR";
+            int badLiteralPos = sql.indexOf("'not-a-timestamp'");
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(badLiteralPos, "invalid fill value: 'not-a-timestamp'");
+        });
+    }
+
+    @Test
+    public void testFillRejectInvalidTimezoneAtRuntime() throws Exception {
+        // Bind-variable TIME ZONE with an unparseable runtime value on a
+        // keyed FILL(PREV) 1d shape. As with testFillRejectInvalidOffsetAtRuntime,
+        // the rewriteSampleBy path threads the timezone through
+        // timestamp_floor_utc as an AGB key function; that function's
+        // init() validates the zone and throws before SampleByFillCursor.of()
+        // gets to its own tz-resolution branch. Diversifies
+        // testFillNullTimezoneBindVariableInvalidString (FILL(NULL),
+        // sum/ts shape) to a keyed FILL(PREV) shape so error continuity
+        // covers both routes through the rewrite.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (key SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 2.0, '2024-01-02T00:00:00.000000Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "Mars/Olympus_Mons");
+            try {
+                assertExceptionNoLeakCheck(
+                        "SELECT ts, key, sum(val) FROM x " +
+                                "SAMPLE BY 1d FILL(PREV) ALIGN TO CALENDAR TIME ZONE $1"
+                );
+                fail("expected SqlException for unparseable timezone");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Mars/Olympus_Mons");
+            }
+        });
+    }
+
+    @Test
+    public void testFillRejectNonDeterministicFunction() throws Exception {
+        // rnd_double() reports isNonDeterministic=true. Without the gate in
+        // generateFill, the function would be stored verbatim into constantFills
+        // and produce a different value on every cursor read for synthesized
+        // fill rows -- not a fill value. The check rejects only non-deterministic
+        // functions so deterministic non-folded wrappers like cast(literal) keep
+        // working as fill values.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(2.0, '2024-01-01T02:00:00.000000Z')");
+            String sql = "SELECT ts, first(val) FROM t " +
+                    "SAMPLE BY 1h FILL(rnd_double()) ALIGN TO CALENDAR";
+            int badPos = sql.indexOf("rnd_double()");
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(badPos, "fill value must be a constant expression");
+        });
+    }
+
+    @Test
+    public void testFillSingleConstantBroadcastFunctionRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // FUNCTION-typed expressions (function calls, casts, bind variables)
+            // are deliberately not in the broadcast set: per-aggregate type
+            // coercion for those would need to run per target. Pin this boundary
+            // -- a single rnd_int() against multiple aggregates must keep
+            // hitting the "not enough fill values" path, not silently broadcast.
+            execute("CREATE TABLE t (ts TIMESTAMP, a DOUBLE, b DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, 2)");
+            String sql = "SELECT ts, sum(a), sum(b) FROM t SAMPLE BY 1h FILL(rnd_int()) ALIGN TO CALENDAR";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("rnd_int"), "not enough fill values");
+        });
+    }
+
+    @Test
+    public void testFillSingleConstantBroadcastNumeric() throws Exception {
+        assertMemoryLeak(() -> {
+            // A single numeric CONSTANT fills every non-key aggregate. Two
+            // DOUBLE-output aggregates broadcast the INT 0 via the standard
+            // INT->DOUBLE convertibility path; the gap bucket emits 0.0 in both
+            // columns.
+            execute("CREATE TABLE x (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 30.0, '2024-01-01T02:00:00.000000Z')");
+            assertQuery("SELECT first(a), first(b), ts FROM x SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            first\tfirst1\tts
+                            1.0\t10.0\t2024-01-01T00:00:00.000000Z
+                            0.0\t0.0\t2024-01-01T01:00:00.000000Z
+                            3.0\t30.0\t2024-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillSingleConstantBroadcastString() throws Exception {
+        assertMemoryLeak(() -> {
+            // String CONSTANT broadcasts across two VARCHAR-output aggregates.
+            // Verifies the new fast-path broadcast path correctly threads the
+            // parsed VARCHAR Function through every non-key column.
+            execute("CREATE TABLE x (a VARCHAR, b VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('one', 'ten', '2024-01-01T00:00:00.000000Z')," +
+                    "('three', 'thirty', '2024-01-01T02:00:00.000000Z')");
+            assertQuery("SELECT first(a), first(b), ts FROM x SAMPLE BY 1h FILL('xx') ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            first\tfirst1\tts
+                            one\tten\t2024-01-01T00:00:00.000000Z
+                            xx\txx\t2024-01-01T01:00:00.000000Z
+                            three\tthirty\t2024-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillSingleConstantBroadcastTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            // Quoted-timestamp CONSTANT broadcasts across two TIMESTAMP-output
+            // aggregates. The TIMESTAMP coercion path runs once per aggregate,
+            // producing a unit-correct TimestampConstant for each target.
+            execute("CREATE TABLE x (a TIMESTAMP, b TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('2024-02-01T00:00:00.000000Z', '2024-03-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z')," +
+                    "('2024-02-01T05:00:00.000000Z', '2024-03-01T05:00:00.000000Z', '2024-01-01T02:00:00.000000Z')");
+            assertQuery("SELECT first(a), first(b), ts FROM x SAMPLE BY 1h FILL('2024-06-15T00:00:00.000000Z') ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            first\tfirst1\tts
+                            2024-02-01T00:00:00.000000Z\t2024-03-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                            2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\t2024-01-01T01:00:00.000000Z
+                            2024-02-01T05:00:00.000000Z\t2024-03-01T05:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillSingleConstantBroadcastTypeMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            // INT 0 is convertible to DOUBLE (widening) but not to VARCHAR. A
+            // multi-aggregate broadcast where one target type is incompatible
+            // surfaces a clean upfront error instead of producing garbage at
+            // runtime via the Function dispatch.
+            execute("CREATE TABLE x (a DOUBLE, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, 'one', '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 'three', '2024-01-01T02:00:00.000000Z')");
+            String sql = "SELECT first(a), first(s), ts FROM x SAMPLE BY 1h FILL(42) ALIGN TO CALENDAR";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("42"), "fill value of type INT cannot fill column of type VARCHAR");
+        });
+    }
+
+    @Test
+    public void testFillSingleConstantBroadcastUnquotedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(0) against a TIMESTAMP-output aggregate must reject in
+            // broadcast mode just as it does per-column. The TIMESTAMP coercion
+            // path requires a quoted literal so a unit-correct value can be
+            // parsed.
+            execute("CREATE TABLE x (a TIMESTAMP, b TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('2024-02-01T00:00:00.000000Z', '2024-03-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z')");
+            String sql = "SELECT first(a), first(b), ts FROM x SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("FILL(0)") + 5, "Timestamp fill value must be in quotes");
         });
     }
 
@@ -1638,6 +1793,100 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillSubDayTimezoneFromOffset() throws Exception {
+        // Sub-day SAMPLE BY + FROM + TIME ZONE + WITH OFFSET + FILL(NULL).
+        // The fill bucket grid must match timestamp_floor_utc's grid.
+        // With FROM='2024-06-01' and TIME ZONE='Europe/London' (BST = UTC+1 in June),
+        // to_utc('2024-06-01', 'Europe/London') = 2024-05-31T23:00:00Z. Adding the
+        // 30-minute offset yields the grid anchor 2024-05-31T23:30:00Z, so buckets
+        // land at UTC ...:30 boundaries. TO='2024-06-01T04:00:00Z' wraps to
+        // 2024-06-01T03:00:00Z, so the last bucket is strictly below 03:00Z.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-06-01T01:45:00.000000Z', 42.0)""");
+            assertQuery("""
+                    SELECT ts, sum(x) x FROM t
+                    SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-01T04:00:00.000000Z'
+                    FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:30'""")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tx
+                            2024-05-31T23:30:00.000000Z\tnull
+                            2024-06-01T00:30:00.000000Z\tnull
+                            2024-06-01T01:30:00.000000Z\t42.0
+                            2024-06-01T02:30:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillSubDayTimezoneFromOffsetEmpty() throws Exception {
+        // Sub-day SAMPLE BY + FROM + TIME ZONE + WITH OFFSET + FILL(NULL),
+        // but WHERE filter yields zero base rows. The fill cursor must still
+        // generate the pure-fill bucket grid anchored at to_utc(FROM, tz) + offset
+        // so that leading/middle gap buckets align with timestamp_floor_utc.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-06-01T00:00:00.000000Z', 'other', 1.0)""");
+            assertQuery("""
+                    SELECT ts, sum(x) x FROM t
+                    WHERE sym = 'never_matches'
+                    SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-01T04:00:00.000000Z'
+                    FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:30'""")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tx
+                            2024-05-31T23:30:00.000000Z\tnull
+                            2024-06-01T00:30:00.000000Z\tnull
+                            2024-06-01T01:30:00.000000Z\tnull
+                            2024-06-01T02:30:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillSubDayTimezoneFromOffsetPlan() throws Exception {
+        // Guard the Async Group By + Sample By Fill fast path for the
+        // sub-day + FROM + TIME ZONE + WITH OFFSET shape. The key-function
+        // receives from=to_utc(FROM, tz) as a pre-resolved UTC instant and
+        // offset='00:30' directly; no timezone is re-applied inside floor.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-06-01T01:45:00.000000Z', 42.0)");
+            assertQuery("""
+                    SELECT ts, sum(x) x FROM t
+                    SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-01T04:00:00.000000Z'
+                    FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:30'""")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By Fill
+                              range: (2024-05-31T23:00:00.000000Z,2024-06-01T03:00:00.000000Z)
+                              stride: '1h'
+                              fill: null
+                                Encode sort light
+                                  keys: [ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-05-31T23:30:00.000Z')]
+                                      values: [sum(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: t
+                                              intervals: [("2024-05-31T23:00:00.000000Z","2024-06-01T02:59:59.999999Z")]
+                            """);
+        });
+    }
+
+    @Test
     public void testFillSubDayTimezoneFromSparse() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1664,222 +1913,6 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-06-01T01:00:00.000000Z\tnull
                             2024-06-01T02:00:00.000000Z\t42.0
                             """);
-        });
-    }
-
-    @Test
-    public void testFillToNullTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            // A bind variable bound to null timestamp evaluates to LONG_NULL at
-            // runtime. The optimizer rewrites FROM/TO into an interval filter,
-            // which folds to empty rows when the upper bound is LONG_NULL, so the
-            // fill cursor sees zero base rows. Critically, the fill cursor still
-            // calls initialize() with toFunc != TimestampConstantNull (no
-            // object-identity match) and toFunc.getTimestamp() == LONG_NULL.
-            // Without the hasExplicitTo LONG_NULL guard, maxTimestamp would be
-            // promoted to Long.MAX_VALUE while hasExplicitTo stays true; the
-            // zero-base-row path would NOT take the maxTimestamp == LONG_NULL
-            // short-circuit, leaving the cursor in an inconsistent state and
-            // risking Long.MAX_VALUE-bounded emission in worst cases. With the
-            // guard, maxTimestamp stays LONG_NULL, the short-circuit fires, and
-            // emission terminates cleanly with zero rows. The test asserts
-            // termination (no hang) and a bounded empty result.
-            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "('2024-01-01T00:00:00.000000Z', 1.0)," +
-                    "('2024-01-01T02:00:00.000000Z', 2.0)");
-            bindVariableService.clear();
-            bindVariableService.setTimestamp("upperBound", Numbers.LONG_NULL);
-            assertQuery("SELECT ts, avg(v) FROM t SAMPLE BY 1h FROM '2024-01-01' TO :upperBound FILL(NULL)")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("ts\tavg\n");
-        });
-    }
-
-    @Test
-    public void testSortedRecordCursorFactoryHandlesKeyHeapOverflow() throws Exception {
-        // Pin the SortedRecordCursorFactory cleanup contract for the keyed
-        // SAMPLE BY FILL(PREV) full_recordchain path. With a tiny page size
-        // and a 1-page sort.key budget, MemoryPages fires a
-        // LimitOverflowException once the RecordTreeChain accumulates more
-        // than one page of tree nodes. The factory's catch block must free
-        // chain + rankMaps before the exception propagates; assertMemoryLeak
-        // would surface any unbalanced native allocations.
-        //
-        // AbstractCairoTest.tearDown() restores property overrides via
-        // Overrides.reset(), so no try/finally restore is needed here.
-        // Force the codegen to pick SortedRecordCursorFactory; the default
-        // light_encoded path does not exercise this cleanup contract.
-        setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "full_recordchain");
-        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 64);
-        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64);
-
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (" +
-                    "ts TIMESTAMP, " +
-                    "k SYMBOL, " +
-                    "x DOUBLE" +
-                    ") TIMESTAMP(ts) PARTITION BY DAY");
-            // Generate enough distinct (bucket, key) groups to overflow the
-            // 64-byte sort.key budget. Each RecordTreeChain node is roughly
-            // 41 bytes, so a few hundred rows guarantees the cap fires.
-            execute("INSERT INTO t SELECT " +
-                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts, " +
-                    "rnd_symbol(64, 4, 4, 0) k, " +
-                    "rnd_double() x " +
-                    "FROM long_sequence(512)");
-
-            try {
-                // A keyed SAMPLE BY FILL(PREV) routes through the keyed fast
-                // path whose codegen wraps the group-by factory in
-                // SortedRecordCursorFactory. As the cursor populates the
-                // RecordTreeChain, MemoryPages exhausts its 1-page budget
-                // and throws LimitOverflowException. The outer
-                // SampleByFillRecordCursorFactory cursor is not random-access,
-                // so use .noRandomAccess() here.
-                assertQuery("SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
-                        .noLeakCheck()
-                        .timestamp("ts")
-                        .noRandomAccess()
-                        .returns("");
-                fail("expected LimitOverflowException from constrained sort.key budget");
-            } catch (CairoException ex) {
-                // Catching the LimitOverflowException superclass (CairoException)
-                // directly lets JVM-level Error subclasses propagate instead of
-                // being swallowed, and the assertion locks on a single canonical
-                // substring shared by MemoryPages overflow paths. If the
-                // exception is ever re-wrapped to SqlException, the typed catch
-                // fails loudly instead of hiding the signal under a substring
-                // disjunction.
-                TestUtils.assertContains(ex.getFlyweightMessage(), "Maximum number of pages");
-                // The (raise X) hint must name the actual config key that drove the cap,
-                // so renaming cairo.sql.sort.key.max.bytes would fail this assertion
-                // instead of silently breaking the user-facing remediation guidance.
-                TestUtils.assertContains(ex.getFlyweightMessage(), "(raise cairo.sql.sort.key.max.bytes)");
-            }
-        });
-    }
-
-    @Test
-    public void testSortedRecordCursorFactoryHandlesValueHeapOverflow() throws Exception {
-        // Sibling of testSortedRecordCursorFactoryHandlesKeyHeapOverflow targeting the value chain:
-        // sort.key is left uncapped while a 1-page sort.value budget makes the RecordTreeChain's
-        // value RecordChain overflow in MemoryCARWImpl. Pins the (raise cairo.sql.sort.value.max.bytes)
-        // hint so a property rename fails here instead of silently breaking remediation guidance.
-        setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "full_recordchain");
-        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 64);
-        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 64);
-
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (" +
-                    "ts TIMESTAMP, " +
-                    "k SYMBOL, " +
-                    "x DOUBLE" +
-                    ") TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t SELECT " +
-                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts, " +
-                    "rnd_symbol(64, 4, 4, 0) k, " +
-                    "rnd_double() x " +
-                    "FROM long_sequence(512)");
-
-            try {
-                assertQuery("SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
-                        .noLeakCheck()
-                        .timestamp("ts")
-                        .noRandomAccess()
-                        .returns("");
-                fail("expected LimitOverflowException from constrained sort.value budget");
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "breached in VirtualMemory");
-                TestUtils.assertContains(ex.getFlyweightMessage(), "(raise cairo.sql.sort.value.max.bytes)");
-            }
-        });
-    }
-
-    @Test
-    public void testRoutingAlignToFirstObservationStaysOnLegacyPath() throws Exception {
-        assertMemoryLeak(() -> {
-            // ALIGN TO FIRST OBSERVATION forces the legacy cursor path because
-            // the fast-path bucket grid depends on timestamp_floor_utc's
-            // calendar alignment, which is incompatible with observation-anchored
-            // buckets. The plan must show "Sample By" without the "Fill" suffix.
-            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            assertQuery("SELECT first(val) FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            Sample By
-                              fill: null
-                              values: [first(val)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
-                            """);
-        });
-    }
-
-    @Test
-    public void testRoutingFillLinearStaysOnInterpolatePath() throws Exception {
-        assertMemoryLeak(() -> {
-            // FILL(LINEAR) needs forward-looking interpolation that the streaming
-            // fast path cannot provide; SqlOptimiser.hasLinearFill disables the
-            // rewrite. The plan must show "Sample By" without the "Fill" suffix.
-            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            assertQuery("SELECT first(val) FROM x SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            Sample By
-                              fill: linear
-                              values: [first(val)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
-                            """);
-        });
-    }
-
-    @Test
-    public void testRoutingFromBindVariableStaysOnLegacyPath() throws Exception {
-        assertMemoryLeak(() -> {
-            // A bind variable as the FROM lower bound disables the rewriteSampleBy
-            // gate in SqlOptimiser (sampleByFrom.type == BIND_VARIABLE). The query
-            // must execute on the legacy cursor path and produce correct rows.
-            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "(3.0, '2024-01-01T02:00:00.000000Z')");
-            bindVariableService.clear();
-            // 2024-01-01T00:00:00Z expressed as microseconds since epoch.
-            bindVariableService.setTimestamp("lowerBound", 1_704_067_200_000_000L);
-            // The query's correct output is the same regardless of which cursor
-            // path executes it. If a future refactor routed bind-var FROM through
-            // the fast path and broke it, this test would catch the regression.
-            assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FROM :lowerBound TO '2024-01-01T03:00:00.000000Z' FILL(NULL)")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("""
-                            first\tts
-                            1.0\t2024-01-01T00:00:00.000000Z
-                            null\t2024-01-01T01:00:00.000000Z
-                            3.0\t2024-01-01T02:00:00.000000Z
-                            """);
-        });
-    }
-
-    @Test
-    public void testFillKeyedEmptyTableNoFromTo() throws Exception {
-        assertMemoryLeak(() -> {
-            // Keyed SAMPLE BY FILL on an empty table with neither FROM nor TO
-            // emits zero rows; pass 1 discovers no keys and the initialize
-            // short-circuit at keyCount==0 must terminate cleanly.
-            execute("CREATE TABLE x (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            assertQuery("SELECT sym, sum(val), ts FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("sym\tsum\tts\n");
         });
     }
 
@@ -1918,6 +1951,37 @@ public class SampleByFillTest extends AbstractCairoTest {
                             1.0\t42.0\tnull\t2024-01-01T01:00:00.000000Z
                             2.0\t20.0\t200.0\t2024-01-01T02:00:00.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testFillToNullTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            // A bind variable bound to null timestamp evaluates to LONG_NULL at
+            // runtime. The optimizer rewrites FROM/TO into an interval filter,
+            // which folds to empty rows when the upper bound is LONG_NULL, so the
+            // fill cursor sees zero base rows. Critically, the fill cursor still
+            // calls initialize() with toFunc != TimestampConstantNull (no
+            // object-identity match) and toFunc.getTimestamp() == LONG_NULL.
+            // Without the hasExplicitTo LONG_NULL guard, maxTimestamp would be
+            // promoted to Long.MAX_VALUE while hasExplicitTo stays true; the
+            // zero-base-row path would NOT take the maxTimestamp == LONG_NULL
+            // short-circuit, leaving the cursor in an inconsistent state and
+            // risking Long.MAX_VALUE-bounded emission in worst cases. With the
+            // guard, maxTimestamp stays LONG_NULL, the short-circuit fires, and
+            // emission terminates cleanly with zero rows. The test asserts
+            // termination (no hang) and a bounded empty result.
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 1.0)," +
+                    "('2024-01-01T02:00:00.000000Z', 2.0)");
+            bindVariableService.clear();
+            bindVariableService.setTimestamp("upperBound", Numbers.LONG_NULL);
+            assertQuery("SELECT ts, avg(v) FROM t SAMPLE BY 1h FROM '2024-01-01' TO :upperBound FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\tavg\n");
         });
     }
 
@@ -2214,95 +2278,71 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillSubDayTimezoneFromOffset() throws Exception {
-        // Sub-day SAMPLE BY + FROM + TIME ZONE + WITH OFFSET + FILL(NULL).
-        // The fill bucket grid must match timestamp_floor_utc's grid.
-        // With FROM='2024-06-01' and TIME ZONE='Europe/London' (BST = UTC+1 in June),
-        // to_utc('2024-06-01', 'Europe/London') = 2024-05-31T23:00:00Z. Adding the
-        // 30-minute offset yields the grid anchor 2024-05-31T23:30:00Z, so buckets
-        // land at UTC ...:30 boundaries. TO='2024-06-01T04:00:00Z' wraps to
-        // 2024-06-01T03:00:00Z, so the last bucket is strictly below 03:00Z.
+    public void testRoutingAlignToFirstObservationStaysOnLegacyPath() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO t VALUES
-                        ('2024-06-01T01:45:00.000000Z', 42.0)""");
-            assertQuery("""
-                    SELECT ts, sum(x) x FROM t
-                    SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-01T04:00:00.000000Z'
-                    FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:30'""")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("""
-                            ts\tx
-                            2024-05-31T23:30:00.000000Z\tnull
-                            2024-06-01T00:30:00.000000Z\tnull
-                            2024-06-01T01:30:00.000000Z\t42.0
-                            2024-06-01T02:30:00.000000Z\tnull
-                            """);
-        });
-    }
-
-    @Test
-    public void testFillSubDayTimezoneFromOffsetEmpty() throws Exception {
-        // Sub-day SAMPLE BY + FROM + TIME ZONE + WITH OFFSET + FILL(NULL),
-        // but WHERE filter yields zero base rows. The fill cursor must still
-        // generate the pure-fill bucket grid anchored at to_utc(FROM, tz) + offset
-        // so that leading/middle gap buckets align with timestamp_floor_utc.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO t VALUES
-                        ('2024-06-01T00:00:00.000000Z', 'other', 1.0)""");
-            assertQuery("""
-                    SELECT ts, sum(x) x FROM t
-                    WHERE sym = 'never_matches'
-                    SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-01T04:00:00.000000Z'
-                    FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:30'""")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("""
-                            ts\tx
-                            2024-05-31T23:30:00.000000Z\tnull
-                            2024-06-01T00:30:00.000000Z\tnull
-                            2024-06-01T01:30:00.000000Z\tnull
-                            2024-06-01T02:30:00.000000Z\tnull
-                            """);
-        });
-    }
-
-    @Test
-    public void testFillSubDayTimezoneFromOffsetPlan() throws Exception {
-        // Guard the Async Group By + Sample By Fill fast path for the
-        // sub-day + FROM + TIME ZONE + WITH OFFSET shape. The key-function
-        // receives from=to_utc(FROM, tz) as a pre-resolved UTC instant and
-        // offset='00:30' directly; no timezone is re-applied inside floor.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES ('2024-06-01T01:45:00.000000Z', 42.0)");
-            assertQuery("""
-                    SELECT ts, sum(x) x FROM t
-                    SAMPLE BY 1h FROM '2024-06-01' TO '2024-06-01T04:00:00.000000Z'
-                    FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:30'""")
+            // ALIGN TO FIRST OBSERVATION forces the legacy cursor path because
+            // the fast-path bucket grid depends on timestamp_floor_utc's
+            // calendar alignment, which is incompatible with observation-anchored
+            // buckets. The plan must show "Sample By" without the "Fill" suffix.
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT first(val) FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By Fill
-                              range: (2024-05-31T23:00:00.000000Z,2024-06-01T03:00:00.000000Z)
-                              stride: '1h'
+                            Sample By
                               fill: null
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-05-31T23:30:00.000Z')]
-                                      values: [sum(x)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: t
-                                              intervals: [("2024-05-31T23:00:00.000000Z","2024-06-01T02:59:59.999999Z")]
+                              values: [first(val)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """);
+        });
+    }
+
+    @Test
+    public void testRoutingFillLinearStaysOnInterpolatePath() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(LINEAR) needs forward-looking interpolation that the streaming
+            // fast path cannot provide; SqlOptimiser.hasLinearFill disables the
+            // rewrite. The plan must show "Sample By" without the "Fill" suffix.
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT first(val) FROM x SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              fill: linear
+                              values: [first(val)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """);
+        });
+    }
+
+    @Test
+    public void testRoutingFromBindVariableStaysOnLegacyPath() throws Exception {
+        assertMemoryLeak(() -> {
+            // A bind variable as the FROM lower bound disables the rewriteSampleBy
+            // gate in SqlOptimiser (sampleByFrom.type == BIND_VARIABLE). The query
+            // must execute on the legacy cursor path and produce correct rows.
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, '2024-01-01T02:00:00.000000Z')");
+            bindVariableService.clear();
+            // 2024-01-01T00:00:00Z expressed as microseconds since epoch.
+            bindVariableService.setTimestamp("lowerBound", 1_704_067_200_000_000L);
+            // The query's correct output is the same regardless of which cursor
+            // path executes it. If a future refactor routed bind-var FROM through
+            // the fast path and broke it, this test would catch the regression.
+            assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FROM :lowerBound TO '2024-01-01T03:00:00.000000Z' FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            first\tts
+                            1.0\t2024-01-01T00:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z
+                            3.0\t2024-01-01T02:00:00.000000Z
                             """);
         });
     }
@@ -2413,134 +2453,102 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillKeyedLong() throws Exception {
-        // LONG key column. Exercises FillRecord.getLong's FILL_KEY arm with a
-        // signed-long key carried through gap rows. Two keys, mid-bucket gap,
-        // FILL(NULL) -- gap rows must keep the key value, not zero or LONG_NULL.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (k LONG, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "(1_000_001L, 10.0, '2024-01-01T00:00:00.000000Z')," +
-                    "(2_000_002L, 20.0, '2024-01-01T00:00:00.000000Z')," +
-                    "(1_000_001L, 11.0, '2024-01-01T02:00:00.000000Z')," +
-                    "(2_000_002L, 21.0, '2024-01-01T02:00:00.000000Z')");
-            assertQuery("SELECT ts, k, sum(v) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .returns("""
-                            ts\tk\tsum
-                            2024-01-01T00:00:00.000000Z\t1000001\t10.0
-                            2024-01-01T00:00:00.000000Z\t2000002\t20.0
-                            2024-01-01T01:00:00.000000Z\t1000001\tnull
-                            2024-01-01T01:00:00.000000Z\t2000002\tnull
-                            2024-01-01T02:00:00.000000Z\t1000001\t11.0
-                            2024-01-01T02:00:00.000000Z\t2000002\t21.0
-                            """);
-        });
-    }
+    public void testSortedRecordCursorFactoryHandlesKeyHeapOverflow() throws Exception {
+        // Pin the SortedRecordCursorFactory cleanup contract for the keyed
+        // SAMPLE BY FILL(PREV) full_recordchain path. With a tiny page size
+        // and a 1-page sort.key budget, MemoryPages fires a
+        // LimitOverflowException once the RecordTreeChain accumulates more
+        // than one page of tree nodes. The factory's catch block must free
+        // chain + rankMaps before the exception propagates; assertMemoryLeak
+        // would surface any unbalanced native allocations.
+        //
+        // AbstractCairoTest.tearDown() restores property overrides via
+        // Overrides.reset(), so no try/finally restore is needed here.
+        // Force the codegen to pick SortedRecordCursorFactory; the default
+        // light_encoded path does not exercise this cleanup contract.
+        setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "full_recordchain");
+        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 64);
+        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64);
 
-    @Test
-    public void testFillRejectInvalidOffsetAtRuntime() throws Exception {
-        // Bind-variable OFFSET with an unparseable runtime value on a
-        // keyed FILL(PREV) shape. The rewriteSampleBy path threads the
-        // offset through timestamp_floor_utc as an AGB key function; the
-        // function's init() validates the offset and surfaces SqlException
-        // before SampleByFillCursor.of() gets to evaluate its own offset
-        // copy. Diversifies testFillOffsetInvalidString (WAL + 1d stride)
-        // to a non-WAL keyed shape so the error continuity guarantee
-        // covers both routes through the rewrite.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (key SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('A', 2.0, '2024-01-01T01:00:00.000000Z')");
-            bindVariableService.clear();
-            bindVariableService.setStr(0, "not_an_offset");
+            execute("CREATE TABLE t (" +
+                    "ts TIMESTAMP, " +
+                    "k SYMBOL, " +
+                    "x DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            // Generate enough distinct (bucket, key) groups to overflow the
+            // 64-byte sort.key budget. Each RecordTreeChain node is roughly
+            // 41 bytes, so a few hundred rows guarantees the cap fires.
+            execute("INSERT INTO t SELECT " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts, " +
+                    "rnd_symbol(64, 4, 4, 0) k, " +
+                    "rnd_double() x " +
+                    "FROM long_sequence(512)");
+
             try {
-                assertExceptionNoLeakCheck(
-                        "SELECT ts, key, sum(val) FROM x " +
-                                "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR WITH OFFSET $1"
-                );
-                fail("expected SqlException for unparseable offset");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: not_an_offset");
+                // A keyed SAMPLE BY FILL(PREV) routes through the keyed fast
+                // path whose codegen wraps the group-by factory in
+                // SortedRecordCursorFactory. As the cursor populates the
+                // RecordTreeChain, MemoryPages exhausts its 1-page budget
+                // and throws LimitOverflowException. The outer
+                // SampleByFillRecordCursorFactory cursor is not random-access,
+                // so use .noRandomAccess() here.
+                assertQuery("SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("");
+                fail("expected LimitOverflowException from constrained sort.key budget");
+            } catch (CairoException ex) {
+                // Catching the LimitOverflowException superclass (CairoException)
+                // directly lets JVM-level Error subclasses propagate instead of
+                // being swallowed, and the assertion locks on a single canonical
+                // substring shared by MemoryPages overflow paths. If the
+                // exception is ever re-wrapped to SqlException, the typed catch
+                // fails loudly instead of hiding the signal under a substring
+                // disjunction.
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Maximum number of pages");
+                // The (raise X) hint must name the actual config key that drove the cap,
+                // so renaming cairo.sql.sort.key.max.bytes would fail this assertion
+                // instead of silently breaking the user-facing remediation guidance.
+                TestUtils.assertContains(ex.getFlyweightMessage(), "(raise cairo.sql.sort.key.max.bytes)");
             }
         });
     }
 
     @Test
-    public void testFillRejectInvalidQuotedTimestamp() throws Exception {
-        // Quoted-but-malformed timestamp literal hits parseQuotedLiteral's
-        // NumericException catch in generateFill, which rethrows as
-        // SqlException("invalid fill value: ..."). Pins the error path on the
-        // new fast path; testTimestampFillValueUnquoted (in SampleByTest)
-        // covers the unquoted-literal sibling rejection.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (val DOUBLE, mark TIMESTAMP, ts TIMESTAMP) " +
-                    "TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "(1.0, '2024-01-01T00:00:00.000000Z'::TIMESTAMP, '2024-01-01T00:00:00.000000Z')," +
-                    "(2.0, '2024-01-01T01:00:00.000000Z'::TIMESTAMP, '2024-01-01T01:00:00.000000Z')");
-            String sql = "SELECT ts, first(val), first(mark) " +
-                    "FROM t SAMPLE BY 1h FILL(NULL, 'not-a-timestamp') ALIGN TO CALENDAR";
-            int badLiteralPos = sql.indexOf("'not-a-timestamp'");
-            assertQuery(sql)
-                    .noLeakCheck()
-                    .fails(badLiteralPos, "invalid fill value: 'not-a-timestamp'");
-        });
-    }
+    public void testSortedRecordCursorFactoryHandlesValueHeapOverflow() throws Exception {
+        // Sibling of testSortedRecordCursorFactoryHandlesKeyHeapOverflow targeting the value chain:
+        // sort.key is left uncapped while a 1-page sort.value budget makes the RecordTreeChain's
+        // value RecordChain overflow in MemoryCARWImpl. Pins the (raise cairo.sql.sort.value.max.bytes)
+        // hint so a property rename fails here instead of silently breaking remediation guidance.
+        setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "full_recordchain");
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 64);
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 64);
 
-    @Test
-    public void testFillRejectInvalidTimezoneAtRuntime() throws Exception {
-        // Bind-variable TIME ZONE with an unparseable runtime value on a
-        // keyed FILL(PREV) 1d shape. As with testFillRejectInvalidOffsetAtRuntime,
-        // the rewriteSampleBy path threads the timezone through
-        // timestamp_floor_utc as an AGB key function; that function's
-        // init() validates the zone and throws before SampleByFillCursor.of()
-        // gets to its own tz-resolution branch. Diversifies
-        // testFillNullTimezoneBindVariableInvalidString (FILL(NULL),
-        // sum/ts shape) to a keyed FILL(PREV) shape so error continuity
-        // covers both routes through the rewrite.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (key SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('A', 2.0, '2024-01-02T00:00:00.000000Z')");
-            bindVariableService.clear();
-            bindVariableService.setStr(0, "Mars/Olympus_Mons");
+            execute("CREATE TABLE t (" +
+                    "ts TIMESTAMP, " +
+                    "k SYMBOL, " +
+                    "x DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts, " +
+                    "rnd_symbol(64, 4, 4, 0) k, " +
+                    "rnd_double() x " +
+                    "FROM long_sequence(512)");
+
             try {
-                assertExceptionNoLeakCheck(
-                        "SELECT ts, key, sum(val) FROM x " +
-                                "SAMPLE BY 1d FILL(PREV) ALIGN TO CALENDAR TIME ZONE $1"
-                );
-                fail("expected SqlException for unparseable timezone");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Mars/Olympus_Mons");
+                assertQuery("SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("");
+                fail("expected LimitOverflowException from constrained sort.value budget");
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "breached in VirtualMemory");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "(raise cairo.sql.sort.value.max.bytes)");
             }
-        });
-    }
-
-    @Test
-    public void testFillRejectNonDeterministicFunction() throws Exception {
-        // rnd_double() reports isNonDeterministic=true. Without the gate in
-        // generateFill, the function would be stored verbatim into constantFills
-        // and produce a different value on every cursor read for synthesized
-        // fill rows -- not a fill value. The check rejects only non-deterministic
-        // functions so deterministic non-folded wrappers like cast(literal) keep
-        // working as fill values.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) " +
-                    "TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "(2.0, '2024-01-01T02:00:00.000000Z')");
-            String sql = "SELECT ts, first(val) FROM t " +
-                    "SAMPLE BY 1h FILL(rnd_double()) ALIGN TO CALENDAR";
-            int badPos = sql.indexOf("rnd_double()");
-            assertQuery(sql)
-                    .noLeakCheck()
-                    .fails(badPos, "fill value must be a constant expression");
         });
     }
 }

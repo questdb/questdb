@@ -2124,21 +2124,20 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
         try {
             for (String strategy : strategies) {
                 setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, strategy);
-                assertMemoryLeak(() -> {
-                    execute("DROP TABLE IF EXISTS t");
-                    execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ts TIMESTAMP) " +
-                            "TIMESTAMP(ts) PARTITION BY DAY");
-                    execute("INSERT INTO t VALUES " +
-                            "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                            "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
-                            "('A', 3.0, '2024-01-01T02:00:00.000000Z')");
-                    try (RecordCursorFactory factory = select(
-                            "SELECT * FROM (SELECT ts, k, sum(val) FROM t " +
-                                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR) ORDER BY ts, k")) {
-                        assertCursor(expected, factory, true, false, false, sqlExecutionContext);
-                        assertCursor(expected, factory, true, false, false, sqlExecutionContext);
-                    }
-                });
+                // returns() re-reads the same factory, covering each sort cursor's of() reuse path.
+                assertQuery(
+                        "SELECT * FROM (SELECT ts, k, sum(val) FROM t " +
+                                "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR) ORDER BY ts, k")
+                        .ddl(
+                                "DROP TABLE IF EXISTS t",
+                                "CREATE TABLE t (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                                "INSERT INTO t VALUES " +
+                                        "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                                        "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
+                                        "('A', 3.0, '2024-01-01T02:00:00.000000Z')"
+                        )
+                        .timestamp("ts")
+                        .returns(expected);
             }
         } finally {
             setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "light_encoded");

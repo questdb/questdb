@@ -188,7 +188,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE x (" +
                                     "  ts TIMESTAMP," +
@@ -277,7 +277,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE x (" +
                                     "  ts TIMESTAMP," +
@@ -308,7 +308,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             "CREATE TABLE x (ts TIMESTAMP, iv INT, lv LONG) timestamp(ts) PARTITION BY DAY;",
@@ -403,7 +403,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE 'test1' " +
                                     "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP) " +
@@ -456,7 +456,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                 }
                                 Assert.assertEquals(numOfRows, rowCount);
                             } catch (Throwable e) {
-                                e.printStackTrace();
+                                e.printStackTrace(System.err);
                                 errors.incrementAndGet();
                             } finally {
                                 haltLatch.countDown();
@@ -520,7 +520,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                 Assert.assertEquals(158, record.getLong(0));
                                 Assert.assertFalse(cursor.hasNext());
                             } catch (Throwable e) {
-                                e.printStackTrace();
+                                e.printStackTrace(System.err);
                                 errors.incrementAndGet();
                             }
                         }
@@ -575,7 +575,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             "CREATE TABLE x (ts TIMESTAMP, iv INT) timestamp(ts) PARTITION BY DAY;",
@@ -764,7 +764,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE price (" +
                                     "  ts TIMESTAMP," +
@@ -1169,7 +1169,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (\n" +
                                     "  ts TIMESTAMP," +
@@ -1184,9 +1184,11 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             sqlExecutionContext,
                             "select * from tab where val = 13000 or val = 42000 limit 10",
                             sink,
-                            "ts\tval\n" +
-                                    "1970-01-01T00:13:00.000000Z\t13000.00\n" +
-                                    "1970-01-01T00:42:00.000000Z\t42000.00\n"
+                            """
+                                    ts\tval
+                                    1970-01-01T00:13:00.000000Z\t13000.00
+                                    1970-01-01T00:42:00.000000Z\t42000.00
+                                    """
                     );
                 },
                 configuration,
@@ -1335,7 +1337,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "create table x ( " +
                                     " v long, " +
@@ -1366,7 +1368,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                 RecordCursorFactory factory = factories[finalI];
                                 assertQuery(expected, factory, ctx);
                             } catch (Throwable e) {
-                                e.printStackTrace();
+                                e.printStackTrace(System.err);
                                 errors.incrementAndGet();
                             } finally {
                                 haltLatch.countDown();
@@ -1390,7 +1392,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "create table x ( " +
                                     " l long, " +
@@ -1421,7 +1423,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                 RecordCursorFactory factory = factories[finalI];
                                 assertQuery(expected, factory, ctx);
                             } catch (Throwable e) {
-                                e.printStackTrace();
+                                e.printStackTrace(System.err);
                                 errors.incrementAndGet();
                             } finally {
                                 haltLatch.countDown();

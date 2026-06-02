@@ -35,14 +35,12 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Rosti;
@@ -50,6 +48,7 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -2004,6 +2003,14 @@ public class AggregateTest extends AbstractCairoTest {
         });
     }
 
+    // Query-assertion entry point for the static pool helpers, which run against the
+    // executeWithPool-created engine/context rather than the test's default instance.
+    // prepareForQueryAssertion() is a no-op, so a no-op hook is equivalent.
+    private static QueryAssertion assertQuery(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String query) {
+        return new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, query);
+    }
+
     private static String getColumnName(int type) {
         String typeStr = ColumnType.nameOf(type);
         return "c" + typeStr.replace("(", "").replace(")", "");
@@ -2023,8 +2030,7 @@ public class AggregateTest extends AbstractCairoTest {
                 sqlExecutionContext
         );
 
-        snapshotMemoryUsage();
-        CompiledQuery query = compiler.compile(
+        assertQuery(engine, sqlExecutionContext,
                 "select k, " +
                         "count(1) c1, " +
                         "count(*) cstar, " +
@@ -2033,61 +2039,38 @@ public class AggregateTest extends AbstractCairoTest {
                         "count(d) cd, " +
                         "count(dat) cdat, " +
                         "count(ts) cts " +
-                        "from x order by k",
-                sqlExecutionContext
-        );
-        try {
-            assertCursor(
-                    """
-                            k\tc1\tcstar\tci\tcl\tcd\tcdat\tcts
-                            null\t3\t3\t0\t0\t0\t0\t0
-                            0\t1\t1\t0\t0\t0\t0\t0
-                            1\t1\t1\t0\t0\t0\t0\t0
-                            2\t1\t1\t1\t1\t1\t1\t1
-                            3\t2\t2\t0\t0\t0\t0\t0
-                            4\t2\t2\t1\t1\t1\t1\t1
-                            5\t1\t1\t0\t0\t0\t0\t0
-                            """,
-                    query.getRecordCursorFactory(),
-                    query.getRecordCursorFactory().recordCursorSupportsRandomAccess(),
-                    true,
-                    false,
-                    sqlExecutionContext
-            );
-        } finally {
-            Misc.free(query.getRecordCursorFactory());
-        }
+                        "from x order by k")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        k\tc1\tcstar\tci\tcl\tcd\tcdat\tcts
+                        null\t3\t3\t0\t0\t0\t0\t0
+                        0\t1\t1\t0\t0\t0\t0\t0
+                        1\t1\t1\t0\t0\t0\t0\t0
+                        2\t1\t1\t1\t1\t1\t1\t1
+                        3\t2\t2\t0\t0\t0\t0\t0
+                        4\t2\t2\t1\t1\t1\t1\t1
+                        5\t1\t1\t0\t0\t0\t0\t0
+                        """);
 
-        snapshotMemoryUsage();
-        query = compiler.compile(
+        assertQuery(engine, sqlExecutionContext,
                 "select hour(tstmp), " +
                         "count(1) c1, " +
                         "count(*) cstar, " +
                         "count(i) ci, " +
                         "count(l) cl " +
                         "from x " +
-                        "order by 1",
-                sqlExecutionContext
-        );
-        try {
-            assertCursor(
-                    """
-                            hour\tc1\tcstar\tci\tcl
-                            0\t2\t2\t0\t0
-                            1\t2\t2\t0\t0
-                            2\t2\t2\t0\t0
-                            3\t3\t3\t1\t1
-                            4\t2\t2\t1\t1
-                            """,
-                    query.getRecordCursorFactory(),
-                    query.getRecordCursorFactory().recordCursorSupportsRandomAccess(),
-                    true,
-                    false,
-                    sqlExecutionContext
-            );
-        } finally {
-            Misc.free(query.getRecordCursorFactory());
-        }
+                        "order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        hour\tc1\tcstar\tci\tcl
+                        0\t2\t2\t0\t0
+                        1\t2\t2\t0\t0
+                        2\t2\t2\t0\t0
+                        3\t3\t3\t1\t1
+                        4\t2\t2\t1\t1
+                        """);
     }
 
     private static void runCountTestWithKeyColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws Exception {
@@ -2098,35 +2081,22 @@ public class AggregateTest extends AbstractCairoTest {
         engine.execute("alter table x add column k int", sqlExecutionContext);
         engine.execute("insert into x values ((1+2*3600L*1000000)::timestamp, null, null, null, null, null, 6)", sqlExecutionContext);
 
-        snapshotMemoryUsage();
-        CompiledQuery query = compiler.compile(
+        assertQuery(engine, sqlExecutionContext,
                 "select k, " +
                         "count(1) c1, " +
                         "count(*) cstar, " +
                         "count(i) ci, " +
                         "count(l) cl " +
-                        "from x order by k",
-                sqlExecutionContext
-        );
-        try {
-            assertCursor(
-                    """
-                            k\tc1\tcstar\tci\tcl
-                            null\t5\t5\t1\t1
-                            6\t1\t1\t0\t0
-                            """,
-                    query.getRecordCursorFactory(),
-                    true,
-                    true,
-                    false,
-                    sqlExecutionContext
-            );
-        } finally {
-            Misc.free(query.getRecordCursorFactory());
-        }
+                        "from x order by k")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        k\tc1\tcstar\tci\tcl
+                        null\t5\t5\t1\t1
+                        6\t1\t1\t0\t0
+                        """);
 
-        snapshotMemoryUsage();
-        query = compiler.compile(
+        assertQuery(engine, sqlExecutionContext,
                 "select hour(tstmp), " +
                         "count(1) c1, " +
                         "count(*) cstar, " +
@@ -2136,30 +2106,18 @@ public class AggregateTest extends AbstractCairoTest {
                         "count(dat) cdat, " +
                         "count(ts) cts " +
                         "from x " +
-                        "order by 1",
-                sqlExecutionContext
-        );
-
-        try {
-            assertCursor(
-                    """
-                            hour\tc1\tcstar\tci\tcl\tcd\tcdat\tcts
-                            0\t2\t2\t0\t0\t0\t0\t0
-                            1\t2\t2\t0\t0\t0\t0\t0
-                            2\t2\t2\t1\t1\t1\t1\t1
-                            """,
-                    query.getRecordCursorFactory(),
-                    true,
-                    true,
-                    false,
-                    sqlExecutionContext
-            );
-        } finally {
-            Misc.free(query.getRecordCursorFactory());
-        }
+                        "order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        hour\tc1\tcstar\tci\tcl\tcd\tcdat\tcts
+                        0\t2\t2\t0\t0\t0\t0\t0
+                        1\t2\t2\t0\t0\t0\t0\t0
+                        2\t2\t2\t1\t1\t1\t1\t1
+                        """);
     }
 
-    private static void runGroupByIntWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
+    private static void runGroupByIntWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws Exception {
         engine.execute(
                 "create table tab as " +
                         "( select cast(x as int) i, " +
@@ -2172,52 +2130,30 @@ public class AggregateTest extends AbstractCairoTest {
                 sqlExecutionContext
         );
 
-        snapshotMemoryUsage();
-        CompiledQuery query = compiler.compile(
+        assertQuery(engine, sqlExecutionContext,
                 "select count(*) cnt from " +
                         "(select i, count(*), min(i), avg(i), max(i), sum(i), " +
                         "min(l), avg(l), max(l), sum(l), " +
                         "min(dat), max(dat), " +
                         "min(ts), max(ts), " +
                         "min(d), avg(d), max(d), sum(d), nsum(d), ksum(d)," +
-                        "sum(l256), count(i), count(l) from tab group by i )",
-                sqlExecutionContext
-        );
-
-        try {
-            assertCursor(
-                    "cnt\n1000\n",
-                    query.getRecordCursorFactory(),
-                    query.getRecordCursorFactory().recordCursorSupportsRandomAccess(),
-                    true,
-                    false,
-                    sqlExecutionContext
-            );
-        } finally {
-            Misc.free(query.getRecordCursorFactory());
-        }
+                        "sum(l256), count(i), count(l) from tab group by i )")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("cnt\n1000\n");
     }
 
-    private static void runGroupByTest(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypename) throws SqlException {
+    private static void runGroupByTest(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypename) throws Exception {
         engine.execute("create table tab as  (select cast(x as int) x1, cast(x as date) dt from long_sequence(1000000))", sqlExecutionContext);
-        snapshotMemoryUsage();
-        CompiledQuery query = compiler.compile("select count(*) cnt from (select x1, count(*), count(*) from tab group by x1)", sqlExecutionContext);
-
-        try {
-            assertCursor(
-                    "cnt\n1000000\n",
-                    query.getRecordCursorFactory(),
-                    query.getRecordCursorFactory().recordCursorSupportsRandomAccess(),
-                    true,
-                    false,
-                    sqlExecutionContext
-            );
-        } finally {
-            Misc.free(query.getRecordCursorFactory());
-        }
+        assertQuery(engine, sqlExecutionContext, "select count(*) cnt from (select x1, count(*), count(*) from tab group by x1)")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("cnt\n1000000\n");
     }
 
-    private static void runGroupByWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
+    private static void runGroupByWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws Exception {
         engine.execute(
                 "create table tab as " +
                         "( select cast(x as int) i, " +
@@ -2230,30 +2166,18 @@ public class AggregateTest extends AbstractCairoTest {
                 sqlExecutionContext
         );
 
-        snapshotMemoryUsage();
-        CompiledQuery query = compiler.compile(
+        assertQuery(engine, sqlExecutionContext,
                 "select count(*) cnt from " +
                         "(select count(*), min(i), avg(i), max(i), sum(i), " +
                         "min(l), avg(l), max(l), sum(l), " +
                         "min(dat), max(dat), " +
                         "min(ts), max(ts), " +
                         "min(d), avg(d), max(d), sum(d), nsum(d), ksum(d)," +
-                        "sum(l256), count(i), count(l) from tab )",
-                sqlExecutionContext
-        );
-
-        try {
-            assertCursor(
-                    "cnt\n1\n",
-                    query.getRecordCursorFactory(),
-                    query.getRecordCursorFactory().recordCursorSupportsRandomAccess(),
-                    true,
-                    false,
-                    sqlExecutionContext
-            );
-        } finally {
-            Misc.free(query.getRecordCursorFactory());
-        }
+                        "sum(l256), count(i), count(l) from tab )")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("cnt\n1\n");
     }
 
     private void assertGroupByQuery(

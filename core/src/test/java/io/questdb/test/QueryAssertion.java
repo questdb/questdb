@@ -4,6 +4,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -37,6 +38,8 @@ import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.MutationStep;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
@@ -68,13 +71,16 @@ public class QueryAssertion {
 
     private final Runnable prepareHook;
     private final CharSequence query;
+    private Class<?> baseFactoryClass;
     private SqlCompiler compiler;
     private SqlExecutionContext context;
     private CharSequence ddl;
     private CharSequence ddl2;
     private ObjList<CharSequence> ddl2More;
+    private ObjList<CharSequence> ddlMore;
     private CairoEngine engine;
     private boolean expectSize;
+    private IntList expectedColumnTypes;
     private CharSequence expectedPlan;
     private CharSequence expectedTimestamp;
     private boolean fullFatJoins;
@@ -90,689 +96,6 @@ public class QueryAssertion {
         this.context = context;
         this.prepareHook = prepareHook;
         this.query = query;
-    }
-
-    /**
-     * Terminal: assert ONLY the query's execution plan (EXPLAIN output) matches {@code expectedPlan}
-     * exactly, without running the query for a result. Use for EXPLAIN/plan-routing tests that have no
-     * row result to assert. Supports only {@link #ddl}, {@link #noLeakCheck}, {@link #withContext} and
-     * {@link #withEngine}.
-     */
-    public void assertsPlan(CharSequence expectedPlan) throws Exception {
-        requirePlanOnlyCompatible();
-        prepareHook.run();
-        if (leakCheck) {
-            assertMemoryLeak(() -> {
-                runDdl();
-                assertExactPlan(expectedPlan);
-            });
-        } else {
-            runDdl();
-            assertExactPlan(expectedPlan);
-        }
-    }
-
-    /**
-     * Terminal: assert ONLY the query's execution plan (EXPLAIN output) contains every one of
-     * {@code fragments}, without running the query for a result. The plan-only counterpart of
-     * {@link #withPlanContaining}. Supports only {@link #ddl}, {@link #noLeakCheck},
-     * {@link #withContext} and {@link #withEngine}.
-     */
-    public void assertsPlanContaining(CharSequence... fragments) throws Exception {
-        requirePlanOnlyCompatible();
-        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
-        for (CharSequence fragment : fragments) {
-            list.add(fragment);
-        }
-        prepareHook.run();
-        if (leakCheck) {
-            assertMemoryLeak(() -> {
-                runDdl();
-                assertPlanContains(list);
-            });
-        } else {
-            runDdl();
-            assertPlanContains(list);
-        }
-    }
-
-    /**
-     * Terminal: assert ONLY the query's execution plan (EXPLAIN output) contains NONE of
-     * {@code fragments}, without running the query for a result. The negative counterpart of
-     * {@link #assertsPlanContaining}. Supports only {@link #ddl}, {@link #noLeakCheck},
-     * {@link #withContext} and {@link #withEngine}.
-     */
-    public void assertsPlanNotContaining(CharSequence... fragments) throws Exception {
-        requirePlanOnlyCompatible();
-        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
-        for (CharSequence fragment : fragments) {
-            list.add(fragment);
-        }
-        prepareHook.run();
-        if (leakCheck) {
-            assertMemoryLeak(() -> {
-                runDdl();
-                assertPlanNotContains(list);
-            });
-        } else {
-            runDdl();
-            assertPlanNotContains(list);
-        }
-    }
-
-    /**
-     * SQL to execute before the query (typically a CREATE TABLE / INSERT). Drains the WAL queue
-     * afterwards when WAL is enabled by default, exactly as the legacy helpers do.
-     */
-    public QueryAssertion ddl(CharSequence ddl) {
-        this.ddl = ddl;
-        return this;
-    }
-
-    /**
-     * Assert that {@code cursor.size()} returns a known (non-negative) value. Off by default.
-     */
-    public QueryAssertion expectSize() {
-        return expectSize(true);
-    }
-
-    /**
-     * Variable-driven variant of {@link #expectSize()} for helper methods that receive the flag as
-     * a parameter. {@code expectSize(true)} asserts a known size; {@code expectSize(false)} asserts
-     * an undetermined (-1) size, the default.
-     */
-    public QueryAssertion expectSize(boolean expectSize) {
-        this.expectSize = expectSize;
-        return this;
-    }
-
-    /**
-     * Terminal: assert that compiling/running the query fails with an error whose message contains
-     * {@code contains} at position {@code errorPos}. Pass {@code errorPos = -1} to skip the position
-     * check (or use {@link #failsWith}).
-     */
-    public void fails(int errorPos, CharSequence contains) throws Exception {
-        requireFailsCompatible();
-        if (ddl != null && fullFatJoins) {
-            throw new IllegalStateException("fullFatJoins() is not supported together with ddl() on the fails() path");
-        }
-        if (leakCheck) {
-            assertMemoryLeak(() -> failsNoLeak(errorPos, contains));
-        } else {
-            failsNoLeak(errorPos, contains);
-        }
-    }
-
-    /**
-     * Terminal: assert the query fails with an error message containing {@code contains}, without
-     * checking the error position.
-     */
-    public void failsWith(CharSequence contains) throws Exception {
-        fails(-1, contains);
-    }
-
-    /**
-     * Force full-fat (non-optimized) join execution. Supports {@link #timestamp},
-     * {@link #expectSize}, {@link #noRandomAccess} and the {@link #fails}/{@link #failsWith}
-     * terminals. Not supported together with {@link #ddl} on the {@link #fails} path.
-     */
-    public QueryAssertion fullFatJoins() {
-        return fullFatJoins(true);
-    }
-
-    /**
-     * Variable-driven variant of {@link #fullFatJoins()} for helper methods that receive the flag
-     * as a parameter (e.g. a test parameterized over normal vs full-fat execution).
-     */
-    public QueryAssertion fullFatJoins(boolean fullFatJoins) {
-        this.fullFatJoins = fullFatJoins;
-        return this;
-    }
-
-    /**
-     * SQL to execute after the first assertion, re-checking the same factory against the second
-     * expected value. Requires the two-argument {@link #returns(CharSequence, CharSequence)} (or
-     * {@link #returnsRecords(Record[], Record[])}) terminal.
-     */
-    public QueryAssertion mutateWith(CharSequence ddl2) {
-        this.ddl2 = ddl2;
-        this.ddl2More = null;
-        return this;
-    }
-
-    /**
-     * Multi-statement variant of {@link #mutateWith(CharSequence)}. The statements run in order,
-     * each as a separate {@code engine.execute()} call, before the second assertion re-checks the
-     * same factory. Use when the mutation needs more than one statement (e.g. drop then recreate a
-     * table), which {@code engine.execute()} cannot run as a single {@code ;}-separated batch.
-     */
-    public QueryAssertion mutateWith(CharSequence ddl2, CharSequence... more) {
-        this.ddl2 = ddl2;
-        this.ddl2More = new ObjList<>(more.length);
-        for (int i = 0, n = more.length; i < n; i++) {
-            this.ddl2More.add(more[i]);
-        }
-        return this;
-    }
-
-    /**
-     * Skip the surrounding memory-leak check. Use inside a test body that is already wrapped in
-     * {@code assertMemoryLeak(...)}.
-     */
-    public QueryAssertion noLeakCheck() {
-        this.leakCheck = false;
-        return this;
-    }
-
-    /**
-     * Declare that the factory does not support random access, skipping the random-access record
-     * checks. Random access is exercised by default.
-     */
-    public QueryAssertion noRandomAccess() {
-        this.supportsRandomAccess = false;
-        return this;
-    }
-
-    /**
-     * Terminal: assert the query produces exactly {@code expected}.
-     */
-    public void returns(CharSequence expected) throws Exception {
-        if (ddl2 != null) {
-            throw new IllegalStateException("mutateWith(...) requires returns(before, after)");
-        }
-        dispatch(expected, null);
-    }
-
-    /**
-     * Terminal: assert the query produces {@code expectedBefore}, then run the {@link #mutateWith}
-     * statement and assert the same factory now produces {@code expectedAfter}.
-     */
-    public void returns(CharSequence expectedBefore, CharSequence expectedAfter) throws Exception {
-        if (ddl2 == null) {
-            throw new IllegalStateException("returns(before, after) requires mutateWith(...)");
-        }
-        dispatch(expectedBefore, expectedAfter);
-    }
-
-    /**
-     * Terminal: assert the query prints exactly {@code expected} from a SINGLE cursor pass,
-     * skipping the second read, calculate-size, variable-column and factory-property checks that
-     * {@link #returns(CharSequence)} performs. Use for non-deterministic projections whose output is
-     * not stable across a re-read. Supports only {@link #ddl}, {@link #noLeakCheck},
-     * {@link #withContext} and {@link #withEngine}.
-     */
-    public void returnsOnce(CharSequence expected) throws Exception {
-        requireSingleShotCompatible();
-        prepareHook.run();
-        if (leakCheck) {
-            assertMemoryLeak(() -> {
-                runDdl();
-                TestUtils.assertSql(engine, context, query, sink, expected);
-            });
-        } else {
-            runDdl();
-            TestUtils.assertSql(engine, context, query, sink, expected);
-        }
-    }
-
-    /**
-     * Terminal: assert the query produces the given raw records. Always leak-checked; supports only
-     * {@link #ddl}, {@link #timestamp}, {@link #mutateWith} and {@link #expectSize}.
-     */
-    public void returnsRecords(Record[] expected) throws Exception {
-        if (ddl2 != null) {
-            throw new IllegalStateException("mutateWith(...) requires returnsRecords(before, after)");
-        }
-        requireRecordPathCompatible();
-        assertReturnsRecords(expected, null);
-    }
-
-    /**
-     * Terminal: the record-array counterpart of {@link #returns(CharSequence, CharSequence)}.
-     */
-    public void returnsRecords(Record[] expectedBefore, Record[] expectedAfter) throws Exception {
-        if (ddl2 == null) {
-            throw new IllegalStateException("returnsRecords(before, after) requires mutateWith(...)");
-        }
-        requireRecordPathCompatible();
-        assertReturnsRecords(expectedBefore, expectedAfter);
-    }
-
-    /**
-     * Allow {@code cursor.size()} to be reported as unknown (-1) in some passes. Off by default.
-     */
-    public QueryAssertion sizeMayVary() {
-        return sizeMayVary(true);
-    }
-
-    /**
-     * Variable-driven variant of {@link #sizeMayVary()} for helper methods that receive the flag as
-     * a parameter.
-     */
-    public QueryAssertion sizeMayVary(boolean sizeCanBeVariable) {
-        this.sizeCanBeVariable = sizeCanBeVariable;
-        return this;
-    }
-
-    /**
-     * Variable-driven variant of {@link #noRandomAccess()} for helper methods that receive the
-     * flag as a parameter.
-     */
-    public QueryAssertion supportsRandomAccess(boolean supportsRandomAccess) {
-        this.supportsRandomAccess = supportsRandomAccess;
-        return this;
-    }
-
-    /**
-     * Assert the result has a designated timestamp on the given column. Without this step the
-     * result is asserted to have no designated timestamp.
-     */
-    public QueryAssertion timestamp(CharSequence column) {
-        this.expectedTimestamp = column;
-        return this;
-    }
-
-    /**
-     * Like {@link #timestamp} but also assert ascending (forward) scan order.
-     */
-    public QueryAssertion timestampAsc(CharSequence column) {
-        this.expectedTimestamp = column + "###ASC";
-        return this;
-    }
-
-    /**
-     * Like {@link #timestamp} but also assert descending (backward) scan order.
-     */
-    public QueryAssertion timestampDesc(CharSequence column) {
-        this.expectedTimestamp = column + "###DESC";
-        return this;
-    }
-
-    /**
-     * Compile the query with a specific {@link SqlCompiler} instead of one borrowed from the engine.
-     * Routes the assertion through the single-factory cursor path (no {@code calculateSize()} pass).
-     * Supports {@link #ddl}, {@link #timestamp}, {@link #expectSize} and {@link #noRandomAccess}.
-     */
-    public QueryAssertion withCompiler(SqlCompiler compiler) {
-        this.compiler = compiler;
-        this.overridden = true;
-        return this;
-    }
-
-    /**
-     * Run with a specific {@link SqlExecutionContext} instead of the construction-time one.
-     */
-    public QueryAssertion withContext(SqlExecutionContext context) {
-        this.context = context;
-        this.overridden = true;
-        return this;
-    }
-
-    /**
-     * Run against a specific {@link CairoEngine} instead of the construction-time one.
-     */
-    public QueryAssertion withEngine(CairoEngine engine) {
-        this.engine = engine;
-        this.overridden = true;
-        return this;
-    }
-
-    /**
-     * Also assert the query's execution plan (EXPLAIN output) matches {@code expectedPlan} exactly.
-     * Honors {@link #noLeakCheck()}; cannot be combined with {@link #fullFatJoins()} or
-     * {@link #withCompiler}.
-     */
-    public QueryAssertion withPlan(CharSequence expectedPlan) {
-        this.expectedPlan = expectedPlan;
-        return this;
-    }
-
-    /**
-     * Also assert the query's execution plan (EXPLAIN output) contains every one of {@code fragments}.
-     * Honors {@link #noLeakCheck()}; cannot be combined with {@link #fullFatJoins()} or
-     * {@link #withCompiler}.
-     */
-    public QueryAssertion withPlanContaining(CharSequence... fragments) {
-        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
-        for (CharSequence fragment : fragments) {
-            list.add(fragment);
-        }
-        this.planFragments = list;
-        return this;
-    }
-
-    /**
-     * Also assert the query's execution plan (EXPLAIN output) contains NONE of {@code fragments}.
-     * The negative counterpart of {@link #withPlanContaining}. Honors {@link #noLeakCheck()}; cannot
-     * be combined with {@link #fullFatJoins()} or {@link #withCompiler}.
-     */
-    public QueryAssertion withPlanNotContaining(CharSequence... fragments) {
-        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
-        for (CharSequence fragment : fragments) {
-            list.add(fragment);
-        }
-        this.planFragmentsAbsent = list;
-        return this;
-    }
-
-    private void assertExactPlan(CharSequence expectedPlan) throws SqlException {
-        final StringSink explainSql = new StringSink();
-        explainSql.put("EXPLAIN ").put(query);
-        try (
-                RecordCursorFactory planFactory = selectPlanFactory(explainSql);
-                RecordCursor cursor = planFactory.getCursor(context)
-        ) {
-            final CharSequence plan = JitUtil.isJitSupported() ? expectedPlan : Chars.toString(expectedPlan).replace("Async JIT", "Async");
-            TestUtils.assertCursor(plan, cursor, planFactory.getMetadata(), false, sink);
-        }
-    }
-
-    private void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        engine.clear();
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                code.run();
-            } finally {
-                releaseInactive(engine);
-            }
-        });
-    }
-
-    private void assertPlanContains(ObjList<CharSequence> fragments) throws SqlException {
-        final StringSink explainSql = new StringSink();
-        explainSql.put("EXPLAIN ").put(query);
-        final StringSink actualPlan = new StringSink();
-        try (
-                RecordCursorFactory planFactory = selectPlanFactory(explainSql);
-                RecordCursor cursor = planFactory.getCursor(context)
-        ) {
-            CursorPrinter.println(cursor, planFactory.getMetadata(), actualPlan, false, false);
-        }
-        for (int i = 0, n = fragments.size(); i < n; i++) {
-            CharSequence fragment = fragments.getQuick(i);
-            if (!JitUtil.isJitSupported()) {
-                fragment = Chars.toString(fragment).replace("Async JIT", "Async");
-            }
-            TestUtils.assertContains(actualPlan, fragment);
-        }
-    }
-
-    private void assertPlanNotContains(ObjList<CharSequence> fragments) throws SqlException {
-        final StringSink explainSql = new StringSink();
-        explainSql.put("EXPLAIN ").put(query);
-        final StringSink actualPlan = new StringSink();
-        try (
-                RecordCursorFactory planFactory = selectPlanFactory(explainSql);
-                RecordCursor cursor = planFactory.getCursor(context)
-        ) {
-            CursorPrinter.println(cursor, planFactory.getMetadata(), actualPlan, false, false);
-        }
-        for (int i = 0, n = fragments.size(); i < n; i++) {
-            CharSequence fragment = fragments.getQuick(i);
-            if (!JitUtil.isJitSupported()) {
-                fragment = Chars.toString(fragment).replace("Async JIT", "Async");
-            }
-            TestUtils.assertNotContains(actualPlan, fragment);
-        }
-    }
-
-    private void assertReturns(CharSequence expected, CharSequence expected2) throws SqlException {
-        snapshotMemoryUsage();
-        RecordCursorFactory factory = compileSelect();
-        try {
-            assertTimestamp(expectedTimestamp, factory, context);
-            assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
-            // make sure we get the same outcome when we get factory to create new cursor
-            assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
-            // make sure strings, binary fields and symbols are compliant with expected record behaviour
-            assertVariableColumns(factory, context);
-
-            if (ddl2 != null) {
-                runMutations();
-                if (engine.getConfiguration().getWalEnabledDefault()) {
-                    drainWalQueue(engine);
-                }
-
-                int count = 3;
-                while (count > 0) {
-                    try {
-                        assertCursor(expected2, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
-                        // and again
-                        assertCursor(expected2, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
-                        return;
-                    } catch (TableReferenceOutOfDateException e) {
-                        Misc.free(factory);
-                        factory = compileSelect();
-                        count--;
-                    }
-                }
-            }
-
-            // make sure calculateSize() produces consistent result
-            assertCalculateSize(factory, context);
-        } finally {
-            Misc.free(factory);
-        }
-    }
-
-    private void assertReturnsRecords(Record[] expected, Record[] expected2) throws Exception {
-        prepareHook.run();
-        assertMemoryLeak(() -> {
-            runDdl();
-            snapshotMemoryUsage();
-            RecordCursorFactory factory = compileSelect();
-            try {
-                assertTimestamp(expectedTimestamp, factory, context);
-                assertCursorRawRecords(expected, factory, context, expectSize);
-                // make sure we get the same outcome when we get factory to create new cursor
-                assertCursorRawRecords(expected, factory, context, expectSize);
-                assertVariableColumns(factory, context);
-
-                if (ddl2 != null) {
-                    runMutations();
-                    if (engine.getConfiguration().getWalEnabledDefault()) {
-                        drainWalQueue(engine);
-                    }
-                    int count = 3;
-                    while (count > 0) {
-                        try {
-                            assertCursorRawRecords(expected2, factory, context, expectSize);
-                            // and again
-                            assertCursorRawRecords(expected2, factory, context, expectSize);
-                            return;
-                        } catch (TableReferenceOutOfDateException e) {
-                            Misc.free(factory);
-                            factory = compileSelect();
-                            count--;
-                        }
-                    }
-                }
-            } finally {
-                Misc.free(factory);
-            }
-        });
-    }
-
-    private void assertThrows(int errorPos, CharSequence contains, boolean fullFat) throws Exception {
-        Assert.assertNotNull(contains);
-        try {
-            if (compiler != null) {
-                assertThrowsViaCompiler(fullFat);
-            } else {
-                TestUtils.assertException(engine, context, fullFat, query, sink);
-            }
-        } catch (Throwable e) {
-            if (e instanceof FlyweightMessageContainer container) {
-                if (contains.isEmpty()) {
-                    Assert.fail("position: " + container.getPosition() + ", message: " + e.getMessage());
-                }
-                TestUtils.assertContains(container.getFlyweightMessage(), contains);
-                if (errorPos > -1) {
-                    Assert.assertEquals(errorPos, container.getPosition());
-                }
-            } else {
-                throw e;
-            }
-        }
-    }
-
-    private void assertThrowsViaCompiler(boolean fullFat) throws SqlException {
-        if (fullFat) {
-            compiler.setFullFatJoins(true);
-        }
-        try (
-                RecordCursorFactory factory = CairoEngine.select(compiler, query, context);
-                RecordCursor cursor = factory.getCursor(context)
-        ) {
-            sink.clear();
-            final Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
-                // ignore the output, we're looking for an error
-                TestUtils.println(record, factory.getMetadata(), sink);
-                sink.clear();
-            }
-        }
-        Assert.fail("SQL statement should have failed");
-    }
-
-    private void assertViaFactoryCursor(CharSequence expected) throws SqlException {
-        runDdl();
-        snapshotMemoryUsage();
-        final String ts = expectedTimestamp == null ? null : expectedTimestamp.toString();
-        if (compiler != null) {
-            if (fullFatJoins) {
-                compiler.setFullFatJoins(true);
-            }
-            try (RecordCursorFactory factory = CairoEngine.select(compiler, query, context)) {
-                assertFactoryCursor(expected, ts, factory, supportsRandomAccess, context, expectSize, false);
-            }
-        } else {
-            try (SqlCompiler fullFatCompiler = engine.getSqlCompiler()) {
-                fullFatCompiler.setFullFatJoins(true);
-                try (RecordCursorFactory factory = CairoEngine.select(fullFatCompiler, query, context)) {
-                    assertFactoryCursor(expected, ts, factory, supportsRandomAccess, context, expectSize, false);
-                }
-            }
-        }
-    }
-
-    private RecordCursorFactory compileSelect() throws SqlException {
-        return compiler != null ? CairoEngine.select(compiler, query, context) : engine.select(query, context);
-    }
-
-    private RecordCursorFactory selectPlanFactory(CharSequence explainSql) throws SqlException {
-        return compiler != null ? CairoEngine.select(compiler, explainSql, context) : engine.select(explainSql, context);
-    }
-
-    private void dispatch(CharSequence expected, CharSequence expected2) throws Exception {
-        prepareHook.run();
-        if (expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
-            if (fullFatJoins || compiler != null) {
-                throw new IllegalStateException("withPlan(...)/withPlanContaining(...)/withPlanNotContaining(...) cannot be combined with fullFatJoins()/withCompiler()");
-            }
-            final CharSequence exactPlan = expectedPlan;
-            final ObjList<CharSequence> fragments = planFragments;
-            final ObjList<CharSequence> absentFragments = planFragmentsAbsent;
-            final TestUtils.LeakProneCode body = () -> {
-                runDdl();
-                assertReturns(expected, expected2);
-                if (exactPlan != null) {
-                    assertExactPlan(exactPlan);
-                }
-                if (fragments != null) {
-                    assertPlanContains(fragments);
-                }
-                if (absentFragments != null) {
-                    assertPlanNotContains(absentFragments);
-                }
-            };
-            if (leakCheck) {
-                assertMemoryLeak(body);
-            } else {
-                body.run();
-            }
-            return;
-        }
-        if (fullFatJoins || compiler != null) {
-            if (ddl2 != null || sizeCanBeVariable) {
-                throw new IllegalStateException("fullFatJoins()/withCompiler() supports only ddl()/timestamp()/expectSize()/noRandomAccess()");
-            }
-            if (leakCheck) {
-                assertMemoryLeak(() -> assertViaFactoryCursor(expected));
-            } else {
-                assertViaFactoryCursor(expected);
-            }
-            return;
-        }
-        if (leakCheck) {
-            assertMemoryLeak(() -> {
-                runDdl();
-                assertReturns(expected, expected2);
-            });
-        } else {
-            runDdl();
-            assertReturns(expected, expected2);
-        }
-    }
-
-    private void failsNoLeak(int errorPos, CharSequence contains) throws Exception {
-        prepareHook.run();
-        if (ddl != null) {
-            try {
-                engine.execute(ddl, context);
-                assertThrows(errorPos, contains, false);
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.clear();
-            }
-            return;
-        }
-        assertThrows(errorPos, contains, fullFatJoins);
-    }
-
-    private void requireFailsCompatible() {
-        if (expectSize || expectedTimestamp != null || ddl2 != null || !supportsRandomAccess
-                || sizeCanBeVariable || expectedPlan != null || planFragments != null) {
-            throw new IllegalStateException("fails(...)/failsWith(...) supports only ddl()/fullFatJoins()/withCompiler()/noLeakCheck()/withContext()/withEngine()");
-        }
-    }
-
-    private void requirePlanOnlyCompatible() {
-        if (expectSize || expectedTimestamp != null || ddl2 != null || fullFatJoins
-                || !supportsRandomAccess || sizeCanBeVariable || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
-            throw new IllegalStateException("assertsPlan(...)/assertsPlanContaining(...)/assertsPlanNotContaining(...) supports only ddl()/noLeakCheck()/withCompiler()/withContext()/withEngine()");
-        }
-    }
-
-    private void requireRecordPathCompatible() {
-        if (!leakCheck || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || sizeCanBeVariable || !supportsRandomAccess || overridden) {
-            throw new IllegalStateException("returnsRecords(...) supports only ddl()/timestamp()/mutateWith()/expectSize()");
-        }
-    }
-
-    private void requireSingleShotCompatible() {
-        if (expectSize || expectedTimestamp != null || ddl2 != null || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || !supportsRandomAccess || sizeCanBeVariable) {
-            throw new IllegalStateException("returnsOnce(...) supports only ddl()/noLeakCheck()/withContext()/withEngine()");
-        }
-    }
-
-    private void runDdl() throws SqlException {
-        if (ddl != null) {
-            engine.execute(ddl, context);
-            if (engine.getConfiguration().getWalEnabledDefault()) {
-                drainWalQueue(engine);
-            }
-        }
-    }
-
-    private void runMutations() throws SqlException {
-        engine.execute(ddl2, context);
-        if (ddl2More != null) {
-            for (int i = 0, n = ddl2More.size(); i < n; i++) {
-                engine.execute(ddl2More.getQuick(i), context);
-            }
-        }
     }
 
     public static boolean assertCursor(
@@ -1066,6 +389,14 @@ public class QueryAssertion {
         assertFactoryMemoryUsage();
     }
 
+    public static boolean doubleEquals(double a, double b, double epsilon) {
+        return a == b || Math.abs(a - b) < epsilon;
+    }
+
+    public static boolean doubleEquals(double a, double b) {
+        return doubleEquals(a, b, EPSILON);
+    }
+
     public static long getMemUsedByFactories() {
         long memUsed = 0;
         for (int i = 0; i < MemoryTag.SIZE; i++) {
@@ -1076,11 +407,470 @@ public class QueryAssertion {
         return memUsed;
     }
 
+    public static void printFactoryMemoryUsageDiff() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (!FACTORY_TAGS[i]) {
+                continue;
+            }
+
+            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
+
+            if (value != 0L) {
+                System.out.println(MemoryTag.nameOf(i) + ":" + value);
+            }
+        }
+    }
+
     public static void snapshotMemoryUsage() {
         memoryUsage = getMemUsedByFactories();
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
         }
+    }
+
+    /**
+     * Terminal: compile the query once, then run every {@link BindVarTuple} in turn. Each case
+     * clears the bind-variable service, applies its binds and re-opens the cursor; a successful case is
+     * checked with the same battery {@link #returns(CharSequence)} runs (re-read, calculate-size,
+     * random-access and variable-column checks), a failing case asserts the error message contains the
+     * case's fragment at the optional position. Factory options ({@link #timestamp}, {@link #expectSize},
+     * {@link #noRandomAccess}, {@link #sizeMayVary}) set the per-case defaults; individual cases can
+     * override order/random-access/size where a particular bind value flips the factory's behavior.
+     * Supports only {@link #ddl}, {@link #timestamp}, {@link #expectSize}, {@link #noRandomAccess},
+     * {@link #sizeMayVary}, {@link #noLeakCheck}, {@link #withContext} and {@link #withEngine}.
+     */
+    public void assertBinds(ObjList<BindVarTuple> cases) throws Exception {
+        requireBindsCompatible();
+        prepareHook.run();
+        if (leakCheck) {
+            assertMemoryLeak(() -> runBinds(cases));
+        } else {
+            runBinds(cases);
+        }
+    }
+
+    /**
+     * Terminal: assert ONLY the query's execution plan (EXPLAIN output) matches {@code expectedPlan}
+     * exactly, without running the query for a result. Use for EXPLAIN/plan-routing tests that have no
+     * row result to assert. Supports only {@link #ddl}, {@link #noLeakCheck}, {@link #withContext} and
+     * {@link #withEngine}.
+     */
+    public void assertsPlan(CharSequence expectedPlan) throws Exception {
+        requirePlanOnlyCompatible();
+        prepareHook.run();
+        if (leakCheck) {
+            assertMemoryLeak(() -> {
+                runDdl();
+                assertExactPlan(expectedPlan);
+            });
+        } else {
+            runDdl();
+            assertExactPlan(expectedPlan);
+        }
+    }
+
+    /**
+     * Terminal: assert ONLY the query's execution plan (EXPLAIN output) contains every one of
+     * {@code fragments}, without running the query for a result. The plan-only counterpart of
+     * {@link #withPlanContaining}. Supports only {@link #ddl}, {@link #noLeakCheck},
+     * {@link #withContext} and {@link #withEngine}.
+     */
+    public void assertsPlanContaining(CharSequence... fragments) throws Exception {
+        requirePlanOnlyCompatible();
+        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
+        for (CharSequence fragment : fragments) {
+            list.add(fragment);
+        }
+        prepareHook.run();
+        if (leakCheck) {
+            assertMemoryLeak(() -> {
+                runDdl();
+                assertPlanContains(list);
+            });
+        } else {
+            runDdl();
+            assertPlanContains(list);
+        }
+    }
+
+    /**
+     * Terminal: assert ONLY the query's execution plan (EXPLAIN output) contains NONE of
+     * {@code fragments}, without running the query for a result. The negative counterpart of
+     * {@link #assertsPlanContaining}. Supports only {@link #ddl}, {@link #noLeakCheck},
+     * {@link #withContext} and {@link #withEngine}.
+     */
+    public void assertsPlanNotContaining(CharSequence... fragments) throws Exception {
+        requirePlanOnlyCompatible();
+        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
+        for (CharSequence fragment : fragments) {
+            list.add(fragment);
+        }
+        prepareHook.run();
+        if (leakCheck) {
+            assertMemoryLeak(() -> {
+                runDdl();
+                assertPlanNotContains(list);
+            });
+        } else {
+            runDdl();
+            assertPlanNotContains(list);
+        }
+    }
+
+    /**
+     * Also assert that column {@code columnIndex} of the result has type {@code columnType} (a
+     * {@link ColumnType} constant). Repeatable for multiple columns. Asserted on the
+     * {@link #returns(CharSequence)} / {@link #returns(CharSequence, CharSequence)} path.
+     */
+    public QueryAssertion columnType(int columnIndex, int columnType) {
+        if (expectedColumnTypes == null) {
+            expectedColumnTypes = new IntList();
+        }
+        expectedColumnTypes.add(columnIndex);
+        expectedColumnTypes.add(columnType);
+        return this;
+    }
+
+    /**
+     * SQL to execute before the query (typically a CREATE TABLE / INSERT). Drains the WAL queue
+     * afterwards when WAL is enabled by default, exactly as the legacy helpers do.
+     */
+    public QueryAssertion ddl(CharSequence ddl) {
+        this.ddl = ddl;
+        this.ddlMore = null;
+        return this;
+    }
+
+    /**
+     * Multi-statement variant of {@link #ddl(CharSequence)}. The statements run in order, each as a
+     * separate {@code engine.execute()} call, before the query is compiled. Use when setup needs more
+     * than one statement (e.g. a CREATE TABLE followed by an INSERT), which {@code engine.execute()}
+     * cannot run as a single {@code ;}-separated batch.
+     */
+    public QueryAssertion ddl(CharSequence ddl, CharSequence... more) {
+        this.ddl = ddl;
+        this.ddlMore = new ObjList<>(more.length);
+        for (int i = 0, n = more.length; i < n; i++) {
+            this.ddlMore.add(more[i]);
+        }
+        return this;
+    }
+
+    /**
+     * Assert that {@code cursor.size()} returns a known (non-negative) value. Off by default.
+     */
+    public QueryAssertion expectSize() {
+        return expectSize(true);
+    }
+
+    /**
+     * Variable-driven variant of {@link #expectSize()} for helper methods that receive the flag as
+     * a parameter. {@code expectSize(true)} asserts a known size; {@code expectSize(false)} asserts
+     * an undetermined (-1) size, the default.
+     */
+    public QueryAssertion expectSize(boolean expectSize) {
+        this.expectSize = expectSize;
+        return this;
+    }
+
+    /**
+     * Terminal: assert that compiling/running the query fails with an error whose message contains
+     * {@code contains} at position {@code errorPos}. Pass {@code errorPos = -1} to skip the position
+     * check (or use {@link #failsWith}).
+     */
+    public void fails(int errorPos, CharSequence contains) throws Exception {
+        requireFailsCompatible();
+        if (ddl != null && fullFatJoins) {
+            throw new IllegalStateException("fullFatJoins() is not supported together with ddl() on the fails() path");
+        }
+        if (leakCheck) {
+            assertMemoryLeak(() -> failsNoLeak(errorPos, contains));
+        } else {
+            failsNoLeak(errorPos, contains);
+        }
+    }
+
+    /**
+     * Terminal: assert the query fails with an error message containing {@code contains}, without
+     * checking the error position.
+     */
+    public void failsWith(CharSequence contains) throws Exception {
+        fails(-1, contains);
+    }
+
+    /**
+     * Force full-fat (non-optimized) join execution. Supports {@link #timestamp},
+     * {@link #expectSize}, {@link #noRandomAccess} and the {@link #fails}/{@link #failsWith}
+     * terminals. Not supported together with {@link #ddl} on the {@link #fails} path.
+     */
+    public QueryAssertion fullFatJoins() {
+        return fullFatJoins(true);
+    }
+
+    /**
+     * Variable-driven variant of {@link #fullFatJoins()} for helper methods that receive the flag
+     * as a parameter (e.g. a test parameterized over normal vs full-fat execution).
+     */
+    public QueryAssertion fullFatJoins(boolean fullFatJoins) {
+        this.fullFatJoins = fullFatJoins;
+        return this;
+    }
+
+    /**
+     * Terminal: compile the query once, then for each {@link MutationStep} run its statement against the
+     * live engine (typically an INSERT that grows the input table) and re-assert the SAME held factory
+     * against that step's expected result. The stepwise generalization of {@link #mutateWith}: it holds
+     * one factory across many incremental mutations, asserting after each, to verify a shared factory
+     * keeps producing correct (non-stale) results as its input grows. Supports {@link #ddl},
+     * {@link #expectSize}, {@link #noRandomAccess}, {@link #sizeMayVary}, {@link #noLeakCheck},
+     * {@link #withContext} and {@link #withEngine}.
+     */
+    public void mutateStepwise(ObjList<MutationStep> steps) throws Exception {
+        requireMutateStepwiseCompatible();
+        prepareHook.run();
+        if (leakCheck) {
+            assertMemoryLeak(() -> runMutationSteps(steps));
+        } else {
+            runMutationSteps(steps);
+        }
+    }
+
+    /**
+     * SQL to execute after the first assertion, re-checking the same factory against the second
+     * expected value. Requires the two-argument {@link #returns(CharSequence, CharSequence)} (or
+     * {@link #returnsRecords(Record[], Record[])}) terminal.
+     */
+    public QueryAssertion mutateWith(CharSequence ddl2) {
+        this.ddl2 = ddl2;
+        this.ddl2More = null;
+        return this;
+    }
+
+    /**
+     * Multi-statement variant of {@link #mutateWith(CharSequence)}. The statements run in order,
+     * each as a separate {@code engine.execute()} call, before the second assertion re-checks the
+     * same factory. Use when the mutation needs more than one statement (e.g. drop then recreate a
+     * table), which {@code engine.execute()} cannot run as a single {@code ;}-separated batch.
+     */
+    public QueryAssertion mutateWith(CharSequence ddl2, CharSequence... more) {
+        this.ddl2 = ddl2;
+        this.ddl2More = new ObjList<>(more.length);
+        for (int i = 0, n = more.length; i < n; i++) {
+            this.ddl2More.add(more[i]);
+        }
+        return this;
+    }
+
+    /**
+     * Skip the surrounding memory-leak check. Use inside a test body that is already wrapped in
+     * {@code assertMemoryLeak(...)}.
+     */
+    public QueryAssertion noLeakCheck() {
+        this.leakCheck = false;
+        return this;
+    }
+
+    /**
+     * Declare that the factory does not support random access, skipping the random-access record
+     * checks. Random access is exercised by default.
+     */
+    public QueryAssertion noRandomAccess() {
+        this.supportsRandomAccess = false;
+        return this;
+    }
+
+    /**
+     * Terminal: assert the query produces exactly {@code expected}.
+     */
+    public void returns(CharSequence expected) throws Exception {
+        if (ddl2 != null) {
+            throw new IllegalStateException("mutateWith(...) requires returns(before, after)");
+        }
+        dispatch(expected, null);
+    }
+
+    /**
+     * Terminal: assert the query produces {@code expectedBefore}, then run the {@link #mutateWith}
+     * statement and assert the same factory now produces {@code expectedAfter}.
+     */
+    public void returns(CharSequence expectedBefore, CharSequence expectedAfter) throws Exception {
+        if (ddl2 == null) {
+            throw new IllegalStateException("returns(before, after) requires mutateWith(...)");
+        }
+        dispatch(expectedBefore, expectedAfter);
+    }
+
+    /**
+     * Terminal: assert the query prints exactly {@code expected} from a SINGLE cursor pass,
+     * skipping the second read, calculate-size, variable-column and factory-property checks that
+     * {@link #returns(CharSequence)} performs. Use for non-deterministic projections whose output is
+     * not stable across a re-read. Supports only {@link #ddl}, {@link #noLeakCheck},
+     * {@link #withContext} and {@link #withEngine}.
+     */
+    public void returnsOnce(CharSequence expected) throws Exception {
+        requireSingleShotCompatible();
+        prepareHook.run();
+        if (leakCheck) {
+            assertMemoryLeak(() -> {
+                runDdl();
+                TestUtils.assertSql(engine, context, query, sink, expected);
+            });
+        } else {
+            runDdl();
+            TestUtils.assertSql(engine, context, query, sink, expected);
+        }
+    }
+
+    /**
+     * Terminal: assert the query produces the given raw records. Always leak-checked; supports only
+     * {@link #ddl}, {@link #timestamp}, {@link #mutateWith} and {@link #expectSize}.
+     */
+    public void returnsRecords(Record[] expected) throws Exception {
+        if (ddl2 != null) {
+            throw new IllegalStateException("mutateWith(...) requires returnsRecords(before, after)");
+        }
+        requireRecordPathCompatible();
+        assertReturnsRecords(expected, null);
+    }
+
+    /**
+     * Terminal: the record-array counterpart of {@link #returns(CharSequence, CharSequence)}.
+     */
+    public void returnsRecords(Record[] expectedBefore, Record[] expectedAfter) throws Exception {
+        if (ddl2 == null) {
+            throw new IllegalStateException("returnsRecords(before, after) requires mutateWith(...)");
+        }
+        requireRecordPathCompatible();
+        assertReturnsRecords(expectedBefore, expectedAfter);
+    }
+
+    /**
+     * Allow {@code cursor.size()} to be reported as unknown (-1) in some passes. Off by default.
+     */
+    public QueryAssertion sizeMayVary() {
+        return sizeMayVary(true);
+    }
+
+    /**
+     * Variable-driven variant of {@link #sizeMayVary()} for helper methods that receive the flag as
+     * a parameter.
+     */
+    public QueryAssertion sizeMayVary(boolean sizeCanBeVariable) {
+        this.sizeCanBeVariable = sizeCanBeVariable;
+        return this;
+    }
+
+    /**
+     * Variable-driven variant of {@link #noRandomAccess()} for helper methods that receive the
+     * flag as a parameter.
+     */
+    public QueryAssertion supportsRandomAccess(boolean supportsRandomAccess) {
+        this.supportsRandomAccess = supportsRandomAccess;
+        return this;
+    }
+
+    /**
+     * Assert the result has a designated timestamp on the given column. Without this step the
+     * result is asserted to have no designated timestamp.
+     */
+    public QueryAssertion timestamp(CharSequence column) {
+        this.expectedTimestamp = column;
+        return this;
+    }
+
+    /**
+     * Like {@link #timestamp} but also assert ascending (forward) scan order.
+     */
+    public QueryAssertion timestampAsc(CharSequence column) {
+        this.expectedTimestamp = column + "###ASC";
+        return this;
+    }
+
+    /**
+     * Like {@link #timestamp} but also assert descending (backward) scan order.
+     */
+    public QueryAssertion timestampDesc(CharSequence column) {
+        this.expectedTimestamp = column + "###DESC";
+        return this;
+    }
+
+    /**
+     * Also assert that the compiled factory's base factory (see
+     * {@link RecordCursorFactory#getBaseFactory()}) is exactly {@code baseFactoryClass}. Use to pin the
+     * execution strategy a query must compile to, e.g. that a filtered scan routes through
+     * {@code AsyncFilteredRecordCursorFactory}. Asserted on the {@link #returns(CharSequence)} /
+     * {@link #returns(CharSequence, CharSequence)} path.
+     */
+    public QueryAssertion withBaseFactoryClass(Class<?> baseFactoryClass) {
+        this.baseFactoryClass = baseFactoryClass;
+        return this;
+    }
+
+    /**
+     * Compile the query with a specific {@link SqlCompiler} instead of one borrowed from the engine.
+     * Routes the assertion through the single-factory cursor path (no {@code calculateSize()} pass).
+     * Supports {@link #ddl}, {@link #timestamp}, {@link #expectSize} and {@link #noRandomAccess}.
+     */
+    public QueryAssertion withCompiler(SqlCompiler compiler) {
+        this.compiler = compiler;
+        this.overridden = true;
+        return this;
+    }
+
+    /**
+     * Run with a specific {@link SqlExecutionContext} instead of the construction-time one.
+     */
+    public QueryAssertion withContext(SqlExecutionContext context) {
+        this.context = context;
+        this.overridden = true;
+        return this;
+    }
+
+    /**
+     * Run against a specific {@link CairoEngine} instead of the construction-time one.
+     */
+    public QueryAssertion withEngine(CairoEngine engine) {
+        this.engine = engine;
+        this.overridden = true;
+        return this;
+    }
+
+    /**
+     * Also assert the query's execution plan (EXPLAIN output) matches {@code expectedPlan} exactly.
+     * Honors {@link #noLeakCheck()}; cannot be combined with {@link #fullFatJoins()} or
+     * {@link #withCompiler}.
+     */
+    public QueryAssertion withPlan(CharSequence expectedPlan) {
+        this.expectedPlan = expectedPlan;
+        return this;
+    }
+
+    /**
+     * Also assert the query's execution plan (EXPLAIN output) contains every one of {@code fragments}.
+     * Honors {@link #noLeakCheck()}; cannot be combined with {@link #fullFatJoins()} or
+     * {@link #withCompiler}.
+     */
+    public QueryAssertion withPlanContaining(CharSequence... fragments) {
+        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
+        for (CharSequence fragment : fragments) {
+            list.add(fragment);
+        }
+        this.planFragments = list;
+        return this;
+    }
+
+    /**
+     * Also assert the query's execution plan (EXPLAIN output) contains NONE of {@code fragments}.
+     * The negative counterpart of {@link #withPlanContaining}. Honors {@link #noLeakCheck()}; cannot
+     * be combined with {@link #fullFatJoins()} or {@link #withCompiler}.
+     */
+    public QueryAssertion withPlanNotContaining(CharSequence... fragments) {
+        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
+        for (CharSequence fragment : fragments) {
+            list.add(fragment);
+        }
+        this.planFragmentsAbsent = list;
+        return this;
     }
 
     private static void assertCalculateSize(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -1307,6 +1097,464 @@ public class QueryAssertion {
         }
     }
 
+    private void assertBaseFactoryClass(RecordCursorFactory factory) {
+        if (baseFactoryClass != null) {
+            Assert.assertEquals(baseFactoryClass, factory.getBaseFactory().getClass());
+        }
+    }
+
+    private void assertBindFailure(RecordCursorFactory factory, BindVarTuple testCase, SqlExecutionContext executionContext) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(executionContext)) {
+            sink.clear();
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                TestUtils.println(record, factory.getMetadata(), sink);
+            }
+            Assert.fail(testCase.getDescription() + ": expected failure but the query succeeded");
+        } catch (Throwable e) {
+            if (!(e instanceof FlyweightMessageContainer container)) {
+                throw e;
+            }
+            TestUtils.assertContains(testCase.getDescription(), container.getFlyweightMessage(), testCase.getExpected());
+            if (testCase.getErrorPosition() != BindVarTuple.ANY_POSITION) {
+                Assert.assertEquals(testCase.getDescription(), testCase.getErrorPosition(), container.getPosition());
+            }
+        }
+    }
+
+    private void assertBindSuccess(RecordCursorFactory factory, BindVarTuple testCase, SqlExecutionContext executionContext) throws SqlException {
+        final boolean randomAccess = testCase.getRandomAccessOverride() != null
+                ? testCase.getRandomAccessOverride()
+                : supportsRandomAccess;
+        final boolean sizeExpected = testCase.getExpectSizeOverride() != null
+                ? testCase.getExpectSizeOverride()
+                : expectSize;
+        assertTimestamp(resolveTimestamp(testCase), factory, executionContext);
+        assertCursor(testCase.getExpected(), factory, randomAccess, sizeExpected, sizeCanBeVariable, executionContext);
+        // re-open with the same binds and reproduce the same outcome
+        assertCursor(testCase.getExpected(), factory, randomAccess, sizeExpected, sizeCanBeVariable, executionContext);
+        assertVariableColumns(factory, executionContext);
+        assertCalculateSize(factory, executionContext);
+    }
+
+    private void assertColumnTypes(RecordCursorFactory factory) {
+        if (expectedColumnTypes != null) {
+            final RecordMetadata metadata = factory.getMetadata();
+            for (int i = 0, n = expectedColumnTypes.size(); i < n; i += 2) {
+                final int columnIndex = expectedColumnTypes.getQuick(i);
+                Assert.assertEquals(expectedColumnTypes.getQuick(i + 1), metadata.getColumnType(columnIndex));
+            }
+        }
+    }
+
+    private void assertExactPlan(CharSequence expectedPlan) throws SqlException {
+        final StringSink explainSql = new StringSink();
+        explainSql.put("EXPLAIN ").put(query);
+        try (
+                RecordCursorFactory planFactory = selectPlanFactory(explainSql);
+                RecordCursor cursor = planFactory.getCursor(context)
+        ) {
+            final CharSequence plan = JitUtil.isJitSupported() ? expectedPlan : Chars.toString(expectedPlan).replace("Async JIT", "Async");
+            TestUtils.assertCursor(plan, cursor, planFactory.getMetadata(), false, sink);
+        }
+    }
+
+    private void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        engine.clear();
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                code.run();
+            } finally {
+                releaseInactive(engine);
+            }
+        });
+    }
+
+    private void assertPlanContains(ObjList<CharSequence> fragments) throws SqlException {
+        final StringSink explainSql = new StringSink();
+        explainSql.put("EXPLAIN ").put(query);
+        final StringSink actualPlan = new StringSink();
+        try (
+                RecordCursorFactory planFactory = selectPlanFactory(explainSql);
+                RecordCursor cursor = planFactory.getCursor(context)
+        ) {
+            CursorPrinter.println(cursor, planFactory.getMetadata(), actualPlan, false, false);
+        }
+        for (int i = 0, n = fragments.size(); i < n; i++) {
+            CharSequence fragment = fragments.getQuick(i);
+            if (!JitUtil.isJitSupported()) {
+                fragment = Chars.toString(fragment).replace("Async JIT", "Async");
+            }
+            TestUtils.assertContains(actualPlan, fragment);
+        }
+    }
+
+    private void assertPlanNotContains(ObjList<CharSequence> fragments) throws SqlException {
+        final StringSink explainSql = new StringSink();
+        explainSql.put("EXPLAIN ").put(query);
+        final StringSink actualPlan = new StringSink();
+        try (
+                RecordCursorFactory planFactory = selectPlanFactory(explainSql);
+                RecordCursor cursor = planFactory.getCursor(context)
+        ) {
+            CursorPrinter.println(cursor, planFactory.getMetadata(), actualPlan, false, false);
+        }
+        for (int i = 0, n = fragments.size(); i < n; i++) {
+            CharSequence fragment = fragments.getQuick(i);
+            if (!JitUtil.isJitSupported()) {
+                fragment = Chars.toString(fragment).replace("Async JIT", "Async");
+            }
+            TestUtils.assertNotContains(actualPlan, fragment);
+        }
+    }
+
+    private void assertReturns(CharSequence expected, CharSequence expected2) throws SqlException {
+        snapshotMemoryUsage();
+        RecordCursorFactory factory = compileSelect();
+        try {
+            assertBaseFactoryClass(factory);
+            assertColumnTypes(factory);
+            assertTimestamp(expectedTimestamp, factory, context);
+            assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
+            // make sure we get the same outcome when we get factory to create new cursor
+            assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
+            // make sure strings, binary fields and symbols are compliant with expected record behaviour
+            assertVariableColumns(factory, context);
+
+            if (ddl2 != null) {
+                runMutations();
+                if (engine.getConfiguration().getWalEnabledDefault()) {
+                    drainWalQueue(engine);
+                }
+
+                int count = 3;
+                while (count > 0) {
+                    try {
+                        assertCursor(expected2, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
+                        // and again
+                        assertCursor(expected2, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
+                        return;
+                    } catch (TableReferenceOutOfDateException e) {
+                        Misc.free(factory);
+                        factory = compileSelect();
+                        count--;
+                    }
+                }
+            }
+
+            // make sure calculateSize() produces consistent result
+            assertCalculateSize(factory, context);
+        } finally {
+            Misc.free(factory);
+        }
+    }
+
+    private void assertReturnsRecords(Record[] expected, Record[] expected2) throws Exception {
+        prepareHook.run();
+        assertMemoryLeak(() -> {
+            runDdl();
+            snapshotMemoryUsage();
+            RecordCursorFactory factory = compileSelect();
+            try {
+                assertTimestamp(expectedTimestamp, factory, context);
+                assertCursorRawRecords(expected, factory, context, expectSize);
+                // make sure we get the same outcome when we get factory to create new cursor
+                assertCursorRawRecords(expected, factory, context, expectSize);
+                assertVariableColumns(factory, context);
+
+                if (ddl2 != null) {
+                    runMutations();
+                    if (engine.getConfiguration().getWalEnabledDefault()) {
+                        drainWalQueue(engine);
+                    }
+                    int count = 3;
+                    while (count > 0) {
+                        try {
+                            assertCursorRawRecords(expected2, factory, context, expectSize);
+                            // and again
+                            assertCursorRawRecords(expected2, factory, context, expectSize);
+                            return;
+                        } catch (TableReferenceOutOfDateException e) {
+                            Misc.free(factory);
+                            factory = compileSelect();
+                            count--;
+                        }
+                    }
+                }
+            } finally {
+                Misc.free(factory);
+            }
+        });
+    }
+
+    private void assertThrows(int errorPos, CharSequence contains, boolean fullFat) throws Exception {
+        Assert.assertNotNull(contains);
+        try {
+            if (compiler != null) {
+                assertThrowsViaCompiler(fullFat);
+            } else {
+                TestUtils.assertException(engine, context, fullFat, query, sink);
+            }
+        } catch (Throwable e) {
+            if (e instanceof FlyweightMessageContainer container) {
+                if (contains.isEmpty()) {
+                    Assert.fail("position: " + container.getPosition() + ", message: " + e.getMessage());
+                }
+                TestUtils.assertContains(container.getFlyweightMessage(), contains);
+                if (errorPos > -1) {
+                    Assert.assertEquals(errorPos, container.getPosition());
+                }
+            } else {
+                throw e;
+            }
+        }
+    }
+
+    private void assertThrowsViaCompiler(boolean fullFat) throws SqlException {
+        if (fullFat) {
+            compiler.setFullFatJoins(true);
+        }
+        try (
+                RecordCursorFactory factory = CairoEngine.select(compiler, query, context);
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            sink.clear();
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                // ignore the output, we're looking for an error
+                TestUtils.println(record, factory.getMetadata(), sink);
+                sink.clear();
+            }
+        }
+        Assert.fail("SQL statement should have failed");
+    }
+
+    private void assertViaFactoryCursor(CharSequence expected) throws SqlException {
+        runDdl();
+        snapshotMemoryUsage();
+        final String ts = expectedTimestamp == null ? null : expectedTimestamp.toString();
+        if (compiler != null) {
+            if (fullFatJoins) {
+                compiler.setFullFatJoins(true);
+            }
+            try (RecordCursorFactory factory = CairoEngine.select(compiler, query, context)) {
+                assertFactoryCursor(expected, ts, factory, supportsRandomAccess, context, expectSize, false);
+            }
+        } else {
+            try (SqlCompiler fullFatCompiler = engine.getSqlCompiler()) {
+                fullFatCompiler.setFullFatJoins(true);
+                try (RecordCursorFactory factory = CairoEngine.select(fullFatCompiler, query, context)) {
+                    assertFactoryCursor(expected, ts, factory, supportsRandomAccess, context, expectSize, false);
+                }
+            }
+        }
+    }
+
+    private RecordCursorFactory compileSelect() throws SqlException {
+        return compiler != null ? CairoEngine.select(compiler, query, context) : engine.select(query, context);
+    }
+
+    private void dispatch(CharSequence expected, CharSequence expected2) throws Exception {
+        prepareHook.run();
+        if (expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
+            if (fullFatJoins || compiler != null) {
+                throw new IllegalStateException("withPlan(...)/withPlanContaining(...)/withPlanNotContaining(...) cannot be combined with fullFatJoins()/withCompiler()");
+            }
+            final CharSequence exactPlan = expectedPlan;
+            final ObjList<CharSequence> fragments = planFragments;
+            final ObjList<CharSequence> absentFragments = planFragmentsAbsent;
+            final TestUtils.LeakProneCode body = () -> {
+                runDdl();
+                assertReturns(expected, expected2);
+                if (exactPlan != null) {
+                    assertExactPlan(exactPlan);
+                }
+                if (fragments != null) {
+                    assertPlanContains(fragments);
+                }
+                if (absentFragments != null) {
+                    assertPlanNotContains(absentFragments);
+                }
+            };
+            if (leakCheck) {
+                assertMemoryLeak(body);
+            } else {
+                body.run();
+            }
+            return;
+        }
+        if (fullFatJoins || compiler != null) {
+            if (ddl2 != null || sizeCanBeVariable) {
+                throw new IllegalStateException("fullFatJoins()/withCompiler() supports only ddl()/timestamp()/expectSize()/noRandomAccess()");
+            }
+            if (leakCheck) {
+                assertMemoryLeak(() -> assertViaFactoryCursor(expected));
+            } else {
+                assertViaFactoryCursor(expected);
+            }
+            return;
+        }
+        if (leakCheck) {
+            assertMemoryLeak(() -> {
+                runDdl();
+                assertReturns(expected, expected2);
+            });
+        } else {
+            runDdl();
+            assertReturns(expected, expected2);
+        }
+    }
+
+    private void failsNoLeak(int errorPos, CharSequence contains) throws Exception {
+        prepareHook.run();
+        if (ddl != null) {
+            try {
+                engine.execute(ddl, context);
+                runDdlMore();
+                assertThrows(errorPos, contains, false);
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.clear();
+            }
+            return;
+        }
+        assertThrows(errorPos, contains, fullFatJoins);
+    }
+
+    private void requireBindsCompatible() {
+        if (ddl2 != null || fullFatJoins || compiler != null
+                || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
+            throw new IllegalStateException(
+                    "assertBinds(...) supports only ddl()/timestamp*()/expectSize()/noRandomAccess()/sizeMayVary()/noLeakCheck()/withContext()/withEngine()");
+        }
+    }
+
+    private void requireFailsCompatible() {
+        if (expectSize || expectedTimestamp != null || ddl2 != null || !supportsRandomAccess
+                || sizeCanBeVariable || expectedPlan != null || planFragments != null) {
+            throw new IllegalStateException("fails(...)/failsWith(...) supports only ddl()/fullFatJoins()/withCompiler()/noLeakCheck()/withContext()/withEngine()");
+        }
+    }
+
+    private void requireMutateStepwiseCompatible() {
+        if (ddl2 != null || fullFatJoins || compiler != null
+                || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
+            throw new IllegalStateException(
+                    "mutateStepwise(...) supports only ddl()/expectSize()/noRandomAccess()/sizeMayVary()/noLeakCheck()/withContext()/withEngine()");
+        }
+    }
+
+    private void requirePlanOnlyCompatible() {
+        if (expectSize || expectedTimestamp != null || ddl2 != null || fullFatJoins
+                || !supportsRandomAccess || sizeCanBeVariable || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
+            throw new IllegalStateException("assertsPlan(...)/assertsPlanContaining(...)/assertsPlanNotContaining(...) supports only ddl()/noLeakCheck()/withCompiler()/withContext()/withEngine()");
+        }
+    }
+
+    private void requireRecordPathCompatible() {
+        if (!leakCheck || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || sizeCanBeVariable || !supportsRandomAccess || overridden) {
+            throw new IllegalStateException("returnsRecords(...) supports only ddl()/timestamp()/mutateWith()/expectSize()");
+        }
+    }
+
+    private void requireSingleShotCompatible() {
+        if (expectSize || expectedTimestamp != null || ddl2 != null || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || !supportsRandomAccess || sizeCanBeVariable) {
+            throw new IllegalStateException("returnsOnce(...) supports only ddl()/noLeakCheck()/withContext()/withEngine()");
+        }
+    }
+
+    private String resolveTimestamp(BindVarTuple testCase) {
+        if (expectedTimestamp == null) {
+            return null;
+        }
+        final String chainTimestamp = expectedTimestamp.toString();
+        if (testCase.getOrder() == BindVarTuple.Order.INHERIT) {
+            return chainTimestamp;
+        }
+        final int sep = chainTimestamp.indexOf("###");
+        final String column = sep < 0 ? chainTimestamp : chainTimestamp.substring(0, sep);
+        return column + (testCase.getOrder() == BindVarTuple.Order.ASC ? "###ASC" : "###DESC");
+    }
+
+    private void runBinds(ObjList<BindVarTuple> cases) throws SqlException {
+        runDdl();
+        snapshotMemoryUsage();
+        final BindVariableService bindVariableService = context.getBindVariableService();
+        // Seed bind-variable types from the first success case before compiling: the compiler rejects an
+        // undefined NAMED bind (:name), unlike an indexed one ($1). The per-case loop below re-clears and
+        // re-applies binds for each value, so this initial assignment only establishes compile-time types.
+        for (int i = 0, n = cases.size(); i < n; i++) {
+            if (!cases.getQuick(i).isExpectedToFail()) {
+                bindVariableService.clear();
+                cases.getQuick(i).getBinds().assignBindVariables(bindVariableService);
+                break;
+            }
+        }
+        try (RecordCursorFactory factory = compileSelect()) {
+            for (int i = 0, n = cases.size(); i < n; i++) {
+                final BindVarTuple testCase = cases.getQuick(i);
+                // A case may execute under its own context (with its own bind service) to verify the
+                // factory reads binds from the execution context; otherwise it uses the chain context.
+                final SqlExecutionContext caseContext = testCase.getExecutionContext() != null
+                        ? testCase.getExecutionContext()
+                        : context;
+                caseContext.getBindVariableService().clear();
+                testCase.getBinds().assignBindVariables(caseContext.getBindVariableService());
+                if (testCase.isExpectedToFail()) {
+                    assertBindFailure(factory, testCase, caseContext);
+                } else {
+                    assertBindSuccess(factory, testCase, caseContext);
+                }
+            }
+        }
+    }
+
+    private void runDdl() throws SqlException {
+        if (ddl != null) {
+            engine.execute(ddl, context);
+            runDdlMore();
+            // Drain unconditionally: a table created with an explicit WAL keyword is WAL even when
+            // walEnabledDefault is false (the test-harness default), so its inserts stay in the WAL
+            // until applied. drainWalQueue() is a no-op when nothing is pending.
+            drainWalQueue(engine);
+        }
+    }
+
+    private void runDdlMore() throws SqlException {
+        if (ddlMore != null) {
+            for (int i = 0, n = ddlMore.size(); i < n; i++) {
+                engine.execute(ddlMore.getQuick(i), context);
+            }
+        }
+    }
+
+    private void runMutationSteps(ObjList<MutationStep> steps) throws SqlException {
+        runDdl();
+        snapshotMemoryUsage();
+        try (RecordCursorFactory factory = compileSelect()) {
+            for (int i = 0, n = steps.size(); i < n; i++) {
+                final MutationStep step = steps.getQuick(i);
+                engine.execute(step.getMutation(), context);
+                drainWalQueue(engine);
+                assertCursor(step.getExpected(), factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
+            }
+        }
+    }
+
+    private void runMutations() throws SqlException {
+        engine.execute(ddl2, context);
+        if (ddl2More != null) {
+            for (int i = 0, n = ddl2More.size(); i < n; i++) {
+                engine.execute(ddl2More.getQuick(i), context);
+            }
+        }
+    }
+
+    private RecordCursorFactory selectPlanFactory(CharSequence explainSql) throws SqlException {
+        return compiler != null ? CairoEngine.select(compiler, explainSql, context) : engine.select(explainSql, context);
+    }
+
     protected static void assertCursor(
             CharSequence expected,
             RecordCursorFactory factory,
@@ -1423,6 +1671,26 @@ public class QueryAssertion {
         assertFactoryMemoryUsage();
     }
 
+    protected static void assertFactoryCursor(
+            CharSequence expected,
+            String expectedTimestamp,
+            RecordCursorFactory factory,
+            boolean supportsRandomAccess,
+            SqlExecutionContext executionContext,
+            boolean expectSize,
+            boolean sizeCanBeVariable
+    ) throws SqlException {
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
+        // v Please keep this check after ^ that one.
+        // Factories that have a scan order dependent on the bind variable will not test correctly.
+        // See generate_series
+        assertTimestamp(expectedTimestamp, factory, executionContext);
+        // make sure we get the same outcome when we get factory to create new cursor
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
+        // make sure strings, binary fields and symbols are compliant with expected record behaviour
+        assertVariableColumns(factory, executionContext);
+    }
+
     protected static void assertFactoryMemoryUsage() {
         if (memoryUsage > -1) {
             long memAfterCursorClose = getMemUsedByFactories();
@@ -1497,35 +1765,6 @@ public class QueryAssertion {
         assertFactoryMemoryUsage();
     }
 
-    protected static void releaseInactive(CairoEngine engine) {
-        engine.releaseInactive();
-        engine.releaseInactiveTableSequencers();
-        engine.resetNameRegistryMemory();
-        engine.getTxnScoreboardPool().clear();
-        Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
-        Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
-    }
-
-    protected static void assertFactoryCursor(
-            CharSequence expected,
-            String expectedTimestamp,
-            RecordCursorFactory factory,
-            boolean supportsRandomAccess,
-            SqlExecutionContext executionContext,
-            boolean expectSize,
-            boolean sizeCanBeVariable
-    ) throws SqlException {
-        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
-        // v Please keep this check after ^ that one.
-        // Factories that have a scan order dependent on the bind variable will not test correctly.
-        // See generate_series
-        assertTimestamp(expectedTimestamp, factory, executionContext);
-        // make sure we get the same outcome when we get factory to create new cursor
-        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
-        // make sure strings, binary fields and symbols are compliant with expected record behaviour
-        assertVariableColumns(factory, executionContext);
-    }
-
     protected static ApplyWal2TableJob createWalApplyJob(CairoEngine engine) {
         return new ApplyWal2TableJob(engine, 0);
     }
@@ -1544,32 +1783,19 @@ public class QueryAssertion {
         }
     }
 
-    public static boolean doubleEquals(double a, double b, double epsilon) {
-        return a == b || Math.abs(a - b) < epsilon;
-    }
-
-    public static boolean doubleEquals(double a, double b) {
-        return doubleEquals(a, b, EPSILON);
-    }
-
-    public static void printFactoryMemoryUsageDiff() {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if (!FACTORY_TAGS[i]) {
-                continue;
-            }
-
-            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
-
-            if (value != 0L) {
-                System.out.println(MemoryTag.nameOf(i) + ":" + value);
-            }
-        }
-    }
-
     protected static void dumpMemoryUsage() {
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
             LOG.info().$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i)).$();
         }
+    }
+
+    protected static void releaseInactive(CairoEngine engine) {
+        engine.releaseInactive();
+        engine.releaseInactiveTableSequencers();
+        engine.resetNameRegistryMemory();
+        engine.getTxnScoreboardPool().clear();
+        Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
+        Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
     }
 
     static {
