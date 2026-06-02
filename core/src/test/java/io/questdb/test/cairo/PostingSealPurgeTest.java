@@ -719,7 +719,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPersistTaskDirectRejectsUnclampedToTxnSentinel() throws Exception {
+    public void testPersistReadyTasksDirectRejectsUnclampedToTxnSentinel() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tok = createPostingTable("posting_purge_sentinel");
             PostingSealPurgeTask task = new PostingSealPurgeTask();
@@ -735,8 +735,6 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     0L,
                     Long.MAX_VALUE
             );
-
-            assertFalse(PostingSealPurgeJob.persistTaskDirect(engine, task));
 
             ObjList<PostingSealPurgeTask> tasks = new ObjList<>();
             tasks.add(newPostingSealPurgeTask(tok, "c_ready", 2L, 1L));

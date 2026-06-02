@@ -130,17 +130,6 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    public static boolean persistTaskDirect(CairoEngine engine, PostingSealPurgeTask task) {
-        if (task == null || task.isEmpty()) {
-            return true;
-        }
-        if (task.getToTableTxn() == Long.MAX_VALUE) {
-            logUnclampedSentinel(task);
-            return false;
-        }
-        return persistTaskDirect0(engine, task);
-    }
-
     public static boolean persistReadyTasksDirect(
             CairoEngine engine,
             ObjList<PostingSealPurgeTask> tasks,
@@ -178,34 +167,6 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                 .$(", column=").$(task.getIndexColumnName())
                 .$(", sealTxn=").$(task.getSealTxn())
                 .I$();
-    }
-
-    private static boolean persistTaskDirect0(CairoEngine engine, PostingSealPurgeTask task) {
-        TableWriter logWriter = null;
-        SqlExecutionContextImpl sqlExecutionContext = null;
-        try {
-            CairoConfiguration configuration = engine.getConfiguration();
-            sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-            sqlExecutionContext.with(
-                    configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                    null,
-                    null
-            );
-            TableToken logTableToken;
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                logTableToken = createLogTable(configuration, compiler, sqlExecutionContext);
-            }
-            logWriter = engine.getWriter(logTableToken, "QuestDB system");
-            appendTask(logWriter, task, configuration.getMicrosecondClock().getTicks());
-            logWriter.commit();
-            return true;
-        } catch (Throwable th) {
-            LOG.error().$("posting seal purge: direct task persist failed [err=").$(th).I$();
-            return false;
-        } finally {
-            closeDirectPersistResource(logWriter);
-            closeDirectPersistResource(sqlExecutionContext);
-        }
     }
 
     private static boolean persistTasksDirect0(
