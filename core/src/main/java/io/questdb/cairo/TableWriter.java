@@ -189,6 +189,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     };
     private static final Row NOOP_ROW = new NoOpRow();
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
+    private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
     private static final int ROW_ACTION_NO_PARTITION = 1;
     private static final int ROW_ACTION_NO_TIMESTAMP = 2;
     private static final int ROW_ACTION_O3 = 3;
@@ -4647,7 +4648,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void closeDeferredPostingSealPurges() {
         long currentTableTxn = txWriter != null ? txWriter.getTxn() : -1L;
         if (txWriter != null) {
-            publishDeferredPostingSealPurges(currentTableTxn, true);
+            publishDeferredPostingSealPurgesOnClose(currentTableTxn);
         }
         for (int i = deferredPostingSealPurges.size() - 1; i >= 0; i--) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
@@ -10676,6 +10677,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void publishDeferredPostingSealPurges(long currentTableTxn, boolean persistOnQueueFull) {
+        publishDeferredPostingSealPurges(currentTableTxn, persistOnQueueFull, 0);
+    }
+
+    private void publishDeferredPostingSealPurges(long currentTableTxn, boolean persistOnQueueFull, int queueRetryCount) {
         if (deferredPostingSealPurges.size() == 0) {
             return;
         }
@@ -10701,8 +10706,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
 
-            long cursor = pubSeq.next();
+            long cursor = nextPostingSealPurgePubSeq(pubSeq, queueRetryCount);
             if (cursor < 0) {
+                // A live PostingSealPurgeJob owns the purge-log writer, so
+                // direct persist is mostly useful when no job/message bus owns
+                // that table. Close gives the ring a bounded drain chance first.
                 if (persistOnQueueFull && PostingSealPurgeJob.persistReadyTasksDirect(engine, deferredPostingSealPurges, readPos, n, currentTableTxn)) {
                     writePos = releaseDirectPersistedPostingSealPurges(readPos, writePos, n, currentTableTxn);
                 } else {
@@ -10734,6 +10742,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = deferredPostingSealPurges.size() - 1; i >= writePos; i--) {
             deferredPostingSealPurges.remove(i);
         }
+    }
+
+    private void publishDeferredPostingSealPurgesOnClose(long currentTableTxn) {
+        publishDeferredPostingSealPurges(currentTableTxn, true, POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT);
     }
 
     private void publishPendingPostingSealPurges(long currentTableTxn) {
@@ -11290,6 +11302,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return writePos;
+    }
+
+    private long nextPostingSealPurgePubSeq(Sequence pubSeq, int retryCount) {
+        long cursor = pubSeq.next();
+        for (int i = 0; cursor < 0 && i < retryCount; i++) {
+            if (i > 0) {
+                Os.sleep(1);
+            } else {
+                Os.pause();
+            }
+            cursor = pubSeq.next();
+        }
+        return cursor;
     }
 
     private void releaseIndexerWriters() {
