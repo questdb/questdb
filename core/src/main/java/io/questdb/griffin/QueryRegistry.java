@@ -37,6 +37,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerProvider;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakMutableObjectPool;
 import io.questdb.std.datetime.Clock;
@@ -263,6 +264,21 @@ public class QueryRegistry {
 
         public long getChangedAtNs() {
             return changedAtNs;
+        }
+
+        // For query_activity: the per-query limit, or NULL when no tracker is
+        // bound (nested registration) or the limit is 0 (unlimited).
+        public long getMemoryLimit() {
+            final MemoryTracker t = memoryTracker;
+            final long limit = t != null ? t.getLimit() : 0;
+            return limit != 0 ? limit : Numbers.LONG_NULL;
+        }
+
+        // For query_activity: bytes charged to the per-query tracker, or NULL
+        // when no tracker is bound (nested registration).
+        public long getMemoryUsed() {
+            final MemoryTracker t = memoryTracker;
+            return t != null ? t.getUsed() : Numbers.LONG_NULL;
         }
 
         public CharSequence getPoolName() {
