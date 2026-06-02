@@ -35,7 +35,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
@@ -46,13 +45,11 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Files;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -832,62 +829,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
         testStrBindVariable("VARCHAR", SqlJitMode.JIT_MODE_ENABLED);
     }
 
-    private static boolean assertCursor(
-            CharSequence expected,
-            RecordCursorFactory factory,
-            SqlExecutionContext sqlExecutionContext,
-            StringSink sink,
-            LongList rows
-    ) throws SqlException {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            Assert.assertTrue("supports random access", factory.recordCursorSupportsRandomAccess());
-            if (
-                    assertCursor(
-                            expected,
-                            true,
-                            false,
-                            true,
-                            cursor,
-                            factory.getMetadata(),
-                            sink,
-                            rows,
-                            factory.fragmentedSymbolTables()
-                    )
-            ) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static void assertQuery(
-            CharSequence expected,
-            RecordCursorFactory factory,
-            SqlExecutionContext sqlExecutionContext
-    ) throws Exception {
-        StringSink sink = new StringSink();
-        LongList rows = new LongList();
-        if (
-                assertCursor(
-                        expected,
-                        factory,
-                        sqlExecutionContext,
-                        sink,
-                        rows
-                )
-        ) {
-            return;
-        }
-        // make sure we get the same outcome when we get factory to create new cursor
-        assertCursor(
-                expected,
-                factory,
-                sqlExecutionContext,
-                sink,
-                rows
-        );
-    }
-
     private void testAsyncOffloadTimeout(String query) throws Exception {
         final int rowCount = 10 * ROW_COUNT;
         // The test is very sensitive to page frame sizes.
@@ -1366,7 +1307,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             TestUtils.await(barrier);
                             try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
                                 RecordCursorFactory factory = factories[finalI];
-                                assertQuery(expected, factory, ctx);
+                                assertFactory(factory).withContext(ctx).sizeMayVary().returns(expected);
                             } catch (Throwable e) {
                                 e.printStackTrace(System.err);
                                 errors.incrementAndGet();
@@ -1421,7 +1362,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             TestUtils.await(barrier);
                             try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 4)) {
                                 RecordCursorFactory factory = factories[finalI];
-                                assertQuery(expected, factory, ctx);
+                                assertFactory(factory).withContext(ctx).sizeMayVary().returns(expected);
                             } catch (Throwable e) {
                                 e.printStackTrace(System.err);
                                 errors.incrementAndGet();

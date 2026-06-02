@@ -53,10 +53,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -84,10 +81,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
-import io.questdb.std.IntList;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
@@ -128,9 +121,7 @@ import org.junit.rules.Timeout;
 import org.junit.runner.Description;
 
 import java.io.File;
-import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @SuppressWarnings("ClassEscapesDefinedScope")
 public abstract class AbstractCairoTest extends AbstractTest {
@@ -182,219 +173,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
-
-    // Thread-safe cursor assertion method.
-    public static boolean assertCursor(
-            CharSequence expected,
-            boolean supportsRandomAccess,
-            boolean sizeExpected,
-            boolean sizeCanBeVariable,
-            RecordCursor cursor,
-            RecordMetadata metadata,
-            StringSink sink,
-            LongList rows,
-            boolean fragmentedSymbolTables
-    ) {
-        long cursorSizeBeforeFetch = cursor.size();
-        if (expected == null) {
-            Assert.assertFalse(cursor.hasNext());
-            cursor.toTop();
-            Assert.assertFalse(cursor.hasNext());
-            return true;
-        }
-
-        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
-        long preComputerStateSize = cursor.preComputedStateSize();
-
-        testSymbolAPI(metadata, cursor, fragmentedSymbolTables);
-        cursor.toTop();
-        Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
-        testStringsLong256AndBinary(metadata, cursor);
-
-        // test API where the same record is being updated by cursor
-        cursor.toTop();
-        Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
-        Record record = cursor.getRecord();
-        Assert.assertNotNull(record);
-        sink.clear();
-        CursorPrinter.println(metadata, sink);
-        long count = 0;
-        long cursorSize = cursor.size();
-        while (cursor.hasNext()) {
-            TestUtils.println(record, metadata, sink);
-            count++;
-        }
-
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        int skip = count > 0 && rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
-        int k = 0;
-        while (k < skip && cursor.hasNext()) {
-            k++;
-        }
-        sink.clear();
-        cursor.toTop();
-        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
-
-        if (!sizeCanBeVariable) {
-            if (sizeExpected) {
-                Assert.assertTrue("Concrete cursor size expected but was -1", cursorSize != -1);
-            } else {
-                Assert.assertTrue("Invalid/undetermined cursor size expected but was " + cursorSize, cursorSize <= 0);
-            }
-        }
-        if (cursorSize != -1) {
-            Assert.assertEquals("Expected: counted with hasNext(), actual: cursor.size()", count, cursorSize);
-            if (cursorSizeBeforeFetch != -1) {
-                Assert.assertEquals("Expected: cursor size before fetch, actual: cursor size after fetch",
-                        cursorSizeBeforeFetch, cursorSize);
-            }
-        }
-        if (count > 0) {
-            int countReducedToInt = (int) Math.min(Integer.MAX_VALUE, count);
-            RecordCursor.Counter counter = new RecordCursor.Counter();
-            cursor.toTop();
-            skip = rnd.nextBoolean() ? rnd.nextInt(countReducedToInt) : 0;
-            while (counter.get() < skip && cursor.hasNext()) {
-                counter.inc();
-            }
-            SqlExecutionCircuitBreaker breaker =
-                    sqlExecutionContext != null ? sqlExecutionContext.getCircuitBreaker() : null;
-            cursor.calculateSize(breaker, counter);
-            Assert.assertEquals(
-                    String.format("Skip %,d then calculateSize(). Expect: as counted with hasNext(), actual: cursor.calculateSize()", skip),
-                    count, counter.get());
-
-            cursor.toTop();
-            counter.set(count + 1);
-            cursor.skipRows(counter);
-            Assert.assertEquals("skipRows(rowCountPlusOne) didn't leave the counter at 1", 1, counter.get());
-            Assert.assertFalse("hasNext() returned true after skipRows exhausted the cursor", cursor.hasNext());
-
-            if (count > 1) {
-                skip = rnd.nextInt(countReducedToInt / 2);
-                counter.set(skip);
-                cursor.toTop();
-                cursor.skipRows(counter);
-                Assert.assertEquals("skipRows(lessThanRowCount) didn't bring the counter to 0", 0, counter.get());
-                long remaining = 0;
-                String countMethod;
-                if (rnd.nextBoolean()) {
-                    countMethod = "calculateSize()";
-                    counter.clear();
-                    cursor.calculateSize(breaker, counter);
-                    remaining = counter.get();
-                } else {
-                    countMethod = "hasNext()";
-                    while (cursor.hasNext()) {
-                        remaining++;
-                    }
-                }
-                Assert.assertEquals(
-                        "skipRows(lessThanRowCount) didn't leave the correct number of remaining rows." +
-                                " Remaining rows counted using " + countMethod,
-                        count, skip + remaining);
-            }
-        } else {
-            cursor.toTop();
-            Assert.assertFalse(cursor.hasNext());
-        }
-
-        TestUtils.assertEquals(expected, sink);
-
-        if (supportsRandomAccess) {
-            cursor.toTop();
-            Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
-            sink.clear();
-            rows.clear();
-            while (cursor.hasNext()) {
-                rows.add(record.getRowId());
-            }
-
-            final Record rec = cursor.getRecord();
-            CursorPrinter.println(metadata, sink);
-            for (int i = 0, n = rows.size(); i < n; i++) {
-                cursor.recordAt(rec, rows.getQuick(i));
-                TestUtils.println(rec, metadata, sink);
-            }
-
-            TestUtils.assertEquals(expected, sink);
-
-            sink.clear();
-
-            final Record factRec = cursor.getRecordB();
-            CursorPrinter.println(metadata, sink);
-            for (int i = 0, n = rows.size(); i < n; i++) {
-                cursor.recordAt(factRec, rows.getQuick(i));
-                TestUtils.println(factRec, metadata, sink);
-            }
-
-            TestUtils.assertEquals(expected, sink);
-
-            // test that absolute positioning of record does not affect the state of record cursor
-            if (rows.size() > 0) {
-                sink.clear();
-
-                cursor.toTop();
-                Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
-                int target = rows.size() / 2;
-                CursorPrinter.println(metadata, sink);
-                while (target-- > 0 && cursor.hasNext()) {
-                    TestUtils.println(record, metadata, sink);
-                }
-
-                // no obliterated record with absolute positioning
-                for (int i = 0, n = rows.size(); i < n; i++) {
-                    cursor.recordAt(factRec, rows.getQuick(i));
-                }
-
-                // now continue normal fetch
-                while (cursor.hasNext()) {
-                    TestUtils.println(record, metadata, sink);
-                }
-
-                TestUtils.assertEquals(expected, sink);
-
-                // now test that cursor.hasNext() won't affect the state of recordB
-                sink.clear();
-                CursorPrinter.println(metadata, sink);
-                cursor.toTop();
-                target = rows.size() / 2;
-                boolean cursorExhausted = false;
-                for (int i = 0, n = target; i < n; i++) {
-                    cursor.recordAt(factRec, rows.getQuick(i));
-                    // intentionally calling hasNext() twice: we want to advance the cursor position,
-                    // but we do *NOT* want to call it in step-lock with recordAt()
-                    if (!cursorExhausted) {
-                        cursorExhausted = !cursor.hasNext();
-                    }
-                    if (!cursorExhausted) {
-                        cursorExhausted = !cursor.hasNext();
-                    }
-                    TestUtils.println(factRec, metadata, sink);
-                }
-                cursor.toTop();
-                for (int i = target, n = rows.size(); i < n; i++) {
-                    // in the 2nd part, we are intentionally not calling hasNext() at all
-                    cursor.recordAt(factRec, rows.getQuick(i));
-                    TestUtils.println(factRec, metadata, sink);
-                }
-                TestUtils.assertEquals(expected, sink);
-            }
-        } else {
-            try {
-                cursor.getRecordB();
-                Assert.fail();
-            } catch (UnsupportedOperationException ignore) {
-            }
-
-            try {
-                cursor.recordAt(record, 0);
-                Assert.fail();
-            } catch (UnsupportedOperationException ignore) {
-            }
-        }
-        return false;
-    }
 
     public static void assertReader(String expected, CharSequence tableName) {
         try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
@@ -699,207 +477,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
     }
 
-    private static void assertSymbolColumnThreadSafety(int numberOfIterations, int symbolColumnCount, ObjList<SymbolTable> symbolTables, int[] symbolTableKeySnapshot, String[][] symbolTableValueSnapshot) {
-        final Rnd rnd = TestUtils.generateRandom(null);
-        for (int i = 0; i < numberOfIterations; i++) {
-            int symbolColIndex = rnd.nextInt(symbolColumnCount);
-            SymbolTable symbolTable = symbolTables.getQuick(symbolColIndex);
-            int max = symbolTableKeySnapshot[symbolColIndex] + 1;
-            // max could be -1 meaning we have nulls; max can also be 0, meaning only one symbol value
-            // basing boundary on 2 we convert -1 tp 1 and 0 to 2
-            int key = rnd.nextInt(max + 1) - 1;
-            String expected = symbolTableValueSnapshot[symbolColIndex][key + 1];
-            TestUtils.assertEquals(expected, symbolTable.valueOf(key));
-            // now test static symbol table
-            if (expected != null && symbolTable instanceof StaticSymbolTable staticSymbolTable) {
-                Assert.assertEquals(key, staticSymbolTable.keyOf(expected));
-            }
-        }
-    }
-
     private static TestCairoConfigurationFactory getConfigurationFactory() {
         return configurationFactory != null ? configurationFactory : CairoTestConfiguration::new;
     }
 
     private static TestCairoEngineFactory getEngineFactory() {
         return engineFactory != null ? engineFactory : CairoEngine::new;
-    }
-
-    private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor) {
-        Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                switch (ColumnType.tagOf(metadata.getColumnType(i))) {
-                    case ColumnType.STRING:
-                        CharSequence s = record.getStrA(i);
-                        if (s != null) {
-                            Assert.assertEquals(s.length(), record.getStrLen(i));
-                            CharSequence b = record.getStrB(i);
-                            if (b instanceof AbstractCharSequence) {
-                                // AbstractCharSequence are usually mutable. We cannot have a same mutable instance for A and B
-                                Assert.assertNotSame("Expected string instances to be different for getStr and getStrB", s, b);
-                            }
-                        } else {
-                            Assert.assertNull(record.getStrB(i));
-                            Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
-                        }
-                        break;
-                    case ColumnType.BINARY:
-                        BinarySequence bs = record.getBin(i);
-                        if (bs != null) {
-                            Assert.assertEquals(bs.length(), record.getBinLen(i));
-                        } else {
-                            Assert.assertEquals(TableUtils.NULL_LEN, record.getBinLen(i));
-                        }
-                        break;
-                    case ColumnType.LONG256:
-                        Long256 l1 = record.getLong256A(i);
-                        Long256 l2 = record.getLong256B(i);
-                        if (l1 == Long256Impl.NULL_LONG256) {
-                            Assert.assertSame(l1, l2);
-                        } else {
-                            Assert.assertNotSame(l1, l2);
-                        }
-                        Assert.assertEquals(l1.getLong0(), l2.getLong0());
-                        Assert.assertEquals(l1.getLong1(), l2.getLong1());
-                        Assert.assertEquals(l1.getLong2(), l2.getLong2());
-                        Assert.assertEquals(l1.getLong3(), l2.getLong3());
-                        break;
-                    default:
-                        break;
-                }
-            }
-        }
-    }
-
-    private static void testSymbolAPI(RecordMetadata metadata, RecordCursor cursor, boolean fragmentedSymbolTables) {
-        IntList symbolIndexes = null;
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
-                if (symbolIndexes == null) {
-                    symbolIndexes = new IntList();
-                }
-                symbolIndexes.add(i);
-            }
-        }
-
-        if (symbolIndexes != null) {
-
-            // create new symbol tables and make sure they are not the same
-            // as the default ones
-
-            ObjList<SymbolTable> clonedSymbolTables = new ObjList<>();
-            ObjList<SymbolTable> originalSymbolTables = new ObjList<>();
-            int[] symbolTableKeySnapshot = new int[symbolIndexes.size()];
-            String[][] symbolTableValueSnapshot = new String[symbolIndexes.size()][];
-            try {
-                cursor.toTop();
-                if (!fragmentedSymbolTables && cursor.hasNext()) {
-                    for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
-                        final int columnIndex = symbolIndexes.getQuick(i);
-                        originalSymbolTables.add(cursor.getSymbolTable(columnIndex));
-                    }
-
-                    // take a snapshot of symbol tables
-                    // multiple passes over the same cursor, if not very efficient, we
-                    // can swap loops around
-                    int sumOfMax = 0;
-                    for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
-                        cursor.toTop();
-                        final Record rec = cursor.getRecord();
-                        final int column = symbolIndexes.getQuick(i);
-                        int max = -1;
-                        while (cursor.hasNext()) {
-                            max = Math.max(max, rec.getInt(column));
-                        }
-                        String[] values = new String[max + 2];
-                        final SymbolTable symbolTable = cursor.getSymbolTable(column);
-                        for (int k = -1; k <= max; k++) {
-                            values[k + 1] = Chars.toString(symbolTable.valueOf(k));
-                        }
-                        symbolTableKeySnapshot[i] = max;
-                        symbolTableValueSnapshot[i] = values;
-                        sumOfMax += max;
-                    }
-
-                    // We grab clones after iterating through the symbol values due to
-                    // the cache warm up required by Cast*ToSymbolFunctionFactory functions.
-                    for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
-                        final int columnIndex = symbolIndexes.getQuick(i);
-                        SymbolTable tab = cursor.newSymbolTable(columnIndex);
-                        Assert.assertNotNull(tab);
-                        clonedSymbolTables.add(tab);
-                    }
-
-                    // Now start two threads, one will be using normal symbol table,
-                    // another will be using a clone. Threads will randomly check that
-                    // symbol table is able to convert keys to values without problems
-
-                    int numberOfIterations = sumOfMax * 2;
-                    int symbolColumnCount = symbolIndexes.size();
-                    int workerCount = 2;
-                    CyclicBarrier barrier = new CyclicBarrier(workerCount);
-                    SOCountDownLatch doneLatch = new SOCountDownLatch(workerCount);
-                    AtomicInteger errorCount = new AtomicInteger(0);
-
-                    // thread that is hitting clones
-                    new Thread(() -> {
-                        try {
-                            TestUtils.await(barrier);
-                            assertSymbolColumnThreadSafety(numberOfIterations, symbolColumnCount, clonedSymbolTables, symbolTableKeySnapshot, symbolTableValueSnapshot);
-                        } catch (Throwable e) {
-                            errorCount.incrementAndGet();
-                            //noinspection CallToPrintStackTrace
-                            e.printStackTrace();
-                        } finally {
-                            doneLatch.countDown();
-                        }
-                    }).start();
-
-                    // thread that is hitting the original symbol tables
-                    new Thread(() -> {
-                        try {
-                            TestUtils.await(barrier);
-                            assertSymbolColumnThreadSafety(numberOfIterations, symbolColumnCount, originalSymbolTables, symbolTableKeySnapshot, symbolTableValueSnapshot);
-                        } catch (Throwable e) {
-                            errorCount.incrementAndGet();
-                            //noinspection CallToPrintStackTrace
-                            e.printStackTrace();
-                        } finally {
-                            doneLatch.countDown();
-                        }
-                    }).start();
-
-                    doneLatch.await();
-
-                    Assert.assertEquals(0, errorCount.get());
-                }
-
-                cursor.toTop();
-                final Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
-                        int column = symbolIndexes.getQuick(i);
-                        SymbolTable symbolTable = cursor.getSymbolTable(column);
-                        if (symbolTable instanceof StaticSymbolTable) {
-                            CharSequence sym = Chars.toString(record.getSymA(column));
-                            int value = record.getInt(column);
-                            if (((StaticSymbolTable) symbolTable).containsNullValue() && value == ((StaticSymbolTable) symbolTable).getSymbolCount()) {
-                                Assert.assertEquals(Integer.MIN_VALUE, ((StaticSymbolTable) symbolTable).keyOf(sym));
-                            } else {
-                                Assert.assertEquals(value, ((StaticSymbolTable) symbolTable).keyOf(sym));
-                            }
-                            TestUtils.assertEquals(sym, symbolTable.valueOf(value));
-                        } else {
-                            final int value = record.getInt(column);
-                            TestUtils.assertEquals(record.getSymA(column), symbolTable.valueOf(value));
-                        }
-                    }
-                }
-            } finally {
-                Misc.freeObjListIfCloseable(clonedSymbolTables);
-            }
-        }
     }
 
     private static String txnToString(
@@ -1051,6 +634,21 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos) throws Exception {
         assertExceptionNoLeakCheck(sql, errorPos, "inconvertible types: TIMESTAMP -> INT", false);
+    }
+
+    /**
+     * Begin an assertion against a pre-built, caller-owned {@link RecordCursorFactory} instead of a SQL
+     * string. The builder will NOT compile SQL, run DDL, free the factory, leak-check, or touch the shared
+     * memory-snapshot accounting, and it asserts each cursor through caller-local scratch buffers, so it is
+     * safe to call concurrently from multiple worker threads. Pass the per-thread context through
+     * {@link QueryAssertion#withContext(SqlExecutionContext)} before the terminal. Supports
+     * {@link QueryAssertion#withBaseFactoryClass}, {@link QueryAssertion#columnType},
+     * {@link QueryAssertion#timestamp}, {@link QueryAssertion#noRandomAccess},
+     * {@link QueryAssertion#expectSize()} and {@link QueryAssertion#sizeMayVary}; the
+     * {@link QueryAssertion#returns(CharSequence)} terminal asserts the output.
+     */
+    protected QueryAssertion assertFactory(RecordCursorFactory factory) {
+        return new QueryAssertion(engine, factory);
     }
 
     protected static void assertFactoryMemoryUsage() {
