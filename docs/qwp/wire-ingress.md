@@ -33,7 +33,6 @@ features:
 - **Column-oriented encoding**: All values for a column are stored contiguously
 - **Batch processing**: Multiple tables and rows per message
 - **Gorilla timestamp compression**: Delta-of-delta encoding for timestamps
-- **Schema references**: Reference previously sent schemas by numeric ID
 
 ### Magic Bytes
 
@@ -90,12 +89,12 @@ byte (offset 4) of the message header. The server validates every incoming
 message against the negotiated version and rejects any message whose version
 byte does not match with a parse error.
 
-### Ingress is pinned to version 1
+### Ingress and read-side routing
 
-Ingress senders advertise `X-QWP-Max-Version: 1` because no v2 ingest semantics
-exist. The v2 bump is purely an egress addition — an unsolicited `SERVER_INFO`
-frame on the upgrade carrying server role and zone metadata for read-side
-routing (see [`wire-egress.md`](wire-egress.md) §11.8 and
+Both ingress and egress advertise `X-QWP-Max-Version: 1` — there is a single
+protocol version. The `SERVER_INFO` frame that carries server role and zone
+metadata for read-side routing is an egress-only feature delivered on the read
+endpoint (see [`wire-egress.md`](wire-egress.md) §11.8 and
 [`failover.md`](failover.md) §5). Ingress clients do NOT read `SERVER_INFO`,
 ignore zone advertising, and rely on the `421 + X-QuestDB-Role` upgrade-reject
 convention alone for primary-vs-replica routing. The `zone=` connect-string
@@ -258,24 +257,11 @@ Each table block contains data for a single table.
 
 ## 9. Schema Definition
 
-### Schema Mode Byte
-
-| Value  | Mode      | Description                                    |
-|--------|-----------|------------------------------------------------|
-| `0x00` | Full      | Schema ID + complete column definitions inline |
-| `0x01` | Reference | Schema ID only (lookup from registry)          |
-
-### Full Schema Mode (`0x00`)
-
-Sent the first time a table's schema appears on a connection, or whenever the
-column set changes.
+The schema section follows the table header and lists every column inline, one
+definition per column in column order (`column_count` definitions total):
 
 ```
 ┌─────────────────────────────────────────┐
-│ mode_byte: 0x00                         │
-├─────────────────────────────────────────┤
-│ schema_id: varint                       │
-├─────────────────────────────────────────┤
 │ Column Definition 0                     │
 │   ├─ name_length: varint                │
 │   ├─ name: UTF-8 bytes                  │
@@ -285,31 +271,15 @@ column set changes.
 └─────────────────────────────────────────┘
 ```
 
-Schema IDs are non-negative integers assigned by the client and scoped to the
-lifetime of a single connection. They are global across all tables on the
-connection (not per-table). Clients typically assign them sequentially starting
-at 0, but the server does not require any particular ordering.
+There is no cross-message schema registry and no schema-by-id reference: each
+table block fully describes its own columns. This keeps every message
+self-contained for store-and-forward replay (see
+[`sf-client.md`](sf-client.md) §12).
 
 The `type_code` byte contains the column type (0x01 through 0x18).
 
 A column with an **empty name** (length 0) and type TIMESTAMP denotes the
 designated timestamp column.
-
-### Reference Schema Mode (`0x01`)
-
-Used for subsequent batches when the server has already registered the schema.
-
-```
-┌─────────────────────────────────────────┐
-│ mode_byte: 0x01                         │
-├─────────────────────────────────────────┤
-│ schema_id: varint                       │
-└─────────────────────────────────────────┘
-```
-
-The server looks up the schema by its ID in the per-connection schema registry.
-Full-mode schemas may arrive in any order and may re-register an existing ID;
-the server accepts any ID within the per-connection schema-ID limit.
 
 ## 10. Column Types
 
@@ -862,7 +832,7 @@ the server to reject the message with `PARSE_ERROR`.
 
 ## 15. Client Operation
 
-This section describes the high-level batching and registry behaviour every
+This section describes the high-level batching and schema behaviour every
 client implements. The full client-side substrate — on-disk Store-and-Forward
 storage, frame-sequence-number model, ACK-driven trim, durable-ack handshake,
 keepalive PING, reconnect/replay semantics, error categories and policies — is
@@ -889,17 +859,13 @@ The client uses double-buffered microbatches:
 | Byte size            | disabled   |
 | Time since first row | 100 ms     |
 
-### 15.3 Schema Registry
+### 15.3 Schema Transmission
 
-- First batch for a given table: full schema mode (0x00) with a new schema ID.
-- Subsequent batches with an unchanged column set: schema reference mode (0x01)
-  with the same ID.
-- When a table gains a column, the client assigns a new schema ID and sends it
-  in full mode.
-- Schema IDs are global per connection, not per table; the server registers them
-  in a per-connection registry.
-- On reconnect both sides reset: the client reassigns IDs from 0 and the server
-  clears its registry.
+Every table block carries its full column schema inline (§9). There is no
+schema registry and no schema-by-id reference: each batch repeats the column
+definitions for the tables it touches. This keeps every message
+self-describing, which matters for store-and-forward replay (see
+[`sf-client.md`](sf-client.md) §12).
 
 ### 15.4 Symbol Dictionary Lifecycle
 
@@ -983,10 +949,6 @@ XX XX XX XX  # Payload length
 73 65 6E 73 6F 72 73  # "sensors" UTF-8
 02           # Row count: 2
 03           # Column count: 3
-
-# Schema (full mode)
-00           # Schema mode: full
-00           # Schema ID: 0
 
 # Column 0: id
 02           # Name length: 2
@@ -1089,9 +1051,7 @@ Payload:
       02                       -- row_count = 2
       03                       -- column_count = 3
 
-    Schema (full mode):
-      00                       -- schema_mode = FULL
-      00                       -- schema_id = 0
+    Schema (inline):
       04 68 6F 73 74  09       -- "host" : SYMBOL
       04 74 65 6D 70  07       -- "temp" : DOUBLE
       00              0A       -- "" : TIMESTAMP (designated)
@@ -1117,8 +1077,8 @@ Payload:
 
 The authoritative implementation lives in QuestDB's Java codebase under
 `core/src/main/java/io/questdb/cutlass/qwp/protocol/`. That directory contains
-the header and varint parsers, the schema registry, the message and table-block
-cursors, and the type-specific column decoders.
+the header and varint parsers, the message and table-block cursors, the schema
+parser, and the type-specific column decoders.
 
 ## 18. Version History
 

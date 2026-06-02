@@ -49,7 +49,6 @@ simplifications imposed by the self-contained datagram constraint:
 
 | WebSocket QWP                          | UDP QWP                                  | Rationale                                           |
 |----------------------------------------|------------------------------------------|-----------------------------------------------------|
-| Schema reference mode (0x01)           | **Full schema only (0x00)**              | No session state to store schema definitions        |
 | Delta symbol dictionary (FLAG 0x08)    | **Per-column dictionary only**           | No cross-datagram dictionary accumulation. Each SYMBOL column carries its own dictionary inline (dict_size + entries + indices), same as the existing non-delta wire format in `QwpSymbolColumnCursor`. |
 | Gorilla timestamp encoding (FLAG 0x04) | **Disabled**                             | Marginal benefit at sub-1,400 byte datagram scale; simplifies encoder |
 | Multi-table batches                    | **Single table per datagram**            | Simplicity and predictable sizing                   |
@@ -86,9 +85,8 @@ sub-1,400 byte payloads offers marginal benefit).
 │  │ Row count:          varint                             │  │
 │  │ Column count:       varint                             │  │
 │  │                                                        │  │
-│  │ Schema (always full, mode 0x00)                        │  │
+│  │ Schema (inline column definitions)                     │  │
 │  │ ┌──────────────────────────────────────────────────┐   │  │
-│  │ │ 0x00                                             │   │  │
 │  │ │ For each column:                                 │   │  │
 │  │ │   name_len: varint                               │   │  │
 │  │ │   name:     UTF-8 bytes                          │   │  │
@@ -246,10 +244,9 @@ Constructor parameters (matching existing `LineUdpSender` pattern):
 ### `QwpUdpEncoder`
 
 A simplified encoder that reuses `QwpColumnWriter` for column encoding:
-- Removed: delta symbol dictionary, schema reference mode, Gorilla encoding
-  tag.
-- Added: always writes full schema, always uses per-column symbol dictionary
-  (same non-delta wire format as `QwpColumnWriter.writeSymbolColumn()`).
+- Removed: delta symbol dictionary, Gorilla encoding tag.
+- Added: per-column symbol dictionary (same non-delta wire format as
+  `QwpColumnWriter.writeSymbolColumn()`).
 - Same `encodeColumn()` dispatch and all type-specific write methods.
 
 ## Server Side
@@ -286,7 +283,7 @@ QwpWalAppender (writes to WAL)
 | `QwpMessageHeader`      | 100%        | Same 12-byte header parsing                     |
 | `QwpMessageCursor`      | 100%        | Table block iteration                            |
 | `QwpTableBlockCursor`   | 100%        | Column iteration within table                    |
-| `QwpSchema`             | 100%        | Full schema parsing (always mode 0x00)           |
+| `QwpSchema`             | 100%        | Inline schema parsing                            |
 | All column cursors      | 100%        | `QwpFixedWidthColumnCursor`, `QwpBooleanColumnCursor`, `QwpStringColumnCursor`, `QwpSymbolColumnCursor`, `QwpGeoHashColumnCursor`, etc. |
 | `QwpWalAppender`        | 100%        | Column-type mapping, WAL writes, auto-create     |
 | `QwpNullBitmap`         | 100%        | Null bitmap reading                              |
@@ -382,7 +379,6 @@ Message header:                           12 bytes
 Table name "cpu_metrics" (varint + UTF8): 1 + 11 = 12 bytes
 Row count (varint, 1 row):                1 byte
 Column count (varint, 3):                 1 byte
-Schema mode byte:                         1 byte
 Column "host" def (varint + UTF8 + type): 1 + 4 + 1 = 6 bytes
 Column "usage" def:                       1 + 5 + 1 = 7 bytes
 Column "" (designated ts) def:            1 + 0 + 1 = 2 bytes
@@ -394,13 +390,13 @@ Double value:                             8 bytes
 Timestamp null flag:                      1 byte
 Timestamp value:                          8 bytes
 ─────────────────────────────────────────────────
-Total:                                    72 bytes
+Total:                                    71 bytes
 ```
 
-At 72 bytes per single row with full schema, there is ample room. With 10
+At 71 bytes per single row with inline schema, there is ample room. With 10
 rows (same schema, same symbol), the incremental cost per row is ~17 bytes
 (symbol index + double + timestamp), bringing the total to roughly
-72 + 9 * 17 = 225 bytes -- comfortably within 1,400 bytes.
+71 + 9 * 17 = 224 bytes -- comfortably within 1,400 bytes.
 
 For wider schemas (20 columns, long column names), the fixed schema overhead
 grows but still typically fits. The sender's size estimator catches overflow
@@ -426,7 +422,7 @@ before encoding.
 ## Implementation Plan
 
 1. **Client: `QwpUdpEncoder`** -- build on `QwpColumnWriter`, remove delta
-   dict / schema ref / Gorilla paths. Add size estimation method.
+   dict / Gorilla paths. Add size estimation method.
 2. **Client: `QwpUdpSender`** -- implement `Sender` interface. Manage UDP
    socket, `QwpTableBuffer`, auto-flush on MTU threshold.
 3. **Client: Builder integration** -- add `Transport.UDP` and `udp::` URI

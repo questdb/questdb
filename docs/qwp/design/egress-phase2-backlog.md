@@ -54,7 +54,8 @@ All items in this list are net-new work; everything below is already landed on
 - Wire protocol spec: `../wire-egress.md`.
 - Server: `/read/v1` endpoint, handshake, `QUERY_REQUEST` decoder with binds
   for all scalar types, cursor -> `RESULT_BATCH` -> `RESULT_END` loop,
-  per-connection schema registry, native column scratches + reusable Decimal
+  per-query inline schema in the first batch (the original per-connection
+  schema registry was removed), native column scratches + reusable Decimal
   sinks + cached UTF-8 column names.
 - Non-SELECT execution (`EXEC_DONE`, 0x16) for DDL, INSERT, UPDATE, ALTER,
   DROP, TRUNCATE, CREATE TABLE, CREATE MAT VIEW, and parse-time-executed

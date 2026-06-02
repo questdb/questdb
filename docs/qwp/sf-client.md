@@ -172,7 +172,6 @@ spec — and treat them with the precedence rules in §14.
 | `init_buf_size` | size | `64K` | Initial encode buffer capacity. |
 | `max_buf_size` | size | `100M` | Max encode buffer capacity. |
 | `max_name_len` | int | `127` | Local validation cap for table/column names. |
-| `max_schemas_per_connection` | int | `65535` | Per-connection schema-id ceiling. |
 
 ### 4.6 Validation
 
@@ -663,20 +662,25 @@ message. Servers reply with PONG; clients ignore PONG content.
 
 Every frame written to the SF substrate MUST be self-sufficient: it
 carries the **full schema** for every table it touches and the **full
-symbol-dictionary delta from id 0**. Schema-by-id refs are forbidden, and
-incremental delta-dicts are forbidden.
+symbol-dictionary delta from id 0**. Incremental delta-dicts are forbidden.
+
+Schema is always inline — the wire format carries every table's columns in
+each block (see [`wire-ingress.md`](wire-ingress.md) §9), so it is
+self-sufficient by construction. The symbol dictionary is the part that needs
+care: a live connection normally sends only the incremental delta of new
+symbols since the previous batch, but an SF frame must restart its delta at
+id 0.
 
 Concretely, the encoder is invoked with:
 
 - `confirmedMaxId = -1` (so the symbol delta starts at id 0 every time)
-- `useSchemaRef = false` (so column blocks always carry full schema mode)
 
 Rationale: SF frames may be replayed against a fresh server connection
 weeks later — after process restart, after reconnect, or in a
-background-drainer adopting an orphan slot. A frame that references
-schema id N or symbol id M is unreplayable if the new server has never
-seen those ids. Self-sufficiency makes every frame valid against any
-server. The cost is a small per-batch overhead which is accepted.
+background-drainer adopting an orphan slot. A frame whose symbol columns
+reference dictionary id M is unreplayable if the new server has never seen
+that id. Self-sufficiency makes every frame valid against any server. The
+cost is a small per-batch overhead which is accepted.
 
 This is mandatory for cross-client interop. A drainer written in C++
 adopting a slot written by Java must be able to replay the bytes
@@ -1123,8 +1127,9 @@ Mandatory for every conformant SF client:
   the duplicate-row behaviour the watermark was designed to suppress.
 - **FSN model** (§7): `fsn = fsnAtZero + wireSeq`. Strict in-order send
   on the wire.
-- **Self-sufficient frames** (§12): mandatory. Schema refs and
-  incremental delta-dicts are forbidden in SF frames.
+- **Self-sufficient frames** (§12): mandatory. Incremental delta-dicts are
+  forbidden in SF frames — every frame carries its schema inline and starts
+  its symbol delta at id 0.
 - **Durable-ack handshake** (§8.1): if the client opts in, it MUST
   validate the response header and fail loudly on absence.
 - **Trim driver**: in non-durable mode, OK frames advance trim. In

@@ -21,7 +21,7 @@ to their loops in the wire docs above.
 |---|---|---|---|
 | `addr` | `host:port[,host:port…]` | required | Comma-separated multi-host failover list. |
 | `auth_timeout_ms` | int | `15_000` | Per-host upper bound on the **HTTP upgrade response read** only. Does NOT cover TCP connect (OS default), TLS handshake, or the post-upgrade `SERVER_INFO` frame read (those use a separate hard-coded 5s timeout). Bounds the common "TCP accepts but the server never replies" blackhole; full-route blackholes that drop SYN-ACK still fall back to the OS connect timeout. |
-| `zone` | string | unset | Client's zone identifier (opaque, case-insensitive; e.g. `eu-west-1a`, `dc-amsterdam`). Egress with `target=any\|replica` prefers endpoints whose server-advertised `zone_id` matches; see §2 for the priority lattice and `wire-egress.md` §11.8 for the `SERVER_INFO.zone_id` field. Ignored when `target=primary` (writers follow the master across zones). Silently ignored on ingress (zone-blind, pinned to v1) — users are encouraged to share the same connect string across ingress and egress clients, so a per-startup WARN would fire spuriously for a setting that is working correctly on its egress siblings. |
+| `zone` | string | unset | Client's zone identifier (opaque, case-insensitive; e.g. `eu-west-1a`, `dc-amsterdam`). Egress with `target=any\|replica` prefers endpoints whose server-advertised `zone_id` matches; see §2 for the priority lattice and `wire-egress.md` §11.8 for the `SERVER_INFO.zone_id` field. Ignored when `target=primary` (writers follow the master across zones). Silently ignored on ingress (zone-blind) — users are encouraged to share the same connect string across ingress and egress clients, so a per-startup WARN would fire spuriously for a setting that is working correctly on its egress siblings. |
 
 `addr` accepts comma syntax (`addr=h1:p1,h2:p2`) and repeated keys
 (`addr=h1:p1;addr=h2:p2`). The two forms MUST accumulate; empty
@@ -49,13 +49,13 @@ Zone tier is assigned the first time the host's zone is observed
 | Zone tier | Meaning | Zone priority |
 |---|---|---|
 | `Same`    | Server zone equals client `zone=` (case-insensitive), OR client `zone=` is unset, OR `target=primary`. | 1 (best) |
-| `Unknown` | Server did not advertise a zone (no `CAP_ZONE`, no `X-QuestDB-Zone` header, or v1-pinned client). | 2 |
+| `Unknown` | Server did not advertise a zone (no `CAP_ZONE`, no `X-QuestDB-Zone` header, or a client that never reads `SERVER_INFO`). | 2 |
 | `Other`   | Server advertised a different zone. | 3 (worst) |
 
 `target=primary` collapses every host's zone tier to `Same`: writers
 must follow the master regardless of geography. Ingress is likewise
-zone-blind in both storage modes — it pins v1 and never reads zone
-information, so every host is `Same` by default.
+zone-blind in both storage modes — it never reads `SERVER_INFO` (and thus
+no zone information), so every host is `Same` by default.
 
 ### Selection priority
 
@@ -255,11 +255,12 @@ Per-endpoint check sequence:
 3. If response is `421 + X-QuestDB-Role: <role>`: extract `X-QuestDB-Zone`
    if present and record the host's zone tier (§2); then `RecordRoleReject`
    and walk to next host (no `SERVER_INFO` frame is read).
-4. Otherwise upgrade succeeds; if negotiated version ≥ 2, read the
-   `SERVER_INFO` frame. If `capabilities & CAP_ZONE`, parse `zone_id`
-   and record the host's zone tier. Apply the role table below.
-5. v1 negotiation skips the `SERVER_INFO` read entirely; the host's
-   zone tier remains `Unknown`.
+4. Otherwise upgrade succeeds. On the read endpoint the server always emits a
+   `SERVER_INFO` frame post-handshake; read it. If `capabilities & CAP_ZONE`,
+   parse `zone_id` and record the host's zone tier. Apply the role table below.
+5. Ingress connects to the write endpoint, which never emits `SERVER_INFO`, so
+   the host's zone tier remains `Unknown` and ingress routes on the
+   `421 + X-QuestDB-Role` convention (step 3) alone.
 
 `SERVER_INFO.Role` byte values:
 
@@ -270,10 +271,11 @@ Per-endpoint check sequence:
 | `0x02` | REPLICA | ✓ | ✗ | ✓ |
 | `0x03` | PRIMARY_CATCHUP | ✓ | ✓ | ✗ |
 
-When v1 is negotiated (either v1 server, or v1-pinned client):
-`target=any` matches; `target=primary` and `target=replica` produce
-`TopologyReject`. The filter is wire-supported only when both sides
-reach v2+.
+The role filter is wire-supported on every egress connection: the read
+endpoint always emits `SERVER_INFO`, so `target=primary` / `target=replica`
+resolve from the role byte without any version negotiation. Ingress does not
+apply the filter — it never reads `SERVER_INFO` (step 5) and routes on the
+`421 + X-QuestDB-Role` convention alone.
 
 The `X-QuestDB-Role` HTTP response header on a `421` upgrade reject
 SHOULD be one of `STANDALONE` / `PRIMARY` / `REPLICA` /
@@ -299,7 +301,7 @@ etc.) compared as bytes against the client's configured `zone=`. Servers
 that have a zone configured SHOULD emit it on every `421` reject so the
 zone tier is observable without a successful upgrade. Absence (or empty
 value, after trimming) leaves the host's zone tier as `Unknown`. The
-header has no effect on ingress (zone-blind, pinned to v1) and no effect
+header has no effect on ingress (zone-blind) and no effect
 on any client whose `zone=` is unset (every host collapses to `Same`).
 
 ## 6. Error classification

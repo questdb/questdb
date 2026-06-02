@@ -42,12 +42,13 @@ header, type system, and column encodings unchanged. The deltas are limited to:
 QWP egress streams SQL query results to clients using the same wire encoding
 QWP ingress uses for inbound data. Key properties:
 
-- **Columnar result batches.** Each batch is a single QWP table block: schema
-  section followed by per-column data with null bitmaps. The decoder is the
-  same code path as ingress.
-- **Server-driven schemas.** The server assigns connection-scoped schema IDs.
-  Mode `0x00` (full) on the first batch of a query; mode `0x01` (reference) on
-  subsequent batches with the same column set.
+- **Columnar result batches.** Each batch is a single QWP table block of
+  per-column data with null bitmaps. The first `RESULT_BATCH` of a query also
+  carries the inline schema section; continuation batches carry rows only. The
+  decoder is the same code path as ingress.
+- **Per-query schema scope.** The schema is transmitted once per query, in the
+  first batch. There is no connection-scoped schema registry and no
+  schema-by-id reference.
 - **Per-connection symbol dictionary.** The server accumulates symbol entries
   across all queries on the connection. Repeated queries reuse prior IDs
   without retransmitting the strings.
@@ -89,12 +90,13 @@ are negotiated at the HTTP upgrade:
 | `X-QWP-Version`          | S -> C    | Yes      | Negotiated version = `min(clientMax, serverMax)`.                                 |
 | `X-QWP-Content-Encoding` | S -> C    | No       | Server's selected encoding from the client's accept list. Omitted means `raw`.    |
 
-Egress was introduced at version 1. Version 2 adds an unsolicited
-`SERVER_INFO` frame (§11.8) delivered as the first WebSocket frame after the
-upgrade response; the frame carries the server's replication role,
-cluster/node identity, and a capabilities bitfield so clients can route reads
-to primary vs replica. Ingest is pinned to version 1 because the v2 bump has
-no ingest semantics.
+Egress and ingress share a single protocol version (1). On the read endpoint
+the server emits an unsolicited `SERVER_INFO` frame (§11.8) as the first
+WebSocket frame after the upgrade response; the frame carries the server's
+replication role, cluster/node identity, and a capabilities bitfield so
+clients can route reads to primary vs replica. `X-QWP-Max-Version` stays as the
+negotiation hook for a future version bump: both sides advertise and validate
+`1` today.
 
 The connection-level contract from the ingress spec applies: every message's
 header version byte must equal the negotiated version, and the server rejects
@@ -172,7 +174,7 @@ Endpoint disambiguation is sufficient because connections are direction-pure.
 | `0x15` | CREDIT            | C -> S    | Extend the byte window                |
 | `0x16` | EXEC_DONE         | S -> C    | Non-SELECT statement acknowledgement  |
 | `0x17` | CACHE_RESET       | S -> C    | Clear connection-scoped caches        |
-| `0x18` | SERVER_INFO       | S -> C    | Unsolicited, first frame on v2 only; carries role + cluster identity |
+| `0x18` | SERVER_INFO       | S -> C    | Unsolicited first frame post-handshake; carries role + cluster identity |
 
 `0x19` through `0x1F` are reserved for future egress kinds (prepared
 statements, transactions, server-driven keepalives). `0x20+` is reserved for
@@ -278,15 +280,18 @@ Gorilla when the column has at least three non-null values and the
 delta-of-delta bitstream is smaller than `nonNull * 8` bytes; unordered or
 jumpy columns fall back to raw.
 
-The schema section inside the table block follows the standard rules:
+The table block layout depends on `batch_seq`:
 
-- **First batch for a query**: schema mode `0x00` (full), with a new
-  schema_id assigned by the server.
-- **Subsequent batches with the same column set**: schema mode `0x01`
-  (reference), reusing the same schema_id.
+- **First batch (`batch_seq == 0`)**: the table block carries the full schema
+  inline — `col_count` followed by the column definitions (see
+  [`wire-ingress.md`](wire-ingress.md) §9) — then the row data.
+- **Continuation batches (`batch_seq > 0`)**: the table block omits both
+  `col_count` and the column definitions. The client already holds the schema
+  from batch 0 and reuses it for the rest of the query.
 
 If the result set is empty, the server still sends one `RESULT_BATCH` with
-`row_count = 0` so the client receives the schema, followed by `RESULT_END`.
+`batch_seq == 0` and `row_count = 0` so the client receives the schema,
+followed by `RESULT_END`.
 
 The table block's `name` field carries an empty string (`name_length = 0`).
 Result sets do not have a table name; clients should ignore the field.
@@ -433,19 +438,17 @@ If the statement fails, the server sends `QUERY_ERROR` (§9) instead.
 
 ## 11.7 CACHE_RESET (0x17)
 
-Server to client. Clears one or both of the connection-scoped caches
-(SYMBOL delta dict; schema-fingerprint cache) when the server-side usage
-crosses a configured soft cap. Emitted at a query boundary (between the
-previous query's terminator and the next query's first `RESULT_BATCH` or
-`EXEC_DONE`); never mid-stream, so no in-flight frame references an id the
-reset would invalidate.
+Server to client. Clears the connection-scoped SYMBOL delta dictionary when
+the server-side usage crosses a configured soft cap. Emitted at a query
+boundary (between the previous query's terminator and the next query's first
+`RESULT_BATCH` or `EXEC_DONE`); never mid-stream, so no in-flight frame
+references an id the reset would invalidate.
 
 ```
 +---------------------------------------------------------+
 | msg_kind:    uint8    0x17                              |
 | reset_mask:  uint8    Bit 0 = SYMBOL dict               |
-|                       Bit 1 = schema-fingerprint cache  |
-|                       Bits 2-7 reserved, must be zero   |
+|                       Bits 1-7 reserved, must be zero   |
 +---------------------------------------------------------+
 ```
 
@@ -462,15 +465,9 @@ connection state, not a specific query.
   The server MUST also clear any per-column native-key -> connId caches on
   its side; failing to do so would let a scratch hand back an id the reset
   dictionary has already dropped.
-- **Bit 1, `RESET_MASK_SCHEMAS`**: the peer clears its connection-scoped
-  schema registry. Every previously assigned `schema_id` is discarded. The
-  next `RESULT_BATCH` that would have shipped `SCHEMA_MODE_REFERENCE` (§7.1)
-  for a cached shape MUST instead ship `SCHEMA_MODE_FULL` with a freshly
-  allocated id. Schema ids allocated after the reset may collide with
-  previously-used values (the server's counter restarts at 0).
 
-Both bits MAY be set in the same frame. Reserved bits MUST be zero on
-transmit; recipients MUST ignore any reserved bits that are set.
+Reserved bits MUST be zero on transmit; recipients MUST ignore any reserved
+bits that are set.
 
 ### When the server emits it
 
@@ -480,7 +477,6 @@ Each QuestDB server enforces configurable soft caps on two metrics:
 |-----|---------|----------|
 | Entry count in the SYMBOL delta dict | 100,000 | `RESET_MASK_DICT` |
 | UTF-8 heap bytes in the SYMBOL delta dict | 8 MiB | `RESET_MASK_DICT` |
-| Distinct registered schemas | 4,096 | `RESET_MASK_SCHEMAS` |
 
 Actual cap values are implementation-defined; clients MUST accept any cap
 policy and MUST be prepared to receive `CACHE_RESET` after any query
@@ -489,15 +485,15 @@ did not trigger one.
 
 ### Why not mid-stream
 
-Resetting the dictionary or the schema registry while a `RESULT_BATCH` is
-in flight would invalidate ids already referenced in that batch's row
-payload. The server therefore postpones the reset until a natural query
-boundary. This has two knock-on effects:
+Resetting the dictionary while a `RESULT_BATCH` is in flight would invalidate
+ids already referenced in that batch's row payload. The server therefore
+postpones the reset until a natural query boundary. This has two knock-on
+effects:
 
-- Under a saturating workload, the server may exceed its soft caps for the
-  duration of a single query; the caps are self-healing and bounded by the
-  size of any one query's distinct symbol / schema footprint.
-- The client cannot infer dict or schema state purely from frame order:
+- Under a saturating workload, the server may exceed its soft cap for the
+  duration of a single query; the cap is self-healing and bounded by the
+  size of any one query's distinct symbol footprint.
+- The client cannot infer dict state purely from frame order:
   every `RESULT_BATCH` may be preceded by a `CACHE_RESET` that resets the
   counter. Clients SHOULD treat `CACHE_RESET` as transparent.
 
@@ -514,15 +510,11 @@ server -> RESULT_BATCH(request_id=42, batch_seq=1, ...)
 server -> RESULT_END(request_id=42, ...)
 ```
 
-If the schema cache is also over cap, the server emits a single
-`CACHE_RESET(reset_mask=0x03)`; the client clears both caches in one hop.
-
 ## 11.8 SERVER_INFO (0x18)
 
 Server to client. Unsolicited frame delivered as the **first WebSocket frame
-after the HTTP upgrade response**, and only when the negotiated version is 2
-or above. A v1-only client never sees it; a v2 client must consume it before
-submitting the first `QUERY_REQUEST`.
+after the HTTP upgrade response** on the read endpoint. Every egress client
+must consume it before submitting the first `QUERY_REQUEST`.
 
 ```
 +---------------------------------------------------------+
@@ -561,7 +553,7 @@ operator. Clients may surface them in diagnostics and in error messages
 produced by the role filter (§"Client routing" below).
 
 The `capabilities` field is a bitfield of optional fields and protocol
-extensions. v2.0 servers and clients set it to zero. Defined bits:
+extensions. A server with no optional capabilities sets it to zero. Defined bits:
 
 | Bit | Name | Meaning |
 |---|---|---|
@@ -570,20 +562,22 @@ extensions. v2.0 servers and clients set it to zero. Defined bits:
 Higher bits remain reserved for future protocol extensions
 (freshness-watermark reads, multi-query multiplexing, etc.). Clients
 encountering an unknown capability bit MUST ignore it; servers MUST
-only set bits the negotiated wire revision defines. Trailing fields
-gated by unset bits are absent from the frame, so a v2.0 client reading
-a v2.1 server with `CAP_ZONE=0` sees the same byte layout it always did.
+only set bits they implement. Trailing fields gated by unset bits are
+absent from the frame, so a client reading a server with `CAP_ZONE=0`
+sees the same byte layout regardless of which higher capabilities the
+server supports.
 
 `SERVER_INFO` is delivered in the same TCP/WebSocket send buffer as the 101
 upgrade response, so on a healthy connection the frame is already in the
-client's kernel recv buffer by the time the client parses the upgrade. If the
-server negotiates v1 it omits the frame entirely and clients fall back to
-the "role unknown" path (equivalent to `STANDALONE` for routing purposes).
+client's kernel recv buffer by the time the client parses the upgrade. The
+server always emits it post-handshake on the read endpoint, so an egress
+client can rely on reading exactly one `SERVER_INFO` frame before its first
+`QUERY_REQUEST`.
 
 ### Client routing (`target=`, `zone=`, `failover=`)
 
-Egress clients that support v2 accept a comma-separated list of endpoints
-plus role and zone preferences on the connection string:
+Egress clients accept a comma-separated list of endpoints plus role and zone
+preferences on the connection string:
 
 ```
 ws::addr=db-a:9000,db-b:9000,db-c:9000;target=any;zone=eu-west-1a;failover=on;
@@ -607,8 +601,9 @@ role filter, error classification — live in
 - The `421 + X-QuestDB-Role` (and optional `X-QuestDB-Zone`)
   upgrade-reject convention shared with ingress (see `failover.md` §5).
 
-`failover=off` restores the pre-v2 behaviour where transport failures
-surface directly through `onError` (no automatic reconnect).
+`failover=off` disables the per-Execute reconnect loop: transport failures
+surface directly through `onError` instead of triggering an automatic
+reconnect.
 
 ## 11.9 Multi-host failover (per-Execute loop)
 
@@ -729,8 +724,8 @@ WalkTracker():
             return (lastInfo, lastError, anyRoleMismatch)
         candidate = build transport for hosts[idx]
         try connect with auth_timeout_ms budget:
-            ServerInfo = (negotiatedVersion >= 2) ? read SERVER_INFO frame : null
-            if ServerInfo and (ServerInfo.capabilities & CAP_ZONE):
+            ServerInfo = read SERVER_INFO frame
+            if ServerInfo.capabilities & CAP_ZONE:
                 tracker.RecordZone(idx, ServerInfo.zone_id)
         on success:
             if EndpointMatchesTarget(ServerInfo):
@@ -772,24 +767,23 @@ collapse rule.
 
 ## 12. Schema and Symbol Dictionary Scope
 
-### Schema registry (per connection)
+### Schema scope (per query)
 
-The server maintains a per-connection schema registry keyed by `schema_id`.
-The first `RESULT_BATCH` for a query registers a new schema in mode `0x00`;
-subsequent batches with the same column set reference it in mode `0x01`.
+The schema is transmitted once per query, in the first `RESULT_BATCH`
+(`batch_seq == 0`). It carries the full column set inline — `col_count`
+followed by the column definitions. Continuation batches (`batch_seq > 0`)
+omit the schema and carry rows only; the client holds the schema from batch 0
+for the lifetime of the query.
 
-A query whose column set differs from a prior registration receives a fresh
-`schema_id`. The server may garbage-collect schema entries that no longer
-correspond to any active query, but is not required to.
+There is no connection-scoped schema registry and no schema-by-id reference.
+Every query re-ships its schema in batch 0, even when an identical query ran
+earlier on the same connection. The cost is a few dozen bytes of column
+descriptors per result; the benefit is that each query result is
+self-describing and the server holds no cross-query schema state.
 
-Connections that accumulate many distinct column shapes may cross the
-server-side schema soft cap. When that happens the server emits
-`CACHE_RESET` with `RESET_MASK_SCHEMAS` (§11.7) at a query boundary and
-clears the registry on both sides. `schema_id` values after the reset may
-collide with previously-used ones; clients MUST treat the pre-reset and
-post-reset id spaces as independent.
-
-On disconnect, both sides reset the registry.
+A client keys its per-query schema state by `request_id` so that interleaved
+queries (when the protocol permits them — see §6 Concurrency) each track their
+own column set; the schema for one query never leaks into another.
 
 ### Symbol dictionary (per connection)
 
@@ -835,8 +829,8 @@ reference.
                                           (parse, plan, open cursor)
                                                   |
                                                   v
-   client  <---------------- RESULT_BATCH(seq=0) -----  schema mode 0x00
-   client  <---------------- RESULT_BATCH(seq=1) -----  schema mode 0x01
+   client  <---------------- RESULT_BATCH(seq=0) -----  schema inline
+   client  <---------------- RESULT_BATCH(seq=1) -----  rows only
    client  <---------------- RESULT_BATCH(seq=N) -----
                                                   |
                                                   v
@@ -869,8 +863,8 @@ server's last frame before close should be a `QUERY_ERROR` with
 The server may interpose a `CACHE_RESET` frame (§11.7) between the
 terminator of one query and the first frame of the next when a
 connection-scoped cache has crossed a soft cap. The client MUST process
-`CACHE_RESET` before assuming continuity of the delta dict or schema
-registry across the boundary.
+`CACHE_RESET` before assuming continuity of the delta dict across the
+boundary.
 
 ```
    client  <----------------- RESULT_END ------------- (query N)
@@ -948,7 +942,6 @@ additions and changes:
 | Max RESULT_BATCH wire size     | 16 MiB        | Same as ingress batch ceiling    |
 | Symbol dict soft cap — entries | 100,000       | Per connection. Exceeding triggers `CACHE_RESET(RESET_MASK_DICT)` at the next query boundary (§11.7). |
 | Symbol dict soft cap — heap    | 8 MiB         | Per connection, UTF-8 bytes. Exceeding triggers `CACHE_RESET(RESET_MASK_DICT)`. |
-| Schema registry soft cap       | 4,096         | Per connection. Exceeding triggers `CACHE_RESET(RESET_MASK_SCHEMAS)` at the next query boundary. |
 | Min initial credit             | 0             | 0 means unbounded                |
 
 Soft caps are implementation-defined and may be configured or tuned by the
@@ -1003,9 +996,7 @@ RESULT_BATCH (seq=0):
       02                  row_count = 2
       02                  column_count = 2
 
-      Schema (full mode):
-        00                schema_mode = FULL
-        00                schema_id = 0
+      Schema (batch 0, inline):
         02 69 64    05    "id" : LONG
         05 76 61 6C 75 65  07    "value" : DOUBLE
 
