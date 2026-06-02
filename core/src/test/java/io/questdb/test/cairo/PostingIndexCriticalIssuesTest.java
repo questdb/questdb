@@ -157,13 +157,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             execute("ALTER TABLE t_parquet_future_head CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
 
-            assertSql(
-                    """
+            assertQuery("SELECT ts, sym, price FROM t_parquet_future_head WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tsym\tprice
                             2024-01-01T00:00:00.000000Z\tA\t1.0
-                            """,
-                    "SELECT ts, sym, price FROM t_parquet_future_head WHERE sym = 'A'"
-            );
+                            """);
         });
     }
 
@@ -1232,13 +1232,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             execute("ALTER TABLE t_rename_future_head RENAME COLUMN sym TO new_sym");
 
-            assertSql(
-                    """
+            assertQuery("SELECT ts, new_sym, price FROM t_rename_future_head WHERE new_sym = 'A'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tnew_sym\tprice
                             2024-01-01T00:00:00.000000Z\tA\t1.0
-                            """,
-                    "SELECT ts, new_sym, price FROM t_rename_future_head WHERE new_sym = 'A'"
-            );
+                            """);
         });
     }
 
