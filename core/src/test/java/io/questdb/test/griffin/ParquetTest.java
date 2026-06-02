@@ -25,17 +25,28 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.ParquetDecodeMetrics;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -136,6 +147,20 @@ public class ParquetTest extends AbstractCairoTest {
             "    ]" +
             "  ]" +
             "]";
+
+    @Before
+    public void recreateParquetSpillDir() {
+        PageFrameMemoryPool.initDiskSpillDir(
+                configuration.getFilesFacade(),
+                configuration.getSqlParquetCacheDiskDir(),
+                configuration.getMkDirMode()
+        );
+    }
+
+    @After
+    public void resetForceColdParquetPartition() {
+        PageFrameAddressCache.FORCE_COLD_PARQUET_PARTITION_FOR_TEST = false;
+    }
 
     @Test
     public void test1dArray() throws Exception {
@@ -2000,6 +2025,190 @@ public class ParquetTest extends AbstractCairoTest {
                             0\t10\t1970-01-01T02:30:00.000000Z
                             """);
         });
+    }
+
+    @Test
+    public void testParquetCacheManyPartitionsSpillRoundTrip() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 512L * 1024 * 1024);
+        PageFrameAddressCache.FORCE_COLD_PARQUET_PARTITION_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table src (k int, v double, w long, ts timestamp)
+                    timestamp(ts) partition by hour wal""");
+            execute("""
+                    insert into src
+                    select
+                      (x % 97)::int,
+                      x::double,
+                      (x * 31 + 7)::long,
+                      timestamp_sequence('2024-01-01', 18_000_000)
+                    from long_sequence(10000)""");
+            drainWalQueue();
+            execute("alter table src convert partition to parquet where ts >= 0");
+            drainWalQueue();
+            execute("""
+                    create table src_native as (select * from src)
+                    timestamp(ts) partition by hour wal""");
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "select k, v, w, ts from src_native order by k, ts",
+                    "select k, v, w, ts from src order by k, ts"
+            );
+
+            Assert.assertTrue("spill path never fired [spills=" + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertTrue("restore path never fired [restores=" + metrics.restores() + "]", metrics.restores() > 0);
+        });
+    }
+
+    @Test
+    public void testParquetCacheQuotaExhaustedDegradesToDiscard() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 4096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 128);
+        PageFrameAddressCache.FORCE_COLD_PARQUET_PARTITION_FOR_TEST = true;
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table src (k int, v double, ts timestamp)
+                    timestamp(ts) partition by hour wal""");
+            execute("""
+                    insert into src
+                    select (x % 17)::int, x::double, timestamp_sequence('2024-01-01', 36_000_000)
+                    from long_sequence(3000)""");
+            drainWalQueue();
+            execute("alter table src convert partition to parquet where ts >= 0");
+            drainWalQueue();
+            execute("""
+                    create table src_native as (select * from src)
+                    timestamp(ts) partition by hour wal""");
+            drainWalQueue();
+            assertSqlCursors(
+                    "select k, sum(v), count() from src_native order by k",
+                    "select k, sum(v), count() from src order by k"
+            );
+        });
+    }
+
+    @Test
+    public void testParquetCacheVarcharStillCorrectWithoutSpill() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 8 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 128L * 1024 * 1024);
+        PageFrameAddressCache.FORCE_COLD_PARQUET_PARTITION_FOR_TEST = true;
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table src (k int, label varchar, ts timestamp)
+                    timestamp(ts) partition by hour wal""");
+            execute("""
+                    insert into src
+                    select
+                      (x % 50)::int,
+                      ('row-' || lpad(x::varchar, 10, '0'))::varchar,
+                      timestamp_sequence('2024-01-01', 36_000_000)
+                    from long_sequence(5000)""");
+            drainWalQueue();
+            execute("alter table src convert partition to parquet where ts >= 0");
+            drainWalQueue();
+            execute("""
+                    create table src_native as (select * from src)
+                    timestamp(ts) partition by hour wal""");
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "select label, k, ts from src_native order by label",
+                    "select label, k, ts from src order by label"
+            );
+        });
+    }
+
+    @Test
+    public void testParquetCacheInitDiskSpillDirCreatesMissingDir() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            String missingDir = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "nope-" + System.nanoTime();
+            try (Path p = new Path()) {
+                Assert.assertFalse(ff.exists(p.of(missingDir).$()));
+                PageFrameMemoryPool.initDiskSpillDir(ff, missingDir, 0755);
+                Assert.assertTrue(ff.exists(p.of(missingDir).$()));
+            }
+        });
+    }
+
+    @Test
+    public void testParquetCacheInitDiskSpillDirRemovesPrefixedFilesOnly() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            String dir = temp.getRoot().getAbsolutePath();
+            try (Path path = new Path()) {
+                path.of(dir).slash().put("questdb.log").$();
+                long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd >= 0);
+                ff.close(fd);
+                for (int i = 0; i < 3; i++) {
+                    path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX)
+                            .put(1L).put('-').put(i).$();
+                    fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                    Assert.assertTrue(fd >= 0);
+                    ff.close(fd);
+                }
+
+                PageFrameMemoryPool.initDiskSpillDir(ff, dir, 0755);
+
+                path.of(dir).slash().put("questdb.log").$();
+                Assert.assertTrue(ff.exists(path.$()));
+                for (int i = 0; i < 3; i++) {
+                    path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX)
+                            .put(1L).put('-').put(i).$();
+                    Assert.assertFalse(ff.exists(path.$()));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetCacheZeroBudgetSinglePartitionStillCorrect() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 0);
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table src (k int, v double, ts timestamp)
+                    timestamp(ts) partition by day wal""");
+            execute("""
+                    insert into src
+                    select (x % 17)::int, x::double, timestamp_sequence('2024-01-01', 60_000_000)
+                    from long_sequence(1500)""");
+            drainWalQueue();
+            execute("alter table src convert partition to parquet where ts >= 0");
+            drainWalQueue();
+            execute("""
+                    create table src_native as (select * from src)
+                    timestamp(ts) partition by day wal""");
+            drainWalQueue();
+            assertSqlCursors(
+                    "select k, sum(v) from src_native order by k",
+                    "select k, sum(v) from src order by k"
+            );
+        });
+    }
+
+    @Test
+    public void testParquetDecodeHintMonotonicScalesToOneQuarter() {
+        Assert.assertEquals(64L * 1024 * 1024, ParquetDecodeHint.MONOTONIC.applyTo(256L * 1024 * 1024));
+        Assert.assertEquals(0, ParquetDecodeHint.MONOTONIC.applyTo(0));
+    }
+
+    @Test
+    public void testParquetDecodeHintScatteredKeepsFullBudget() {
+        Assert.assertEquals(256L * 1024 * 1024, ParquetDecodeHint.SCATTERED.applyTo(256L * 1024 * 1024));
+        Assert.assertEquals(0, ParquetDecodeHint.SCATTERED.applyTo(0));
+    }
+
+    @Test
+    public void testParquetDecodeHintTwoEnumValues() {
+        ParquetDecodeHint[] values = ParquetDecodeHint.values();
+        Assert.assertEquals(2, values.length);
+        Assert.assertEquals(ParquetDecodeHint.MONOTONIC, values[0]);
+        Assert.assertEquals(ParquetDecodeHint.SCATTERED, values[1]);
     }
 
     @Test

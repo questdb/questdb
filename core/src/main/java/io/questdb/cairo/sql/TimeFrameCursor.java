@@ -35,6 +35,16 @@ import io.questdb.std.QuietCloseable;
  */
 public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
 
+    /**
+     * Declares the access pattern the enclosing factory will use when calling
+     * random-access on this cursor. Mirrors {@link RecordCursor#setParquetDecodeHint(ParquetDecodeHint)};
+     * default is no-op so non-pool-owning implementations can ignore it.
+     */
+    default void setParquetDecodeHint(ParquetDecodeHint hint) {
+    }
+
+
+
     static void findSeekEstimate(
             long timestamp,
             int frameCount,

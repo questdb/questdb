@@ -155,8 +155,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                 perWorkerFilters,
                 workerCount,
                 workerCount,
-                1, // owner memory pool capacity
-                1  // per-worker memory pool capacity
+                0L, // owner memory pool budget (single-buffer effective behavior)
+                0L  // per-worker memory pool budget
         );
 
         // Group by functions (ownership transferred from caller)

@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
+import io.questdb.std.BoolList;
 import io.questdb.std.ByteList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -49,11 +50,17 @@ import io.questdb.std.Transient;
  * Meant to be used along with {@link PageFrameMemoryPool}.
  */
 public class PageFrameAddressCache implements QuietCloseable, Mutable {
+    // Test-only override: when true, every Parquet frame is marked cold on
+    // add(), regardless of frame.isColdParquetPartition(). Lets integration
+    // tests exercise the cold-tier spill path without real cold-storage
+    // wiring. Production code never flips this; tests reset it in @After.
+    public static volatile boolean FORCE_COLD_PARQUET_PARTITION_FOR_TEST = false;
     private static final int ADDRESS_LIST_INITIAL_CAPACITY = 64;
     // Flat arrays storing per-frame, per-column data. Indexed as: frameIndex * columnCount + columnIndex.
     // These are off-heap to reduce GC pressure for large and wide tables.
     private final DirectLongList auxPageAddresses;
     private final DirectLongList auxPageSizes;
+    private final BoolList coldParquetPartition = new BoolList();
     private final ColumnMapping columnMapping = new ColumnMapping();
     private final IntList columnTypes = new IntList();
     private final ByteList frameFormats = new ByteList();
@@ -113,6 +120,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         parquetRowGroups.add(frame.getParquetRowGroup());
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());
+        coldParquetPartition.add(frame.isColdParquetPartition() || FORCE_COLD_PARQUET_PARTITION_FOR_TEST);
         rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
     }
 
@@ -124,6 +132,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         parquetRowGroups.clear();
         parquetRowGroupLos.clear();
         parquetRowGroupHis.clear();
+        coldParquetPartition.clear();
         pageAddresses.clear();
         auxPageAddresses.clear();
         pageSizes.clear();
@@ -242,10 +251,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         this.external = external;
     }
 
-    /**
-     * Converts a frame index to an offset into the flat column arrays.
-     * Usage: {@code cache.getPageAddresses().getQuick(cache.toColumnOffset(frameIndex) + columnIndex)}
-     */
     public int toColumnOffset(int frameIndex) {
         return frameIndex * columnCount;
     }
@@ -270,5 +275,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         } else {
             parquetDecoders.setQuick(frameIndex, frame.getParquetDecoder());
         }
+    }
+
+     boolean isColdParquetPartition(int frameIndex) {
+        return coldParquetPartition.get(frameIndex);
     }
 }

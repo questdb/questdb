@@ -78,8 +78,8 @@ public class AsyncFilterContext implements Closeable {
             @Nullable ObjList<Function> perWorkerFilters,
             int slotCount,
             int filteredMemoryRecordCount,
-            int ownerMemoryPoolCapacity,
-            int perWorkerMemoryPoolCapacity
+            long ownerMemoryPoolMaxBytes,
+            long perWorkerMemoryPoolMaxBytes
     ) {
         this.compiledFilter = compiledFilter;
         this.bindVarMemory = bindVarMemory;
@@ -89,7 +89,13 @@ public class AsyncFilterContext implements Closeable {
         this.perWorkerFilters = perWorkerFilters;
 
         try {
-            ownerMemoryPool = new PageFrameMemoryPool(ownerMemoryPoolCapacity);
+            ownerMemoryPool = new PageFrameMemoryPool(
+                    ownerMemoryPoolMaxBytes,
+                    configuration.getSqlParquetCacheDiskSize(),
+                    configuration.getSqlParquetCacheDiskDir(),
+                    configuration.getFilesFacade(),
+                    configuration.getMetrics().parquetDecodeMetrics()
+            );
             ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
             if (compiledFilter != null) {
                 ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
@@ -105,7 +111,13 @@ public class AsyncFilterContext implements Closeable {
             perWorkerAuxAddresses = new ObjList<>(slotCount);
             perWorkerSelectivityStats = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(perWorkerMemoryPoolCapacity));
+                perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(
+                        perWorkerMemoryPoolMaxBytes,
+                        configuration.getSqlParquetCacheDiskSize(),
+                        configuration.getSqlParquetCacheDiskDir(),
+                        configuration.getFilesFacade(),
+                        configuration.getMetrics().parquetDecodeMetrics()
+                ));
                 perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD));
                 if (compiledFilter != null) {
                     perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));

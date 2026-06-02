@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -84,7 +85,13 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     public AsyncFilteredNegativeLimitRecordCursor(@NotNull CairoConfiguration configuration, int scanDirection) {
         this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-        this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+        this.frameMemoryPool = new PageFrameMemoryPool(
+                configuration.getSqlParquetCacheMemorySize(),
+                configuration.getSqlParquetCacheDiskSize(),
+                configuration.getSqlParquetCacheDiskDir(),
+                configuration.getFilesFacade(),
+                configuration.getMetrics().parquetDecodeMetrics()
+        );
         this.dispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
     }
 
@@ -167,6 +174,11 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        frameMemoryPool.setParquetDecodeHint(hint);
     }
 
     @Override

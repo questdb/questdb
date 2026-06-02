@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -83,7 +84,13 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     ) {
         try {
             this.timestampIndex = metadata.getTimestampIndex();
-            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+            this.frameMemoryPool = new PageFrameMemoryPool(
+                    configuration.getSqlParquetCacheMemorySize(),
+                    configuration.getSqlParquetCacheDiskSize(),
+                    configuration.getSqlParquetCacheDiskDir(),
+                    configuration.getFilesFacade(),
+                    configuration.getMetrics().parquetDecodeMetrics()
+            );
             this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
         } catch (Throwable th) {
             close();
@@ -277,6 +284,11 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
                 sharedState.getPartitionTimestamps(),
                 timeFrame
         );
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        frameMemoryPool.setParquetDecodeHint(hint);
     }
 
     @Override

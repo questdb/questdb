@@ -473,7 +473,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         }
         if (pageFrameAddressCache == null) {
             pageFrameAddressCache = new PageFrameAddressCache();
-            pageFrameMemoryPool = new PageFrameMemoryPool(1);
+            pageFrameMemoryPool = new PageFrameMemoryPool(0L);
             pageFrameMemoryRecord = new PageFrameMemoryRecord();
         }
         pageFrameAddressCache.of(

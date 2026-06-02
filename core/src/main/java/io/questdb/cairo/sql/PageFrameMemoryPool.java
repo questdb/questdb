@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Reopenable;
@@ -31,17 +32,28 @@ import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Provides addresses for page frames in both native and Parquet formats.
@@ -51,13 +63,39 @@ import org.jetbrains.annotations.NotNull;
  * Thus, a {@link #navigateTo(int)} call is required before accessing memory
  * that belongs to a page frame.
  * <p>
+ * Decoded Parquet frames live in a per-cursor LRU capped by total decoded
+ * bytes ({@code cairo.sql.parquet.cache.memory.size}). Each entry tracks its
+ * decoded size on insertion; inserting a new entry whose decode would push
+ * the total over budget triggers LRU eviction of unused entries until the
+ * total fits. Entries currently bound to a record or to the frame-memory
+ * flyweight are never evicted, so the budget may be temporarily exceeded
+ * when every cached entry is in use.
+ * <p>
+ * The access-pattern hint declared by the enclosing factory scales the
+ * effective ceiling: {@link ParquetDecodeHint#MONOTONIC} cursors get a quarter
+ * of the configured budget, {@link ParquetDecodeHint#SCATTERED} cursors get all
+ * of it. Hints come in via {@link #of(PageFrameAddressCache, ParquetDecodeHint)}
+ * or {@link #setParquetDecodeHint(ParquetDecodeHint)} and default to MONOTONIC.
+ * <p>
+ * Optional disk spill: when a SCATTERED-pattern cursor evicts a decoded
+ * buffer that resides on a cold-tier (remote) partition, the pool may copy
+ * the decoded bytes to a local-disk scratch file rather than discarding
+ * them. Three gates must all hold: pattern == SCATTERED,
+ * {@link PageFrameAddressCache#isColdParquetPartition(int)} == true, and
+ * {@code cairo.sql.parquet.cache.disk.size} > 0. Spill files are tagged with
+ * a per-cursor ID and deleted on {@link #close()}; the engine wipes the
+ * spill directory on startup.
+ * <p>
  * This pool is thread-unsafe as it may hold navigated Parquet partition data,
  * so it shouldn't be shared between multiple threads.
  */
 public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, Mutable {
+    public static final String SPILL_FILE_PREFIX = "qdb-parquet-spill-";
     private static final byte FRAME_MEMORY_MASK = 1 << 2;
+    private static final Log LOG = LogFactory.getLog(PageFrameMemoryPool.class);
     private static final byte RECORD_A_MASK = 1;
     private static final byte RECORD_B_MASK = 1 << 1;
+    private static final AtomicLong cursorIdGenerator = new AtomicLong();
     // LRU cache (most recently used buffers are to the right)
     private final ObjList<ParquetBuffers> cachedParquetBuffers;
     // Maps column ID (field_id / writer index) to parquet column index.
@@ -66,7 +104,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final PageFrameMemoryImpl frameMemory;
     private final ObjList<ParquetBuffers> freeParquetBuffers;
     private final ParquetFileDecoder legacyDecoder;
-    private final int parquetCacheSize;
+    private final long maxCacheBytes;
     // Contains [parquet_column_index, column_type] pairs.
     // Each parquet column appears at most once even when multiple query
     // columns reference it (a SelectedRecord projection can list the same
@@ -79,27 +117,58 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // from the parquet file because it was added later).
     private final IntIntHashMap parquetIdxToDecodeSlot;
     private final ParquetPartitionDecoder parquetMetaDecoder;
+    private final SpillManager spillManager;
+    private ParquetDecodeHint accessPattern = ParquetDecodeHint.MONOTONIC;
     private ParquetDecoder activeDecoder;
     private PageFrameAddressCache addressCache;
+    private long cachedBytes;
+    private long effectiveBudgetBytes;
 
-    public PageFrameMemoryPool(int parquetCacheSize) {
+    public PageFrameMemoryPool(long maxCacheBytes) {
+        this(maxCacheBytes, 0L, null, null, null);
+    }
+
+    public PageFrameMemoryPool(
+            long maxCacheBytes,
+            long diskSpillBytes,
+            @Nullable CharSequence diskSpillDir,
+            @Nullable FilesFacade filesFacade,
+            @Nullable ParquetDecodeMetrics metrics
+    ) {
         try {
-            this.parquetCacheSize = parquetCacheSize;
-            cachedParquetBuffers = new ObjList<>(parquetCacheSize);
-            freeParquetBuffers = new ObjList<>(parquetCacheSize);
-            for (int i = 0; i < parquetCacheSize; i++) {
-                freeParquetBuffers.add(new ParquetBuffers());
-            }
+            this.maxCacheBytes = Math.max(maxCacheBytes, 0L);
+            this.effectiveBudgetBytes = accessPattern.applyTo(this.maxCacheBytes);
+            long cursorId = cursorIdGenerator.incrementAndGet();
+            cachedParquetBuffers = new ObjList<>(8);
+            freeParquetBuffers = new ObjList<>(8);
             columnIdToParquetIdx = new IntIntHashMap(16);
             frameMemory = new PageFrameMemoryImpl();
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
             parquetIdxToDecodeSlot = new IntIntHashMap(16);
             parquetMetaDecoder = new ParquetPartitionDecoder();
             legacyDecoder = new ParquetFileDecoder();
+            spillManager = (diskSpillBytes > 0 && diskSpillDir != null && filesFacade != null)
+                    ? new SpillManager(filesFacade, diskSpillDir, diskSpillBytes, cursorId, metrics)
+                    : null;
         } catch (Throwable th) {
             close();
             throw th;
         }
+    }
+
+    public static void initDiskSpillDir(FilesFacade ff, @NotNull CharSequence dir, int mkDirMode) {
+        if (dir.isEmpty()) {
+            return;
+        }
+        Path path = Path.getThreadLocal(dir);
+        if (!ff.exists(path.$())) {
+            if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not create parquet spill dir [path=").put(path).put(']');
+            }
+            return;
+        }
+        SpillManager.deleteSpillFilesInDir(ff, path);
     }
 
     @Override
@@ -118,6 +187,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         activeDecoder = null;
         Misc.free(parquetColumns);
         releaseParquetBuffers();
+        if (spillManager != null) {
+            spillManager.close();
+        }
         addressCache = null;
     }
 
@@ -145,16 +217,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     columnOffset
             );
         } else if (format == PartitionFormat.PARQUET) {
-            openParquet(frameIndex);
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
-            final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, usageBit);
-            if (!parquetBuffers.cacheHit) {
-                final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
-                final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-                final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
-                parquetBuffers.decode(activeDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+            ParquetBuffers parquetBuffers = tryHit(frameIndex, usageBit);
+            if (parquetBuffers == null) {
+                openParquet(frameIndex);
+                parquetBuffers = allocateMiss(frameIndex, usageBit);
+                decodeAndAccount(frameIndex, parquetBuffers);
             }
-
             record.init(
                     frameIndex,
                     format,
@@ -163,7 +232,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     parquetBuffers.auxPageAddresses,
                     parquetBuffers.pageSizes,
                     parquetBuffers.auxPageSizes,
-                    0 // parquet buffers use 0 offset since they're frame-specific
+                    0
             );
         }
     }
@@ -192,21 +261,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.columnOffset = columnOffset;
             frameMemory.currentRowGroupBuffer = null;
         } else if (format == PartitionFormat.PARQUET) {
-            openParquet(frameIndex);
-            final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, FRAME_MEMORY_MASK);
-            if (!parquetBuffers.cacheHit) {
-                final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
-                final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-                final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
-                parquetBuffers.decode(activeDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+            ParquetBuffers parquetBuffers = tryHit(frameIndex, FRAME_MEMORY_MASK);
+            if (parquetBuffers == null) {
+                openParquet(frameIndex);
+                parquetBuffers = allocateMiss(frameIndex, FRAME_MEMORY_MASK);
+                decodeAndAccount(frameIndex, parquetBuffers);
             }
-
             frameMemory.currentRowGroupBuffer = parquetBuffers;
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
             frameMemory.pageSizes = parquetBuffers.pageSizes;
             frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
-            frameMemory.columnOffset = 0; // parquet buffers use 0 offset
+            frameMemory.columnOffset = 0;
         }
 
         frameMemory.frameIndex = frameIndex;
@@ -229,21 +295,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.columnOffset = columnOffset;
             frameMemory.currentRowGroupBuffer = null;
         } else if (format == PartitionFormat.PARQUET) {
-            openParquet(frameIndex, columnIndexes, true);
-            final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, FRAME_MEMORY_MASK);
-            if (!parquetBuffers.cacheHit) {
-                final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
-                final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-                final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
-                parquetBuffers.decode(activeDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+            ParquetBuffers parquetBuffers = tryHit(frameIndex, FRAME_MEMORY_MASK);
+            if (parquetBuffers == null) {
+                openParquet(frameIndex, columnIndexes, true);
+                parquetBuffers = allocateMiss(frameIndex, FRAME_MEMORY_MASK);
+                decodeAndAccount(frameIndex, parquetBuffers);
             }
-
             frameMemory.currentRowGroupBuffer = parquetBuffers;
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
             frameMemory.pageSizes = parquetBuffers.pageSizes;
             frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
-            frameMemory.columnOffset = 0; // parquet buffers use 0 offset
+            frameMemory.columnOffset = 0;
         }
 
         frameMemory.frameIndex = frameIndex;
@@ -252,7 +315,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     public void of(PageFrameAddressCache addressCache) {
+        of(addressCache, ParquetDecodeHint.MONOTONIC);
+    }
+
+    public void of(PageFrameAddressCache addressCache, ParquetDecodeHint hint) {
         this.addressCache = addressCache;
+        this.accessPattern = hint;
+        this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
         frameMemory.clear();
         Misc.free(parquetMetaDecoder);
         Misc.free(legacyDecoder);
@@ -266,11 +335,30 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
     }
 
+    /**
+     * Frees all decoded Parquet buffers and clears bookkeeping.
+     * <p>
+     * Bulk shutdown path: this does NOT honour the {@code usageFlags} pin
+     * bits, so any {@link PageFrameMemoryRecord} or {@code frameMemory}
+     * flyweight still bound to a cached entry will hold a dangling pointer
+     * after this returns. Callers must ensure all records are abandoned
+     * before invoking. Used from {@link #clear()} / {@link #close()} and
+     * from cursor lifecycle points (toTop, close).
+     */
     public void releaseParquetBuffers() {
+        Misc.freeObjListAndKeepObjects(cachedParquetBuffers);
         freeParquetBuffers.addAll(cachedParquetBuffers);
         cachedParquetBuffers.clear();
-        Misc.freeObjListAndKeepObjects(freeParquetBuffers);
+        cachedBytes = 0;
         frameMemory.clear();
+        if (spillManager != null) {
+            spillManager.deleteAllSpilledFiles();
+        }
+    }
+
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        this.accessPattern = hint;
+        this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
     }
 
     private void activateDecoder(int frameIndex) {
@@ -291,6 +379,23 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
     }
 
+    private ParquetBuffers allocateMiss(int frameIndex, byte usageBit) {
+        ParquetBuffers buffers;
+        final int free = freeParquetBuffers.size();
+        if (free > 0) {
+            buffers = freeParquetBuffers.getQuick(free - 1);
+            freeParquetBuffers.remove(free - 1);
+        } else {
+            buffers = new ParquetBuffers();
+        }
+        buffers.reopen();
+        buffers.frameIndex = frameIndex;
+        buffers.usageFlags = usageBit;
+        buffers.decodedBytes = 0;
+        cachedParquetBuffers.add(buffers);
+        return buffers;
+    }
+
     private void buildColumnIdMap(ParquetDecoder decoder) {
         final int parquetColumnCount = decoder.getColumnCount();
         columnIdToParquetIdx.clear();
@@ -302,59 +407,68 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
     }
 
-    // We don't use additional data structures to speed up the lookups
-    // such as <frame_index, buffers> hash table. That's because we don't
-    // expect the cache size to be large.
-    @NotNull
-    private ParquetBuffers nextFreeBuffers(int frameIndex, byte usageBit) {
-        // First, clear the usage bit.
-        for (int i = 0, n = cachedParquetBuffers.size(); i < n; i++) {
-            ParquetBuffers buffers = cachedParquetBuffers.getQuick(i);
-            buffers.usageFlags &= (byte) ~usageBit;
+    private void decodeAndAccount(int frameIndex, ParquetBuffers parquetBuffers) {
+        if (spillManager != null && spillManager.restore(parquetBuffers, frameIndex)) {
+            try {
+                parquetBuffers.remapColumns();
+            } catch (Throwable th) {
+                evictHalfInitialized(parquetBuffers);
+                throw th;
+            }
+            cachedBytes += parquetBuffers.decodedBytes;
+            enforceBudget();
+            return;
         }
-        // Next, check if the frame is already in the cache.
-        final int cached = cachedParquetBuffers.size();
-        for (int i = 0; i < cached; i++) {
-            ParquetBuffers buffers = cachedParquetBuffers.getQuick(i);
-            if (buffers.frameIndex == frameIndex) {
-                buffers.usageFlags |= usageBit;
-                buffers.cacheHit = true;
-                // Preserve LRU order.
-                cachedParquetBuffers.setQuick(i, cachedParquetBuffers.getQuick(cached - 1));
-                cachedParquetBuffers.setQuick(cached - 1, buffers);
-                return buffers;
+        final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
+        final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
+        final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+        try {
+            parquetBuffers.decode(activeDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+        } catch (Throwable th) {
+            evictHalfInitialized(parquetBuffers);
+            throw th;
+        }
+        cachedBytes += parquetBuffers.decodedBytes;
+        enforceBudget();
+    }
+
+    private void enforceBudget() {
+        if (cachedBytes <= effectiveBudgetBytes) {
+            return;
+        }
+        // Walk oldest -> newest (head is LRU). Skip in-use entries; the budget
+        // may be temporarily exceeded when everything is pinned.
+        int i = 0;
+        while (i < cachedParquetBuffers.size() && cachedBytes > effectiveBudgetBytes) {
+            ParquetBuffers b = cachedParquetBuffers.getQuick(i);
+            if (b.usageFlags == 0) {
+                evict(i, b);
+            } else {
+                i++;
             }
         }
-        // Check free buffers.
-        final int free = freeParquetBuffers.size();
-        if (free > 0) {
-            ParquetBuffers buffers = freeParquetBuffers.getQuick(free - 1);
-            freeParquetBuffers.remove(free - 1);
-            buffers.reopen();
-            buffers.frameIndex = frameIndex;
-            buffers.usageFlags = usageBit;
-            buffers.cacheHit = false;
-            cachedParquetBuffers.add(buffers);
-            return buffers;
+    }
+
+    private void evict(int index, ParquetBuffers b) {
+        if (spillManager != null
+                && accessPattern == ParquetDecodeHint.SCATTERED
+                && addressCache != null
+                && addressCache.isColdParquetPartition(b.frameIndex)) {
+            spillManager.spill(b);
         }
-        // Finally, try to find an unused buffer in the cache.
-        for (int i = 0; i < cached; i++) {
-            ParquetBuffers buffers = cachedParquetBuffers.getQuick(i);
-            if (buffers.usageFlags == 0) {
-                buffers.frameIndex = frameIndex;
-                buffers.usageFlags = usageBit;
-                buffers.cacheHit = false;
-                // Preserve LRU order.
-                cachedParquetBuffers.setQuick(i, cachedParquetBuffers.getQuick(cached - 1));
-                cachedParquetBuffers.setQuick(cached - 1, buffers);
-                return buffers;
-            }
+        cachedBytes -= b.decodedBytes;
+        b.close();
+        cachedParquetBuffers.remove(index);
+        freeParquetBuffers.add(b);
+    }
+
+    private void evictHalfInitialized(ParquetBuffers buffers) {
+        final int last = cachedParquetBuffers.size() - 1;
+        if (last >= 0 && cachedParquetBuffers.getQuick(last) == buffers) {
+            cachedParquetBuffers.remove(last);
         }
-        // Give up.
-        throw CairoException.critical(0)
-                .put("insufficient memory pool size [size=").put(parquetCacheSize)
-                .put(", usageBit=").put(usageBit)
-                .put(']');
+        buffers.close();
+        freeParquetBuffers.add(buffers);
     }
 
     private void openParquet(int frameIndex) {
@@ -406,6 +520,349 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     parquetColumns.add(parquetIdx);
                     parquetColumns.add(columnType);
                 }
+            }
+        }
+    }
+
+    @Nullable
+    private ParquetBuffers tryHit(int frameIndex, byte usageBit) {
+        final int cached = cachedParquetBuffers.size();
+        int hitIdx = -1;
+        for (int i = 0; i < cached; i++) {
+            ParquetBuffers b = cachedParquetBuffers.getQuick(i);
+            b.usageFlags &= (byte) ~usageBit;
+            if (b.frameIndex == frameIndex) {
+                hitIdx = i;
+            }
+        }
+        if (hitIdx < 0) {
+            return null;
+        }
+        ParquetBuffers hit = cachedParquetBuffers.getQuick(hitIdx);
+        if (hitIdx != cached - 1) {
+            cachedParquetBuffers.remove(hitIdx);
+            cachedParquetBuffers.add(hit);
+        }
+        hit.usageFlags |= usageBit;
+        return hit;
+    }
+
+    public static final class SpillManager implements QuietCloseable {
+        // File layout written by spill() and read by restore():
+        //   header @ 0:
+        //     int32  slotCount
+        //     for s in 0..slotCount:
+        //       long  dataSize[s]
+        //       long  auxSize[s]
+        //   body @ HEADER_FIXED + slotCount * SLOT_META:
+        //     for s in 0..slotCount:
+        //       bytes data[s] (dataSize[s])
+        //       bytes aux[s]  (auxSize[s])
+        private static final int HEADER_FIXED = Integer.BYTES;
+        private static final int MAX_SPILL_SLOTS = 65_536;
+        private static final int SLOT_META = 2 * Long.BYTES;
+        private final long cursorId;
+        private final CharSequence dir;
+        private final long diskBudget;
+        private final FilesFacade ff;
+        private final ParquetDecodeMetrics metrics;
+        private final LongList spilledFrameBytes = new LongList();
+        private final IntList spilledFrameIndexes = new IntList();
+        private long headerScratch;
+        private long headerScratchSize;
+        private long spilledBytes;
+
+        SpillManager(FilesFacade ff, CharSequence dir, long diskBudget, long cursorId, @Nullable ParquetDecodeMetrics metrics) {
+            this.ff = ff;
+            this.dir = dir;
+            this.diskBudget = diskBudget;
+            this.cursorId = cursorId;
+            this.metrics = metrics;
+        }
+
+        @Override
+        public void close() {
+            try {
+                deleteAllSpilledFiles();
+            } finally {
+                if (headerScratch != 0) {
+                    Unsafe.free(headerScratch, headerScratchSize, MemoryTag.NATIVE_DEFAULT);
+                    headerScratch = 0;
+                    headerScratchSize = 0;
+                }
+            }
+        }
+
+        private static boolean nameStartsWith(long nameZ) {
+            for (int i = 0, n = PageFrameMemoryPool.SPILL_FILE_PREFIX.length(); i < n; i++) {
+                byte b = Unsafe.getByte(nameZ + i);
+                if (b == 0 || ((char) (b & 0xff)) != PageFrameMemoryPool.SPILL_FILE_PREFIX.charAt(i)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private void buildPath(Path path, int frameIndex) {
+            path.slash().put(SPILL_FILE_PREFIX).put(cursorId).put('-').put(frameIndex);
+        }
+
+        private void dropSpilledEntry(int idx) {
+            if (idx < 0 || idx >= spilledFrameIndexes.size()) {
+                return;
+            }
+            final int frameIndex = spilledFrameIndexes.getQuick(idx);
+            final long bytes = spilledFrameBytes.getQuick(idx);
+            spilledFrameIndexes.removeIndex(idx);
+            spilledFrameBytes.removeIndex(idx);
+            spilledBytes -= bytes;
+            Path path = Path.getThreadLocal(dir);
+            buildPath(path, frameIndex);
+            ff.removeQuiet(path.$());
+        }
+
+        private void ensureHeaderScratch(long needed) {
+            if (headerScratchSize >= needed) {
+                return;
+            }
+            if (headerScratch != 0) {
+                Unsafe.free(headerScratch, headerScratchSize, MemoryTag.NATIVE_DEFAULT);
+                headerScratch = 0;
+                headerScratchSize = 0;
+            }
+            headerScratch = Unsafe.malloc(needed, MemoryTag.NATIVE_DEFAULT);
+            headerScratchSize = needed;
+        }
+
+        private int findSpilled(int frameIndex) {
+            for (int i = 0, n = spilledFrameIndexes.size(); i < n; i++) {
+                if (spilledFrameIndexes.getQuick(i) == frameIndex) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        private void spill(ParquetBuffers buffers) {
+            final int slotCount = buffers.slotCount;
+            final long bodyBytes = buffers.decodedBytes;
+            if (slotCount <= 0 || bodyBytes <= 0) {
+                return;
+            }
+            if (buffers.hasVarSizeSlot) {
+                return;
+            }
+            if (findSpilled(buffers.frameIndex) >= 0) {
+                return;
+            }
+            final long headerBytes = HEADER_FIXED + (long) slotCount * SLOT_META;
+            final long fileBytes = headerBytes + bodyBytes;
+            if (spilledBytes + fileBytes > diskBudget) {
+                return;
+            }
+            Path path = Path.getThreadLocal(dir);
+            buildPath(path, buffers.frameIndex);
+            final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+            System.err.println("DEBUG spill openRW fd=" + fd + " path=" + path + " errno=" + ff.errno());
+            if (fd < 0) {
+                LOG.error().$("could not open spill file [errno=").$(ff.errno())
+                        .$(", path=").$(path).I$();
+                return;
+            }
+            boolean spillOk = false;
+            try {
+                if (!ff.allocate(fd, fileBytes)) {
+                    LOG.error().$("could not allocate spill file [errno=").$(ff.errno())
+                            .$(", size=").$(fileBytes).$(", path=").$(path).I$();
+                    return;
+                }
+                ensureHeaderScratch(headerBytes);
+                Unsafe.putInt(headerScratch, slotCount);
+                long mPtr = headerScratch + HEADER_FIXED;
+                for (int s = 0; s < slotCount; s++) {
+                    Unsafe.putLong(mPtr, buffers.getSlotDataSize(s));
+                    mPtr += Long.BYTES;
+                    Unsafe.putLong(mPtr, buffers.getSlotAuxSize(s));
+                    mPtr += Long.BYTES;
+                }
+                if (ff.write(fd, headerScratch, headerBytes, 0) != headerBytes) {
+                    LOG.error().$("could not write spill header [errno=").$(ff.errno())
+                            .$(", path=").$(path).I$();
+                    return;
+                }
+                long off = headerBytes;
+                for (int s = 0; s < slotCount; s++) {
+                    final long ds = buffers.getSlotDataSize(s);
+                    if (ds > 0) {
+                        if (ff.write(fd, buffers.getSlotDataPtr(s), ds, off) != ds) {
+                            LOG.error().$("could not write spill data [errno=").$(ff.errno())
+                                    .$(", slot=").$(s).$(", path=").$(path).I$();
+                            return;
+                        }
+                        off += ds;
+                    }
+                    final long as = buffers.getSlotAuxSize(s);
+                    if (as > 0) {
+                        if (ff.write(fd, buffers.getSlotAuxPtr(s), as, off) != as) {
+                            LOG.error().$("could not write spill aux [errno=").$(ff.errno())
+                                    .$(", slot=").$(s).$(", path=").$(path).I$();
+                            return;
+                        }
+                        off += as;
+                    }
+                }
+                spilledFrameIndexes.add(buffers.frameIndex);
+                spilledFrameBytes.add(fileBytes);
+                spilledBytes += fileBytes;
+                spillOk = true;
+                if (metrics != null) {
+                    metrics.incSpills();
+                }
+            } finally {
+                ff.close(fd);
+                if (!spillOk) {
+                    ff.removeQuiet(path.$());
+                }
+            }
+        }
+
+        static void deleteSpillFilesInDir(FilesFacade ff, Path dir) {
+            final int prefixLen = dir.size();
+            final long pFind = ff.findFirst(dir.$());
+            if (pFind <= 0) {
+                return;
+            }
+            try {
+                do {
+                    if (ff.findType(pFind) != Files.DT_FILE) {
+                        continue;
+                    }
+                    final long nameZ = ff.findName(pFind);
+                    if (nameZ == 0 || !nameStartsWith(nameZ)) {
+                        continue;
+                    }
+                    dir.trimTo(prefixLen).concat(nameZ).$();
+                    ff.removeQuiet(dir.$());
+                } while (ff.findNext(pFind) > 0);
+            } finally {
+                ff.findClose(pFind);
+                dir.trimTo(prefixLen);
+            }
+        }
+
+        void deleteAllSpilledFiles() {
+            if (spilledFrameIndexes.size() == 0) {
+                return;
+            }
+            Path path = Path.getThreadLocal(dir);
+            for (int i = 0, n = spilledFrameIndexes.size(); i < n; i++) {
+                buildPath(path, spilledFrameIndexes.getQuick(i));
+                ff.removeQuiet(path.$());
+            }
+
+            spilledFrameIndexes.clear();
+            spilledFrameBytes.clear();
+            spilledBytes = 0;
+        }
+
+        // Reads the spill file for frameIndex back into a fresh native scratch
+        // owned by buffers. After this returns true the caller must invoke
+        // buffers.remapColumns() to publish addresses to the per-query lists.
+        boolean restore(ParquetBuffers buffers, int frameIndex) {
+            final int idx = findSpilled(frameIndex);
+            if (idx < 0) {
+                return false;
+            }
+            Path path = Path.getThreadLocal(dir);
+            buildPath(path, frameIndex);
+            final long fd = ff.openRO(path.$());
+            if (fd < 0) {
+                LOG.error().$("could not open spill file for restore [errno=").$(ff.errno())
+                        .$(", path=").$(path).I$();
+                dropSpilledEntry(idx);
+                return false;
+            }
+            try {
+                ensureHeaderScratch(HEADER_FIXED);
+                if (ff.read(fd, headerScratch, HEADER_FIXED, 0) != HEADER_FIXED) {
+                    LOG.error().$("could not read spill slotCount [errno=").$(ff.errno())
+                            .$(", path=").$(path).I$();
+                    dropSpilledEntry(idx);
+                    return false;
+                }
+                final int slotCount = Unsafe.getInt(headerScratch);
+                if (slotCount <= 0 || slotCount > MAX_SPILL_SLOTS) {
+                    LOG.error().$("invalid spill slotCount [slotCount=").$(slotCount)
+                            .$(", path=").$(path).I$();
+                    dropSpilledEntry(idx);
+                    return false;
+                }
+                final long headerBytes = HEADER_FIXED + (long) slotCount * SLOT_META;
+                ensureHeaderScratch(headerBytes);
+                if (ff.read(fd, headerScratch, headerBytes, 0) != headerBytes) {
+                    LOG.error().$("could not read spill header [errno=").$(ff.errno())
+                            .$(", path=").$(path).I$();
+                    dropSpilledEntry(idx);
+                    return false;
+                }
+                long bodyBytes = 0;
+                long mPtr = headerScratch + HEADER_FIXED;
+                for (int s = 0; s < slotCount; s++) {
+                    final long ds = Unsafe.getLong(mPtr);
+                    mPtr += Long.BYTES;
+                    final long as = Unsafe.getLong(mPtr);
+                    mPtr += Long.BYTES;
+                    if (ds < 0 || as < 0) {
+                        LOG.error().$("negative slot size in spill header [slot=").$(s)
+                                .$(", dataSize=").$(ds).$(", auxSize=").$(as)
+                                .$(", path=").$(path).I$();
+                        dropSpilledEntry(idx);
+                        return false;
+                    }
+                    bodyBytes += ds + as;
+                }
+                final long fileLen = ff.length(fd);
+                if (fileLen != headerBytes + bodyBytes) {
+                    LOG.error().$("spill file size mismatch [expected=").$(headerBytes + bodyBytes)
+                            .$(", actual=").$(fileLen).$(", path=").$(path).I$();
+                    dropSpilledEntry(idx);
+                    return false;
+                }
+                final long bodyPtr = Unsafe.malloc(bodyBytes, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                boolean ok = false;
+                try {
+                    if (ff.read(fd, bodyPtr, bodyBytes, headerBytes) != bodyBytes) {
+                        LOG.error().$("could not read spill body [errno=").$(ff.errno())
+                                .$(", path=").$(path).I$();
+                        dropSpilledEntry(idx);
+                        return false;
+                    }
+                    buffers.setupRestored(slotCount, bodyPtr, bodyBytes);
+                    ok = true;
+                    long off = 0;
+                    mPtr = headerScratch + HEADER_FIXED;
+                    for (int s = 0; s < slotCount; s++) {
+                        final long ds = Unsafe.getLong(mPtr);
+                        mPtr += Long.BYTES;
+                        final long as = Unsafe.getLong(mPtr);
+                        mPtr += Long.BYTES;
+                        final long dataPtr = ds > 0 ? bodyPtr + off : 0;
+                        off += ds;
+                        final long auxPtr = as > 0 ? bodyPtr + off : 0;
+                        off += as;
+                        buffers.setRestoredSlot(s, dataPtr, ds, auxPtr, as);
+                    }
+                    if (metrics != null) {
+                        metrics.incRestores();
+                    }
+                    return true;
+                } finally {
+                    if (!ok) {
+                        Unsafe.free(bodyPtr, bodyBytes, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    }
+                }
+            } finally {
+                ff.close(fd);
             }
         }
     }
@@ -516,7 +973,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
             final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
             if (filteredRows.size() != 0) {
-                currentRowGroupBuffer.decodeRemainingColumns(
+                final long prevDecodedBytes = currentRowGroupBuffer.decodedBytes;
+                final long extra = currentRowGroupBuffer.decodeRemainingColumns(
                         activeDecoder,
                         filterColumnIndexes,
                         parquetColumns,
@@ -526,6 +984,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         filteredRows,
                         fillWithNulls
                 );
+                if (extra > 0) {
+                    currentRowGroupBuffer.decodedBytes = prevDecodedBytes + extra;
+                    cachedBytes += extra;
+                    enforceBudget();
+                }
                 return true;
             }
             return false;
@@ -537,9 +1000,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private final DirectLongList auxPageSizes;
         private final DirectLongList pageAddresses;
         private final DirectLongList pageSizes;
+        private final DirectLongList restoredSlotMeta;
         private final RowGroupBuffers rowGroupBuffers;
-        private boolean cacheHit;
+        private long decodedBytes;
         private int frameIndex = -1;
+        private boolean hasVarSizeSlot;
+        private boolean isRestored;
+        private long restoredScratch;
+        private long restoredScratchSize;
+        private int slotCount;
         // Contains bits FRAME_MEMORY_MASK, RECORD_A_MASK and RECORD_B_MASK.
         private byte usageFlags;
 
@@ -548,6 +1017,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             this.auxPageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
             this.pageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
             this.pageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
+            this.restoredSlotMeta = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
             this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
         }
 
@@ -557,15 +1027,34 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             Misc.free(pageSizes);
             Misc.free(auxPageAddresses);
             Misc.free(auxPageSizes);
+            Misc.free(restoredSlotMeta);
             Misc.free(rowGroupBuffers);
+            freeRestoredScratch();
+            isRestored = false;
+            slotCount = 0;
             usageFlags = 0;
             frameIndex = -1;
+            decodedBytes = 0;
         }
 
         public void decode(ParquetDecoder decoder, DirectIntList parquetColumns, int rowGroup, int rowLo, int rowHi) {
             clearAddresses();
+            freeRestoredScratch();
+            isRestored = false;
+            hasVarSizeSlot = false;
             if (parquetColumns.size() > 0) {
                 decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
+                slotCount = (int) (parquetColumns.size() / 2);
+                decodedBytes = sumChunkBytes(0, slotCount);
+                for (int s = 0; s < slotCount; s++) {
+                    if (ColumnType.isVarSize(parquetColumns.get(2L * s + 1))) {
+                        hasVarSizeSlot = true;
+                        break;
+                    }
+                }
+            } else {
+                slotCount = 0;
+                decodedBytes = 0;
             }
             // Always size and zero the page-address lists, even when there are no
             // parquet columns to decode (every projected column was added after this
@@ -577,7 +1066,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             remapColumns();
         }
 
-        public void decodeRemainingColumns(
+        public long decodeRemainingColumns(
                 ParquetDecoder decoder,
                 IntHashSet filterColumnIndexes,
                 DirectIntList parquetColumns,
@@ -587,15 +1076,48 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 DirectLongList filteredRows,
                 boolean fillWithNulls
         ) {
-            if (parquetColumns.size() > 0) {
-                final int columnOffset = filterColumnIndexes.size();
-                if (fillWithNulls) {
-                    decoder.decodeRowGroupWithRowFilterFillNulls(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
-                } else {
-                    decoder.decodeRowGroupWithRowFilter(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
-                }
-                remapRemainingColumns(columnOffset, filterColumnIndexes);
+            assert !isRestored : "decodeRemainingColumns on restored buffer would mix rowGroupBuffers and restoredScratch addresses";
+            if (parquetColumns.size() == 0) {
+                return 0;
             }
+            final int columnOffset = filterColumnIndexes.size();
+            if (fillWithNulls) {
+                decoder.decodeRowGroupWithRowFilterFillNulls(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
+            } else {
+                decoder.decodeRowGroupWithRowFilter(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
+            }
+            final int extraSlots = (int) (parquetColumns.size() / 2);
+            final long extra = sumChunkBytes(columnOffset, extraSlots);
+            remapRemainingColumns(columnOffset, filterColumnIndexes);
+            return extra;
+        }
+
+        public long getSlotAuxPtr(int slot) {
+            if (isRestored) {
+                return restoredSlotMeta.get((long) slot * 4 + 2);
+            }
+            return rowGroupBuffers.getChunkAuxPtr(slot);
+        }
+
+        public long getSlotAuxSize(int slot) {
+            if (isRestored) {
+                return restoredSlotMeta.get((long) slot * 4 + 3);
+            }
+            return rowGroupBuffers.getChunkAuxSize(slot);
+        }
+
+        public long getSlotDataPtr(int slot) {
+            if (isRestored) {
+                return restoredSlotMeta.get((long) slot * 4);
+            }
+            return rowGroupBuffers.getChunkDataPtr(slot);
+        }
+
+        public long getSlotDataSize(int slot) {
+            if (isRestored) {
+                return restoredSlotMeta.get((long) slot * 4 + 1);
+            }
+            return rowGroupBuffers.getChunkDataSize(slot);
         }
 
         @Override
@@ -604,7 +1126,28 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             pageSizes.reopen();
             auxPageAddresses.reopen();
             auxPageSizes.reopen();
+            restoredSlotMeta.reopen();
             rowGroupBuffers.reopen();
+        }
+
+        public void setRestoredSlot(int slot, long dataPtr, long dataSize, long auxPtr, long auxSize) {
+            final long base = (long) slot * 4;
+            restoredSlotMeta.set(base, dataPtr);
+            restoredSlotMeta.set(base + 1, dataSize);
+            restoredSlotMeta.set(base + 2, auxPtr);
+            restoredSlotMeta.set(base + 3, auxSize);
+        }
+
+        public void setupRestored(int slotCount, long scratchPtr, long scratchSize) {
+            freeRestoredScratch();
+            restoredSlotMeta.clear();
+            restoredSlotMeta.setCapacity((long) slotCount * 4);
+            restoredSlotMeta.setPos((long) slotCount * 4);
+            this.slotCount = slotCount;
+            this.restoredScratch = scratchPtr;
+            this.restoredScratchSize = scratchSize;
+            this.decodedBytes = scratchSize;
+            isRestored = true;
         }
 
         private void clearAddresses() {
@@ -618,6 +1161,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             list.setCapacity(size);
             list.zero();
             list.setPos(size);
+        }
+
+        private void freeRestoredScratch() {
+            if (restoredScratch != 0) {
+                Unsafe.free(restoredScratch, restoredScratchSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                restoredScratch = 0;
+                restoredScratchSize = 0;
+            }
         }
 
         // Fan the decoded buffers out to query columns. parquetColumns is
@@ -662,11 +1213,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     continue; // Not part of this decode pass.
                 }
                 final int columnType = addressCache.getColumnTypes().getQuick(q);
-                pageAddresses.set(q, rowGroupBuffers.getChunkDataPtr(slot));
-                pageSizes.set(q, rowGroupBuffers.getChunkDataSize(slot));
+                pageAddresses.set(q, getSlotDataPtr(slot));
+                pageSizes.set(q, getSlotDataSize(slot));
                 if (ColumnType.isVarSize(columnType)) {
-                    auxPageAddresses.set(q, rowGroupBuffers.getChunkAuxPtr(slot));
-                    auxPageSizes.set(q, rowGroupBuffers.getChunkAuxSize(slot));
+                    auxPageAddresses.set(q, getSlotAuxPtr(slot));
+                    auxPageSizes.set(q, getSlotAuxSize(slot));
                 }
             }
         }
@@ -699,6 +1250,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     auxPageSizes.set(q, rowGroupBuffers.getChunkAuxSize(columnOffset + slot));
                 }
             }
+        }
+
+        private long sumChunkBytes(int startSlot, int slotCount) {
+            long bytes = 0;
+            for (int s = 0; s < slotCount; s++) {
+                bytes += rowGroupBuffers.getChunkDataSize(startSlot + s)
+                        + rowGroupBuffers.getChunkAuxSize(startSlot + s);
+            }
+            return bytes;
         }
     }
 }

@@ -1168,6 +1168,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getSqlParquetCacheDiskDir() {
+        return getDbRoot() + Files.SEPARATOR + "tmp";
+    }
+
+    @Override
+    public long getSqlParquetCacheDiskSize() {
+        return 0;
+    }
+
+    @Override
+    public long getSqlParquetCacheMemorySize() {
+        return 256L * 1024 * 1024;
+    }
+
+    @Override
     public int getSqlParquetFrameCacheCapacity() {
         return 8;
     }

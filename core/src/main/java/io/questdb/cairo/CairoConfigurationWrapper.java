@@ -1173,6 +1173,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getSqlParquetCacheDiskDir() {
+        return getDelegate().getSqlParquetCacheDiskDir();
+    }
+
+    @Override
+    public long getSqlParquetCacheDiskSize() {
+        return getDelegate().getSqlParquetCacheDiskSize();
+    }
+
+    @Override
+    public long getSqlParquetCacheMemorySize() {
+        return getDelegate().getSqlParquetCacheMemorySize();
+    }
+
+    @Override
     public int getSqlParquetFrameCacheCapacity() {
         return getDelegate().getSqlParquetFrameCacheCapacity();
     }

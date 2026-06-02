@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -106,7 +107,13 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         try {
             this.metadata = metadata;
             this.frameAddressCache = new PageFrameAddressCache();
-            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+            this.frameMemoryPool = new PageFrameMemoryPool(
+                    configuration.getSqlParquetCacheMemorySize(),
+                    configuration.getSqlParquetCacheDiskSize(),
+                    configuration.getSqlParquetCacheDiskDir(),
+                    configuration.getFilesFacade(),
+                    configuration.getMetrics().parquetDecodeMetrics()
+            );
             this.framePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
             this.frameRowCounts = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT, true);
             this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
@@ -320,6 +327,11 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
                 partitionTimestamps,
                 timeFrame
         );
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        frameMemoryPool.setParquetDecodeHint(hint);
     }
 
     @Override
