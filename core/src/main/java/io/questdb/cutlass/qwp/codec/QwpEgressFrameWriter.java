@@ -66,9 +66,8 @@ public final class QwpEgressFrameWriter {
 
     /**
      * Writes the body of a {@code CACHE_RESET} frame: msg_kind + reset_mask.
-     * {@code resetMask} is the bitwise OR of
-     * {@link QwpEgressMsgKind#RESET_MASK_DICT} and
-     * {@link QwpEgressMsgKind#RESET_MASK_SCHEMAS}.
+     * {@code resetMask} currently carries only
+     * {@link QwpEgressMsgKind#RESET_MASK_DICT}.
      *
      * @return address just past the body
      */

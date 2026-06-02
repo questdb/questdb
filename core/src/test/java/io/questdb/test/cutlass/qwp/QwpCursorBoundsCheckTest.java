@@ -33,14 +33,11 @@ import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
-import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpDecimalColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
-import io.questdb.cutlass.qwp.protocol.QwpSchema;
-import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
@@ -282,7 +279,7 @@ public class QwpCursorBoundsCheckTest {
                 }
 
                 QwpMessageCursor cursor = new QwpMessageCursor();
-                cursor.of(address, message.length, null, null);
+                cursor.of(address, message.length, null);
 
                 try {
                     cursor.nextTable();
@@ -315,7 +312,7 @@ public class QwpCursorBoundsCheckTest {
 
                 QwpMessageCursor cursor = new QwpMessageCursor();
                 try {
-                    cursor.of(address, messageLength, null, null);
+                    cursor.of(address, messageLength, null);
                     Assert.fail("expected QwpParseException for truncated message payload");
                 } catch (QwpParseException e) {
                     Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
@@ -323,43 +320,6 @@ public class QwpCursorBoundsCheckTest {
                 }
             } finally {
                 Unsafe.free(address, messageLength, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testMessageCursorRejectsSchemaReferenceWithMismatchedColumnCount() throws Exception {
-        assertMemoryLeak(() -> {
-            byte[] registeredPayload = encodeTablePayloadWithFullSchema();
-            byte[] registeredMessage = wrapSingleTableMessage(registeredPayload);
-
-            byte[] referencePayload = encodeTablePayloadWithSchemaReference();
-            byte[] referenceMessage = wrapSingleTableMessage(referencePayload);
-
-            long registeredAddress = Unsafe.malloc(registeredMessage.length, MemoryTag.NATIVE_DEFAULT);
-            long referenceAddress = Unsafe.malloc(referenceMessage.length, MemoryTag.NATIVE_DEFAULT);
-            try {
-                copyToNative(registeredMessage, registeredAddress);
-                copyToNative(referenceMessage, referenceAddress);
-
-                QwpSchemaRegistry registry = new QwpSchemaRegistry();
-                QwpMessageCursor cursor = new QwpMessageCursor();
-
-                cursor.of(registeredAddress, registeredMessage.length, registry, null);
-                cursor.nextTable();
-
-                cursor.clear();
-                cursor.of(referenceAddress, referenceMessage.length, registry, null);
-                try {
-                    cursor.nextTable();
-                    Assert.fail("expected QwpParseException for schema reference column count mismatch");
-                } catch (QwpParseException e) {
-                    Assert.assertEquals(QwpParseException.ErrorCode.SCHEMA_MISMATCH, e.getErrorCode());
-                    Assert.assertTrue(e.getMessage().contains("schema column count mismatch"));
-                }
-            } finally {
-                Unsafe.free(registeredAddress, registeredMessage.length, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(referenceAddress, referenceMessage.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -583,34 +543,6 @@ public class QwpCursorBoundsCheckTest {
         return buf;
     }
 
-    private static byte[] encodeTablePayloadWithFullSchema() {
-        byte[] header = encodeTableHeaderPayload(1, 1);
-        QwpSchema schema = QwpSchema.create(new QwpColumnDef[]{new QwpColumnDef("a", QwpConstants.TYPE_LONG)});
-        byte[] schemaBytes = new byte[schema.encodedSize(0)];
-        schema.encode(schemaBytes, 0, 0);
-        byte[] columnData = new byte[]{0, 0, 0, 0, 0, 0, 0, 0, 0};
-
-        byte[] payload = new byte[header.length + schemaBytes.length + columnData.length];
-        int offset = 0;
-        System.arraycopy(header, 0, payload, offset, header.length);
-        offset += header.length;
-        System.arraycopy(schemaBytes, 0, payload, offset, schemaBytes.length);
-        offset += schemaBytes.length;
-        System.arraycopy(columnData, 0, payload, offset, columnData.length);
-        return payload;
-    }
-
-    private static byte[] encodeTablePayloadWithSchemaReference() {
-        byte[] header = encodeTableHeaderPayload(1, 2);
-        byte[] schemaRef = new byte[1 + QwpVarint.encodedLength(0)];
-        QwpSchema.encodeReference(schemaRef, 0, 0);
-
-        byte[] payload = new byte[header.length + schemaRef.length];
-        System.arraycopy(header, 0, payload, 0, header.length);
-        System.arraycopy(schemaRef, 0, payload, header.length, schemaRef.length);
-        return payload;
-    }
-
     private static byte[] generateValidMessage(Rnd rnd, int iter) {
         try (QwpTableBuffer buffer = new QwpTableBuffer("fuzz_" + iter);
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
@@ -625,7 +557,7 @@ public class QwpCursorBoundsCheckTest {
 
     private static long parseAndIterate(long address, int length) throws QwpParseException {
         QwpMessageCursor cursor = new QwpMessageCursor(FUZZ_MAX_ROWS_PER_TABLE);
-        cursor.of(address, length, new QwpSchemaRegistry(), new ObjList<>());
+        cursor.of(address, length, new ObjList<>());
 
         long checksum = 0;
         while (cursor.hasNextTable()) {
@@ -751,22 +683,4 @@ public class QwpCursorBoundsCheckTest {
         }
     }
 
-    private static byte[] wrapSingleTableMessage(byte[] payload) {
-        byte[] message = new byte[HEADER_SIZE + payload.length];
-        int offset = 0;
-        message[offset++] = 'Q';
-        message[offset++] = 'W';
-        message[offset++] = 'P';
-        message[offset++] = '1';
-        message[offset++] = 1;
-        message[offset++] = FLAG_GORILLA;
-        message[offset++] = 1;
-        message[offset++] = 0;
-        message[offset++] = (byte) payload.length;
-        message[offset++] = (byte) (payload.length >>> 8);
-        message[offset++] = (byte) (payload.length >>> 16);
-        message[offset++] = (byte) (payload.length >>> 24);
-        System.arraycopy(payload, 0, message, offset, payload.length);
-        return message;
-    }
 }

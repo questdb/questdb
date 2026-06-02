@@ -400,10 +400,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * Uses {@link #emitTableBlockImpl} in dry-run mode so emit and size share
      * the same byte-layout source -- no drift risk.
      */
-    public int computeTableBlockSize(int rowsToEmit, boolean writeFullSchema) {
-        // wireLimit = Long.MAX_VALUE so the dry run can never report overflow;
-        // schemaId is unused by the size math, pass 0.
-        return emitTableBlockImpl(0L, Long.MAX_VALUE, startRow, rowsToEmit, 0L, writeFullSchema, true);
+    public int computeTableBlockSize(int rowsToEmit, boolean isFirstBatch) {
+        // wireLimit = Long.MAX_VALUE so the dry run can never report overflow.
+        return emitTableBlockImpl(0L, Long.MAX_VALUE, startRow, rowsToEmit, isFirstBatch, true);
     }
 
     /**
@@ -429,8 +428,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      *
      * @return number of bytes written, or -1 if the data would overflow wireLimit
      */
-    public int emitTableBlock(long wireBuf, long wireLimit, long schemaId, boolean writeFullSchema) {
-        return emitTableBlockImpl(wireBuf, wireLimit, 0, physicalRowCount, schemaId, writeFullSchema, false);
+    public int emitTableBlock(long wireBuf, long wireLimit, boolean isFirstBatch) {
+        return emitTableBlockImpl(wireBuf, wireLimit, 0, physicalRowCount, isFirstBatch, false);
     }
 
     /**
@@ -442,14 +441,13 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      *
      * @return number of bytes written, or -1 if the data would overflow wireLimit
      */
-    public int emitTableBlockPrefix(long wireBuf, long wireLimit, int rowsToEmit,
-                                    long schemaId, boolean writeFullSchema) {
-        return emitTableBlockImpl(wireBuf, wireLimit, startRow, rowsToEmit, schemaId, writeFullSchema, false);
+    public int emitTableBlockPrefix(long wireBuf, long wireLimit, int rowsToEmit, boolean isFirstBatch) {
+        return emitTableBlockImpl(wireBuf, wireLimit, startRow, rowsToEmit, isFirstBatch, false);
     }
 
     /**
      * Binary-searches the largest {@code K} in {@code [0, getRowCount()]} such
-     * that {@link #computeTableBlockSize}{@code (K, writeFullSchema) <= budget}.
+     * that {@link #computeTableBlockSize}{@code (K, isFirstBatch) <= budget}.
      * <p>
      * Return values:
      * <ul>
@@ -461,15 +459,15 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      *       pathological send-buffer config.</li>
      * </ul>
      */
-    public int findLargestEmittablePrefix(long budget, boolean writeFullSchema) {
+    public int findLargestEmittablePrefix(long budget, boolean isFirstBatch) {
         int hi = getRowCount();
-        if (computeTableBlockSize(0, writeFullSchema) > budget) return -1;
+        if (computeTableBlockSize(0, isFirstBatch) > budget) return -1;
         if (hi == 0) return 0;
-        if (computeTableBlockSize(hi, writeFullSchema) <= budget) return hi;
+        if (computeTableBlockSize(hi, isFirstBatch) <= budget) return hi;
         int lo = 0;
         while (lo < hi) {
             int mid = (lo + hi + 1) >>> 1;
-            if (computeTableBlockSize(mid, writeFullSchema) <= budget) lo = mid;
+            if (computeTableBlockSize(mid, isFirstBatch) <= budget) lo = mid;
             else hi = mid - 1;
         }
         return lo;
@@ -1054,8 +1052,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     /**
      * Single source of truth for table-block emit. Writes the wire layout for
      * rows {@code [srcRowStart, srcRowStart + rowsToEmit)} at {@code wireBuf}:
-     * empty-name byte + rowsToEmit varint + columnCount varint + schema
-     * (full or reference) + one column-slice per column. When {@code dryRun}
+     * empty-name byte + row_count varint + (first batch only) col_count varint
+     * + inline column descriptors + one column-slice per column. When {@code dryRun}
      * is true, computes the byte count without writing -- the same code path
      * powers both {@link #emitTableBlock} / {@link #emitTableBlockPrefix} and
      * {@link #computeTableBlockSize}, eliminating drift between emit and
@@ -1100,38 +1098,40 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     private int emitTableBlockImpl(long wireBuf, long wireLimit, int srcRowStart, int rowsToEmit,
-                                   long schemaId, boolean writeFullSchema, boolean dryRun) {
+                                   boolean isFirstBatch, boolean dryRun) {
         long p = wireBuf;
         int rowsVarLen = QwpVarint.encodedLength(rowsToEmit);
-        int colsVarLen = QwpVarint.encodedLength(columnCount);
-        if (p + 1 + rowsVarLen + colsVarLen > wireLimit) return -1;
+        // table_name (zero-length varint, one 0x00 byte) + row_count varint.
+        if (p + 1 + rowsVarLen > wireLimit) return -1;
         if (!dryRun) {
             Unsafe.putByte(p, (byte) 0);
             p++;
             p = QwpVarint.encode(p, rowsToEmit);
-            p = QwpVarint.encode(p, columnCount);
         } else {
-            p += 1 + rowsVarLen + colsVarLen;
+            p += 1 + rowsVarLen;
         }
-        if (writeFullSchema) {
-            int exact = QwpEgressSchemaWriter.exactFullSize(schemaId, columns);
-            if (p + exact > wireLimit) return -1;
+        // The first batch of a query (batch_seq == 0) carries col_count plus the
+        // inline column descriptors; continuation batches carry rows only -- the
+        // client holds the schema between batches of the same query.
+        if (isFirstBatch) {
+            int colsVarLen = QwpVarint.encodedLength(columnCount);
+            int schemaBytes = colsVarLen + inlineColumnsSize();
+            if (p + schemaBytes > wireLimit) return -1;
             if (!dryRun) {
-                long newP = QwpEgressSchemaWriter.writeFull(p, schemaId, columns);
-                assert newP - p == exact : "writeFull byte count drifted from exactFullSize";
-                p = newP;
+                long startP = p;
+                p = QwpVarint.encode(p, columnCount);
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    QwpEgressColumnDef col = columns.getQuick(i);
+                    byte[] nameBytes = col.getNameUtf8();
+                    p = QwpVarint.encode(p, nameBytes.length);
+                    for (byte b : nameBytes) {
+                        Unsafe.putByte(p++, b);
+                    }
+                    Unsafe.putByte(p++, col.getWireType());
+                }
+                assert p - startP == schemaBytes : "inline schema byte count drifted from inlineColumnsSize";
             } else {
-                p += exact;
-            }
-        } else {
-            int exact = QwpEgressSchemaWriter.exactReferenceSize(schemaId);
-            if (p + exact > wireLimit) return -1;
-            if (!dryRun) {
-                long newP = QwpEgressSchemaWriter.writeReference(p, schemaId);
-                assert newP - p == exact : "writeReference byte count drifted from exactReferenceSize";
-                p = newP;
-            } else {
-                p += exact;
+                p += schemaBytes;
             }
         }
         for (int ci = 0; ci < columnCount; ci++) {
@@ -1193,6 +1193,23 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             Vect.memcpy(p + 1, sliceValuesAddr, rawBytes);
         }
         return p + 1 + rawBytes;
+    }
+
+    /**
+     * Byte count of the inline column descriptors (per col: {@code name_len}
+     * varint + UTF-8 name + wire-type byte) for the current schema, excluding
+     * the leading {@code col_count} varint. Mirrors the per-column emit loop in
+     * {@link #emitTableBlockImpl} so dry-run sizing matches the real emit
+     * byte-for-byte.
+     */
+    private int inlineColumnsSize() {
+        int total = 0;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QwpEgressColumnDef col = columns.getQuick(i);
+            int nameLen = col.getNameUtf8().length;
+            total += QwpVarint.encodedLength(nameLen) + nameLen + 1 /* wire type */;
+        }
+        return total;
     }
 
     /**

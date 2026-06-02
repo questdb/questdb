@@ -34,10 +34,10 @@ import java.nio.charset.StandardCharsets;
 public final class QwpEgressMsgKind {
     /**
      * Server-to-client connection-cache reset. Body:
-     * {@code reset_mask:u8} with bit 0 = SYMBOL dict, bit 1 = schema cache.
+     * {@code reset_mask:u8} with bit 0 = SYMBOL dict.
      * Sent between result boundaries when a cache reaches its configured
      * soft cap. Recipient clears the indicated caches; subsequent RESULT_BATCH
-     * and schema-reference frames assume a fresh starting state. See
+     * frames assume a fresh starting state. See
      * {@code docs/qwp/wire-egress.md} sec 12.
      */
     public static final byte CACHE_RESET = 0x17;
@@ -68,13 +68,6 @@ public final class QwpEgressMsgKind {
      * {@code RESULT_BATCH} delta section starts at {@code deltaStart=0}.
      */
     public static final byte RESET_MASK_DICT = 0x01;
-    /**
-     * Reset mask bit: clear the connection-scoped schema-id cache.
-     * After receiving, the peer discards every previously assigned schema
-     * id; the next {@code RESULT_BATCH} ships the schema in full mode
-     * (not reference mode) with a fresh id.
-     */
-    public static final byte RESET_MASK_SCHEMAS = 0x02;
     public static final byte RESULT_BATCH = 0x11;
     public static final byte RESULT_END = 0x12;
     /**
@@ -104,8 +97,8 @@ public final class QwpEgressMsgKind {
     public static final byte ROLE_STANDALONE = 0;
     /**
      * Server-to-client. Unsolicited frame delivered as the first QWP message on
-     * every v2 WebSocket connection (see {@code QwpConstants.VERSION_2}). Carries
-     * the server's replication role, monotonic role epoch, cluster and node
+     * every WebSocket connection. Carries the server's replication role,
+     * monotonic role epoch, cluster and node
      * identifiers, a capabilities bitfield, and the server's wall-clock
      * nanoseconds at send time.
      * <p>

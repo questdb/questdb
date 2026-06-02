@@ -139,8 +139,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     private static final ThreadLocal<byte[]> HASH_SCRATCH = ThreadLocal.withInitial(() -> new byte[SHA1_DIGEST_SIZE]);
     // Precomputed X-QWP-Version digit bytes indexed by version number. Lets the
     // handshake response writer skip per-call Integer.toString + getBytes
-    // allocations since the negotiated version is always inside the closed set
-    // [VERSION_1, MAX_SUPPORTED_VERSION] the server itself defines.
+    // allocations. QWP runs at a single version today; the table stays indexed by
+    // version so a future bump can re-introduce a range.
     private static final byte[][] VERSION_BYTES = buildVersionBytes();
     private static final byte[] WEBSOCKET_GUID_BYTES = WEBSOCKET_GUID.getBytes(StandardCharsets.US_ASCII);
     private final QwpIngressUpgradeProcessor processor;
@@ -504,10 +504,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     private static byte[][] buildVersionBytes() {
-        byte[][] table = new byte[QwpConstants.MAX_SUPPORTED_VERSION + 1][];
-        for (int v = QwpConstants.VERSION_1; v <= QwpConstants.MAX_SUPPORTED_VERSION; v++) {
-            table[v] = Integer.toString(v).getBytes(StandardCharsets.US_ASCII);
-        }
+        byte[][] table = new byte[QwpConstants.VERSION + 1][];
+        table[QwpConstants.VERSION] = Integer.toString(QwpConstants.VERSION).getBytes(StandardCharsets.US_ASCII);
         return table;
     }
 
