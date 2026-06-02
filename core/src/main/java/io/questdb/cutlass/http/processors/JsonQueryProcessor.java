@@ -481,14 +481,27 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 // otherwise be executed and land on a node that is already demoting (its WAL uploader
                 // may have closed), losing the write once the node settles as a replica. Re-checking
                 // the live engine state per statement closes that window for the HTTP /exec path.
+                // Keep this enumeration in lockstep with the pg-wire gate in PGPipelineEntry: it must
+                // cover EVERY state-mutating statement type. Nothing behind this gate refuses writes
+                // (isReadOnlyMode() is not enforced at the engine/writer level, and a PRIMARY-resolved
+                // request keeps a read-write security context across the demote), so an omitted type
+                // executes against a demoting node (write-loss). CREATE_USER/ALTER_USER are
+                // intentionally excluded: they are ACL ops gated by the enterprise ACL permission
+                // layer, not the table-write class this gate covers.
                 if (engine.isReadOnlyMode()
                         && (cc.getType() == CompiledQuery.INSERT
                         || cc.getType() == CompiledQuery.INSERT_AS_SELECT
                         || cc.getType() == CompiledQuery.UPDATE
                         || cc.getType() == CompiledQuery.ALTER
+                        || cc.getType() == CompiledQuery.TRUNCATE
+                        || cc.getType() == CompiledQuery.RENAME_TABLE
                         || cc.getType() == CompiledQuery.CREATE_TABLE
                         || cc.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT
                         || cc.getType() == CompiledQuery.CREATE_MAT_VIEW
+                        || cc.getType() == CompiledQuery.REFRESH_MAT_VIEW
+                        || cc.getType() == CompiledQuery.CREATE_VIEW
+                        || cc.getType() == CompiledQuery.ALTER_VIEW
+                        || cc.getType() == CompiledQuery.ALTER_STORAGE_POLICY
                         || cc.getType() == CompiledQuery.DROP)) {
                     throw CairoException.authorization().put("replica access is read-only");
                 }

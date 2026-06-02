@@ -631,14 +631,28 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // may have closed), losing the write once the node settles as a replica. Re-checking the
             // live engine state per statement closes that window for pg-wire, the same way the QWP
             // ingress path consults isReadOnlyMode() per batch.
+            // The enumerated set must cover EVERY state-mutating statement type, because nothing
+            // behind this gate refuses writes: isReadOnlyMode() is not enforced at the engine/writer
+            // level, and a connection authorized while the node was PRIMARY keeps a read-write
+            // SecurityContext across the demote, so steady-state ReadOnlySecurityContext does not
+            // apply to it. A type omitted here falls through to msgExecute's default branch and
+            // engine.execute(), mutating a demoting node (write-loss). CREATE_USER/ALTER_USER are
+            // intentionally NOT listed: they are ACL ops gated by the enterprise ACL permission
+            // layer, not the table-write class this gate covers.
             if (engine.isReadOnlyMode()
                     && (this.sqlType == CompiledQuery.INSERT
                     || this.sqlType == CompiledQuery.INSERT_AS_SELECT
                     || this.sqlType == CompiledQuery.UPDATE
                     || this.sqlType == CompiledQuery.ALTER
+                    || this.sqlType == CompiledQuery.TRUNCATE
+                    || this.sqlType == CompiledQuery.RENAME_TABLE
                     || this.sqlType == CompiledQuery.CREATE_TABLE
                     || this.sqlType == CompiledQuery.CREATE_TABLE_AS_SELECT
                     || this.sqlType == CompiledQuery.CREATE_MAT_VIEW
+                    || this.sqlType == CompiledQuery.REFRESH_MAT_VIEW
+                    || this.sqlType == CompiledQuery.CREATE_VIEW
+                    || this.sqlType == CompiledQuery.ALTER_VIEW
+                    || this.sqlType == CompiledQuery.ALTER_STORAGE_POLICY
                     || this.sqlType == CompiledQuery.DROP)) {
                 throw CairoException.authorization().put("replica access is read-only");
             }

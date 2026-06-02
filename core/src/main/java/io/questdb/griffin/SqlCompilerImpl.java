@@ -3474,6 +3474,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
         if (!executionContext.isValidationOnly()) {
+            if (engine.isReadOnlyMode()) {
+                // A connection authorized while the node was PRIMARY keeps a read-write security
+                // context across an in-place demote, so authorizeMatViewRefresh above still passes.
+                // Refuse the instant the node goes read-only, mirroring the per-statement write gates
+                // on the pg-wire and HTTP /exec paths -- otherwise this enqueues an async refresh that
+                // writes to a node that is already demoting and loses the write once it settles.
+                throw CairoException.authorization().put("replica access is read-only");
+            }
             final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
             if (isStatsReset) {
                 final MatViewState viewState = matViewStateStore.getViewState(matViewToken);
