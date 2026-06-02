@@ -864,6 +864,100 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * The multi-record spill+replay round trip. A live PostingSealPurgeJob
+     * owns the purge-log writer and the ring is full, so closing a table with
+     * TWO superseded posting indexes spills BOTH ready intents into a single
+     * two-record pending file - the only path that writes a record count >= 2.
+     * The next writer open then walks that file, exercising the variable
+     * inter-record stride (each record advances by 56 fixed bytes plus the
+     * stored index column name), and republishes both intents so a later purge
+     * job reclaims the superseded .pv/.pc sidecars for both columns.
+     * <p>
+     * The two index columns use DISTINCT name lengths on purpose: a record
+     * stride that ignored the variable-length name would still land correctly
+     * on the second record when both names share a length, hiding the bug. This
+     * complements the single-record file-existence check in
+     * {@link #testCloseWithLivePurgeJobSpillsReadyDeferredPostingSealPurgeWhenQueueIsFull()}
+     * and the single-record replay in
+     * {@link #testO3DeferredPostingSealPurgePersistsOnCloseWhenJobHoldsLogWriter()}.
+     */
+    @Test
+    public void testCloseWithLivePurgeJobSpillsMultipleReadyDeferredPostingSealPurgesAndReplaysOnReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            drainPostingSealPurgeQueue();
+            final String tableName = "posting_close_live_job_multi_deferred";
+            // Distinct lengths so the on-disk record stride genuinely depends
+            // on the stored name length between records, not a constant.
+            final String indexColumnName1 = "new_col_11";
+            final String indexColumnName2 = "ix2";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym3 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(tableName, -85, 0, true));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName1);
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym3 TO " + indexColumnName2);
+            execute(insertPostingRowsSql(tableName, 0, 10, true));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(tableName, 0, 35, true));
+            final PostingSealFileNames oldFiles1 = resolvePostingSealFileNames(tableName, indexColumnName1, coveredColumnName, targetPartitionTimestamp, -1L);
+            final PostingSealFileNames oldFiles2 = resolvePostingSealFileNames(tableName, indexColumnName2, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(oldFiles1, true);
+            assertPostingSealFilesExist(oldFiles2, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+            try (PostingSealPurgeJob ignoredLiveJob = new PostingSealPurgeJob(engine)) {
+                fillPostingSealPurgeQueue(tableToken);
+                try {
+                    // The O3 commit advances _txn so both deferred purges are
+                    // ready, but the ring is full so they stay in the
+                    // TableWriter until close.
+                    execute(insertPostingRowsSql(tableName, 35, 92, true));
+                    engine.releaseAllWriters();
+
+                    // The handoff reached neither the ring nor the shared log,
+                    // so both ready intents were spilled into one two-record
+                    // pending file rather than the log table.
+                    assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName1, oldFiles1.sealTxn, 0);
+                    assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName2, oldFiles2.sealTxn, 0);
+                    assertPostingSealPurgePendingFileExists(tableToken, true);
+                    assertPostingSealFilesExist(oldFiles1, true);
+                    assertPostingSealFilesExist(oldFiles2, true);
+                } finally {
+                    drainPostingSealPurgeQueue();
+                }
+            }
+
+            // Reopen so writer-open recovery walks the two-record pending file
+            // (the inter-record stride path) and republishes both intents. The
+            // file is removed once recovered.
+            try (TableWriter ignore = engine.getWriter(tableToken, "posting seal purge multi-record recovery test")) {
+                Assert.assertNotNull(ignore);
+            }
+            assertPostingSealPurgePendingFileExists(tableToken, false);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            // Both superseded seal-file pairs must be purged, proving the
+            // second record parsed at the correct offset.
+            assertPostingSealFilesExist(oldFiles1, false);
+            assertPostingSealFilesExist(oldFiles2, false);
+        });
+    }
+
+    /**
      * The genuine data-losing branch of closeDeferredPostingSealPurges(): a
      * live PostingSealPurgeJob owns the purge-log writer and the ring is full
      * (so the handoff fails), AND the close-time spill to the table-local
