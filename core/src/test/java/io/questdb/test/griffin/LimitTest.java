@@ -953,7 +953,7 @@ public class LimitTest extends AbstractCairoTest {
                                     """);
 
                     assertQuery("with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts desc, y.a ")
-                            .timestamp("ts###desc")
+                            .timestampDesc("ts")
                             .expectSize()
                             .returns("""
                                     a\tts\ta1\tts1
@@ -1059,7 +1059,7 @@ public class LimitTest extends AbstractCairoTest {
                     "FROM long_sequence(100);");
 
             assertQuery("SELECT * FROM trades WHERE timestamp < '2025-01-01' ORDER BY timestamp DESC LIMIT 10")
-                    .timestamp("timestamp###desc")
+                    .timestampDesc("timestamp")
                     .returns("""
                             id\tprice\ttimestamp
                             100\t150.0\t2024-01-05T03:00:00.000000Z
@@ -1629,13 +1629,13 @@ public class LimitTest extends AbstractCairoTest {
                     """;
             assertQuery("select x, * from tab where ts2 in '1970' order by ts2 desc limit 5")
                     .noLeakCheck()
-                    .timestamp("ts2###desc")
+                    .timestampDesc("ts2")
                     .expectSize()
                     .returns(expected);
 
             assertQuery("select x, * from tab where ts2 in '2099' order by ts2 desc limit 5")
                     .noLeakCheck()
-                    .timestamp("ts2###desc")
+                    .timestampDesc("ts2")
                     .expectSize()
                     .returns("x\tx1\tts\tts2\n");
         });

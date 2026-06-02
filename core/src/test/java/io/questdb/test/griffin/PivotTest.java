@@ -3071,7 +3071,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     GROUP BY timestamp
                   ) ORDER BY timestamp ASC;""")
                 .ddl(ddlTrades)
-                .timestamp("timestamp###ASC")
+                .timestampAsc("timestamp")
                 .mutateWith(dmlTrades)
                 .expectSize()
                 .withPlan("""
@@ -3110,7 +3110,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     GROUP BY timestamp
                   ) ORDER BY timestamp DESC;""")
                 .ddl(ddlTrades)
-                .timestamp("timestamp###DESC")
+                .timestampDesc("timestamp")
                 .mutateWith(dmlTrades)
                 .expectSize()
                 .withPlan("""

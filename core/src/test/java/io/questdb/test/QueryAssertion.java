@@ -64,13 +64,11 @@ public class QueryAssertion {
     private static final double EPSILON = 0.000001;
     private static final boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
     private static final Log LOG = LogFactory.getLog(QueryAssertion.class);
-    private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
-    private static final LongList rows = new LongList();
-    private static final StringSink sink = new StringSink();
-    private static long memoryUsage = -1;
-
+    private final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private final Runnable prepareHook;
     private final CharSequence query;
+    private final LongList rows = new LongList();
+    private final StringSink sink = new StringSink();
     private Class<?> baseFactoryClass;
     private SqlCompiler compiler;
     private SqlExecutionContext context;
@@ -83,9 +81,11 @@ public class QueryAssertion {
     private IntList expectedColumnTypes;
     private CharSequence expectedPlan;
     private CharSequence expectedTimestamp;
+    private TimestampOrder expectedTimestampOrder = TimestampOrder.ASC;
     private RecordCursorFactory factory;
     private boolean fullFatJoins;
     private boolean leakCheck = true;
+    private long memoryUsage = -1;
     private boolean overridden;
     private ObjList<CharSequence> planFragments;
     private ObjList<CharSequence> planFragmentsAbsent;
@@ -133,27 +133,6 @@ public class QueryAssertion {
         return memUsed;
     }
 
-    public static void printFactoryMemoryUsageDiff() {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if (!FACTORY_TAGS[i]) {
-                continue;
-            }
-
-            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
-
-            if (value != 0L) {
-                System.out.println(MemoryTag.nameOf(i) + ":" + value);
-            }
-        }
-    }
-
-    public static void snapshotMemoryUsage() {
-        memoryUsage = getMemUsedByFactories();
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
-        }
-    }
-
     /**
      * Terminal: compile the query once, then run every {@link BindVarTuple} in turn. Each case
      * clears the bind-variable service, applies its binds and re-opens the cursor; a successful case is
@@ -167,7 +146,7 @@ public class QueryAssertion {
      */
     public void assertBinds(ObjList<BindVarTuple> cases) throws Exception {
         requireBindsCompatible();
-        prepareHook.run();
+        runPrepareHook();
         if (leakCheck) {
             assertMemoryLeak(() -> runBinds(cases));
         } else {
@@ -183,7 +162,7 @@ public class QueryAssertion {
      */
     public void assertsPlan(CharSequence expectedPlan) throws Exception {
         requirePlanOnlyCompatible();
-        prepareHook.run();
+        runPrepareHook();
         if (leakCheck) {
             assertMemoryLeak(() -> {
                 runDdl();
@@ -207,7 +186,7 @@ public class QueryAssertion {
         for (CharSequence fragment : fragments) {
             list.add(fragment);
         }
-        prepareHook.run();
+        runPrepareHook();
         if (leakCheck) {
             assertMemoryLeak(() -> {
                 runDdl();
@@ -231,7 +210,7 @@ public class QueryAssertion {
         for (CharSequence fragment : fragments) {
             list.add(fragment);
         }
-        prepareHook.run();
+        runPrepareHook();
         if (leakCheck) {
             assertMemoryLeak(() -> {
                 runDdl();
@@ -353,7 +332,7 @@ public class QueryAssertion {
      */
     public void mutateStepwise(ObjList<MutationStep> steps) throws Exception {
         requireMutateStepwiseCompatible();
-        prepareHook.run();
+        runPrepareHook();
         if (leakCheck) {
             assertMemoryLeak(() -> runMutationSteps(steps));
         } else {
@@ -405,6 +384,20 @@ public class QueryAssertion {
         return this;
     }
 
+    public void printFactoryMemoryUsageDiff() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (!FACTORY_TAGS[i]) {
+                continue;
+            }
+
+            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
+
+            if (value != 0L) {
+                System.out.println(MemoryTag.nameOf(i) + ":" + value);
+            }
+        }
+    }
+
     /**
      * Terminal: assert the query produces exactly {@code expected}.
      */
@@ -435,7 +428,7 @@ public class QueryAssertion {
      */
     public void returnsOnce(CharSequence expected) throws Exception {
         requireSingleShotCompatible();
-        prepareHook.run();
+        runPrepareHook();
         if (leakCheck) {
             assertMemoryLeak(() -> {
                 runDdl();
@@ -486,6 +479,13 @@ public class QueryAssertion {
         return this;
     }
 
+    public void snapshotMemoryUsage() {
+        memoryUsage = getMemUsedByFactories();
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
+        }
+    }
+
     /**
      * Variable-driven variant of {@link #noRandomAccess()} for helper methods that receive the
      * flag as a parameter.
@@ -501,6 +501,7 @@ public class QueryAssertion {
      */
     public QueryAssertion timestamp(CharSequence column) {
         this.expectedTimestamp = column;
+        this.expectedTimestampOrder = TimestampOrder.ASC;
         return this;
     }
 
@@ -508,7 +509,8 @@ public class QueryAssertion {
      * Like {@link #timestamp} but also assert ascending (forward) scan order.
      */
     public QueryAssertion timestampAsc(CharSequence column) {
-        this.expectedTimestamp = column + "###ASC";
+        this.expectedTimestamp = column;
+        this.expectedTimestampOrder = TimestampOrder.ASC;
         return this;
     }
 
@@ -516,7 +518,8 @@ public class QueryAssertion {
      * Like {@link #timestamp} but also assert descending (backward) scan order.
      */
     public QueryAssertion timestampDesc(CharSequence column) {
-        this.expectedTimestamp = column + "###DESC";
+        this.expectedTimestamp = column;
+        this.expectedTimestampOrder = TimestampOrder.DESC;
         return this;
     }
 
@@ -628,391 +631,6 @@ public class QueryAssertion {
         }
     }
 
-    private static boolean assertCursor(
-            CharSequence expected,
-            boolean supportsRandomAccess,
-            boolean sizeExpected,
-            boolean sizeCanBeVariable,
-            RecordCursor cursor,
-            RecordMetadata metadata,
-            boolean fragmentedSymbolTables,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        return assertCursor(
-                expected,
-                supportsRandomAccess,
-                sizeExpected,
-                sizeCanBeVariable,
-                cursor,
-                metadata,
-                sink,
-                rows,
-                fragmentedSymbolTables,
-                sqlExecutionContext
-        );
-    }
-
-    private static boolean assertCursor(
-            CharSequence expected,
-            boolean supportsRandomAccess,
-            boolean sizeExpected,
-            boolean sizeCanBeVariable,
-            RecordCursor cursor,
-            RecordMetadata metadata,
-            StringSink sink,
-            LongList rows,
-            boolean fragmentedSymbolTables,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        long cursorSizeBeforeFetch = cursor.size();
-        if (expected == null) {
-            Assert.assertFalse(cursor.hasNext());
-            cursor.toTop();
-            Assert.assertFalse(cursor.hasNext());
-            return true;
-        }
-
-        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
-        long preComputerStateSize = cursor.preComputedStateSize();
-
-        testSymbolAPI(metadata, cursor, fragmentedSymbolTables);
-        cursor.toTop();
-        Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
-        testStringsLong256AndBinary(metadata, cursor);
-
-        // test API where the same record is being updated by cursor
-        cursor.toTop();
-        Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
-        Record record = cursor.getRecord();
-        Assert.assertNotNull(record);
-        sink.clear();
-        CursorPrinter.println(metadata, sink);
-        long count = 0;
-        long cursorSize = cursor.size();
-        while (cursor.hasNext()) {
-            TestUtils.println(record, metadata, sink);
-            count++;
-        }
-
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        int skip = count > 0 && rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
-        int k = 0;
-        while (k < skip && cursor.hasNext()) {
-            k++;
-        }
-        sink.clear();
-        cursor.toTop();
-        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
-
-        if (!sizeCanBeVariable) {
-            if (sizeExpected) {
-                Assert.assertTrue("Concrete cursor size expected but was -1", cursorSize != -1);
-            } else {
-                Assert.assertTrue("Invalid/undetermined cursor size expected but was " + cursorSize, cursorSize <= 0);
-            }
-        }
-        if (cursorSize != -1) {
-            Assert.assertEquals("Expected: counted with hasNext(), actual: cursor.size()", count, cursorSize);
-            if (cursorSizeBeforeFetch != -1) {
-                Assert.assertEquals("Expected: cursor size before fetch, actual: cursor size after fetch",
-                        cursorSizeBeforeFetch, cursorSize);
-            }
-        }
-        if (count > 0) {
-            int countReducedToInt = (int) Math.min(Integer.MAX_VALUE, count);
-            RecordCursor.Counter counter = new RecordCursor.Counter();
-            cursor.toTop();
-            skip = rnd.nextBoolean() ? rnd.nextInt(countReducedToInt) : 0;
-            while (counter.get() < skip && cursor.hasNext()) {
-                counter.inc();
-            }
-            SqlExecutionCircuitBreaker breaker =
-                    sqlExecutionContext != null ? sqlExecutionContext.getCircuitBreaker() : null;
-            cursor.calculateSize(breaker, counter);
-            Assert.assertEquals(
-                    String.format("Skip %,d then calculateSize(). Expect: as counted with hasNext(), actual: cursor.calculateSize()", skip),
-                    count, counter.get());
-
-            cursor.toTop();
-            counter.set(count + 1);
-            cursor.skipRows(counter);
-            Assert.assertEquals("skipRows(rowCountPlusOne) didn't leave the counter at 1", 1, counter.get());
-            Assert.assertFalse("hasNext() returned true after skipRows exhausted the cursor", cursor.hasNext());
-
-            if (count > 1) {
-                skip = rnd.nextInt(countReducedToInt / 2);
-                counter.set(skip);
-                cursor.toTop();
-                cursor.skipRows(counter);
-                Assert.assertEquals("skipRows(lessThanRowCount) didn't bring the counter to 0", 0, counter.get());
-                long remaining = 0;
-                String countMethod;
-                if (rnd.nextBoolean()) {
-                    countMethod = "calculateSize()";
-                    counter.clear();
-                    cursor.calculateSize(breaker, counter);
-                    remaining = counter.get();
-                } else {
-                    countMethod = "hasNext()";
-                    while (cursor.hasNext()) {
-                        remaining++;
-                    }
-                }
-                Assert.assertEquals(
-                        "skipRows(lessThanRowCount) didn't leave the correct number of remaining rows." +
-                                " Remaining rows counted using " + countMethod,
-                        count, skip + remaining);
-            }
-        } else {
-            cursor.toTop();
-            Assert.assertFalse(cursor.hasNext());
-        }
-
-        TestUtils.assertEquals(expected, sink);
-
-        if (supportsRandomAccess) {
-            cursor.toTop();
-            Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
-            sink.clear();
-            rows.clear();
-            while (cursor.hasNext()) {
-                rows.add(record.getRowId());
-            }
-
-            final Record rec = cursor.getRecord();
-            CursorPrinter.println(metadata, sink);
-            for (int i = 0, n = rows.size(); i < n; i++) {
-                cursor.recordAt(rec, rows.getQuick(i));
-                TestUtils.println(rec, metadata, sink);
-            }
-
-            TestUtils.assertEquals(expected, sink);
-
-            sink.clear();
-
-            final Record factRec = cursor.getRecordB();
-            CursorPrinter.println(metadata, sink);
-            for (int i = 0, n = rows.size(); i < n; i++) {
-                cursor.recordAt(factRec, rows.getQuick(i));
-                TestUtils.println(factRec, metadata, sink);
-            }
-
-            TestUtils.assertEquals(expected, sink);
-
-            // test that absolute positioning of record does not affect the state of record cursor
-            if (rows.size() > 0) {
-                sink.clear();
-
-                cursor.toTop();
-                Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
-                int target = rows.size() / 2;
-                CursorPrinter.println(metadata, sink);
-                while (target-- > 0 && cursor.hasNext()) {
-                    TestUtils.println(record, metadata, sink);
-                }
-
-                // no obliterated record with absolute positioning
-                for (int i = 0, n = rows.size(); i < n; i++) {
-                    cursor.recordAt(factRec, rows.getQuick(i));
-                }
-
-                // now continue normal fetch
-                while (cursor.hasNext()) {
-                    TestUtils.println(record, metadata, sink);
-                }
-
-                TestUtils.assertEquals(expected, sink);
-
-                // now test that cursor.hasNext() won't affect the state of recordB
-                sink.clear();
-                CursorPrinter.println(metadata, sink);
-                cursor.toTop();
-                target = rows.size() / 2;
-                boolean cursorExhausted = false;
-                for (int i = 0, n = target; i < n; i++) {
-                    cursor.recordAt(factRec, rows.getQuick(i));
-                    // intentionally calling hasNext() twice: we want to advance the cursor position,
-                    // but we do *NOT* want to call it in step-lock with recordAt()
-                    if (!cursorExhausted) {
-                        cursorExhausted = !cursor.hasNext();
-                    }
-                    if (!cursorExhausted) {
-                        cursorExhausted = !cursor.hasNext();
-                    }
-                    TestUtils.println(factRec, metadata, sink);
-                }
-                cursor.toTop();
-                for (int i = target, n = rows.size(); i < n; i++) {
-                    // in the 2nd part, we are intentionally not calling hasNext() at all
-                    cursor.recordAt(factRec, rows.getQuick(i));
-                    TestUtils.println(factRec, metadata, sink);
-                }
-                TestUtils.assertEquals(expected, sink);
-            }
-        } else {
-            try {
-                cursor.getRecordB();
-                Assert.fail();
-            } catch (UnsupportedOperationException ignore) {
-            }
-
-            try {
-                cursor.recordAt(record, 0);
-                Assert.fail();
-            } catch (UnsupportedOperationException ignore) {
-            }
-        }
-        return false;
-    }
-
-    private static void assertCursor(
-            CharSequence expected,
-            RecordCursorFactory factory,
-            boolean supportsRandomAccess,
-            boolean sizeExpected,
-            boolean sizeCanBeVariable, // this means size() can either be -1 in some cases or known in others
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        boolean cursorAsserted;
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            Assert.assertEquals("supports random access", supportsRandomAccess, factory.recordCursorSupportsRandomAccess());
-            cursorAsserted = assertCursor(expected, supportsRandomAccess, sizeExpected, sizeCanBeVariable, cursor, factory.getMetadata(), factory.fragmentedSymbolTables(), sqlExecutionContext);
-        }
-
-        assertFactoryMemoryUsage();
-
-        if (cursorAsserted) {
-            return;
-        }
-
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            testSymbolAPI(factory.getMetadata(), cursor, factory.fragmentedSymbolTables());
-        }
-
-        assertFactoryMemoryUsage();
-    }
-
-    private static void assertCursorRawRecords(Record[] expected, RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext, boolean expectSize) throws SqlException {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            if (expected == null) {
-                Assert.assertFalse(cursor.hasNext());
-                cursor.toTop();
-                Assert.assertFalse(cursor.hasNext());
-                return;
-            }
-
-            final long rowsCount = cursor.size();
-            if (expectSize) {
-                Assert.assertEquals(rowsCount, expected.length);
-            }
-
-            RecordMetadata metadata = factory.getMetadata();
-
-            testSymbolAPI(metadata, cursor, factory.fragmentedSymbolTables());
-            cursor.toTop();
-            testStringsLong256AndBinary(metadata, cursor);
-
-            cursor.toTop();
-            final Record record = cursor.getRecord();
-            Assert.assertNotNull(record);
-            int expectedRow = 0;
-            while (cursor.hasNext()) {
-                for (int col = 0, n = metadata.getColumnCount(); col < n; col++) {
-                    switch (ColumnType.tagOf(metadata.getColumnType(col))) {
-                        case ColumnType.BOOLEAN:
-                            Assert.assertEquals(expected[expectedRow].getBool(col), record.getBool(col));
-                            break;
-                        case ColumnType.BYTE:
-                            Assert.assertEquals(expected[expectedRow].getByte(col), record.getByte(col));
-                            break;
-                        case ColumnType.SHORT:
-                            Assert.assertEquals(expected[expectedRow].getShort(col), record.getShort(col));
-                            break;
-                        case ColumnType.CHAR:
-                            Assert.assertEquals(expected[expectedRow].getChar(col), record.getChar(col));
-                            break;
-                        case ColumnType.INT:
-                            Assert.assertEquals(expected[expectedRow].getInt(col), record.getInt(col));
-                            break;
-                        case ColumnType.LONG:
-                            Assert.assertEquals(expected[expectedRow].getLong(col), record.getLong(col));
-                            break;
-                        case ColumnType.DATE:
-                            Assert.assertEquals(expected[expectedRow].getDate(col), record.getDate(col));
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            Assert.assertEquals(expected[expectedRow].getTimestamp(col), record.getTimestamp(col));
-                            break;
-                        case ColumnType.FLOAT:
-                            Assert.assertTrue(doubleEquals(expected[expectedRow].getFloat(col), record.getFloat(col)));
-                            break;
-                        case ColumnType.DOUBLE:
-                            Assert.assertTrue(doubleEquals(expected[expectedRow].getDouble(col), record.getDouble(col)));
-                            break;
-                        case ColumnType.STRING:
-                            TestUtils.assertEquals(expected[expectedRow].getStrA(col), record.getStrA(col));
-                            break;
-                        case ColumnType.SYMBOL:
-                            TestUtils.assertEquals(expected[expectedRow].getSymA(col), record.getSymA(col));
-                            break;
-                        case ColumnType.IPv4:
-                            Assert.assertEquals(expected[expectedRow].getIPv4(col), record.getIPv4(col));
-                            break;
-                        case ColumnType.LONG256:
-                            Long256 l1 = expected[expectedRow].getLong256A(col);
-                            Long256 l2 = record.getLong256A(col);
-                            Assert.assertEquals(l1.getLong0(), l2.getLong0());
-                            Assert.assertEquals(l1.getLong1(), l2.getLong1());
-                            Assert.assertEquals(l1.getLong2(), l2.getLong2());
-                            Assert.assertEquals(l1.getLong3(), l2.getLong3());
-                            break;
-                        case ColumnType.BINARY:
-                            TestUtils.assertEquals(expected[expectedRow].getBin(col), record.getBin(col), record.getBin(col).length());
-                        default:
-                            Assert.fail("Unknown column type");
-                            break;
-                    }
-                }
-                expectedRow++;
-            }
-            Assert.assertTrue((expectSize && rowsCount != -1) || (!expectSize && rowsCount == -1));
-            Assert.assertTrue(rowsCount == -1 || expectedRow == rowsCount);
-        }
-        assertFactoryMemoryUsage();
-    }
-
-    private static void assertFactoryCursor(
-            CharSequence expected,
-            String expectedTimestamp,
-            RecordCursorFactory factory,
-            boolean supportsRandomAccess,
-            SqlExecutionContext executionContext,
-            boolean expectSize,
-            boolean sizeCanBeVariable
-    ) throws SqlException {
-        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
-        // v Please keep this check after ^ that one.
-        // Factories that have a scan order dependent on the bind variable will not test correctly.
-        // See generate_series
-        assertTimestamp(expectedTimestamp, factory, executionContext);
-        // make sure we get the same outcome when we get factory to create new cursor
-        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
-        // make sure strings, binary fields and symbols are compliant with expected record behaviour
-        assertVariableColumns(factory, executionContext);
-    }
-
-    private static void assertFactoryMemoryUsage() {
-        if (memoryUsage > -1) {
-            long memAfterCursorClose = getMemUsedByFactories();
-            long limit = memoryUsage + 64 * 1024;
-            if (memAfterCursorClose > limit) {
-                dumpMemoryUsage();
-                printFactoryMemoryUsageDiff();
-                Assert.fail("cursor is allowed to keep up to 64 KiB of RSS after close. This cursor kept " + (memAfterCursorClose - memoryUsage) / 1024 + " KiB.");
-            }
-        }
-    }
-
     private static void assertSymbolColumnThreadSafety(int numberOfIterations, int symbolColumnCount, ObjList<SymbolTable> symbolTables, int[] symbolTableKeySnapshot, String[][] symbolTableValueSnapshot) {
         final Rnd rnd = TestUtils.generateRandom(null);
         for (int i = 0; i < numberOfIterations; i++) {
@@ -1029,122 +647,6 @@ public class QueryAssertion {
                 Assert.assertEquals(key, staticSymbolTable.keyOf(expected));
             }
         }
-    }
-
-    private static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (expectedTimestamp == null || expectedTimestamp.isEmpty()) {
-            int timestampIdx = factory.getMetadata().getTimestampIndex();
-            if (timestampIdx != -1) {
-                Assert.fail("Expected no timestamp but found " + factory.getMetadata().getColumnName(timestampIdx) + ", idx=" + timestampIdx);
-            }
-        } else {
-            boolean expectAscendingOrder = true;
-            String tsDesc = expectedTimestamp.toString();
-            int position = tsDesc.indexOf("###");
-            if (position > 0) {
-                expectedTimestamp = tsDesc.substring(0, position);
-                expectAscendingOrder = tsDesc.substring(position + 3).equalsIgnoreCase("asc");
-            }
-
-            if (expectAscendingOrder) {
-                try {
-                    Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, factory.getScanDirection());
-                } catch (AssertionError e) {
-                    throw new AssertionError("expected ASCENDING timestamp", e);
-                }
-            } else {
-                try {
-                    Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_BACKWARD, factory.getScanDirection());
-                } catch (AssertionError e) {
-                    throw new AssertionError("expected DESCENDING timestamp", e);
-                }
-            }
-
-            int index = factory.getMetadata().getColumnIndexQuiet(expectedTimestamp);
-            Assert.assertTrue("Column '" + expectedTimestamp + "' can't be found in metadata", index > -1);
-            Assert.assertNotEquals("Expected non-negative value as timestamp index", -1, index);
-            Assert.assertEquals("Timestamp column index", index, factory.getMetadata().getTimestampIndex());
-            assertTimestampColumnValues(factory, sqlExecutionContext, expectAscendingOrder);
-        }
-    }
-
-    private static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext, boolean isAscending) throws SqlException {
-        int index = factory.getMetadata().getTimestampIndex();
-        Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(factory.getMetadata().getColumnType(index)));
-        long timestamp = isAscending ? Long.MIN_VALUE : Long.MAX_VALUE;
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            final Record record = cursor.getRecord();
-            long c = 0;
-            while (cursor.hasNext()) {
-                long ts = record.getTimestamp(index);
-                if ((isAscending && timestamp > ts) || (!isAscending && timestamp < ts)) {
-                    StringSink error = new StringSink();
-                    error.put("record # ").put(c).put(" should have ").put(isAscending ? "bigger" : "smaller").put(" (or equal) timestamp than the row before. Values prior=");
-                    MicrosFormatUtils.appendDateTimeUSec(error, timestamp);
-                    error.put(" current=");
-                    MicrosFormatUtils.appendDateTimeUSec(error, ts);
-
-                    Assert.fail(error.toString());
-                }
-                timestamp = ts;
-                c++;
-            }
-        }
-        assertFactoryMemoryUsage();
-    }
-
-    private static void assertVariableColumns(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
-        try (RecordCursor cursor = factory.getCursor(executionContext)) {
-            RecordMetadata metadata = factory.getMetadata();
-            final int columnCount = metadata.getColumnCount();
-            final Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
-                for (int i = 0; i < columnCount; i++) {
-                    switch (ColumnType.tagOf(metadata.getColumnType(i))) {
-                        case ColumnType.STRING: {
-                            CharSequence a = record.getStrA(i);
-                            CharSequence b = record.getStrB(i);
-                            if (a == null) {
-                                Assert.assertNull(b);
-                                Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
-                            } else {
-                                if (a instanceof AbstractCharSequence) {
-                                    // AbstractCharSequence are usually mutable. We cannot have a same mutable instance for A and B
-                                    Assert.assertNotSame(a, b);
-                                }
-                                TestUtils.assertEquals(a, b);
-                                Assert.assertEquals(a.length(), record.getStrLen(i));
-                            }
-                            break;
-                        }
-                        case ColumnType.VARCHAR: {
-                            Utf8Sequence a = record.getVarcharA(i);
-                            Utf8Sequence b = record.getVarcharB(i);
-                            if (a == null) {
-                                Assert.assertNull(b);
-                                Assert.assertEquals(TableUtils.NULL_LEN, record.getVarcharSize(i));
-                            } else {
-                                TestUtils.assertEquals(a, b);
-                                Assert.assertEquals(a.size(), record.getVarcharSize(i));
-                            }
-                            break;
-                        }
-                        case ColumnType.BINARY: {
-                            BinarySequence s = record.getBin(i);
-                            if (s == null) {
-                                Assert.assertEquals(TableUtils.NULL_LEN, record.getBinLen(i));
-                            } else {
-                                Assert.assertEquals(s.length(), record.getBinLen(i));
-                            }
-                            break;
-                        }
-                        default:
-                            break;
-                    }
-                }
-            }
-        }
-        assertFactoryMemoryUsage();
     }
 
     private static ApplyWal2TableJob createWalApplyJob(CairoEngine engine) {
@@ -1383,7 +885,7 @@ public class QueryAssertion {
         final boolean sizeExpected = testCase.getExpectSizeOverride() != null
                 ? testCase.getExpectSizeOverride()
                 : expectSize;
-        assertTimestamp(resolveTimestamp(testCase), factory, executionContext);
+        assertTimestamp(expectedTimestamp, resolveTimestampOrder(testCase), factory, executionContext);
         assertCursor(testCase.getExpected(), factory, randomAccess, sizeExpected, sizeCanBeVariable, executionContext);
         // re-open with the same binds and reproduce the same outcome
         assertCursor(testCase.getExpected(), factory, randomAccess, sizeExpected, sizeCanBeVariable, executionContext);
@@ -1399,6 +901,359 @@ public class QueryAssertion {
                 Assert.assertEquals(expectedColumnTypes.getQuick(i + 1), metadata.getColumnType(columnIndex));
             }
         }
+    }
+
+    private boolean assertCursor(
+            CharSequence expected,
+            boolean supportsRandomAccess,
+            boolean sizeExpected,
+            boolean sizeCanBeVariable,
+            RecordCursor cursor,
+            RecordMetadata metadata,
+            boolean fragmentedSymbolTables,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return assertCursor(
+                expected,
+                supportsRandomAccess,
+                sizeExpected,
+                sizeCanBeVariable,
+                cursor,
+                metadata,
+                sink,
+                rows,
+                fragmentedSymbolTables,
+                sqlExecutionContext
+        );
+    }
+
+    private boolean assertCursor(
+            CharSequence expected,
+            boolean supportsRandomAccess,
+            boolean sizeExpected,
+            boolean sizeCanBeVariable,
+            RecordCursor cursor,
+            RecordMetadata metadata,
+            StringSink sink,
+            LongList rows,
+            boolean fragmentedSymbolTables,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        long cursorSizeBeforeFetch = cursor.size();
+        if (expected == null) {
+            Assert.assertFalse(cursor.hasNext());
+            cursor.toTop();
+            Assert.assertFalse(cursor.hasNext());
+            return true;
+        }
+
+        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+        long preComputerStateSize = cursor.preComputedStateSize();
+
+        testSymbolAPI(metadata, cursor, fragmentedSymbolTables);
+        cursor.toTop();
+        Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
+        testStringsLong256AndBinary(metadata, cursor);
+
+        // test API where the same record is being updated by cursor
+        cursor.toTop();
+        Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
+        Record record = cursor.getRecord();
+        Assert.assertNotNull(record);
+        sink.clear();
+        CursorPrinter.println(metadata, sink);
+        long count = 0;
+        long cursorSize = cursor.size();
+        while (cursor.hasNext()) {
+            TestUtils.println(record, metadata, sink);
+            count++;
+        }
+
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        int skip = count > 0 && rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
+        int k = 0;
+        while (k < skip && cursor.hasNext()) {
+            k++;
+        }
+        sink.clear();
+        cursor.toTop();
+        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+
+        if (!sizeCanBeVariable) {
+            if (sizeExpected) {
+                Assert.assertTrue("Concrete cursor size expected but was -1", cursorSize != -1);
+            } else {
+                Assert.assertTrue("Invalid/undetermined cursor size expected but was " + cursorSize, cursorSize <= 0);
+            }
+        }
+        if (cursorSize != -1) {
+            Assert.assertEquals("Expected: counted with hasNext(), actual: cursor.size()", count, cursorSize);
+            if (cursorSizeBeforeFetch != -1) {
+                Assert.assertEquals("Expected: cursor size before fetch, actual: cursor size after fetch",
+                        cursorSizeBeforeFetch, cursorSize);
+            }
+        }
+        if (count > 0) {
+            int countReducedToInt = (int) Math.min(Integer.MAX_VALUE, count);
+            RecordCursor.Counter counter = new RecordCursor.Counter();
+            cursor.toTop();
+            skip = rnd.nextBoolean() ? rnd.nextInt(countReducedToInt) : 0;
+            while (counter.get() < skip && cursor.hasNext()) {
+                counter.inc();
+            }
+            SqlExecutionCircuitBreaker breaker =
+                    sqlExecutionContext != null ? sqlExecutionContext.getCircuitBreaker() : null;
+            cursor.calculateSize(breaker, counter);
+            Assert.assertEquals(
+                    String.format("Skip %,d then calculateSize(). Expect: as counted with hasNext(), actual: cursor.calculateSize()", skip),
+                    count, counter.get());
+
+            cursor.toTop();
+            counter.set(count + 1);
+            cursor.skipRows(counter);
+            Assert.assertEquals("skipRows(rowCountPlusOne) didn't leave the counter at 1", 1, counter.get());
+            Assert.assertFalse("hasNext() returned true after skipRows exhausted the cursor", cursor.hasNext());
+
+            if (count > 1) {
+                skip = rnd.nextInt(countReducedToInt / 2);
+                counter.set(skip);
+                cursor.toTop();
+                cursor.skipRows(counter);
+                Assert.assertEquals("skipRows(lessThanRowCount) didn't bring the counter to 0", 0, counter.get());
+                long remaining = 0;
+                String countMethod;
+                if (rnd.nextBoolean()) {
+                    countMethod = "calculateSize()";
+                    counter.clear();
+                    cursor.calculateSize(breaker, counter);
+                    remaining = counter.get();
+                } else {
+                    countMethod = "hasNext()";
+                    while (cursor.hasNext()) {
+                        remaining++;
+                    }
+                }
+                Assert.assertEquals(
+                        "skipRows(lessThanRowCount) didn't leave the correct number of remaining rows." +
+                                " Remaining rows counted using " + countMethod,
+                        count, skip + remaining);
+            }
+        } else {
+            cursor.toTop();
+            Assert.assertFalse(cursor.hasNext());
+        }
+
+        TestUtils.assertEquals(expected, sink);
+
+        if (supportsRandomAccess) {
+            cursor.toTop();
+            Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
+            sink.clear();
+            rows.clear();
+            while (cursor.hasNext()) {
+                rows.add(record.getRowId());
+            }
+
+            final Record rec = cursor.getRecord();
+            CursorPrinter.println(metadata, sink);
+            for (int i = 0, n = rows.size(); i < n; i++) {
+                cursor.recordAt(rec, rows.getQuick(i));
+                TestUtils.println(rec, metadata, sink);
+            }
+
+            TestUtils.assertEquals(expected, sink);
+
+            sink.clear();
+
+            final Record factRec = cursor.getRecordB();
+            CursorPrinter.println(metadata, sink);
+            for (int i = 0, n = rows.size(); i < n; i++) {
+                cursor.recordAt(factRec, rows.getQuick(i));
+                TestUtils.println(factRec, metadata, sink);
+            }
+
+            TestUtils.assertEquals(expected, sink);
+
+            // test that absolute positioning of record does not affect the state of record cursor
+            if (rows.size() > 0) {
+                sink.clear();
+
+                cursor.toTop();
+                Assert.assertEquals(preComputerStateSize, cursor.preComputedStateSize());
+                int target = rows.size() / 2;
+                CursorPrinter.println(metadata, sink);
+                while (target-- > 0 && cursor.hasNext()) {
+                    TestUtils.println(record, metadata, sink);
+                }
+
+                // no obliterated record with absolute positioning
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    cursor.recordAt(factRec, rows.getQuick(i));
+                }
+
+                // now continue normal fetch
+                while (cursor.hasNext()) {
+                    TestUtils.println(record, metadata, sink);
+                }
+
+                TestUtils.assertEquals(expected, sink);
+
+                // now test that cursor.hasNext() won't affect the state of recordB
+                sink.clear();
+                CursorPrinter.println(metadata, sink);
+                cursor.toTop();
+                target = rows.size() / 2;
+                boolean cursorExhausted = false;
+                for (int i = 0, n = target; i < n; i++) {
+                    cursor.recordAt(factRec, rows.getQuick(i));
+                    // intentionally calling hasNext() twice: we want to advance the cursor position,
+                    // but we do *NOT* want to call it in step-lock with recordAt()
+                    if (!cursorExhausted) {
+                        cursorExhausted = !cursor.hasNext();
+                    }
+                    if (!cursorExhausted) {
+                        cursorExhausted = !cursor.hasNext();
+                    }
+                    TestUtils.println(factRec, metadata, sink);
+                }
+                cursor.toTop();
+                for (int i = target, n = rows.size(); i < n; i++) {
+                    // in the 2nd part, we are intentionally not calling hasNext() at all
+                    cursor.recordAt(factRec, rows.getQuick(i));
+                    TestUtils.println(factRec, metadata, sink);
+                }
+                TestUtils.assertEquals(expected, sink);
+            }
+        } else {
+            try {
+                cursor.getRecordB();
+                Assert.fail();
+            } catch (UnsupportedOperationException ignore) {
+            }
+
+            try {
+                cursor.recordAt(record, 0);
+                Assert.fail();
+            } catch (UnsupportedOperationException ignore) {
+            }
+        }
+        return false;
+    }
+
+    private void assertCursor(
+            CharSequence expected,
+            RecordCursorFactory factory,
+            boolean supportsRandomAccess,
+            boolean sizeExpected,
+            boolean sizeCanBeVariable, // this means size() can either be -1 in some cases or known in others
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        boolean cursorAsserted;
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertEquals("supports random access", supportsRandomAccess, factory.recordCursorSupportsRandomAccess());
+            cursorAsserted = assertCursor(expected, supportsRandomAccess, sizeExpected, sizeCanBeVariable, cursor, factory.getMetadata(), factory.fragmentedSymbolTables(), sqlExecutionContext);
+        }
+
+        assertFactoryMemoryUsage();
+
+        if (cursorAsserted) {
+            return;
+        }
+
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            testSymbolAPI(factory.getMetadata(), cursor, factory.fragmentedSymbolTables());
+        }
+
+        assertFactoryMemoryUsage();
+    }
+
+    private void assertCursorRawRecords(Record[] expected, RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext, boolean expectSize) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            if (expected == null) {
+                Assert.assertFalse(cursor.hasNext());
+                cursor.toTop();
+                Assert.assertFalse(cursor.hasNext());
+                return;
+            }
+
+            final long rowsCount = cursor.size();
+            if (expectSize) {
+                Assert.assertEquals(rowsCount, expected.length);
+            }
+
+            RecordMetadata metadata = factory.getMetadata();
+
+            testSymbolAPI(metadata, cursor, factory.fragmentedSymbolTables());
+            cursor.toTop();
+            testStringsLong256AndBinary(metadata, cursor);
+
+            cursor.toTop();
+            final Record record = cursor.getRecord();
+            Assert.assertNotNull(record);
+            int expectedRow = 0;
+            while (cursor.hasNext()) {
+                for (int col = 0, n = metadata.getColumnCount(); col < n; col++) {
+                    switch (ColumnType.tagOf(metadata.getColumnType(col))) {
+                        case ColumnType.BOOLEAN:
+                            Assert.assertEquals(expected[expectedRow].getBool(col), record.getBool(col));
+                            break;
+                        case ColumnType.BYTE:
+                            Assert.assertEquals(expected[expectedRow].getByte(col), record.getByte(col));
+                            break;
+                        case ColumnType.SHORT:
+                            Assert.assertEquals(expected[expectedRow].getShort(col), record.getShort(col));
+                            break;
+                        case ColumnType.CHAR:
+                            Assert.assertEquals(expected[expectedRow].getChar(col), record.getChar(col));
+                            break;
+                        case ColumnType.INT:
+                            Assert.assertEquals(expected[expectedRow].getInt(col), record.getInt(col));
+                            break;
+                        case ColumnType.LONG:
+                            Assert.assertEquals(expected[expectedRow].getLong(col), record.getLong(col));
+                            break;
+                        case ColumnType.DATE:
+                            Assert.assertEquals(expected[expectedRow].getDate(col), record.getDate(col));
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            Assert.assertEquals(expected[expectedRow].getTimestamp(col), record.getTimestamp(col));
+                            break;
+                        case ColumnType.FLOAT:
+                            Assert.assertTrue(doubleEquals(expected[expectedRow].getFloat(col), record.getFloat(col)));
+                            break;
+                        case ColumnType.DOUBLE:
+                            Assert.assertTrue(doubleEquals(expected[expectedRow].getDouble(col), record.getDouble(col)));
+                            break;
+                        case ColumnType.STRING:
+                            TestUtils.assertEquals(expected[expectedRow].getStrA(col), record.getStrA(col));
+                            break;
+                        case ColumnType.SYMBOL:
+                            TestUtils.assertEquals(expected[expectedRow].getSymA(col), record.getSymA(col));
+                            break;
+                        case ColumnType.IPv4:
+                            Assert.assertEquals(expected[expectedRow].getIPv4(col), record.getIPv4(col));
+                            break;
+                        case ColumnType.LONG256:
+                            Long256 l1 = expected[expectedRow].getLong256A(col);
+                            Long256 l2 = record.getLong256A(col);
+                            Assert.assertEquals(l1.getLong0(), l2.getLong0());
+                            Assert.assertEquals(l1.getLong1(), l2.getLong1());
+                            Assert.assertEquals(l1.getLong2(), l2.getLong2());
+                            Assert.assertEquals(l1.getLong3(), l2.getLong3());
+                            break;
+                        case ColumnType.BINARY:
+                            TestUtils.assertEquals(expected[expectedRow].getBin(col), record.getBin(col), record.getBin(col).length());
+                        default:
+                            Assert.fail("Unknown column type");
+                            break;
+                    }
+                }
+                expectedRow++;
+            }
+            Assert.assertTrue((expectSize && rowsCount != -1) || (!expectSize && rowsCount == -1));
+            Assert.assertTrue(rowsCount == -1 || expectedRow == rowsCount);
+        }
+        assertFactoryMemoryUsage();
     }
 
     private void assertExactPlan(CharSequence expectedPlan) throws SqlException {
@@ -1422,7 +1277,7 @@ public class QueryAssertion {
         assertBaseFactoryClass(factory);
         assertColumnTypes(factory);
         if (expectedTimestamp != null) {
-            assertTimestamp(expectedTimestamp, factory, context);
+            assertTimestamp(expectedTimestamp, expectedTimestampOrder, factory, context);
         }
         if (assertExternalFactoryCursor(expected, localSink, localRows)) {
             return;
@@ -1446,6 +1301,37 @@ public class QueryAssertion {
                     factory.fragmentedSymbolTables(),
                     context
             );
+        }
+    }
+
+    private void assertFactoryCursor(
+            CharSequence expected,
+            RecordCursorFactory factory,
+            boolean supportsRandomAccess,
+            SqlExecutionContext executionContext,
+            boolean expectSize,
+            boolean sizeCanBeVariable
+    ) throws SqlException {
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
+        // v Please keep this check after ^ that one.
+        // Factories that have a scan order dependent on the bind variable will not test correctly.
+        // See generate_series
+        assertTimestamp(expectedTimestamp, expectedTimestampOrder, factory, executionContext);
+        // make sure we get the same outcome when we get factory to create new cursor
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
+        // make sure strings, binary fields and symbols are compliant with expected record behaviour
+        assertVariableColumns(factory, executionContext);
+    }
+
+    private void assertFactoryMemoryUsage() {
+        if (memoryUsage > -1) {
+            long memAfterCursorClose = getMemUsedByFactories();
+            long limit = memoryUsage + 64 * 1024;
+            if (memAfterCursorClose > limit) {
+                dumpMemoryUsage();
+                printFactoryMemoryUsageDiff();
+                Assert.fail("cursor is allowed to keep up to 64 KiB of RSS after close. This cursor kept " + (memAfterCursorClose - memoryUsage) / 1024 + " KiB.");
+            }
         }
     }
 
@@ -1504,7 +1390,7 @@ public class QueryAssertion {
         try {
             assertBaseFactoryClass(factory);
             assertColumnTypes(factory);
-            assertTimestamp(expectedTimestamp, factory, context);
+            assertTimestamp(expectedTimestamp, expectedTimestampOrder, factory, context);
             assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
             // make sure we get the same outcome when we get factory to create new cursor
             assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
@@ -1518,6 +1404,7 @@ public class QueryAssertion {
                 }
 
                 int count = 3;
+                TableReferenceOutOfDateException lastError = null;
                 while (count > 0) {
                     try {
                         assertCursor(expected2, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
@@ -1525,11 +1412,15 @@ public class QueryAssertion {
                         assertCursor(expected2, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
                         return;
                     } catch (TableReferenceOutOfDateException e) {
+                        lastError = e;
                         Misc.free(factory);
                         factory = compileSelect();
                         count--;
                     }
                 }
+                // Every attempt saw the table reference go stale, so expected2 was never asserted.
+                // Fail loudly instead of silently falling through to assertCalculateSize().
+                throw new AssertionError("table reference still out of date after 3 attempts; expected2 was not asserted", lastError);
             }
 
             // make sure calculateSize() produces consistent result
@@ -1540,13 +1431,13 @@ public class QueryAssertion {
     }
 
     private void assertReturnsRecords(Record[] expected, Record[] expected2) throws Exception {
-        prepareHook.run();
+        runPrepareHook();
         assertMemoryLeak(() -> {
             runDdl();
             snapshotMemoryUsage();
             RecordCursorFactory factory = compileSelect();
             try {
-                assertTimestamp(expectedTimestamp, factory, context);
+                assertTimestamp(expectedTimestamp, expectedTimestampOrder, factory, context);
                 assertCursorRawRecords(expected, factory, context, expectSize);
                 // make sure we get the same outcome when we get factory to create new cursor
                 assertCursorRawRecords(expected, factory, context, expectSize);
@@ -1558,6 +1449,7 @@ public class QueryAssertion {
                         drainWalQueue(engine);
                     }
                     int count = 3;
+                    TableReferenceOutOfDateException lastError = null;
                     while (count > 0) {
                         try {
                             assertCursorRawRecords(expected2, factory, context, expectSize);
@@ -1565,11 +1457,15 @@ public class QueryAssertion {
                             assertCursorRawRecords(expected2, factory, context, expectSize);
                             return;
                         } catch (TableReferenceOutOfDateException e) {
+                            lastError = e;
                             Misc.free(factory);
                             factory = compileSelect();
                             count--;
                         }
                     }
+                    // Every attempt saw the table reference go stale, so expected2 was never asserted.
+                    // Fail loudly instead of silently returning success.
+                    throw new AssertionError("table reference still out of date after 3 attempts; expected2 was not asserted", lastError);
                 }
             } finally {
                 Misc.free(factory);
@@ -1619,22 +1515,130 @@ public class QueryAssertion {
         Assert.fail("SQL statement should have failed");
     }
 
+    private void assertTimestamp(CharSequence column, TimestampOrder order, RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (column == null || column.isEmpty()) {
+            int timestampIdx = factory.getMetadata().getTimestampIndex();
+            if (timestampIdx != -1) {
+                Assert.fail("Expected no timestamp but found " + factory.getMetadata().getColumnName(timestampIdx) + ", idx=" + timestampIdx);
+            }
+        } else {
+            boolean expectAscendingOrder = order != TimestampOrder.DESC;
+            if (expectAscendingOrder) {
+                try {
+                    Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, factory.getScanDirection());
+                } catch (AssertionError e) {
+                    throw new AssertionError("expected ASCENDING timestamp", e);
+                }
+            } else {
+                try {
+                    Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_BACKWARD, factory.getScanDirection());
+                } catch (AssertionError e) {
+                    throw new AssertionError("expected DESCENDING timestamp", e);
+                }
+            }
+
+            int index = factory.getMetadata().getColumnIndexQuiet(column);
+            Assert.assertTrue("Column '" + column + "' can't be found in metadata", index > -1);
+            Assert.assertNotEquals("Expected non-negative value as timestamp index", -1, index);
+            Assert.assertEquals("Timestamp column index", index, factory.getMetadata().getTimestampIndex());
+            assertTimestampColumnValues(factory, sqlExecutionContext, expectAscendingOrder);
+        }
+    }
+
+    private void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext, boolean isAscending) throws SqlException {
+        int index = factory.getMetadata().getTimestampIndex();
+        Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(factory.getMetadata().getColumnType(index)));
+        long timestamp = isAscending ? Long.MIN_VALUE : Long.MAX_VALUE;
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final Record record = cursor.getRecord();
+            long c = 0;
+            while (cursor.hasNext()) {
+                long ts = record.getTimestamp(index);
+                if ((isAscending && timestamp > ts) || (!isAscending && timestamp < ts)) {
+                    StringSink error = new StringSink();
+                    error.put("record # ").put(c).put(" should have ").put(isAscending ? "bigger" : "smaller").put(" (or equal) timestamp than the row before. Values prior=");
+                    MicrosFormatUtils.appendDateTimeUSec(error, timestamp);
+                    error.put(" current=");
+                    MicrosFormatUtils.appendDateTimeUSec(error, ts);
+
+                    Assert.fail(error.toString());
+                }
+                timestamp = ts;
+                c++;
+            }
+        }
+        assertFactoryMemoryUsage();
+    }
+
+    private void assertVariableColumns(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(executionContext)) {
+            RecordMetadata metadata = factory.getMetadata();
+            final int columnCount = metadata.getColumnCount();
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                for (int i = 0; i < columnCount; i++) {
+                    switch (ColumnType.tagOf(metadata.getColumnType(i))) {
+                        case ColumnType.STRING: {
+                            CharSequence a = record.getStrA(i);
+                            CharSequence b = record.getStrB(i);
+                            if (a == null) {
+                                Assert.assertNull(b);
+                                Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
+                            } else {
+                                if (a instanceof AbstractCharSequence) {
+                                    // AbstractCharSequence are usually mutable. We cannot have a same mutable instance for A and B
+                                    Assert.assertNotSame(a, b);
+                                }
+                                TestUtils.assertEquals(a, b);
+                                Assert.assertEquals(a.length(), record.getStrLen(i));
+                            }
+                            break;
+                        }
+                        case ColumnType.VARCHAR: {
+                            Utf8Sequence a = record.getVarcharA(i);
+                            Utf8Sequence b = record.getVarcharB(i);
+                            if (a == null) {
+                                Assert.assertNull(b);
+                                Assert.assertEquals(TableUtils.NULL_LEN, record.getVarcharSize(i));
+                            } else {
+                                TestUtils.assertEquals(a, b);
+                                Assert.assertEquals(a.size(), record.getVarcharSize(i));
+                            }
+                            break;
+                        }
+                        case ColumnType.BINARY: {
+                            BinarySequence s = record.getBin(i);
+                            if (s == null) {
+                                Assert.assertEquals(TableUtils.NULL_LEN, record.getBinLen(i));
+                            } else {
+                                Assert.assertEquals(s.length(), record.getBinLen(i));
+                            }
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                }
+            }
+        }
+        assertFactoryMemoryUsage();
+    }
+
     private void assertViaFactoryCursor(CharSequence expected) throws SqlException {
         runDdl();
         snapshotMemoryUsage();
-        final String ts = expectedTimestamp == null ? null : expectedTimestamp.toString();
         if (compiler != null) {
             if (fullFatJoins) {
                 compiler.setFullFatJoins(true);
             }
             try (RecordCursorFactory factory = CairoEngine.select(compiler, query, context)) {
-                assertFactoryCursor(expected, ts, factory, supportsRandomAccess, context, expectSize, false);
+                assertFactoryCursor(expected, factory, supportsRandomAccess, context, expectSize, false);
             }
         } else {
             try (SqlCompiler fullFatCompiler = engine.getSqlCompiler()) {
                 fullFatCompiler.setFullFatJoins(true);
                 try (RecordCursorFactory factory = CairoEngine.select(fullFatCompiler, query, context)) {
-                    assertFactoryCursor(expected, ts, factory, supportsRandomAccess, context, expectSize, false);
+                    assertFactoryCursor(expected, factory, supportsRandomAccess, context, expectSize, false);
                 }
             }
         }
@@ -1646,6 +1650,9 @@ public class QueryAssertion {
 
     private void dispatch(CharSequence expected, CharSequence expected2) throws Exception {
         if (factory != null) {
+            if (context == null) {
+                throw new IllegalStateException("external-factory mode requires withContext(...)");
+            }
             if (expected2 != null) {
                 throw new IllegalStateException("mutateWith(...) is not supported in external-factory mode");
             }
@@ -1656,7 +1663,7 @@ public class QueryAssertion {
             assertExternalFactory(expected);
             return;
         }
-        prepareHook.run();
+        runPrepareHook();
         if (expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
             if (fullFatJoins || compiler != null) {
                 throw new IllegalStateException("withPlan(...)/withPlanContaining(...)/withPlanNotContaining(...) cannot be combined with fullFatJoins()/withCompiler()");
@@ -1707,7 +1714,7 @@ public class QueryAssertion {
     }
 
     private void failsNoLeak(int errorPos, CharSequence contains) throws Exception {
-        prepareHook.run();
+        runPrepareHook();
         if (ddl != null) {
             try {
                 engine.execute(ddl, context);
@@ -1733,7 +1740,7 @@ public class QueryAssertion {
 
     private void requireFailsCompatible() {
         if (expectSize || expectedTimestamp != null || ddl2 != null || !supportsRandomAccess
-                || sizeCanBeVariable || expectedPlan != null || planFragments != null) {
+                || sizeCanBeVariable || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
             throw new IllegalStateException("fails(...)/failsWith(...) supports only ddl()/fullFatJoins()/withCompiler()/noLeakCheck()/withContext()/withEngine()");
         }
     }
@@ -1765,17 +1772,11 @@ public class QueryAssertion {
         }
     }
 
-    private String resolveTimestamp(BindVarTuple testCase) {
-        if (expectedTimestamp == null) {
-            return null;
-        }
-        final String chainTimestamp = expectedTimestamp.toString();
+    private TimestampOrder resolveTimestampOrder(BindVarTuple testCase) {
         if (testCase.getOrder() == BindVarTuple.Order.INHERIT) {
-            return chainTimestamp;
+            return expectedTimestampOrder;
         }
-        final int sep = chainTimestamp.indexOf("###");
-        final String column = sep < 0 ? chainTimestamp : chainTimestamp.substring(0, sep);
-        return column + (testCase.getOrder() == BindVarTuple.Order.ASC ? "###ASC" : "###DESC");
+        return testCase.getOrder() == BindVarTuple.Order.ASC ? TimestampOrder.ASC : TimestampOrder.DESC;
     }
 
     private void runBinds(ObjList<BindVarTuple> cases) throws SqlException {
@@ -1852,6 +1853,12 @@ public class QueryAssertion {
         }
     }
 
+    private void runPrepareHook() {
+        if (prepareHook != null) {
+            prepareHook.run();
+        }
+    }
+
     private RecordCursorFactory selectPlanFactory(CharSequence explainSql) throws SqlException {
         return compiler != null ? CairoEngine.select(compiler, explainSql, context) : engine.select(explainSql, context);
     }
@@ -1879,4 +1886,7 @@ public class QueryAssertion {
         FACTORY_TAGS[MemoryTag.NATIVE_INDEX_READER] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_TABLE_WAL_WRITER] = false;
     }
+
+    // Expected designated-timestamp scan order, set by timestamp()/timestampAsc()/timestampDesc().
+    private enum TimestampOrder {ASC, DESC}
 }

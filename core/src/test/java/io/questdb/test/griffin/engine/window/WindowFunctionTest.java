@@ -428,7 +428,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "min(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC) " +
                     "FROM tab " +
                     "ORDER BY ts DESC")
-                    .timestamp("ts###desc")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -7191,7 +7191,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values ('2021-01-05T00:00:00.000000Z', 5, 'C')");
 
             assertQuery("SELECT ts, val, grp, max(ts) OVER (ORDER BY ts DESC) as max_ts_desc FROM tab ORDER BY ts DESC")
-                    .timestamp("ts###desc")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -18704,7 +18704,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Frame backward scan on: tab
                             """,
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
-                    "ts###desc",
+                    "ts",
+                    true,
                     true,
                     false
             );
@@ -18760,7 +18761,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Frame backward scan on: tab
                             """,
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
-                    "ts###desc",
+                    "ts",
+                    true,
                     true,
                     false
             );
@@ -18816,7 +18818,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Frame backward scan on: tab
                             """,
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
-                    "ts###desc",
+                    "ts",
+                    true,
                     true,
                     false
             );
@@ -18873,7 +18876,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Frame backward scan on: tab
                             """,
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
-                    "ts###desc",
+                    "ts",
+                    true,
                     false,
                     true
             );
@@ -18994,7 +18998,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Frame backward scan on: tab
                             """,
                     "ts\ti\tj\trow_number\n",
-                    "ts###desc",
+                    "ts",
+                    true,
                     false,
                     false
             );
@@ -19051,7 +19056,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                         Frame backward scan on: tab
                             """,
                     "ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n",
-                    "ts###desc",
+                    "ts",
+                    true,
                     true,
                     false
             );
@@ -20953,14 +20959,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     protected void assertQueryAndPlan(String query, String plan, String expectedResult, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+        assertQueryAndPlan(query, plan, expectedResult, expectedTimestamp, false, supportsRandomAccess, expectSize);
+    }
+
+    protected void assertQueryAndPlan(String query, String plan, String expectedResult, String timestampColumn, boolean timestampDescending, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan(plan);
 
-        assertQuery(query)
-                .noLeakCheck()
-                .timestamp(expectedTimestamp)
-                .supportsRandomAccess(supportsRandomAccess)
+        var qa = assertQuery(query).noLeakCheck();
+        if (timestampColumn != null) {
+            if (timestampDescending) {
+                qa.timestampDesc(timestampColumn);
+            } else {
+                qa.timestampAsc(timestampColumn);
+            }
+        }
+        qa.supportsRandomAccess(supportsRandomAccess)
                 .expectSize(expectSize)
                 .returns(expectedResult);
     }

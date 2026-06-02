@@ -609,7 +609,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "FROM tab " +
                         "WHERE key IS NOT NULL " +
                         "ORDER BY ts, key " +
-                        "LIMIT ", "ts");
+                        "LIMIT ", "ts", false);
 
         assertLimitQueries("""
                         ts\tkey\tvalue
@@ -623,7 +623,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "FROM tab " +
                         "WHERE key IS NOT NULL " +
                         "ORDER BY ts, key DESC " +
-                        "LIMIT ", "ts");
+                        "LIMIT ", "ts", false);
 
         assertLimitQueries("""
                         ts\tkey\tvalue
@@ -637,7 +637,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "FROM tab " +
                         "WHERE key IS NOT NULL " +
                         "ORDER BY ts desc, key " +
-                        "LIMIT ", "ts###DESC");
+                        "LIMIT ", "ts", true);
 
         assertLimitQueries("""
                         ts\tkey\tvalue
@@ -651,7 +651,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "FROM tab " +
                         "WHERE key IS NOT NULL " +
                         "ORDER BY ts desc, key desc " +
-                        "LIMIT ", "ts###DESC");
+                        "LIMIT ", "ts", true);
     }
 
     @Test
@@ -934,7 +934,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         });
     }
 
-    private void assertLimitQueries(String result, String query, String expectedTimestamp) throws Exception {
+    private void assertLimitQueries(String result, String query, String timestampColumn, boolean descending) throws Exception {
         int firstLineStart = result.indexOf('\n') + 1;
         String header = result.substring(0, firstLineStart);
 
@@ -956,9 +956,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
                 String expected = header + result.substring(loIdx, hiIdx);
 
-                assertQuery(query + " " + lo + ", " + hi)
-                        .timestamp(expectedTimestamp)
-                        .expectSize()
+                var qa = assertQuery(query + " " + lo + ", " + hi);
+                if (descending) {
+                    qa.timestampDesc(timestampColumn);
+                } else {
+                    qa.timestampAsc(timestampColumn);
+                }
+                qa.expectSize()
                         .returns(expected);
             }
         }

@@ -2703,7 +2703,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ") " +
                     "order by ts desc")
                     .noLeakCheck()
-                    .timestamp("ts###desc")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .returns("""

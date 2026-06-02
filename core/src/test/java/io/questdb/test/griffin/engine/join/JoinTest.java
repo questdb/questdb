@@ -4100,7 +4100,7 @@ public class JoinTest extends AbstractCairoTest {
                             1\ta\t1970-01-01T00:00:00.000001Z\t1\ta\t1970-01-01T00:00:00.000001Z
                             1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z
                             """,
-                    "ts1###DESC", true
+                    "ts1", true, true
             );
 
             assertHashJoinSql(
@@ -4113,7 +4113,7 @@ public class JoinTest extends AbstractCairoTest {
                             null\t\t\t1\tf\t1970-01-01T00:00:00.000002Z
                             null\t\t\t1\tg\t1970-01-01T00:00:00.000003Z
                             """,
-                    "ts1###DESC", true
+                    "ts1", true, true
             );
             assertHashJoinSql(
                     "select * from t1 full join t2 on j = i and (s2 ~ '[abde]') order by ts1 desc, s2",
@@ -4126,7 +4126,7 @@ public class JoinTest extends AbstractCairoTest {
                             null\t\t\t1\tf\t1970-01-01T00:00:00.000002Z
                             null\t\t\t1\tg\t1970-01-01T00:00:00.000003Z
                             """,
-                    "ts1###DESC", true
+                    "ts1", true, true
             );
         });
     }
@@ -4150,6 +4150,7 @@ public class JoinTest extends AbstractCairoTest {
                             5\te\tnull\t
                             """,
                     null,
+                    false,
                     false
             );
             assertHashJoinSql(
@@ -4163,6 +4164,7 @@ public class JoinTest extends AbstractCairoTest {
                             3\tc\t3\tc
                             """,
                     null,
+                    false,
                     true
             );
             assertHashJoinSql(
@@ -4179,6 +4181,7 @@ public class JoinTest extends AbstractCairoTest {
                             5\te\tnull\t
                             """,
                     null,
+                    false,
                     true
             );
         });
@@ -7015,22 +7018,28 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     private void assertHashJoinSql(String query, String expected) throws Exception {
-        assertHashJoinSql(query, expected, null, false);
+        assertHashJoinSql(query, expected, null, false, false);
     }
 
-    private void assertHashJoinSql(String query, String expected, String ts, boolean supportRandom) throws Exception {
-        assertQuery(query)
+    private void assertHashJoinSql(String query, String expected, String tsColumn, boolean tsDescending, boolean supportRandom) throws Exception {
+        var qa = assertQuery(query)
                 .noLeakCheck()
-                .fullFatJoins()
-                .timestamp(ts)
-                .supportsRandomAccess(supportRandom)
+                .fullFatJoins();
+        if (tsColumn != null) {
+            if (tsDescending) {
+                qa.timestampDesc(tsColumn);
+            } else {
+                qa.timestampAsc(tsColumn);
+            }
+        }
+        qa.supportsRandomAccess(supportRandom)
                 .returns(expected);
         printSql(query, true);
         TestUtils.assertEquals("full fat join", expected, sink);
     }
 
     private void assertHashJoinSqlWithRandomAccess(String query, String expected) throws Exception {
-        assertHashJoinSql(query, expected, null, true);
+        assertHashJoinSql(query, expected, null, false, true);
     }
 
     private void assertRepeatedJoinQuery(String query, String left, boolean expectSize) throws Exception {

@@ -7861,7 +7861,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(INSERT_5);
             assertQuery("SELECT ts, sum(v64) OVER (ORDER BY ts DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s64 FROM t ORDER BY ts DESC")
                     .noLeakCheck()
-                    .timestamp("ts###DESC")
+                    .timestampDesc("ts")
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
