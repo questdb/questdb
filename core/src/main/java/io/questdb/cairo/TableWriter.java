@@ -6123,7 +6123,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void dropFuturePostingIndexChainEntriesBeforeLink(
+    private long dropFuturePostingIndexChainEntriesBeforeLink(
             int srcDirLen,
             CharSequence columnName,
             long columnNameTxn,
@@ -6133,11 +6133,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(srcDirLen), columnName, columnNameTxn);
             if (!ff.exists(keyFile)) {
-                return;
+                return -1L;
             }
             long keyFileSize = ff.length(keyFile);
             if (keyFileSize < PostingIndexUtils.KEY_FILE_RESERVED) {
-                return;
+                return -1L;
             }
 
             // Rename and parquet partition switch copy the committed source
@@ -6177,6 +6177,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         currentTableTxn,
                         orphanSealTxns
                 );
+                return chain.getHeadSealTxn();
             }
         } finally {
             path.trimTo(srcDirLen);
@@ -6723,14 +6724,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (ColumnType.isVarSize(columnType)) {
             linkFile(ff, iFile(path.trimTo(plen), columnName, columnNameTxn), iFile(other.trimTo(plen), newName, newColumnNameTxn));
         } else if (ColumnType.isSymbol(columnType) && IndexType.isIndexed(indexType)) {
+            long liveSealTxn = -1L;
             if (IndexType.isPosting(indexType)) {
-                dropFuturePostingIndexChainEntriesBeforeLink(plen, columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
+                liveSealTxn = dropFuturePostingIndexChainEntriesBeforeLink(plen, columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
             }
             linkFile(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn), keyFileName(indexType, other.trimTo(plen), newName, newColumnNameTxn));
             if (IndexType.isPosting(indexType)) {
                 // POSTING: link active .pv (resolved from .pk sealTxn) plus .pci and
                 // all sidecar .pc<N>.* files under the renamed (name, nameTxn).
-                linkPostingIndexAuxFiles(plen, plen, columnName, columnNameTxn, newName, newColumnNameTxn);
+                linkPostingIndexAuxFiles(plen, plen, columnName, columnNameTxn, newName, newColumnNameTxn, liveSealTxn);
             } else {
                 // BITMAP: sealTxn is unused, single .v file.
                 linkFile(ff,
@@ -7186,15 +7188,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionNameTxn
     ) {
         long linkSealTxn = columnNameTxn;
+        long liveSealTxn = -1L;
         if (IndexType.isPosting(indexType)) {
-            dropFuturePostingIndexChainEntriesBeforeLink(srcDirLen, columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
-            // Strict read: throw if .pk header is unreadable while .pv files
-            // exist in the partition (silent fallback to columnNameTxn would
-            // point valueFileName at .pv.<col>.<col>, which never exists).
-            long fromPk = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
-                    ff, path, srcDirLen, columnName, columnNameTxn,
-                    keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn));
-            linkSealTxn = fromPk >= 0 ? fromPk : 0L;
+            liveSealTxn = dropFuturePostingIndexChainEntriesBeforeLink(srcDirLen, columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
+            linkSealTxn = liveSealTxn >= 0 ? liveSealTxn : 0L;
         }
         if (
                 !linkFile(ff,
@@ -7210,7 +7207,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(']');
         }
         if (IndexType.isPosting(indexType)) {
-            linkPostingIndexAuxFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, columnName, columnNameTxn);
+            linkPostingIndexAuxFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, columnName, columnNameTxn, liveSealTxn);
         }
     }
 
@@ -7263,10 +7260,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             CharSequence srcColumnName,
             long srcColumnNameTxn,
             CharSequence dstColumnName,
-            long dstColumnNameTxn
+            long dstColumnNameTxn,
+            long liveSealTxn
     ) {
-        // Read the live sealTxn from src .pk and use it for both the .pv link and
-        // the .pc<N> visitor filter. Linking only the live generation mirrors how
+        // Use the live post-recovery sealTxn for both the .pv link and the
+        // .pc<N> visitor filter. Linking only the live generation mirrors how
         // .pv has always worked here and preserves two invariants:
         //   1. No race with PostingSealPurgeJob. The purge only targets superseded
         //      sealTxns; rename holds the writer lock so no new seal can occur,
@@ -7277,16 +7275,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         //      get purged by their queued tasks, but the dst copies would survive
         //      until the dst column is dropped (no purge task targets the dst
         //      namespace).
-        // Use the strict variant: if the .pk header read fails (e.g. a transient
-        // pread error returning -1) AND .pv files for this column exist in the
-        // partition, the function throws rather than silently skipping the link.
-        // Silent skip would leave the renamed column with .d + .pk but no .pv,
-        // and any later indexed read would fail with "file does not exist" on
-        // the chain's referenced .pv.{sealTxn}.
-        final long liveSealTxn = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
-                ff, path, srcDirLen, srcColumnName, srcColumnNameTxn,
-                keyFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn)
-        );
         // When the chain is empty (liveSealTxn < 0) the column is in its
         // pre-seal state: the live unsealed values sit in .pv.<colTxn>.0
         // rather than under a chain-published sealTxn. ADD COLUMN creates
