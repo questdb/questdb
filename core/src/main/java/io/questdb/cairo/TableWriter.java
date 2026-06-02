@@ -228,6 +228,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int fileOperationRetryCount;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
+    private final PostingIndexChainWriter linkPostingIndexChainWriter = new PostingIndexChainWriter();
+    private final LongList linkPostingIndexOrphanSealTxns = new LongList();
     private final ObjList<ColumnIndexer> indexers;
     // This is the same message bus. When TableWriter instance is created via CairoEngine, message bus is shared
     // and is owned by the engine. Since TableWriter would not have ownership of the bus, it must not free it up.
@@ -6148,7 +6150,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // previous visible entry. Run the same recovery trim that
             // writer-open uses before resolving the live sealTxn for
             // hard-linking.
-            LongList orphanSealTxns = new LongList();
+            linkPostingIndexOrphanSealTxns.clear();
             try (MemoryMARW keyMem = Vm.getCMARWInstance(
                     ff,
                     keyFile,
@@ -6157,10 +6159,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     MemoryTag.MMAP_INDEX_WRITER,
                     CairoConfiguration.O_NONE
             )) {
-                PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                PostingIndexChainWriter chain = linkPostingIndexChainWriter;
+                chain.resetState();
                 long currentTableTxn = txWriter.getTxn();
                 chain.openExisting(keyMem);
-                int dropped = chain.recoveryDropAbandoned(keyMem, currentTableTxn, orphanSealTxns);
+                int dropped = chain.recoveryDropAbandoned(keyMem, currentTableTxn, linkPostingIndexOrphanSealTxns);
                 if (dropped > 0 || chain.isHeadTrimmedOnLastRecovery()) {
                     LOG.info().$("posting index link recovery [table=").$(tableToken)
                             .$(", column=").$(columnName)
@@ -6175,7 +6178,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         partitionTimestamp,
                         partitionNameTxn,
                         currentTableTxn,
-                        orphanSealTxns
+                        linkPostingIndexOrphanSealTxns
                 );
                 return chain.getHeadSealTxn();
             }
