@@ -32,7 +32,9 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
@@ -92,6 +94,35 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                 var txn = rdr.getTxn();
                 Assert.assertEquals(3, txn); // Expecting many transactions to be skipped
             }
+        });
+    }
+
+    @Test
+    public void testMatViewPermittedColumnAltersStayNonStructural() throws Exception {
+        // Locks in the assumption behind the materialized-view skip-barrier exemption in
+        // ApplyWal2TableJob.calculateSkipTransactionCount: a mat view scans PAST a non-data barrier (so an
+        // insert before it can still be skipped) unless the barrier is an SQL transaction. That is safe only
+        // because the column operations a mat view is allowed to run - ADD INDEX, DROP INDEX, SYMBOL CAPACITY
+        // - are non-structural, so they commit as walId > 0 SQL transactions (hard barriers via the
+        // futureType != SQL carve-out) rather than walId < 1 structural changes (exempted soft barriers). The
+        // one row-order-dependent structural op, a column type conversion, is structural AND separately
+        // rejected on a mat view, so it can never reach the exempted path.
+        //
+        // If any of these column alters were ever made structural (added to AlterOperation.isStructural()),
+        // it would silently become an exempted soft barrier on a mat view and could let a primary and a
+        // replica skip different transactions ahead of it - reopening the symbol-map divergence the barrier
+        // closes. This test fails the moment that assumption breaks.
+        assertMemoryLeak(() -> {
+            execute("create table t (s1 symbol, s2 symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
+
+            // The column alters a mat view is permitted to run must be non-structural -> SQL hard barrier.
+            assertAlterIsStructural("alter table t alter column s1 add index", false);
+            assertAlterIsStructural("alter table t alter column s2 drop index", false);
+            assertAlterIsStructural("alter table t alter column s1 symbol capacity 256", false);
+
+            // A column type conversion is structural - the op the barrier exists for - and is separately
+            // rejected on a mat view, so it never reaches the exempted soft-barrier path.
+            assertAlterIsStructural("alter table t alter column s1 type varchar", true);
         });
     }
 
@@ -408,6 +439,92 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeDoesNotSkipInsertBeforeSqlBarrierOnMatView() throws Exception {
+        // The mat-view exemption keeps an SQL transaction a HARD barrier even for a materialized view: the
+        // futureType != SQL carve-out in ApplyWal2TableJob.calculateSkipTransactionCount. Unlike a
+        // MAT_VIEW_INVALIDATE - a soft barrier the scan passes, so the insert before it is skipped (see
+        // testReplaceRangeSkipsInsertBeforeBarrierOnMatView) - an INSERT before an SQL transaction is not
+        // skipped on a mat view either.
+        //
+        // ADD INDEX is the realistic mat-view SQL barrier: it is non-data and non-structural, so it commits
+        // as a walId > 0 SQL transaction rather than a walId < 1 structural change, and it builds row-derived
+        // index state from the rows present when it runs - the kind of operation the hard SQL barrier exists
+        // to protect. (A column type conversion, the other such operation, cannot run on a mat view at all.)
+        //
+        // This is path coverage rather than a strict guard: the covering REPLACE_RANGE overwrites the
+        // inserted rows and rebuilds the index for that range either way, so a single instance ends in the
+        // same state whether or not the insert is skipped. The assertion pins that the SQL-barrier-on-a-mat-
+        // view arm and the ADD INDEX + REPLACE_RANGE interaction apply cleanly, return correct data, and
+        // leave a usable index.
+        assertMemoryLeak(() -> {
+            execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("mv");
+            Assert.assertTrue("mv must be a materialized view", tableToken.isMatView());
+
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
+            final long rangeHi = MicrosTimestampDriver.floor("2022-02-24T01"); // exclusive
+
+            // INSERT covered by the later REPLACE_RANGE - skipped only if the scan passes the barrier.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putSym(0, "old" + i);
+                    row.putDouble(1, i);
+                    row.append();
+                }
+                ww.commit();
+            }
+
+            // ADD INDEX - a non-structural ALTER that commits as a SQL (walId > 0) transaction, the hard
+            // barrier the futureType != SQL carve-out keeps even for a mat view.
+            execute("alter materialized view mv alter column s add index");
+
+            // REPLACE_RANGE fully covering the insert, with new values.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putSym(0, "new" + i);
+                    row.putDouble(1, 1000 + i);
+                    row.append();
+                }
+                ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+
+            // Apply insert + add-index + replace in one batch.
+            drainWalQueue();
+
+            // Only the replacement values remain.
+            assertSql(
+                    """
+                            s\tv
+                            new0\t1000.0
+                            new1\t1001.0
+                            new2\t1002.0
+                            new3\t1003.0
+                            new4\t1004.0
+                            new5\t1005.0
+                            new6\t1006.0
+                            new7\t1007.0
+                            new8\t1008.0
+                            new9\t1009.0
+                            """,
+                    "select s, v from mv order by ts"
+            );
+
+            // The index built by ADD INDEX and rebuilt by the REPLACE_RANGE resolves the replacement row.
+            assertSql(
+                    """
+                            s\tv
+                            new5\t1005.0
+                            """,
+                    "select s, v from mv where s = 'new5'"
+            );
+        });
+    }
+
+    @Test
     public void testReplaceRangeDoesNotSkipInsertBeforeSymbolConversion() throws Exception {
         // The WAL apply job's replace-range skip optimization (ApplyWal2TableJob.calculateSkipTransactionCount)
         // must not skip an INSERT that precedes a STRING->SYMBOL conversion, even when a later REPLACE_RANGE
@@ -490,7 +607,6 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         // the inserted data either way, so a single instance ends in the same state with or without the fix.
         assertMemoryLeak(() -> {
             execute("create table x (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-            final TableToken tableToken = engine.verifyTableName("x");
 
             // Insert that the truncate (not a REPLACE_RANGE) makes skippable; a barrier follows it.
             final StringSink insert = new StringSink();
@@ -1288,6 +1404,21 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             lastValues[4] + "\t2022-02-24T23:45:00.000000Z\n" +
                             lastValues[5] + "\t2022-02-24T23:55:00.000000Z\n");
         });
+    }
+
+    private static void assertAlterIsStructural(String alterSql, boolean expectedStructural) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            AlterOperation alterOp = compiler.compile(alterSql, sqlExecutionContext).getAlterOperation();
+            Assert.assertNotNull(alterSql + " did not compile to an ALTER operation", alterOp);
+            if (expectedStructural) {
+                Assert.assertTrue(alterSql + " must be structural", alterOp.isStructural());
+            } else {
+                Assert.assertFalse(
+                        alterSql + " must be non-structural so it stays a hard SQL barrier on a materialized view",
+                        alterOp.isStructural()
+                );
+            }
+        }
     }
 
     private static void commitNoRowsWithRangeReplace(

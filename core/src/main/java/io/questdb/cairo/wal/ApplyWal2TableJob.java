@@ -145,10 +145,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             long firstNonSkippableTxn = Long.MAX_VALUE;
             boolean seqTxnCanBeSkipped = false;
 
-            // Even though it's O(N^2) complexity, the number of transactions we can skip is expected to be small.
-            // So the outer loop exits very early, it is expected to exit after 1st iteration.
-            // Unless TRUNCATE SQL found and many transactions can be skipped.
-            // TRUNCATE has special optimization to stop scanning early.
+            // Even though it's O(N^2) complexity, the number of transactions we can skip is expected to be
+            // small, so the outer loop usually exits after the 1st iteration. It runs longer only when many
+            // transactions are skippable: a TRUNCATE ahead (the early return below stops the scan at it), or,
+            // for a materialized view, a run of inserts covered by a later REPLACE_RANGE across recorded
+            // barriers (the mat-view exemption below keeps scanning past non-data transactions).
             for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
                 int futureWalId = walTxnDetails.getWalId(futureSeqTxn);
                 // NONE for structural (walId < 1) transactions, which carry no data txn type; the barrier
@@ -177,6 +178,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // work. So for a mat view, record the barrier and keep scanning (the original behaviour), so
                     // a later TRUNCATE or covering REPLACE_RANGE can still skip the data before it. An SQL
                     // transaction stays a hard barrier even for a mat view, as it may read existing data.
+                    //
+                    // This mat-view exemption is safe only because no row-order-dependent structural change
+                    // can reach a mat view: a column type conversion - the one such operation - is rejected on
+                    // a mat view (SqlCompilerImpl.checkMatViewModification), and the column alters a mat view
+                    // does permit (ADD INDEX, DROP INDEX, SYMBOL CAPACITY) are non-structural, so they commit
+                    // as walId > 0 SQL transactions and stay hard barriers via the futureType != SQL check
+                    // below. Making a row-dependent op structural and allowing it on a mat view would reopen
+                    // the cross-instance divergence; WalWriterReplaceRangeTest's
+                    // testMatViewPermittedColumnAltersStayNonStructural guards the non-structural half.
                     if (tableToken.isMatView() && futureType != SQL) {
                         firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
                         continue;
