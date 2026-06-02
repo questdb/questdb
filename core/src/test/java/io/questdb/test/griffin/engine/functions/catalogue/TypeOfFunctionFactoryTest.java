@@ -36,28 +36,41 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarNotSupported() throws Exception {
-        assertException(
-                "select typeOf($1) from test",
-                "create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))",
-                14,
-                "bind variables are not supported"
-        );
+        assertQuery("select typeOf($1) from test")
+                .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))")
+                .fails(14, "bind variables are not supported");
     }
 
     @Test
-    public void testOfNull() throws SqlException {
-        assertSql("typeOf\n" +
-                "NULL\n", "select typeOf(null)"
-        );
-        assertSql("typeOf\n" +
-                "STRING\n", "select typeOf(cast(null as string))"
-        );
-        assertSql("typeOf\n" +
-                "NULL\n", "select typeOf(value) from (select null value from long_sequence(1))"
-        );
-        assertSql("typeOf\n" +
-                "LONG\n", "select typeOf(value) from (select cast(null as long) value from long_sequence(1))"
-        );
+    public void testOfNull() throws Exception {
+        assertQuery("select typeOf(null)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        typeOf
+                        NULL
+                        """);
+        assertQuery("select typeOf(cast(null as string))")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        typeOf
+                        STRING
+                        """);
+        assertQuery("select typeOf(value) from (select null value from long_sequence(1))")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        typeOf
+                        NULL
+                        """);
+        assertQuery("select typeOf(value) from (select cast(null as long) value from long_sequence(1))")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        typeOf
+                        LONG
+                        """);
     }
 
     @Test
@@ -71,7 +84,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTypeOfAllRegularDataTypes() throws SqlException {
+    public void testTypeOfAllRegularDataTypes() throws Exception {
         for (int i = ColumnType.BOOLEAN; i < ColumnType.NULL; i++) {
             String name = ColumnType.nameOf(i);
             if (Chars.equals("unknown", name)
@@ -91,17 +104,23 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
                 continue;
             }
 
-            assertSql("typeOf\n" + ColumnType.nameOf(i) + "\n", "select typeOf(cast(null as " + name + "  ))");
+            assertQuery("select typeOf(cast(null as " + name + "  ))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\n" + ColumnType.nameOf(i) + "\n");
         }
     }
 
     @Test
-    public void testTypeOfGeoHash() throws SqlException {
+    public void testTypeOfGeoHash() throws Exception {
         for (int i = 1; i <= ColumnType.GEOLONG_MAX_BITS; i++) {
             int type = ColumnType.getGeoHashTypeWithBits(i);
             sink.clear();
             sink.put("select typeOf(rnd_geohash(").put(i).put("))");
-            assertSql("typeOf\n" + ColumnType.nameOf(type) + "\n", sink);
+            assertQuery(sink)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\n" + ColumnType.nameOf(type) + "\n");
         }
     }
 

@@ -33,7 +33,6 @@ import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Files;
@@ -51,6 +50,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.ParquetTestUtils;
@@ -67,7 +67,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
-import static io.questdb.test.tools.TestUtils.*;
+import static io.questdb.test.tools.TestUtils.assertEventually;
+import static io.questdb.test.tools.TestUtils.printSqlToString;
 
 public class ExpParquetExportTest extends AbstractBootstrapTest {
 
@@ -127,7 +128,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Test
     public void testBasics() throws Exception {
         getExportTester()
-                .run((engine, sqlExecutionContext) ->
+                .run((_, _) ->
                         testHttpClient.assertGetParquet("/exp", 44690, params, "generate_series(0, '1970-01-02', '1m');"));
     }
 
@@ -245,7 +246,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Test
     public void testConcurrentParquetExportsWithCancel() throws Exception {
         getExportTester()
-                .run((engine, sqlExecutionContext) -> {
+                .run((engine, _) -> {
                     int threadCount = 3;
                     CyclicBarrier barrier = new CyclicBarrier(threadCount);
                     AtomicInteger completedCount = new AtomicInteger(0);
@@ -446,7 +447,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Test
     public void testExportDropConnection() throws Exception {
         assertMemoryLeak(() -> getExportTester()
-                .runNoLeakCheck(null, (engine, sqlExecutionContext) -> {
+                .runNoLeakCheck(null, (engine, _) -> {
                     HttpClient client = testHttpClient.getHttpClient();
                     HttpClient.Request req = client.newRequest("localhost", 9001);
                     req.GET().url("/exp").query("query", "generate_series(0, '9999-01-01', '1U');");
@@ -501,7 +502,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Test
     public void testExportWithAddColumn() throws Exception {
         getExportTester()
-                .run((engine, sqlExecutionContext) -> {
+                .run((engine, _) -> {
                     engine.execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
                     engine.execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1), ('2020-01-03T00:00:00.000000Z', 3)");
                     drainWalQueue(engine);
@@ -531,7 +532,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Test
     public void testExportWithProjection() throws Exception {
         getExportTester()
-                .run((engine, sqlExecutionContext) -> {
+                .run((engine, _) -> {
                     engine.execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
                     engine.execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1), ('2020-01-03T00:00:00.000000Z', 2)");
                     drainWalQueue(engine);
@@ -544,7 +545,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Test
     public void testExportWithTimestampDescending() throws Exception {
         getExportTester()
-                .run((engine, sqlExecutionContext) -> {
+                .run((engine, _) -> {
                     engine.execute("create table test_table (ts TIMESTAMP, x int)");
                     engine.execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1), ('2020-01-03T00:00:00.000000Z', 2)");
                     drainWalQueue(engine);
@@ -558,7 +559,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Test
     public void testExportWithoutTimestamp() throws Exception {
         getExportTester()
-                .run((engine, sqlExecutionContext) -> {
+                .run((engine, _) -> {
                     engine.execute("create table test_table (ts TIMESTAMP, x int)");
                     engine.execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1), ('2020-01-03T00:00:00.000000Z', 2)");
                     drainWalQueue(engine);
@@ -665,12 +666,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             "case when x % 2 = 0 then 'symA' else 'symB' end " +
                             "from long_sequence(10000)");
                     drainWalQueue(engine);
-                    assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select day(ts), count(*) from test_table group by day(ts) order by day(ts)",
-                            new StringSink(),
-                            """
+                    assertQuery("select day(ts), count(*) from test_table group by day(ts) order by day(ts)")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce("""
                                     day	count
                                     1	1000
                                     2	1000
@@ -682,8 +682,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                     8	1000
                                     9	1000
                                     10	1000
-                                    """
-                    );
+                                    """);
                     engine.execute("alter table test_table convert partition to parquet where ts in '2020-01-01'");
                     engine.execute("alter table test_table convert partition to parquet where ts in '2020-01-03'");
                     engine.execute("alter table test_table convert partition to parquet where ts in '2020-01-05'");
@@ -2166,7 +2165,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Test
     public void testParquetExportTimeout() throws Exception {
         getExportTester()
-                .run((engine, sqlExecutionContext) -> {
+                .run((_, _) -> {
                     params.clear();
                     params.put("query", "generate_series(0, '9999-01-01', '1U')");
                     params.put("fmt", "parquet");
@@ -2191,7 +2190,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Test
     public void testParquetExportTimeoutNodelay() throws Exception {
         getExportTester()
-                .run((engine, sqlExecutionContext) -> {
+                .run((_, _) -> {
                     params.clear();
                     params.put("query", "generate_series(0, '9999-01-01', '1U')");
                     params.put("fmt", "parquet");
@@ -2274,9 +2273,12 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 sink.clear();
                 sink.put("COPY '").put(copyIDStr).put("' CANCEL;");
                 try {
-                    assertSql(engine, sqlExecutionContext, sink.toString(), sink, "id\tstatus\n" +
-                            copyIDStr + "\tcancelled\n");
-                } catch (SqlException e) {
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, sink.toString())
+                            .noLeakCheck()
+                            .returnsOnce("id\tstatus\n" +
+                                    copyIDStr + "\tcancelled\n");
+                } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
                 // wait cancel finish

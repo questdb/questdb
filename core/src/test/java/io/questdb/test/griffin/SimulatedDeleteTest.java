@@ -41,10 +41,13 @@ public class SimulatedDeleteTest extends AbstractCairoTest {
             execute("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'EUR', 880.20, 6000000004);");
             execute("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006);");
 
-            assertSql(
-                    "cust_id\tbalance_ccy\tbalance\tinactive\ttimestamp\n" +
-                            "1\tEUR\t650.5\tfalse\t1970-01-01T01:40:00.000002Z\n", "(select * from balances where cust_id=1 latest on timestamp partition by balance_ccy) where not inactive;"
-            );
+            assertQuery("(select * from balances where cust_id=1 latest on timestamp partition by balance_ccy) where not inactive;")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns("""
+                            cust_id\tbalance_ccy\tbalance\tinactive\ttimestamp
+                            1\tEUR\t650.5\tfalse\t1970-01-01T01:40:00.000002Z
+                            """);
         });
     }
 

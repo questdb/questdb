@@ -37,20 +37,15 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
         bindVariableService.clear();
         bindVariableService.setLong(0, 4);
         bindVariableService.setLong(1, 2);
-        assertQuery(
-                """
+        assertQuery("select * from x where x in ($1,$2)")
+                .ddl("create table x as (" +
+                        "select x from long_sequence(10)" +
+                        ")")
+                .returns("""
                         x
                         2
                         4
-                        """,
-                "select * from x where x in ($1,$2)",
-                "create table x as (" +
-                        "select x from long_sequence(10)" +
-                        ")",
-                null,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
@@ -71,14 +66,17 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
             sink.trimTo(sink.length() - 1);
             sink.put(") ORDER BY l LIMIT 5;");
 
-            assertSql("""
-                    l
-                    69
-                    143
-                    280
-                    291
-                    683
-                    """, sink);
+            assertQuery(sink)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            l
+                            69
+                            143
+                            280
+                            291
+                            683
+                            """);
 
             if (engine.getConfiguration().getSqlJitMode() == SqlJitMode.JIT_MODE_ENABLED) {
                 assertPlanNoLeakCheck(sink, """
@@ -127,14 +125,17 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
             sink.trimTo(sink.length() - 1);
             sink.put(") ORDER BY l LIMIT 5;");
 
-            assertSql("""
-                    l
-                    2
-                    5
-                    9
-                    18
-                    20
-                    """, sink);
+            assertQuery(sink)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            l
+                            2
+                            5
+                            9
+                            18
+                            20
+                            """);
 
             // should be the same, JIT or no JIT
             assertPlanNoLeakCheck(sink, """
@@ -155,56 +156,41 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testManyConst() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x where x in (7,5,3,1)")
+                .ddl("create table x as (" +
+                        "select x from long_sequence(10)" +
+                        ")")
+                .returns("""
                         x
                         1
                         3
                         5
                         7
-                        """,
-                "select * from x where x in (7,5,3,1)",
-                "create table x as (" +
-                        "select x from long_sequence(10)" +
-                        ")",
-                null,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testSingleConst() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x where x in (1)")
+                .ddl("create table x as (" +
+                        "select x from long_sequence(5)" +
+                        ")")
+                .returns("""
                         x
                         1
-                        """,
-                "select * from x where x in (1)",
-                "create table x as (" +
-                        "select x from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                false
-        );
+                        """);
     }
 
     @Test
     public void testTwoConst() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x where x in (2,1)")
+                .ddl("create table x as (" +
+                        "select x from long_sequence(5)" +
+                        ")")
+                .returns("""
                         x
                         1
                         2
-                        """,
-                "select * from x where x in (2,1)",
-                "create table x as (" +
-                        "select x from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                false
-        );
+                        """);
     }
 }

@@ -31,12 +31,11 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAll() throws Exception {
-        assertMemoryLeak(() -> assertSql("""
+        assertQuery("select vwap(rnd_double(), rnd_double()) from long_sequence(10)")
+                .returnsOnce("""
                         vwap
                         0.4601797676425299
-                        """,
-                "select vwap(rnd_double(), rnd_double()) from long_sequence(10)"
-        ));
+                        """);
     }
 
     @Test
@@ -44,24 +43,27 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (p double, q double)");
             execute("insert into tab values (null,null),(1,null),(100,10),(null,1),(105,40),(1,0),(1,-1)");
-            assertSql(
-                    """
+            assertQuery("select vwap(p, q) from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             vwap
                             104.0
-                            """,
-                    "select vwap(p, q) from tab"
-            );
+                            """);
             // make sure they are the same
-            assertSql("""
+            assertQuery("select (new_vwap=old_vwap) same_vwap " +
+                    "from (" +
+                    "      (select vwap(p, q) new_vwap from tab) a," +
+                    "      (select (sum(p*q)/sum(q)) old_vwap from tab where p != null and q != null and q > 0) b" +
+                    ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             same_vwap
                             true
-                            """,
-                    "select (new_vwap=old_vwap) same_vwap " +
-                            "from (" +
-                            "      (select vwap(p, q) new_vwap from tab) a," +
-                            "      (select (sum(p*q)/sum(q)) old_vwap from tab where p != null and q != null and q > 0) b" +
-                            ")"
-            );
+                            """);
         });
     }
 
@@ -70,12 +72,14 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (a0 double, a1 double)");
             execute("insert into tab values (null,null),(null,1),(1,null)");
-            assertSql("""
+            assertQuery("select vwap(a0, a1) from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             vwap
                             null
-                            """,
-                    "select vwap(a0, a1) from tab"
-            );
+                            """);
         });
     }
 
@@ -84,12 +88,14 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (a0 double, a1 double)");
             execute("insert into tab values (100,10),(105,40)");
-            assertSql("""
+            assertQuery("select vwap(a0, a1) from tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             vwap
                             104.0
-                            """,
-                    "select vwap(a0, a1) from tab"
-            );
+                            """);
         });
     }
 
@@ -98,13 +104,14 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (price double, volume double, ticker symbol)");
             execute("insert into tab values (100,10,'a'),(105,40,'a'),(102,20,'b'),(103,60,'b')");
-            assertSql("""
+            assertQuery("select ticker,vwap(price, volume) from tab order by ticker")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             ticker\tvwap
                             a\t104.0
                             b\t102.75
-                            """,
-                    "select ticker,vwap(price, volume) from tab order by ticker"
-            );
+                            """);
         });
     }
 
@@ -150,15 +157,12 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                     "2024-01-01T04:00:00.000000Z\tAAPL\t110.0\n" +
                     "2024-01-01T04:00:00.000000Z\tGOOGL\t108.0\n";
 
-            assertQuery(
-                    expected,
-                    "select ts, ticker, vwap(price, volume) " +
-                            "from trades " +
-                            "sample by 1h fill(linear) ",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("select ts, ticker, vwap(price, volume) " +
+                    "from trades " +
+                    "sample by 1h fill(linear) ")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 }

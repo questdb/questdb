@@ -70,8 +70,10 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                                 FROM long_sequence(12)
                             )"""
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM x ORDER BY a ASC, b DESC, c, d")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tb\tc\td
                             0\t1\t0\t3
                             0\t1\t2\t9
@@ -85,16 +87,24 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             2\t1\t2\t11
                             2\t0\t0\t2
                             2\t0\t2\t8
-                            """,
-                    "SELECT * FROM x ORDER BY a ASC, b DESC, c, d"
-            );
+                            """);
         });
     }
 
     @Test
     public void testOrderByDateColumnAscMixedValues() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x order by a asc;")
+                .ddl("create table x as (" +
+                        "select" +
+                        " cast (case" +
+                        "     when x < 10 then x" +
+                        "     when x >= 10 and x < 15 then null" +
+                        "     else x - 25" +
+                        " end as date) as a" +
+                        " from long_sequence(25)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         a
                         
                         
@@ -121,27 +131,23 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         1970-01-01T00:00:00.007Z
                         1970-01-01T00:00:00.008Z
                         1970-01-01T00:00:00.009Z
-                        """,
-                "select * from x order by a asc;",
-                "create table x as (" +
-                        "select" +
-                        " cast (case" +
-                        "     when x < 10 then x" +
-                        "     when x >= 10 and x < 15 then null" +
-                        "     else x - 25" +
-                        " end as date) as a" +
-                        " from long_sequence(25)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testOrderByDateColumnDescMixedValues() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x order by a desc;")
+                .ddl("create table x as (" +
+                        "select" +
+                        " cast (case" +
+                        "     when x < 10 then x" +
+                        "     when x >= 10 and x < 15 then null" +
+                        "     else x - 25" +
+                        " end as date) as a" +
+                        " from long_sequence(25)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         a
                         1970-01-01T00:00:00.009Z
                         1970-01-01T00:00:00.008Z
@@ -168,21 +174,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         
                         
                         
-                        """,
-                "select * from x order by a desc;",
-                "create table x as (" +
-                        "select" +
-                        " cast (case" +
-                        "     when x < 10 then x" +
-                        "     when x >= 10 and x < 15 then null" +
-                        "     else x - 25" +
-                        " end as date) as a" +
-                        " from long_sequence(25)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -208,8 +200,10 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                                 FROM long_sequence(11)
                             )"""
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM x ORDER BY d ASC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             d
                             -1.0000000000000004
                             -1.0000000000000002
@@ -222,11 +216,11 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             null
                             null
                             null
-                            """,
-                    "SELECT * FROM x ORDER BY d ASC"
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x ORDER BY d DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             d
                             null
                             null
@@ -239,9 +233,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             -0.0
                             -1.0000000000000002
                             -1.0000000000000004
-                            """,
-                    "SELECT * FROM x ORDER BY d DESC"
-            );
+                            """);
         });
     }
 
@@ -268,8 +260,10 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                                 FROM long_sequence(11)
                             )"""
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM x ORDER BY f ASC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             f
                             -1.0002
                             -1.0001
@@ -282,16 +276,24 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             null
                             null
                             null
-                            """,
-                    "SELECT * FROM x ORDER BY f ASC"
-            );
+                            """);
         });
     }
 
     @Test
     public void testOrderByIPv4ColumnAscMixedValues() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x order by a asc;")
+                .ddl("create table x as (" +
+                        "select" +
+                        " cast (cast (case" +
+                        "     when x < 10 then x" +
+                        "     when x >= 10 and x < 15 then null" +
+                        "     else x - 25" +
+                        " end as int) as IPv4) as a" +
+                        " from long_sequence(25)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         a
                         
                         
@@ -318,27 +320,23 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         255.255.255.253
                         255.255.255.254
                         255.255.255.255
-                        """,
-                "select * from x order by a asc;",
-                "create table x as (" +
-                        "select" +
-                        " cast (cast (case" +
-                        "     when x < 10 then x" +
-                        "     when x >= 10 and x < 15 then null" +
-                        "     else x - 25" +
-                        " end as int) as IPv4) as a" +
-                        " from long_sequence(25)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testOrderByIPv4ColumnDescMixedValues() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x order by a desc;")
+                .ddl("create table x as (" +
+                        "select" +
+                        " cast (cast (case" +
+                        "     when x < 10 then x" +
+                        "     when x >= 10 and x < 15 then null" +
+                        "     else x - 25" +
+                        " end as int) as IPv4) as a" +
+                        " from long_sequence(25)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         a
                         255.255.255.255
                         255.255.255.254
@@ -365,56 +363,13 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         
                         
                         
-                        """,
-                "select * from x order by a desc;",
-                "create table x as (" +
-                        "select" +
-                        " cast (cast (case" +
-                        "     when x < 10 then x" +
-                        "     when x >= 10 and x < 15 then null" +
-                        "     else x - 25" +
-                        " end as int) as IPv4) as a" +
-                        " from long_sequence(25)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testOrderByIntColumnDescMixedValues() throws Exception {
-        assertQuery(
-                """
-                        a
-                        9
-                        8
-                        7
-                        6
-                        5
-                        4
-                        3
-                        2
-                        1
-                        0
-                        -1
-                        -2
-                        -3
-                        -4
-                        -5
-                        -6
-                        -7
-                        -8
-                        -9
-                        -10
-                        null
-                        null
-                        null
-                        null
-                        null
-                        """,
-                "select * from x order by a desc;",
-                "create table x as (" +
+        assertQuery("select * from x order by a desc;")
+                .ddl("create table x as (" +
                         "select" +
                         " cast (case" +
                         "     when x < 10 then x" +
@@ -422,17 +377,52 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         "     else x - 25" +
                         " end as int) as a" +
                         " from long_sequence(25)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        a
+                        9
+                        8
+                        7
+                        6
+                        5
+                        4
+                        3
+                        2
+                        1
+                        0
+                        -1
+                        -2
+                        -3
+                        -4
+                        -5
+                        -6
+                        -7
+                        -8
+                        -9
+                        -10
+                        null
+                        null
+                        null
+                        null
+                        null
+                        """);
     }
 
     @Test
     public void testOrderByLongColumnAscMixedValues() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x order by a asc;")
+                .ddl("create table x as (" +
+                        "select" +
+                        " case" +
+                        "     when x < 10 then x" +
+                        "     when x >= 10 and x < 15 then null" +
+                        "     else x - 25" +
+                        " end as a" +
+                        " from long_sequence(25)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         a
                         null
                         null
@@ -459,27 +449,23 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         7
                         8
                         9
-                        """,
-                "select * from x order by a asc;",
-                "create table x as (" +
-                        "select" +
-                        " case" +
-                        "     when x < 10 then x" +
-                        "     when x >= 10 and x < 15 then null" +
-                        "     else x - 25" +
-                        " end as a" +
-                        " from long_sequence(25)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testOrderByLongColumnDescMixedValues() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x order by a desc;")
+                .ddl("create table x as (" +
+                        "select" +
+                        " case" +
+                        "     when x < 10 then x" +
+                        "     when x >= 10 and x < 15 then null" +
+                        "     else x - 25" +
+                        " end as a" +
+                        " from long_sequence(25)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         a
                         9
                         8
@@ -506,21 +492,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         null
                         null
                         null
-                        """,
-                "select * from x order by a desc;",
-                "create table x as (" +
-                        "select" +
-                        " case" +
-                        "     when x < 10 then x" +
-                        "     when x >= 10 and x < 15 then null" +
-                        "     else x - 25" +
-                        " end as a" +
-                        " from long_sequence(25)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -543,8 +515,10 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                                 FROM long_sequence(9)
                             )"""
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM x ORDER BY a, b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a	b
                             1	27
                             1	54
@@ -555,9 +529,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             3	28
                             3	55
                             3	82
-                            """,
-                    "SELECT * FROM x ORDER BY a, b"
-            );
+                            """);
         });
     }
 
@@ -582,8 +554,10 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                                 FROM long_sequence(11)
                             )"""
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM x ORDER BY a DESC, b ASC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a	b
                             3	100
                             3	200
@@ -596,9 +570,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             1	300
                             null	100
                             null	200
-                            """,
-                    "SELECT * FROM x ORDER BY a DESC, b ASC"
-            );
+                            """);
         });
     }
 
@@ -611,8 +583,10 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             INSERT INTO x (sym, val) VALUES
                             ('B', 2), ('A', 3), ('B', 1), ('A', 1), ('B', 3), ('A', 2)"""
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM x ORDER BY sym, val")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tval
                             A\t1
                             A\t2
@@ -620,9 +594,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             B\t1
                             B\t2
                             B\t3
-                            """,
-                    "SELECT * FROM x ORDER BY sym, val"
-            );
+                            """);
         });
     }
 
@@ -630,13 +602,13 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     public void testOrderByOneRow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (SELECT 42 AS a FROM long_sequence(1))");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM x ORDER BY a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a
                             42
-                            """,
-                    "SELECT * FROM x ORDER BY a"
-            );
+                            """);
         });
     }
 
@@ -652,8 +624,10 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                                 FROM long_sequence(20)
                             )"""
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM x ORDER BY key")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             key\tinsertion_order
                             1\t1
                             1\t2
@@ -675,16 +649,26 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             1\t18
                             1\t19
                             1\t20
-                            """,
-                    "SELECT * FROM x ORDER BY key"
-            );
+                            """);
         });
     }
 
     @Test
     public void testOrderBySymbolColumnAscWithNulls() throws Exception {
-        assertQuery(
-                """
+        assertQuery("SELECT * FROM x ORDER BY sym ASC")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT" +
+                        " CAST(CASE" +
+                        "     WHEN x % 4 = 0 THEN NULL" +
+                        "     WHEN x % 4 = 1 THEN 'A'" +
+                        "     WHEN x % 4 = 2 THEN 'B'" +
+                        "     ELSE 'C'" +
+                        " END AS SYMBOL) AS sym," +
+                        " x AS val" +
+                        " FROM long_sequence(12)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         sym\tval
                         \t4
                         \t8
@@ -698,29 +682,25 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         C\t3
                         C\t7
                         C\t11
-                        """,
-                "SELECT * FROM x ORDER BY sym ASC",
-                "CREATE TABLE x AS (" +
-                        "SELECT" +
-                        " CAST(CASE" +
-                        "     WHEN x % 4 = 0 THEN NULL" +
-                        "     WHEN x % 4 = 1 THEN 'A'" +
-                        "     WHEN x % 4 = 2 THEN 'B'" +
-                        "     ELSE 'C'" +
-                        " END AS SYMBOL) AS sym," +
-                        " x AS val" +
-                        " FROM long_sequence(12)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testOrderBySymbolColumnDescWithNulls() throws Exception {
-        assertQuery(
-                """
+        assertQuery("SELECT * FROM x ORDER BY sym DESC")
+                .ddl("CREATE TABLE x AS (" +
+                        "SELECT" +
+                        " CAST(CASE" +
+                        "     WHEN x % 4 = 0 THEN NULL" +
+                        "     WHEN x % 4 = 1 THEN 'A'" +
+                        "     WHEN x % 4 = 2 THEN 'B'" +
+                        "     ELSE 'C'" +
+                        " END AS SYMBOL) AS sym," +
+                        " x AS val" +
+                        " FROM long_sequence(12)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         sym\tval
                         C\t3
                         C\t7
@@ -734,29 +714,24 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         \t4
                         \t8
                         \t12
-                        """,
-                "SELECT * FROM x ORDER BY sym DESC",
-                "CREATE TABLE x AS (" +
-                        "SELECT" +
-                        " CAST(CASE" +
-                        "     WHEN x % 4 = 0 THEN NULL" +
-                        "     WHEN x % 4 = 1 THEN 'A'" +
-                        "     WHEN x % 4 = 2 THEN 'B'" +
-                        "     ELSE 'C'" +
-                        " END AS SYMBOL) AS sym," +
-                        " x AS val" +
-                        " FROM long_sequence(12)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testOrderByTimestampColumnAscMixedValues() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x order by a asc;")
+                .ddl("create table x as (" +
+                        "select" +
+                        " cast (case" +
+                        "     when x < 10 then x" +
+                        "     when x >= 10 and x < 15 then null" +
+                        "     else x - 25" +
+                        " end as timestamp) as a" +
+                        " from long_sequence(25)" +
+                        ")")
+                .timestamp("a")
+                .expectSize()
+                .returns("""
                         a
                         
                         
@@ -783,27 +758,24 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         1970-01-01T00:00:00.000007Z
                         1970-01-01T00:00:00.000008Z
                         1970-01-01T00:00:00.000009Z
-                        """,
-                "select * from x order by a asc;",
-                "create table x as (" +
-                        "select" +
-                        " cast (case" +
-                        "     when x < 10 then x" +
-                        "     when x >= 10 and x < 15 then null" +
-                        "     else x - 25" +
-                        " end as timestamp) as a" +
-                        " from long_sequence(25)" +
-                        ")",
-                "a",
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testOrderByTimestampColumnDescMixedValues() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x order by a desc;")
+                .ddl("create table x as (" +
+                        "select" +
+                        " cast (case" +
+                        "     when x < 10 then x" +
+                        "     when x >= 10 and x < 15 then null" +
+                        "     else x - 25" +
+                        " end as timestamp) as a" +
+                        " from long_sequence(25)" +
+                        ")")
+                .timestamp("a###desc")
+                .expectSize()
+                .returns("""
                         a
                         1970-01-01T00:00:00.000009Z
                         1970-01-01T00:00:00.000008Z
@@ -830,40 +802,36 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         
                         
                         
-                        """,
-                "select * from x order by a desc;",
-                "create table x as (" +
-                        "select" +
-                        " cast (case" +
-                        "     when x < 10 then x" +
-                        "     when x >= 10 and x < 15 then null" +
-                        "     else x - 25" +
-                        " end as timestamp) as a" +
-                        " from long_sequence(25)" +
-                        ")",
-                "a###desc",
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testOrderByZeroRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (a INT, b LONG)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM x ORDER BY a")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tb
-                            """,
-                    "SELECT * FROM x ORDER BY a"
-            );
+                            """);
         });
     }
 
     @Test
     public void testOrderIntColumnAscMixedValues() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from x order by a asc;")
+                .ddl("create table x as (" +
+                        "select" +
+                        " cast (case" +
+                        "     when x < 10 then x" +
+                        "     when x >= 10 and x < 15 then null" +
+                        "     else x - 25" +
+                        " end as int) as a" +
+                        " from long_sequence(25)" +
+                        ")")
+                .expectSize()
+                .returns("""
                         a
                         null
                         null
@@ -890,21 +858,7 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         7
                         8
                         9
-                        """,
-                "select * from x order by a asc;",
-                "create table x as (" +
-                        "select" +
-                        " cast (case" +
-                        "     when x < 10 then x" +
-                        "     when x >= 10 and x < 15 then null" +
-                        "     else x - 25" +
-                        " end as int) as a" +
-                        " from long_sequence(25)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     public enum SortMode {

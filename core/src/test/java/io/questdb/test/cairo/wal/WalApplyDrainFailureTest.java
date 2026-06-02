@@ -111,7 +111,11 @@ public class WalApplyDrainFailureTest extends AbstractCairoTest {
             // The drain failure must not suspend the table...
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             // ...the WAL transactions must still be durably applied...
-            assertSql("count\n2\n", "select count() from " + tableName);
+            assertQuery("select count() from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
             // ...the tick failure must have been hit...
             Assert.assertTrue("tick() drain was expected to fail", tickFailureCount.get() > 0);
             // ...and the writer must have been marked distressed so the pool recreates it.

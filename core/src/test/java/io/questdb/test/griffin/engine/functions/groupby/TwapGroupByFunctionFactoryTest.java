@@ -45,13 +45,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             // The cast factory returns the column unwrapped, so twap() still
             // recognizes it as the designated timestamp and the query is
             // accepted, matching plain twap(price, ts) in testTwapBasic.
-            assertQueryNoLeakCheck(
-                    "twap\n16.666666666666668\n",
-                    "SELECT twap(price, ts::timestamp) FROM tbl",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("SELECT twap(price, ts::timestamp) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\n16.666666666666668\n");
         });
     }
 
@@ -65,13 +63,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (null, '2024-01-01T00:00:10.000000Z'),
                     (null, '2024-01-01T00:00:20.000000Z')
                     """);
-            assertQueryNoLeakCheck(
-                    "twap\nnull\n",
-                    "SELECT twap(price, ts) FROM tbl",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\nnull\n");
         });
     }
 
@@ -86,13 +82,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (30.0, '2024-01-01T00:00:00.000000Z')
                     """);
             // all same timestamp => simple average: (10 + 20 + 30) / 3 = 20.0
-            assertQueryNoLeakCheck(
-                    "twap\n20.0\n",
-                    "SELECT twap(price, ts) FROM tbl",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\n20.0\n");
         });
     }
 
@@ -109,13 +103,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             // weighted_sum = 10 * 10_000_000 + 20 * 20_000_000 = 500_000_000
             // total_duration = 30_000_000
             // twap = 500_000_000 / 30_000_000 = 16.666666666666668
-            assertQueryNoLeakCheck(
-                    "twap\n16.666666666666668\n",
-                    "SELECT twap(price, ts) FROM tbl",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\n16.666666666666668\n");
         });
     }
 
@@ -123,13 +115,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testTwapNoRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            assertQueryNoLeakCheck(
-                    "twap\nnull\n",
-                    "SELECT twap(price, ts) FROM tbl",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\nnull\n");
         });
     }
 
@@ -148,22 +138,19 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
-                    assertQueryNoLeakCheck(
-                            compiler,
-                            """
+                    assertQuery(sql)
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     sym\ttwap
                                     A\tnull
                                     B\tnull
                                     C\tnull
                                     D\tnull
                                     E\tnull
-                                    """,
-                            sql,
-                            null,
-                            sqlExecutionContext,
-                            true,
-                            true
-                    );
+                                    """);
                 }, configuration, LOG);
             }
         });
@@ -182,7 +169,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts)
                     """);
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
                 }, configuration, LOG);
@@ -206,20 +193,17 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     // constant price => twap = 42.0 for all groups
-                    assertQueryNoLeakCheck(
-                            compiler,
-                            """
+                    assertQuery(sql)
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     sym\ttwap
                                     A\t42.0
                                     B\t42.0
                                     C\t42.0
-                                    """,
-                            sql,
-                            null,
-                            sqlExecutionContext,
-                            true,
-                            true
-                    );
+                                    """);
                 }, configuration, LOG);
             }
         });
@@ -240,7 +224,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts)
                     """);
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
                 }, configuration, LOG);
@@ -263,7 +247,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts)
                     """);
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
                 }, configuration, LOG);
@@ -283,7 +267,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts)
                     """);
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT twap(price, ts) FROM tbl";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
                 }, configuration, LOG);
@@ -305,7 +289,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts)
                     """);
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
                 }, configuration, LOG);
@@ -327,7 +311,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts)
                     """);
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
                 }, configuration, LOG);
@@ -349,7 +333,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts)
                     """);
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
                 }, configuration, LOG);
@@ -371,7 +355,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts)
                     """);
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
                 }, configuration, LOG);
@@ -557,13 +541,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             // Oracle: over the real ts-ordered base the step-function TWAP for the single
             // bucket is (30*10 + 20*20) / 30 = 23.333..., not the plain average (30+20+10)/3
             // = 20.0 that the reordered base silently produced before the fix.
-            assertQueryNoLeakCheck(
-                    "ts\ttwap\n2024-01-01T00:00:00.000000Z\t23.333333333333332\n",
-                    "SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ttwap\n2024-01-01T00:00:00.000000Z\t23.333333333333332\n");
             // FILL(linear) reaches the interpolated branch; FILL(null)/FILL(prev) reach the
             // other serial branch. Every fill mode must reject the price-ordered base.
             final String reorderedBase = "FROM (SELECT price, ts FROM tbl ORDER BY price ASC LIMIT 10) timestamp(ts) SAMPLE BY 1m ";
@@ -578,13 +560,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             // The same query shape with a genuinely ts-ordered base (timestamp re-attached by
             // name) is still accepted and returns the correct value -- the fix does not
             // over-reject legitimate SAMPLE BY FILL queries.
-            assertQueryNoLeakCheck(
-                    "ts\ttwap\n2024-01-01T00:00:00.000000Z\t23.333333333333332\n",
-                    "SELECT ts, twap(price, ts) FROM (SELECT price, ts FROM tbl ORDER BY ts ASC) timestamp(ts) SAMPLE BY 1m FILL(null)",
-                    "ts",
-                    false,
-                    false
-            );
+            assertQuery("SELECT ts, twap(price, ts) FROM (SELECT price, ts FROM tbl ORDER BY ts ASC) timestamp(ts) SAMPLE BY 1m FILL(null)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\ttwap\n2024-01-01T00:00:00.000000Z\t23.333333333333332\n");
         });
     }
 
@@ -629,13 +609,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO tbl VALUES (42.5, '2024-01-01T00:00:00.000000Z')");
             // single row => total_duration = 0, fallback to price_sum / count = 42.5
-            assertQueryNoLeakCheck(
-                    "twap\n42.5\n",
-                    "SELECT twap(price, ts) FROM tbl",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\n42.5\n");
         });
     }
 
@@ -653,13 +631,11 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             // weighted_sum = 10.0 * 20_000_000 = 200_000_000
             // total_duration = 20_000_000
             // twap = 200_000_000 / 20_000_000 = 10.0
-            assertQueryNoLeakCheck(
-                    "twap\n10.0\n",
-                    "SELECT twap(price, ts) FROM tbl",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\n10.0\n");
         });
     }
 
@@ -677,17 +653,14 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     """);
             // Group A: weighted_sum = 10*10_000_000 + 20*20_000_000 = 500_000_000, dur = 30_000_000, twap = 16.666666666666668
             // Group B: weighted_sum = 100*20_000_000 = 2_000_000_000, dur = 20_000_000, twap = 100.0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT sym, twap(price, ts) FROM tbl ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\ttwap
                             A\t16.666666666666668
                             B\t100.0
-                            """,
-                    "SELECT sym, twap(price, ts) FROM tbl ORDER BY sym",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -705,17 +678,15 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     """);
             // Bucket 1 (00:00:00 - 00:01:00): same as testTwapBasic = 16.666666666666668
             // Bucket 2 (00:01:00 - 00:02:00): weighted_sum = 100*20_000_000 = 2_000_000_000, dur = 20_000_000, twap = 100.0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\ttwap
                             2024-01-01T00:00:00.000000Z\t16.666666666666668
                             2024-01-01T00:01:00.000000Z\t100.0
-                            """,
-                    "SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -734,18 +705,16 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
             // Bucket 00:00 has data: twap = 16.666666666666668
             // Bucket 00:01 is empty: FILL(prev) => 16.666666666666668
             // Bucket 00:02 has data: twap = 100.0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m FILL(prev)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\ttwap
                             2024-01-01T00:00:00.000000Z\t16.666666666666668
                             2024-01-01T00:01:00.000000Z\t16.666666666666668
                             2024-01-01T00:02:00.000000Z\t100.0
-                            """,
-                    "SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m FILL(prev)",
-                    "ts",
-                    false,
-                    false
-            );
+                            """);
         });
     }
 }

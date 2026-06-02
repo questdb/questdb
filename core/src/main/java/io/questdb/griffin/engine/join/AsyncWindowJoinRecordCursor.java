@@ -303,6 +303,11 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             collectCursor(true);
             masterFrameSequence.await();
         }
+        // calculateSize() must leave the cursor exhausted so that a following hasNext()
+        // returns false. The no-filter path counts frame row counts from metadata without
+        // dispatching every frame, so advance the cursor state past the last frame here.
+        frameIndex = frameLimit;
+        frameRowIndex = frameRowCount;
     }
 
     private void collectCursor(boolean forceCollect) {
