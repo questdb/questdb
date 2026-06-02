@@ -48,9 +48,11 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -522,6 +524,48 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             count
                             105
                             """);
+        });
+    }
+
+    @Test
+    public void testO3DeferredPostingSealPurgeRunsAfterCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_recovery";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(0, 10));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(0, 35));
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            final long oldSealTxn = oldFiles.sealTxn;
+            assertPostingSealFilesExist(oldFiles, true);
+
+            // Successful O3 commit: sealPostingIndexForPartition() defers the
+            // purge while the superseding chain entry is tagged with the future
+            // txn, then commitTxWriterAndPublishPendingPostingSealPurges()
+            // should republish that task after _txn advances.
+            execute(insertPostingRowsSql(35, 92));
+            final PostingSealFileNames liveFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            final long liveSealTxn = liveFiles.sealTxn;
+            Assert.assertTrue("successful O3 commit must advance posting sealTxn", liveSealTxn > oldSealTxn);
+            assertPostingSealFilesExist(oldFiles, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            assertPostingSealFilesExist(oldFiles, false);
+            assertPostingSealFilesExist(liveFiles, true);
         });
     }
 
@@ -3603,6 +3647,92 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         return sql.toString();
     }
 
+    private void assertPostingSealFilesExist(PostingSealFileNames files, boolean expected) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            if (expected) {
+                Assert.assertTrue(".pv must exist [path=" + files.valueFile + ']', ff.exists(path.of(files.valueFile).$()));
+                Assert.assertTrue(".pc must exist [path=" + files.coverFile + ']', ff.exists(path.of(files.coverFile).$()));
+            } else {
+                Assert.assertFalse(".pv must be purged [path=" + files.valueFile + ']', ff.exists(path.of(files.valueFile).$()));
+                Assert.assertFalse(".pc must be purged [path=" + files.coverFile + ']', ff.exists(path.of(files.coverFile).$()));
+            }
+        }
+    }
+
+    private PostingSealFileNames resolvePostingSealFileNames(
+            String tableName,
+            String indexColumnName,
+            String coveredColumnName,
+            long partitionTimestamp,
+            long sealTxn
+    ) {
+        try (Path path = new Path()) {
+            return resolvePostingSealFileNames(path, tableName, indexColumnName, coveredColumnName, partitionTimestamp, sealTxn);
+        }
+    }
+
+    private PostingSealFileNames resolvePostingSealFileNames(
+            Path path,
+            String tableName,
+            String indexColumnName,
+            String coveredColumnName,
+            long partitionTimestamp,
+            long sealTxn
+    ) {
+        TableToken token = engine.getTableTokenIfExists(tableName);
+        Assert.assertNotNull("table must exist", token);
+        try (TableReader reader = engine.getReader(token)) {
+            int partitionIndex = -1;
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getTxFile().getPartitionTimestampByIndex(i) == partitionTimestamp) {
+                    partitionIndex = i;
+                    break;
+                }
+            }
+            Assert.assertTrue("target partition must exist", partitionIndex >= 0);
+            long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
+
+            int indexColumnIndex = reader.getMetadata().getColumnIndex(indexColumnName);
+            int indexWriterIndex = reader.getMetadata().getWriterIndex(indexColumnIndex);
+            long postingColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, indexWriterIndex);
+
+            int coveredColumnIndex = reader.getMetadata().getColumnIndex(coveredColumnName);
+            int coveredWriterIndex = reader.getMetadata().getWriterIndex(coveredColumnIndex);
+            long coveredColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, coveredWriterIndex);
+
+            IntList coveringColumnIndices = reader.getMetadata().getColumnMetadata(indexColumnIndex).getCoveringColumnIndices();
+            Assert.assertNotNull("posting index must have covering columns", coveringColumnIndices);
+            int includeIdx = -1;
+            for (int i = 0, n = coveringColumnIndices.size(); i < n; i++) {
+                if (coveringColumnIndices.getQuick(i) == coveredWriterIndex) {
+                    includeIdx = i;
+                    break;
+                }
+            }
+            Assert.assertTrue("covered column must be present in INCLUDE list", includeIdx >= 0);
+
+            path.of(configuration.getDbRoot()).concat(token);
+            setPathForNativePartition(
+                    path,
+                    ColumnType.TIMESTAMP,
+                    io.questdb.cairo.PartitionBy.DAY,
+                    partitionTimestamp,
+                    partitionNameTxn
+            );
+            int plen = path.size();
+            long resolvedSealTxn = sealTxn >= 0 ? sealTxn : PostingIndexUtils.readSealTxnFromKeyFile(
+                    configuration.getFilesFacade(),
+                    PostingIndexUtils.keyFileName(path.trimTo(plen), indexColumnName, postingColumnNameTxn)
+            );
+            PostingIndexUtils.valueFileName(path.trimTo(plen), indexColumnName, postingColumnNameTxn, resolvedSealTxn);
+            String valueFilePath = path.toString();
+            PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexColumnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, resolvedSealTxn);
+            String coverFilePath = path.toString();
+            return new PostingSealFileNames(resolvedSealTxn, valueFilePath, coverFilePath);
+        }
+    }
+
     private static void runPostingSealPurgeJob(PostingSealPurgeJob purgeJob) {
         for (int i = 0; i < 32; i++) {
             if (!purgeJob.run(0)) {
@@ -3628,6 +3758,18 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
         timestamp.append(minute).append(":00.000000Z");
         return timestamp.toString();
+    }
+
+    private static class PostingSealFileNames {
+        private final String coverFile;
+        private final long sealTxn;
+        private final String valueFile;
+
+        private PostingSealFileNames(long sealTxn, String valueFile, String coverFile) {
+            this.sealTxn = sealTxn;
+            this.valueFile = valueFile;
+            this.coverFile = coverFile;
+        }
     }
 
     private void appendFuturePostingHead(
