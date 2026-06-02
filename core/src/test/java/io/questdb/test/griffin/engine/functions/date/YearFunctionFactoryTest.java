@@ -30,60 +30,50 @@ import org.junit.Test;
 public class YearFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull() throws Exception {
-        assertQuery(
-                "year\n" +
-                        "null\n",
-                "select year(null)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select year(null)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        year
+                        null
+                        """);
     }
 
     @Test
     public void testPreEpoch() throws Exception {
-        assertQuery(
-                "year\n" +
-                        "1901\n",
-                "select year('1901-07-11T22:00:30.555998Z'::timestamp)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select year('1901-07-11T22:00:30.555998Z'::timestamp)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        year
+                        1901
+                        """);
 
-        assertQuery(
-                "year\n" +
-                        "1901\n",
-                "select year('1901-07-11T22:00:30.555998113Z'::timestamp_ns)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select year('1901-07-11T22:00:30.555998113Z'::timestamp_ns)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        year
+                        1901
+                        """);
     }
 
     @Test
     public void testVanilla() throws Exception {
-        assertQuery(
-                "year\n" +
-                        "1997\n",
-                "select year('1997-04-11T22:00:30.555555Z'::timestamp)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select year('1997-04-11T22:00:30.555555Z'::timestamp)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        year
+                        1997
+                        """);
 
-        assertQuery(
-                "year\n" +
-                        "1997\n",
-                "select year('1997-04-11T22:00:30.555555123Z'::timestamp_ns)",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select year('1997-04-11T22:00:30.555555123Z'::timestamp_ns)")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        year
+                        1997
+                        """);
     }
 }

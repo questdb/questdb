@@ -40,20 +40,20 @@ public class SymbolTest extends AbstractCairoTest {
             execute("alter table x add column sym_top symbol index;");
             execute("insert into x values('EF', '2022-02-01T00:00','STWEFZMJCWHFQEDUY');");
 
-            assertQueryNoLeakCheck(
-                    "sym\tts\tsym_top\n" +
-                            "EF\t2022-02-01T00:00:00.000000Z\tSTWEFZMJCWHFQEDUY\n",
-                    "x where \"sym_top\" = 'STWEFZMJCWHFQEDUY' order by ts asc",
-                    "ts",
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    "sym\tts\tsym_top\n" +
-                            "EF\t2022-02-01T00:00:00.000000Z\tSTWEFZMJCWHFQEDUY\n",
-                    "x where \"sym_top\" = 'STWEFZMJCWHFQEDUY' order by ts desc",
-                    "ts###desc",
-                    true
-            );
+            assertQuery("x where \"sym_top\" = 'STWEFZMJCWHFQEDUY' order by ts asc")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts\tsym_top
+                            EF\t2022-02-01T00:00:00.000000Z\tSTWEFZMJCWHFQEDUY
+                            """);
+            assertQuery("x where \"sym_top\" = 'STWEFZMJCWHFQEDUY' order by ts desc")
+                    .noLeakCheck()
+                    .timestamp("ts###desc")
+                    .returns("""
+                            sym\tts\tsym_top
+                            EF\t2022-02-01T00:00:00.000000Z\tSTWEFZMJCWHFQEDUY
+                            """);
         });
     }
 
@@ -63,14 +63,10 @@ public class SymbolTest extends AbstractCairoTest {
             execute("CREATE TABLE x (sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             final String query = "select * from x where sym not in ('foo', 'bar')";
             // Load table reader on empty table.
-            assertQueryNoLeakCheck(
-                    "sym\tts\n",
-                    query,
-                    "ts",
-                    true,
-                    false,
-                    false
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("sym\tts\n");
             execute(
                     "insert into x values ('foo', '2024-05-14T16:00:00.000000Z')," +
                             "('bar', '2024-05-14T16:00:01.000000Z')," +
@@ -79,16 +75,14 @@ public class SymbolTest extends AbstractCairoTest {
             );
             // The reader should refresh contain null flag in symbol readers,
             // so NULL row should be included in the result set.
-            assertQueryNoLeakCheck(
-                    "sym\tts\n" +
-                            "baz\t2024-05-14T16:00:02.000000Z\n" +
-                            "\t2024-05-14T16:00:02.000000Z\n",
-                    query,
-                    "ts",
-                    true,
-                    false,
-                    false
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts
+                            baz\t2024-05-14T16:00:02.000000Z
+                            \t2024-05-14T16:00:02.000000Z
+                            """);
         });
     }
 
@@ -98,14 +92,10 @@ public class SymbolTest extends AbstractCairoTest {
             execute("CREATE TABLE x (sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             final String query = "select * from x where sym not in ('foo', 'bar')";
             // Load table reader on empty table.
-            assertQueryNoLeakCheck(
-                    "sym\tts\n",
-                    query,
-                    "ts",
-                    true,
-                    false,
-                    false
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("sym\tts\n");
             // Insert only NULL rows.
             execute(
                     "insert into x values (null, '2024-05-14T16:00:01.000000Z')," +
@@ -114,17 +104,15 @@ public class SymbolTest extends AbstractCairoTest {
             );
             // The reader should refresh contain null flag in symbol readers,
             // so NULL rows should be included in the result set.
-            assertQueryNoLeakCheck(
-                    "sym\tts\n" +
-                            "\t2024-05-14T16:00:01.000000Z\n" +
-                            "\t2024-05-14T16:00:02.000000Z\n" +
-                            "\t2024-05-14T16:00:03.000000Z\n",
-                    query,
-                    "ts",
-                    true,
-                    false,
-                    false
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts
+                            \t2024-05-14T16:00:01.000000Z
+                            \t2024-05-14T16:00:02.000000Z
+                            \t2024-05-14T16:00:03.000000Z
+                            """);
         });
     }
 
@@ -140,18 +128,64 @@ public class SymbolTest extends AbstractCairoTest {
                     " '2024-03-05T12:13'::timestamp timestamp" +
                     " from long_sequence(51)");
             engine.releaseAllWriters();
-            assertQueryNoLeakCheck(
-                    "sym\nZVDZ\nYR\nYPH\nXWC\nXG\nVLTO\nUWD\nUQSR\nULOF\nTMH\nSXU\nSXU\nSXU\nSDOT\nRFB\nPH\n" +
-                            "PH\nOWLP\nOWLP\nLU\nKWZ\nJSHR\nIBBT\nHYHB\nHWVD\nGLHM\nGLHM\nGLHM\nFZ\nFZ\nFMQN\nFLOP\n" +
-                            "FF\nFDT\nEHBH\nEDYY\nEDYY\nEDRQ\nCPSW\n\n\n\n\n\n\n\n\n\n\n\n\n",
-                    "select sym from x" +
-                            " where timestamp in '2024-03-05T12:13'" +
-                            " order by sym desc",
-                    null,
-                    true,
-                    false,
-                    false
-            );
+            assertQuery("select sym from x" +
+                    " where timestamp in '2024-03-05T12:13'" +
+                    " order by sym desc")
+                    .noLeakCheck()
+                    .returns("""
+                            sym
+                            ZVDZ
+                            YR
+                            YPH
+                            XWC
+                            XG
+                            VLTO
+                            UWD
+                            UQSR
+                            ULOF
+                            TMH
+                            SXU
+                            SXU
+                            SXU
+                            SDOT
+                            RFB
+                            PH
+                            PH
+                            OWLP
+                            OWLP
+                            LU
+                            KWZ
+                            JSHR
+                            IBBT
+                            HYHB
+                            HWVD
+                            GLHM
+                            GLHM
+                            GLHM
+                            FZ
+                            FZ
+                            FMQN
+                            FLOP
+                            FF
+                            FDT
+                            EHBH
+                            EDYY
+                            EDYY
+                            EDRQ
+                            CPSW
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            """);
         });
     }
 
@@ -162,7 +196,9 @@ public class SymbolTest extends AbstractCairoTest {
             execute("insert into logs select x::string from long_sequence(10)");
 
             for (int i = 1; i < 11; i++) {
-                assertQueryNoLeakCheck("id\n" + i + "\n", "select * from logs where id = '" + i + "'", null, true);
+                assertQuery("select * from logs where id = '" + i + "'")
+                        .noLeakCheck()
+                        .returns("id\n" + i + "\n");
             }
         });
     }
@@ -177,7 +213,9 @@ public class SymbolTest extends AbstractCairoTest {
                 bindVariableService.clear();
                 bindVariableService.setStr("id", String.valueOf(i));
 
-                assertQueryNoLeakCheck("id\n" + i + "\n", "select * from logs where id = :id", null, true);
+                assertQuery("select * from logs where id = :id")
+                        .noLeakCheck()
+                        .returns("id\n" + i + "\n");
             }
         });
     }

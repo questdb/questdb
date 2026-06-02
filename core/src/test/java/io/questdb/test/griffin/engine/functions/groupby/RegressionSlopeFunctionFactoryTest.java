@@ -31,24 +31,22 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testRegrSlopeAllNull() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "regr_slope\nnull\n", "select regr_slope(y, x) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))",
-                null,
-                false,
-                true
-        ));
+        assertMemoryLeak(() -> assertQuery("select regr_slope(y, x) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("regr_slope\nnull\n"));
     }
 
     @Test
     public void testRegrSlopeAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 17.2151921 x, 17.2151921 y from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    "regr_slope\nnull\n", "select regr_slope(x, y) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_slope(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_slope\nnull\n");
         });
     }
 
@@ -56,12 +54,11 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
     public void testRegrSlopeDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_slope(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_slope\n1.0\n");
         });
     }
 
@@ -74,13 +71,15 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1 (x double, y double)");
             assertPlanNoLeakCheck(
                     "select regr_slope(y, x) from tbl1",
-                    "Async Group By workers: 1\n" +
-                            "  vectorized: false\n" +
-                            "  values: [regr_slope(y,x)]\n" +
-                            "  filter: null\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tbl1\n"
+                    """
+                            Async Group By workers: 1
+                              vectorized: false
+                              values: [regr_slope(y,x)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tbl1
+                            """
             );
         });
     }
@@ -89,12 +88,11 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
     public void testRegrSlopeFloatValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as float) x, cast(x as float) y from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_slope(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_slope\n1.0\n");
         });
     }
 
@@ -102,12 +100,11 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
     public void testRegrSlopeIntValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as int) x, cast(x as int) y from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_slope(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_slope\n1.0\n");
         });
     }
 
@@ -119,12 +116,11 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
         // 2.0; round() absorbs any 1-ulp drift from the Welford updates.
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x * 1e8 as double) x, cast(x * 2e8 + 1e9 as double) y from long_sequence(1_000_000))");
-            assertQueryNoLeakCheck(
-                    "regr_slope\n2.0\n", "select round(regr_slope(y, x), 10) regr_slope from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select round(regr_slope(y, x), 10) regr_slope from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_slope\n2.0\n");
         });
     }
 
@@ -136,12 +132,11 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
             execute("insert into tbl1 values ('NaN'::double, 1.0), (1.0, 'NaN'::double), ('+Infinity'::double, 2.0), (2.0, '-Infinity'::double)");
-            assertQueryNoLeakCheck(
-                    "regr_slope\n1.0\n", "select regr_slope(y, x) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_slope(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_slope\n1.0\n");
         });
     }
 
@@ -151,12 +146,11 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
         // sign-flip bug in the Sxy accumulator that y = x tests cannot.
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x, cast(-2 * x + 5 as double) y from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    "regr_slope\n-2.0\n", "select regr_slope(y, x) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_slope(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_slope\n-2.0\n");
         });
     }
 
@@ -164,23 +158,21 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
     public void testRegrSlopeNoValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x int, y int)");
-            assertQueryNoLeakCheck(
-                    "regr_slope\nnull\n", "select regr_slope(x, y) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_slope(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_slope\nnull\n");
         });
     }
 
     @Test
     public void testRegrSlopeOneColumnAllNull() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "regr_slope\nnull\n", "select regr_slope(x, y) from (select cast(null as double) x, x as y from long_sequence(100))",
-                null,
-                false,
-                true
-        ));
+        assertMemoryLeak(() -> assertQuery("select regr_slope(x, y) from (select cast(null as double) x, x as y from long_sequence(100))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("regr_slope\nnull\n"));
     }
 
     @Test
@@ -188,12 +180,11 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x int, y int)");
             execute("insert into 'tbl1' VALUES (17.2151920, 17.2151920)");
-            assertQueryNoLeakCheck(
-                    "regr_slope\nnull\n", "select regr_slope(x, y) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_slope(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_slope\nnull\n");
         });
     }
 
@@ -202,12 +193,11 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
             execute("insert into 'tbl1' VALUES (null, null)");
-            assertQueryNoLeakCheck(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_slope(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_slope\n1.0\n");
         });
     }
 
@@ -217,12 +207,11 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1(x double, y double)");
             execute("insert into 'tbl1' VALUES (null, null)");
             execute("insert into 'tbl1' select x, x as y from long_sequence(100)");
-            assertQueryNoLeakCheck(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_slope(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_slope\n1.0\n");
         });
     }
 

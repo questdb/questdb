@@ -683,8 +683,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                       : PartitionBy.DAY;
             createTableOperation.setPartitionBy(partitionBy);
             final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
-            if (ttlHoursOrMonths > 0) {
-                // Don't forget to validate TTL against PARTITION BY.
+            if (ttlHoursOrMonths != 0) {
+                // Don't forget to validate TTL against PARTITION BY. Negative values are
+                // months-based TTL; validateTtlGranularity handles both signs.
                 PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
             }
         }

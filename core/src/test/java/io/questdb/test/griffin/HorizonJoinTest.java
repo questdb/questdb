@@ -97,23 +97,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // Trade A at day1 00:00:01 → ASOF to latest price <= 00:00:01 → 100.0 (at day1 00:00:00.5)
             // Trade B at day2 00:00:01 → ASOF to latest price <= day2 00:00:01 → 300.0 (at day2 00:00:00.5)
             // Bug: bookmark from trade A's lookup causes trade B to return 200.0 (last row of day1)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t.sym, avg(p.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tavg
                             A\t100.0
                             B\t300.0
-                            """,
-                    """
-                            SELECT t.sym, avg(p.price)
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p
-                            RANGE FROM 0s TO 0s STEP 1s AS h
-                            ORDER BY t.sym
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -129,15 +126,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 2s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -154,16 +148,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     RANGE FROM 0s TO 0s STEP 1s AS h
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg\tsum
                             null\tnull
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -179,15 +171,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "LIST (0s, 1s, 2s) AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -199,26 +188,22 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE other (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
 
             // HORIZON JOIN after another join
-            assertExceptionNoLeakCheck(
-                    "SELECT h.offset, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "JOIN other AS o ON (t.sym = o.sym) " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM -10s TO 10s STEP 1s AS h",
-                    82,
-                    "horizon join cannot be combined with other joins"
-            );
+            assertQuery("SELECT h.offset, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "JOIN other AS o ON (t.sym = o.sym) " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM -10s TO 10s STEP 1s AS h")
+                    .noLeakCheck()
+                    .fails(82, "horizon join cannot be combined with other joins");
 
             // Another (non-horizon) join after HORIZON JOIN
-            assertExceptionNoLeakCheck(
-                    "SELECT h.offset, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM -10s TO 10s STEP 1s AS h " +
-                            "JOIN other AS o ON (t.sym = o.sym)",
-                    127,
-                    "only horizon joins can follow a horizon join"
-            );
+            assertQuery("SELECT h.offset, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM -10s TO 10s STEP 1s AS h " +
+                    "JOIN other AS o ON (t.sym = o.sym)")
+                    .noLeakCheck()
+                    .fails(127, "only horizon joins can follow a horizon join");
         });
     }
 
@@ -249,15 +234,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 0s STEP 1s AS h " +
                     "WHERE FALSE";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -267,14 +249,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT h.offset, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "LIST () AS h",
-                    97,
-                    "at least one offset expression expected"
-            );
+            assertQuery("SELECT h.offset, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST () AS h")
+                    .noLeakCheck()
+                    .fails(97, "at least one offset expression expected");
         });
     }
 
@@ -300,15 +280,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 2s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -333,16 +310,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     RANGE FROM 0s TO 0s STEP 1s AS h
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg\tsum
                             null\tnull
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -375,15 +350,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "WHERE t.qty > 10_000 " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -408,17 +380,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\tnull\t300.0
                             1\tnull\t300.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -443,16 +412,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     RANGE FROM 0s TO 0s STEP 1s AS h
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg\tsum
                             null\t300.0
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -486,17 +453,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\tnull\t300.0
                             1\tnull\t300.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -506,15 +470,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 0s STEP 1s AS h " +
-                            "WHERE h.offset > 0",
-                    129,
-                    "WHERE clause of HORIZON JOIN can only reference left-hand side columns"
-            );
+            assertQuery("SELECT avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE h.offset > 0")
+                    .noLeakCheck()
+                    .fails(129, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         });
     }
 
@@ -524,15 +486,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 0s STEP 1s AS h " +
-                            "WHERE t.qty + p.price > 10",
-                    136,
-                    "WHERE clause of HORIZON JOIN can only reference left-hand side columns"
-            );
+            assertQuery("SELECT avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE t.qty + p.price > 10")
+                    .noLeakCheck()
+                    .fails(136, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         });
     }
 
@@ -542,15 +502,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 0s STEP 1s AS h " +
-                            "WHERE p.price > 10",
-                    128,
-                    "WHERE clause of HORIZON JOIN can only reference left-hand side columns"
-            );
+            assertQuery("SELECT avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE p.price > 10")
+                    .noLeakCheck()
+                    .fails(128, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         });
     }
 
@@ -595,23 +553,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // concat() forces a Java filter (not symbol index), creating AsyncFilteredRecordCursorFactory.
             // count_distinct(varchar) doesn't support parallelism, forcing downgrade to ST path.
             // The filter stolen for the parallel path must be preserved in the ST factory.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t.order_sym, count_distinct(t.label), sum(t.qty)
+                    FROM orders AS t
+                    HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    WHERE concat(t.order_sym, '_0') = 'AAPL_0'
+                    ORDER BY t.order_sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             order_sym\tcount_distinct\tsum
                             AAPL\t2\t300
-                            """,
-                    """
-                            SELECT t.order_sym, count_distinct(t.label), sum(t.qty)
-                            FROM orders AS t
-                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
-                            RANGE FROM 0s TO 0s STEP 1s AS h
-                            WHERE concat(t.order_sym, '_0') = 'AAPL_0'
-                            ORDER BY t.order_sym
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -637,41 +592,35 @@ public class HorizonJoinTest extends AbstractCairoTest {
             );
 
             // Interval filter on the slave table.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN (prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 2s STEP 1s AS h " +
+                    "ORDER BY sec_offs")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t10.0\t5.0
                             1\t10.0\t5.0
                             2\t10.0\t5.0
-                            """,
-                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN (prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 2s STEP 1s AS h " +
-                            "ORDER BY sec_offs",
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // Same query, but with reordered columns in the slave subquery.
             // This exercises SelectedConcurrentTimeFrameCursor.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), avg(p.price0), sum(t.qty) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 2s STEP 1s AS h " +
+                    "ORDER BY sec_offs")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tavg1\tsum
                             0\t10.0\t10.0\t5.0
                             1\t10.0\t10.0\t5.0
                             2\t10.0\t10.0\t5.0
-                            """,
-                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), avg(p.price0), sum(t.qty) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 2s STEP 1s AS h " +
-                            "ORDER BY sec_offs",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -703,22 +652,19 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
             // Reordered columns: timestamp moves from position 0 to position 3.
             // With the bug, the binary search reads the price column as a timestamp.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), avg(p.price0), sum(t.qty) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 2s STEP 1s AS h " +
+                    "ORDER BY sec_offs")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tavg1\tsum
                             0\t10.0\t10.0\t5.0
                             1\t10.0\t10.0\t5.0
                             2\t10.0\t10.0\t5.0
-                            """,
-                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), avg(p.price0), sum(t.qty) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 2s STEP 1s AS h " +
-                            "ORDER BY sec_offs",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -747,22 +693,19 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // alloc(1024) always returns 42, so all rows group under the same key.
             // The important thing is that alloc() allocates tracked native memory
             // that must be freed via Function.close() in the factory's _close().
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT alloc(1024) AS key, avg(p.price) AS avg_price
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    GROUP BY alloc(1024)
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             key\tavg_price
                             42\t10.0
-                            """,
-                    """
-                            SELECT alloc(1024) AS key, avg(p.price) AS avg_price
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            RANGE FROM 0s TO 0s STEP 1s AS h
-                            GROUP BY alloc(1024)
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -826,17 +769,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY t.sym " +
                     "ORDER BY t.sym";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tn\tavg_price
                             A\t7\t1.0
                             RARE\t6\t100.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -900,17 +840,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY t.sym " +
                     "ORDER BY t.sym";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tn\tavg_price
                             A\t3\t1.0
                             RARE\t3\t100.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -953,19 +890,16 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY t.sym, sec_offs " +
                     "ORDER BY t.sym, h.offset";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tsec_offs\tn\tavg_price
                             A\t0\t2\tnull
                             A\t5\t2\tnull
                             B\t0\t1\tnull
                             B\t5\t1\tnull
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1011,8 +945,10 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY t.sym, sec_offs " +
                     "ORDER BY t.sym, h.offset";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tsec_offs\tn\tavg_price
                             A\t0\t3\t133.33333333333334
                             A\t5\t3\t266.6666666666667
@@ -1020,12 +956,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             B\t5\t1\tnull
                             C\t0\t1\tnull
                             C\t5\t1\tnull
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1069,24 +1000,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // Trade A (day1 12:00) → price 100.0 (day1 06:00, sym A)
             // Trade B (day2 12:00) → price 200.0 (day2 06:00, sym B)
             // Trade C (day3 12:00) → price 300.0 (day3 06:00, sym C)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t.sym, avg(p.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tavg
                             A\t100.0
                             B\t200.0
                             C\t300.0
-                            """,
-                    """
-                            SELECT t.sym, avg(p.price)
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            RANGE FROM 0s TO 0s STEP 1s AS h
-                            ORDER BY t.sym
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1132,18 +1060,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY t.sym, sec_offs " +
                     "ORDER BY t.sym, h.offset";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tsec_offs\tn\tavg_price
                             A\t0\t2\t125.0
                             B\t0\t1\tnull
                             C\t0\t1\t350.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1153,14 +1078,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT h.offset, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "LIST (0s, 2s, 1s) AS h",
-                    105,
-                    "LIST offsets must be monotonically increasing"
-            );
+            assertQuery("SELECT h.offset, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0s, 2s, 1s) AS h")
+                    .noLeakCheck()
+                    .fails(105, "LIST offsets must be monotonically increasing");
         });
     }
 
@@ -1171,14 +1094,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT h.offset, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "LIST (0s, 1s, 2s, 3s, 4s) AS h",
-                    120,
-                    "LIST has too many offsets [count=5, max=4]"
-            );
+            assertQuery("SELECT h.offset, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0s, 1s, 2s, 3s, 4s) AS h")
+                    .noLeakCheck()
+                    .fails(120, "LIST has too many offsets [count=5, max=4]");
         });
     }
 
@@ -1188,14 +1109,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             execute("CREATE TABLE trades_nots (ts TIMESTAMP, sym SYMBOL, qty DOUBLE)");
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(p.price) " +
-                            "FROM trades_nots AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "LIST (0s) AS h",
-                    42,
-                    "left side of time series join has no timestamp"
-            );
+            assertQuery("SELECT avg(p.price) " +
+                    "FROM trades_nots AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0s) AS h")
+                    .noLeakCheck()
+                    .fails(42, "left side of time series join has no timestamp");
         });
     }
 
@@ -1205,14 +1124,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT h.offset, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "AS h", // Missing RANGE or LIST
-                    91,
-                    "unexpected token [AS]"
-            );
+            assertQuery("SELECT h.offset, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "AS h")
+                    .noLeakCheck()
+                    .fails(// Missing RANGE or LIST
+                            91, "unexpected token [AS]");
         });
     }
 
@@ -1262,21 +1180,19 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
             // avg across all symbols: 7 A trades at 1.0 + 6 RARE at 100.0
             // = (7*1.0 + 6*100.0) / 13 = 607/13 ≈ 46.692...
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(p.price) AS avg_price
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_price
                             46.69230769230769
-                            """,
-                    """
-                            SELECT avg(p.price) AS avg_price
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1321,21 +1237,19 @@ public class HorizonJoinTest extends AbstractCairoTest {
             );
 
             // avg across all: 3 A at 1.0 + 3 RARE at 100.0 = 303/6 = 50.5
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(p.price) AS avg_price
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_price
                             50.5
-                            """,
-                    """
-                            SELECT avg(p.price) AS avg_price
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1411,16 +1325,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     RANGE FROM 0s TO 0s STEP 1s AS h
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             fb\tfby\tfsh\tfch\tfi\tfl\tff\tfd\tfdt\tfs\tfvc\tfip\tfu\tfg\tfa\tfdc
                             true\t1\t2\tX\t42\t100000\t1.5\t3.14\t2000-01-01T00:00:00.000Z\thello\tworld\t1.2.3.4\t11111111-1111-1111-1111-111111111111\tsp05\t[1.0,2.0]\t42.50
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1460,16 +1372,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     RANGE FROM 0s TO 0s STEP 1s AS h
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg\tsum
                             110.0\t30.0
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1503,16 +1413,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     RANGE FROM 0s TO 0s STEP 1s AS h
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             first\tlast\tsum
                             NYSE\tNASDAQ\t300
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1548,16 +1456,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     RANGE FROM 0s TO 0s STEP 1s AS h
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             min\tmax\tavg\tsum\tcount
                             20.0\t30.0\t25.0\t50.0\t2
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1593,16 +1499,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     RANGE FROM 0s TO 2s STEP 1s AS h
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sum\tavg\tcount
                             90.0\t30.0\t3
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1643,24 +1547,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // Trade A (day1 12:00) → price 100.0 (day1 06:00)
             // Trade B (day2 12:00) → price 200.0 (day2 06:00)
             // Trade C (day3 12:00) → price 300.0 (day3 06:00)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t.sym, avg(p.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tavg
                             A\t100.0
                             B\t200.0
                             C\t300.0
-                            """,
-                    """
-                            SELECT t.sym, avg(p.price)
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p
-                            RANGE FROM 0s TO 0s STEP 1s AS h
-                            ORDER BY t.sym
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1723,16 +1624,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     WHERE t.sym = 'AX'
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg\tsum
                             20.0\t30.0
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1775,16 +1674,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     LIST (0) AS h
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg\tsum
                             110.0\t30.0
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1822,16 +1719,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     RANGE FROM 0s TO 0s STEP 1s AS h
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg\tsum
                             125.0\t300
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1869,16 +1764,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     RANGE FROM 0s TO 1s STEP 1s AS h
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sum\tavg\tsum1
                             120.0\t30.0\t600.0
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1894,7 +1787,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             WorkerPool pool = new WorkerPool(() -> workerCount);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String symbolGen = "rnd_symbol_zipf(1000, 2.0)";
 
                         // Create prices table with enough data points
@@ -2014,14 +1907,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 5s TO 2s STEP 1s AS h",
-                    92,
-                    "FROM must be less than or equal to TO"
-            );
+            assertQuery("SELECT avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 5s TO 2s STEP 1s AS h")
+                    .noLeakCheck()
+                    .fails(92, "FROM must be less than or equal to TO");
         });
     }
 
@@ -2031,14 +1922,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 2s STEP 0s AS h",
-                    106,
-                    "STEP must be positive"
-            );
+            assertQuery("SELECT avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 2s STEP 0s AS h")
+                    .noLeakCheck()
+                    .fails(106, "STEP must be positive");
         });
     }
 
@@ -2049,14 +1938,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT h.offset, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 5s STEP 1s AS h",
-                    102,
-                    "RANGE generates too many offsets [count=6, max=3]"
-            );
+            assertQuery("SELECT h.offset, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 5s STEP 1s AS h")
+                    .noLeakCheck()
+                    .fails(102, "RANGE generates too many offsets [count=6, max=3]");
         });
     }
 
@@ -2066,15 +1953,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "LIST (0s, 1s) AS h " +
-                            "SAMPLE BY 1s",
-                    110,
-                    "SAMPLE BY cannot be used with HORIZON JOIN"
-            );
+            assertQuery("SELECT avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0s, 1s) AS h " +
+                    "SAMPLE BY 1s")
+                    .noLeakCheck()
+                    .fails(110, "SAMPLE BY cannot be used with HORIZON JOIN");
         });
     }
 
@@ -2084,14 +1969,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             execute("CREATE TABLE prices_nots (ts TIMESTAMP, sym SYMBOL, price DOUBLE)");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices_nots AS p ON (t.sym = p.sym) " +
-                            "LIST (0s) AS h",
-                    37,
-                    "right side of time series join has no timestamp"
-            );
+            assertQuery("SELECT avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices_nots AS p ON (t.sym = p.sym) " +
+                    "LIST (0s) AS h")
+                    .noLeakCheck()
+                    .fails(37, "right side of time series join has no timestamp");
         });
     }
 
@@ -2102,15 +1985,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN (SELECT * FROM prices LIMIT 100) AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 0s STEP 1s AS h " +
-                            "WHERE t.qty > 0",
-                    37,
-                    "right-hand side of HORIZON JOIN can only be a table with an optional filter"
-            );
+            assertQuery("SELECT avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN (SELECT * FROM prices LIMIT 100) AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE t.qty > 0")
+                    .noLeakCheck()
+                    .fails(37, "right-hand side of HORIZON JOIN can only be a table with an optional filter");
         });
     }
 
@@ -2174,18 +2055,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
             TestUtils.assertContains(planSink, getHorizonJoinPlanType());
 
             // Verify results
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg
                             0\t2.6666666666666665
                             1\t3.3333333333333335
                             2\t5.333333333333333
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2232,15 +2110,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     rightTableTimestampType.getTypeName()
             );
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(p.price) " +
-                            "FROM orders AS t " +
-                            "HORIZON JOIN prices AS p ON (t.k = p.k) " +
-                            "RANGE FROM 0s TO 0s STEP 1s AS h " +
-                            "WHERE t.qty > 0",
-                    72,
-                    "join column type mismatch"
-            );
+            assertQuery("SELECT avg(p.price) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE t.qty > 0")
+                    .noLeakCheck()
+                    .fails(72, "join column type mismatch");
         });
     }
 
@@ -2255,15 +2131,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT h.typo, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                            "GROUP BY h.typo",
-                    7,
-                    "Invalid column: h.typo"
-            );
+            assertQuery("SELECT h.typo, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY h.typo")
+                    .noLeakCheck()
+                    .fails(7, "Invalid column: h.typo");
         });
     }
 
@@ -2299,19 +2173,16 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY offset / " + getSecondsDivisor() + ", timestamp " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    replaceExpectedMasterTimestamp(
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(replaceExpectedMasterTimestamp(
                             """
                                     sec_offs\ttimestamp\tavg
                                     0\t1970-01-01T00:00:01.000000Z\t20.0
                                     1\t1970-01-01T00:00:02.000000Z\t20.0
                                     """
-                    ),
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                    ));
         });
     }
 
@@ -2321,14 +2192,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "LIST (0s, 1w) AS h",
-                    91,
-                    "unsupported HORIZON time unit"
-            );
+            assertQuery("SELECT avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0s, 1w) AS h")
+                    .noLeakCheck()
+                    .fails(91, "unsupported HORIZON time unit");
         });
     }
 
@@ -2338,14 +2207,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT row_number() OVER (), avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "LIST (0s, 1s) AS h",
-                    7,
-                    "WINDOW functions are not allowed in HORIZON JOIN queries"
-            );
+            assertQuery("SELECT row_number() OVER (), avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0s, 1s) AS h")
+                    .noLeakCheck()
+                    .fails(7, "WINDOW functions are not allowed in HORIZON JOIN queries");
         });
     }
 
@@ -2417,19 +2284,16 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY h.offset / " + getSecondsDivisor() + ", t.sym " +
                     "ORDER BY sec_offs, t.sym";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tsym\tavg
                             0\tAX\t20.0
                             0\tBX\t200.0
                             1\tAX\t30.0
                             1\tBX\t300.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2463,16 +2327,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY sec_offs, sym " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tsym\tavg
                             0\tAX\t20.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2506,16 +2367,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY 1, 2 " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tsym\tavg
                             0\tAX\t20.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2564,18 +2422,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY t.qty + h.offset / " + getSecondsDivisor() + " + length(p.sym) " +
                     "ORDER BY combined_key";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             combined_key\tavg_price
                             6\t200.0
                             7\t110.0
                             8\t20.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2587,15 +2442,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
             // GROUP BY has h.offset, p.sym but SELECT has h.offset, t.sym - p.sym doesn't match t.sym
-            assertExceptionNoLeakCheck(
-                    "SELECT h.offset, t.sym, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                            "GROUP BY h.offset, p.sym",
-                    150,
-                    "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column"
-            );
+            assertQuery("SELECT h.offset, t.sym, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY h.offset, p.sym")
+                    .noLeakCheck()
+                    .fails(150, "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column");
         });
     }
 
@@ -2607,15 +2460,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
             // GROUP BY has h.offset, t.sym, t.qty but SELECT only has h.offset, t.sym as non-aggregates
-            assertExceptionNoLeakCheck(
-                    "SELECT h.offset, t.sym, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                            "GROUP BY h.offset, t.sym, t.qty",
-                    157,
-                    "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column"
-            );
+            assertQuery("SELECT h.offset, t.sym, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY h.offset, t.sym, t.qty")
+                    .noLeakCheck()
+                    .fails(157, "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column");
         });
     }
 
@@ -2627,15 +2478,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
             // GROUP BY 1, 3 where column 3 is avg(p.price) - an aggregate
-            assertExceptionNoLeakCheck(
-                    "SELECT h.offset, t.sym, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                            "GROUP BY 1, 3",
-                    143,
-                    "HORIZON JOIN GROUP BY cannot reference aggregate column at position 3"
-            );
+            assertQuery("SELECT h.offset, t.sym, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY 1, 3")
+                    .noLeakCheck()
+                    .fails(143, "HORIZON JOIN GROUP BY cannot reference aggregate column at position 3");
         });
     }
 
@@ -2647,15 +2496,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
             // GROUP BY only has h.offset but SELECT has h.offset, t.sym as non-aggregates
-            assertExceptionNoLeakCheck(
-                    "SELECT h.offset, t.sym, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                            "GROUP BY h.offset",
-                    17,
-                    "non-aggregate column must be included in HORIZON JOIN GROUP BY clause"
-            );
+            assertQuery("SELECT h.offset, t.sym, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY h.offset")
+                    .noLeakCheck()
+                    .fails(17, "non-aggregate column must be included in HORIZON JOIN GROUP BY clause");
         });
     }
 
@@ -2668,15 +2515,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT t.qty + p.price, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                            "GROUP BY t.qty",
-                    140,
-                    "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column"
-            );
+            assertQuery("SELECT t.qty + p.price, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY t.qty")
+                    .noLeakCheck()
+                    .fails(140, "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column");
         });
     }
 
@@ -2688,15 +2533,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT t.qty + h.offset, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                            "GROUP BY h.offset",
-                    141,
-                    "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column"
-            );
+            assertQuery("SELECT t.qty + h.offset, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY h.offset")
+                    .noLeakCheck()
+                    .fails(141, "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column");
         });
     }
 
@@ -2736,17 +2579,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY h.offset / " + getSecondsDivisor() + " + 100 " +
                     "ORDER BY offset_key";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             offset_key\tavg_price
                             100\t110.0
                             101\t110.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2786,17 +2626,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY h.offset / " + getSecondsDivisor() + " " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg_price
                             0\t110.0
                             1\t110.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2837,19 +2674,17 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY h.timestamp " +
                     "ORDER BY hts";
 
-            assertQueryNoLeakCheck(
-                    replaceExpectedMasterTimestamp(
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("hts")
+                    .expectSize()
+                    .returns(replaceExpectedMasterTimestamp(
                             """
                                     hts\tavg_price
                                     1970-01-01T00:00:01.000000Z\t110.0
                                     1970-01-01T00:00:02.000000Z\t110.0
                                     """
-                    ),
-                    sql,
-                    "hts",
-                    true,
-                    true
-            );
+                    ));
         });
     }
 
@@ -2901,17 +2736,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "LIST (0s, 1s) AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg
                             0\t20.0
                             1\t30.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2948,17 +2780,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t150.0\t300
                             1\t160.0\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2990,23 +2819,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             );
 
             // Filter using concat() - uses Java filter implementation
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t.order_sym, sum(t.qty), avg(p.price)
+                    FROM orders AS t
+                    HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    WHERE concat(t.order_sym, '_0') = 'AAPL_0'
+                    ORDER BY t.order_sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             order_sym\tsum\tavg
                             AAPL\t300\t105.0
-                            """,
-                    """
-                            SELECT t.order_sym, sum(t.qty), avg(p.price)
-                            FROM orders AS t
-                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
-                            RANGE FROM 0s TO 0s STEP 1s AS h
-                            WHERE concat(t.order_sym, '_0') = 'AAPL_0'
-                            ORDER BY t.order_sym
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3038,23 +2864,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             );
 
             // Filter to only AAPL orders
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t.order_sym, sum(t.qty), avg(p.price)
+                    FROM orders AS t
+                    HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    WHERE t.order_sym = 'AAPL'
+                    ORDER BY t.order_sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             order_sym\tsum\tavg
                             AAPL\t300\t105.0
-                            """,
-                    """
-                            SELECT t.order_sym, sum(t.qty), avg(p.price)
-                            FROM orders AS t
-                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
-                            RANGE FROM 0s TO 0s STEP 1s AS h
-                            WHERE t.order_sym = 'AAPL'
-                            ORDER BY t.order_sym
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3089,17 +2912,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY sec_offs " +
                     "ORDER BY h.offset";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg
                             0\t20.0
                             1\t30.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3143,17 +2963,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t150.0\t300
                             1\t160.0\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3192,17 +3009,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t102.5\t300
                             1\t112.5\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3239,17 +3053,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t102.5\t300
                             1\t112.5\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3296,17 +3107,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t135.0\t600
                             1\t138.33333333333334\t600
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3356,17 +3164,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t127.75\t750
                             1\t132.75\t750
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3401,17 +3206,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY sec_offs " +
                     "ORDER BY h.offset";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg
                             0\t20.0
                             1\t30.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3477,18 +3279,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
             );
 
             // Verify results
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg
                             0\t20.0
                             1\t30.0
                             2\t40.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3530,18 +3329,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "ORDER BY min_offs";
 
             // Verify results
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             min_offs\tavg
                             0\t20.0
                             1\t30.0
                             2\t40.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3590,16 +3386,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "LIST (1s) AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg
                             1\t35.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3639,16 +3432,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "LIST (0) AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg
                             0\t20.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3686,16 +3476,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "LIST (-1s) AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             -1\t25.0\t300.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3734,16 +3521,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "WHERE t.sym = 'AX' " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t20.0\t30.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3781,16 +3565,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     LIST (0) AS h
                     """;
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg\tsum
                             25.0\t300.0
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3829,23 +3611,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // Group by slave symbol (p.exchange)
             // NYSE: AAPL order at 1s (price 100) + MSFT order at 4s (price 300) -> avg = 200, sum(qty) = 400
             // NASDAQ: AAPL order at 2s (price 110) + GOOG order at 3s (price 200) -> avg = 155, sum(qty) = 350
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT p.exchange, sum(t.qty), avg(p.price)
+                    FROM orders AS t
+                    HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY p.exchange
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             exchange\tsum\tavg
                             NASDAQ\t350\t155.0
                             NYSE\t400\t200.0
-                            """,
-                    """
-                            SELECT p.exchange, sum(t.qty), avg(p.price)
-                            FROM orders AS t
-                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
-                            RANGE FROM 0s TO 0s STEP 1s AS h
-                            ORDER BY p.exchange
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3888,17 +3667,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t125.0\t300
                             1\t135.0\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3956,17 +3732,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "GROUP BY concat(t.category, '-', p.region) " +
                     "ORDER BY combined_key";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             combined_key\tavg_price
                             X-US\t20.0
                             Y-EU\t200.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3992,21 +3765,18 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT h.offset / " + getSecondsDivisor() + " AS sec_off, avg(p.bid), avg(p.ask) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "ORDER BY sec_off")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_off\tavg\tavg1
                             0\t3.0\t4.0
                             1\t3.0\t4.0
-                            """,
-                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_off, avg(p.bid), avg(p.ask) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                            "ORDER BY sec_off",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4044,17 +3814,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t125.0\t300
                             1\t135.0\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4092,17 +3859,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t125.0\t300
                             1\t135.0\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4138,44 +3902,38 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
             // Test 1: Left-hand symbol (order_sym) used as a grouping key
             // Right-hand symbol (exchange) used via first() aggregate
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t.order_sym, first(p.exchange), avg(p.price)
+                    FROM orders AS t
+                    HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.order_sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             order_sym\tfirst\tavg
                             AAPL\tNYSE\t105.0
                             GOOG\tNASDAQ\t200.0
                             MSFT\tNYSE\t300.0
-                            """,
-                    """
-                            SELECT t.order_sym, first(p.exchange), avg(p.price)
-                            FROM orders AS t
-                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
-                            RANGE FROM 0s TO 0s STEP 1s AS h
-                            ORDER BY t.order_sym
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // Test 2: Both left and right symbols in SELECT
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t.order_sym, t.category, first(p.exchange), avg(p.price)
+                    FROM orders AS t
+                    HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.order_sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             order_sym\tcategory\tfirst\tavg
                             AAPL\tTECH\tNYSE\t105.0
                             GOOG\tTECH\tNASDAQ\t200.0
                             MSFT\tSOFT\tNYSE\t300.0
-                            """,
-                    """
-                            SELECT t.order_sym, t.category, first(p.exchange), avg(p.price)
-                            FROM orders AS t
-                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
-                            RANGE FROM 0s TO 0s STEP 1s AS h
-                            ORDER BY t.order_sym
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4208,22 +3966,19 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
             // first() should return NYSE (from order at 1s)
             // last() should return NASDAQ (from order at 2s)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t.order_sym, first(p.exchange), last(p.exchange)
+                    FROM orders AS t
+                    HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.order_sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             order_sym\tfirst\tlast
                             AAPL\tNYSE\tNASDAQ
-                            """,
-                    """
-                            SELECT t.order_sym, first(p.exchange), last(p.exchange)
-                            FROM orders AS t
-                            HORIZON JOIN prices AS p ON (t.order_sym = p.price_sym)
-                            RANGE FROM 0s TO 0s STEP 1s AS h
-                            ORDER BY t.order_sym
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4266,17 +4021,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t150.0\t300
                             1\t160.0\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4320,18 +4072,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 2s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg
                             0\t20.0
                             1\t30.0
                             2\t40.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4374,17 +4123,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t25.0\t300.0
                             1\t35.0\t300.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4423,18 +4169,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM -1s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg
                             -1\t20.0
                             0\t30.0
                             1\t40.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4476,16 +4219,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "WHERE t.qty > 100 " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t35.0\t350.0
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4518,23 +4258,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT t.sym, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY t.sym " +
+                    "ORDER BY t.sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tavg_bid\tavg_ask
                             A\tnull\tnull
                             B\tnull\tnull
-                            """,
-                    "SELECT t.sym, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0) AS h " +
-                            "GROUP BY t.sym " +
-                            "ORDER BY t.sym",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4570,22 +4307,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.arr[1]), avg(a.ask), sum(t.qty)
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg\tavg1\tsum
                             null\t50.0\t100.0
-                            """,
-                    """
-                            SELECT avg(b.arr[1]), avg(a.ask), sum(t.qty)
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4650,16 +4385,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
             TestUtils.assertContains(planSink, getMultiHorizonJoinPlanType());
             TestUtils.assertContains(planSink, "tables: 2");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask
                             125.0\t126.0
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4715,16 +4448,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
             TestUtils.assertContains(planSink, getMultiHorizonJoinPlanType());
             TestUtils.assertContains(planSink, "tables: 2");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask
                             125.0\t126.0
-                            """,
-                    sql,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4744,23 +4475,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT t.sym, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask, sum(t.qty) AS sum_qty " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY t.sym " +
+                    "ORDER BY t.sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tavg_bid\tavg_ask\tsum_qty
                             A\tnull\tnull\t10.0
                             B\tnull\tnull\t20.0
-                            """,
-                    "SELECT t.sym, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask, sum(t.qty) AS sum_qty " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0) AS h " +
-                            "GROUP BY t.sym " +
-                            "ORDER BY t.sym",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4779,22 +4507,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask, sum(t.qty) AS sum_qty
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b
+                    HORIZON JOIN asks AS a
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask\tsum_qty
                             null\tnull\t10.0
-                            """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask, sum(t.qty) AS sum_qty
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b
-                            HORIZON JOIN asks AS a
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4835,22 +4561,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade B (ts=2s): bid=200.0, ask=NaN  → bid+ask = NaN (skipped by avg)
             // avg(b.bid + a.ask) = 150.0 / 1 = 150.0
             // avg(b.bid) = (100+200)/2 = 150.0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.bid + a.ask) AS avg_spread, avg(b.bid) AS avg_bid
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_spread\tavg_bid
                             150.0\t150.0
-                            """,
-                    """
-                            SELECT avg(b.bid + a.ask) AS avg_spread, avg(b.bid) AS avg_bid
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4897,22 +4621,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade 1 (sym=A, exchange=NYSE): price=100.0, fee=0.01
             //   Trade 2 (sym=B, exchange=LSE):  price=200.0, fee=0.02
             // avg(price)=150, avg(fee)=0.015
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(p.price) AS avg_price, avg(f.fee) AS avg_fee
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    HORIZON JOIN fees AS f ON (t.exchange = f.exchange)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_price\tavg_fee
                             150.0\t0.015
-                            """,
-                    """
-                            SELECT avg(p.price) AS avg_price, avg(f.fee) AS avg_fee
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            HORIZON JOIN fees AS f ON (t.exchange = f.exchange)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -4951,22 +4673,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade 1 (ts=1s): bid ASOF = 100.0, ask ASOF = 101.0
             //   Trade 2 (ts=2s): bid ASOF = 150.0, ask ASOF = 151.0
             // avg(bid) = 125, avg(ask) = 126
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask
                             125.0\t126.0
-                            """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5004,22 +4724,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade 1 (ts=1s): bid ASOF = 100.0, ask ASOF = 101.0
             //   Trade 2 (ts=2s): bid ASOF = 150.0, ask ASOF = 151.0
             // avg(bid) = 125, avg(ask) = 126
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask
                             125.0\t126.0
-                            """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5044,21 +4762,18 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (0, 1s) AS h " +
+                    "GROUP BY sec_offs " +
+                    "ORDER BY sec_offs")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg_bid\tavg_ask
-                            """,
-                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0, 1s) AS h " +
-                            "GROUP BY sec_offs " +
-                            "ORDER BY sec_offs",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5083,22 +4798,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b
+                    HORIZON JOIN asks AS a
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask
                             null\tnull
-                            """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b
-                            HORIZON JOIN asks AS a
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5143,26 +4856,23 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // At offset 2s (horizon=7s):
             //   A: bid=110, ask=111; B: bid=210, ask=211
             // Keys: A_0, A_2, B_0, B_2
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT t.sym || '_' || (h.offset / " + getSecondsDivisor() + ") AS k, " +
+                    "avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (0, 2s) AS h " +
+                    "GROUP BY k " +
+                    "ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             k\tavg_bid\tavg_ask
                             A_0\t100.0\t101.0
                             A_2\t110.0\t111.0
                             B_0\t200.0\t201.0
                             B_2\t210.0\t211.0
-                            """,
-                    "SELECT t.sym || '_' || (h.offset / " + getSecondsDivisor() + ") AS k, " +
-                            "avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0, 2s) AS h " +
-                            "GROUP BY k " +
-                            "ORDER BY k",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5212,24 +4922,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
             // concat() forces a Java filter, count_distinct(varchar) forces ST path.
             // Only AAPL orders pass the filter.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t.order_sym, count_distinct(t.label), sum(t.qty)
+                    FROM orders AS t
+                    HORIZON JOIN bids AS b ON (t.order_sym = b.bid_sym)
+                    HORIZON JOIN asks AS a ON (t.order_sym = a.ask_sym)
+                        RANGE FROM 0s TO 0s STEP 1s AS h
+                    WHERE concat(t.order_sym, '_0') = 'AAPL_0'
+                    ORDER BY t.order_sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             order_sym\tcount_distinct\tsum
                             AAPL\t2\t300
-                            """,
-                    """
-                            SELECT t.order_sym, count_distinct(t.label), sum(t.qty)
-                            FROM orders AS t
-                            HORIZON JOIN bids AS b ON (t.order_sym = b.bid_sym)
-                            HORIZON JOIN asks AS a ON (t.order_sym = a.ask_sym)
-                                RANGE FROM 0s TO 0s STEP 1s AS h
-                            WHERE concat(t.order_sym, '_0') = 'AAPL_0'
-                            ORDER BY t.order_sym
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5270,24 +4977,22 @@ public class HorizonJoinTest extends AbstractCairoTest {
             );
 
             // Use h.timestamp in the SELECT to verify it resolves
-            assertQueryNoLeakCheck(
-                    replaceExpectedMasterTimestamp(
+            assertQuery("""
+                    SELECT min(h.timestamp), max(h.timestamp), avg(b.bid) AS avg_bid
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceExpectedMasterTimestamp(
                             """
                                     min\tmax\tavg_bid
                                     2024-01-01T00:00:01.000000Z\t2024-01-01T00:00:01.000000Z\t100.0
                                     """
-                    ),
-                    """
-                            SELECT min(h.timestamp), max(h.timestamp), avg(b.bid) AS avg_bid
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                    ));
         });
     }
 
@@ -5351,25 +5056,22 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t.sym, count() AS n, avg(p.price) AS avg_price, avg(v.vol) AS avg_vol
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    HORIZON JOIN volumes AS v ON (t.sym = v.sym)
+                        LIST (0) AS h
+                    GROUP BY t.sym
+                    ORDER BY t.sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tn\tavg_price\tavg_vol
                             A\t7\t1.0\t10.0
                             RARE\t6\t100.0\t500.0
-                            """,
-                    """
-                            SELECT t.sym, count() AS n, avg(p.price) AS avg_price, avg(v.vol) AS avg_vol
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            HORIZON JOIN volumes AS v ON (t.sym = v.sym)
-                                LIST (0) AS h
-                            GROUP BY t.sym
-                            ORDER BY t.sym
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5430,25 +5132,22 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t.sym, count() AS n, avg(p.price) AS avg_price, avg(v.vol) AS avg_vol
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    HORIZON JOIN volumes AS v ON (t.sym = v.sym)
+                        LIST (0) AS h
+                    GROUP BY t.sym
+                    ORDER BY t.sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tn\tavg_price\tavg_vol
                             A\t3\t1.0\t10.0
                             RARE\t3\t100.0\t500.0
-                            """,
-                    """
-                            SELECT t.sym, count() AS n, avg(p.price) AS avg_price, avg(v.vol) AS avg_vol
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            HORIZON JOIN volumes AS v ON (t.sym = v.sym)
-                                LIST (0) AS h
-                            GROUP BY t.sym
-                            ORDER BY t.sym
-                            """,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5495,24 +5194,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   offset -2s (horizon=3s): bid ASOF=null, ask ASOF=null
             //   offset  0s (horizon=5s): bid ASOF=100.0 (at 4s), ask ASOF=101.0 (at 4s)
             //   offset  2s (horizon=7s): bid ASOF=200.0 (at 6s), ask ASOF=201.0 (at 6s)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (-2s, 0, 2s) AS h " +
+                    "GROUP BY sec_offs " +
+                    "ORDER BY sec_offs")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg_bid\tavg_ask
                             -2\tnull\tnull
                             0\t100.0\t101.0
                             2\t200.0\t201.0
-                            """,
-                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (-2s, 0, 2s) AS h " +
-                            "GROUP BY sec_offs " +
-                            "ORDER BY sec_offs",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5563,22 +5259,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade 1 (ts=1s): bid=100.0, ask=101.0
             //   Trade 2 (ts=2s): bid=150.0, ask=151.0
             // avg(bid) = 125, avg(ask) = 126
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                    FROM (SELECT * FROM trades LIMIT 2) AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask
                             125.0\t126.0
-                            """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM (SELECT * FROM trades LIMIT 2) AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5629,22 +5323,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade 1 (ts=1s): bid=100.0, ask=101.0
             //   Trade 2 (ts=2s): bid=150.0, ask=151.0
             // avg(bid) = 125, avg(ask) = 126
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                    FROM (SELECT * FROM trades LIMIT 2) AS t
+                    HORIZON JOIN bids AS b
+                    HORIZON JOIN asks AS a
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask
                             125.0\t126.0
-                            """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM (SELECT * FROM trades LIMIT 2) AS t
-                            HORIZON JOIN bids AS b
-                            HORIZON JOIN asks AS a
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5661,17 +5353,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     rightTableTimestampType.getTypeName()
             );
 
-            assertExceptionNoLeakCheck(
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM trades_nots AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            """,
-                    74,
-                    "left side of time series join has no timestamp"
-            );
+            assertQuery("""
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                    FROM trades_nots AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .fails(74, "left side of time series join has no timestamp");
         });
     }
 
@@ -5683,14 +5373,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(t2.sym) " +
-                            "FROM t1 " +
-                            "HORIZON JOIN t2 ON (t1.sym = t2.sym) " +
-                            "HORIZON JOIN t3 ON (t1.sym = t3.sym)",
-                    27,
-                    "HORIZON JOIN requires offset configuration (RANGE or LIST)"
-            );
+            assertQuery("SELECT avg(t2.sym) " +
+                    "FROM t1 " +
+                    "HORIZON JOIN t2 ON (t1.sym = t2.sym) " +
+                    "HORIZON JOIN t3 ON (t1.sym = t3.sym)")
+                    .noLeakCheck()
+                    .fails(27, "HORIZON JOIN requires offset configuration (RANGE or LIST)");
         });
     }
 
@@ -5731,22 +5419,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             );
 
             // prices is keyed (ON sym), rates is not keyed (timestamp-only ASOF)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(p.price) AS avg_price, avg(r.rate) AS avg_rate
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    HORIZON JOIN rates AS r
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_price\tavg_rate
                             100.0\t1.5
-                            """,
-                    """
-                            SELECT avg(p.price) AS avg_price, avg(r.rate) AS avg_rate
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            HORIZON JOIN rates AS r
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5805,23 +5491,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade A (ts=1s): bid=100.0, ask=101.0, rate=1.5
             //   Trade B (ts=2s): bid=150.0, ask=151.0, rate=2.5
             // avg(bid) = 125, avg(ask) = 126, avg(rate) = 2.0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask, avg(r.rate) AS avg_rate
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                    HORIZON JOIN rates AS r
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask\tavg_rate
                             125.0\t126.0\t2.0
-                            """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask, avg(r.rate) AS avg_rate
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                            HORIZON JOIN rates AS r
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5872,22 +5556,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade day1 (1s): bid ASOF=100.0 (day1 0.5s), ask ASOF=101.0 (day1 0.5s)
             //   Trade day2 (1s): bid ASOF=200.0 (day2 0.5s), ask ASOF=151.0 (day1 12h, cross-partition)
             // avg(bid) = (100+200)/2 = 150, avg(ask) = (101+151)/2 = 126
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask
                             150.0\t126.0
-                            """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5930,23 +5612,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade at 3s: bid=300, ask=301
             // min(bid)=100, max(bid)=300, sum(bid)=600
             // min(ask)=101, max(ask)=301, count=3
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT min(b.bid) AS min_bid, max(b.bid) AS max_bid, sum(b.bid) AS sum_bid,
+                           min(a.ask) AS min_ask, max(a.ask) AS max_ask, count() AS n
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             min_bid\tmax_bid\tsum_bid\tmin_ask\tmax_ask\tn
                             100.0\t300.0\t600.0\t101.0\t301.0\t3
-                            """,
-                    """
-                            SELECT min(b.bid) AS min_bid, max(b.bid) AS max_bid, sum(b.bid) AS sum_bid,
-                                   min(a.ask) AS min_ask, max(a.ask) AS max_ask, count() AS n
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5990,23 +5670,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // GROUP BY sym:
             //   A: avg(bid) = (100+300)/2 = 200.0, avg(ask) = (101+301)/2 = 201.0, count = 2
             //   B: avg(bid) = 200.0, avg(ask) = 201.0, count = 1
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT t.sym, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask, count() AS n " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY t.sym " +
+                    "ORDER BY t.sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tavg_bid\tavg_ask\tn
                             A\t200.0\t201.0\t2
                             B\t200.0\t201.0\t1
-                            """,
-                    "SELECT t.sym, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask, count() AS n " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0) AS h " +
-                            "GROUP BY t.sym " +
-                            "ORDER BY t.sym",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6018,15 +5695,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(t2.sym) " +
-                            "FROM t1 " +
-                            "HORIZON JOIN t2 ON (t1.sym = t2.sym) " +
-                            "JOIN t3 ON (t1.sym = t3.sym) " +
-                            "LIST (0) AS h",
-                    64,
-                    "only horizon joins can follow a horizon join"
-            );
+            assertQuery("SELECT avg(t2.sym) " +
+                    "FROM t1 " +
+                    "HORIZON JOIN t2 ON (t1.sym = t2.sym) " +
+                    "JOIN t3 ON (t1.sym = t3.sym) " +
+                    "LIST (0) AS h")
+                    .noLeakCheck()
+                    .fails(64, "only horizon joins can follow a horizon join");
         });
     }
 
@@ -6038,15 +5713,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(t3.sym) " +
-                            "FROM t1 " +
-                            "JOIN t2 ON (t1.sym = t2.sym) " +
-                            "HORIZON JOIN t3 ON (t1.sym = t3.sym) " +
-                            "LIST (0) AS h",
-                    56,
-                    "horizon join cannot be combined with other joins"
-            );
+            assertQuery("SELECT avg(t3.sym) " +
+                    "FROM t1 " +
+                    "JOIN t2 ON (t1.sym = t2.sym) " +
+                    "HORIZON JOIN t3 ON (t1.sym = t3.sym) " +
+                    "LIST (0) AS h")
+                    .noLeakCheck()
+                    .fails(56, "horizon join cannot be combined with other joins");
         });
     }
 
@@ -6109,22 +5782,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
             // avg price: (7*1.0 + 6*100.0) / 13 = 607/13 ≈ 46.692...
             // avg vol: (7*10.0 + 6*500.0) / 13 = 3070/13 ≈ 236.153...
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(p.price) AS avg_price, avg(v.vol) AS avg_vol
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    HORIZON JOIN volumes AS v ON (t.sym = v.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_price\tavg_vol
                             46.69230769230769\t236.15384615384616
-                            """,
-                    """
-                            SELECT avg(p.price) AS avg_price, avg(v.vol) AS avg_vol
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            HORIZON JOIN volumes AS v ON (t.sym = v.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6183,22 +5854,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
             // avg price: (3*1.0 + 3*100.0) / 6 = 303/6 = 50.5
             // avg vol: (3*10.0 + 3*500.0) / 6 = 1530/6 = 255.0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(p.price) AS avg_price, avg(v.vol) AS avg_vol
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    HORIZON JOIN volumes AS v ON (t.sym = v.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_price\tavg_vol
                             50.5\t255.0
-                            """,
-                    """
-                            SELECT avg(p.price) AS avg_price, avg(v.vol) AS avg_vol
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            HORIZON JOIN volumes AS v ON (t.sym = v.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6224,22 +5893,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask
                             100.0\tnull
-                            """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6277,23 +5944,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // At offset 0:
             //   Trade A (ts=1s): bid ASOF = 100.0, ask ASOF = null (no A in asks)
             //   Trade B (ts=2s): bid ASOF = 200.0, ask ASOF = 301.0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT t.sym, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY t.sym " +
+                    "ORDER BY t.sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sym\tavg_bid\tavg_ask
                             A\t100.0\tnull
                             B\t200.0\t301.0
-                            """,
-                    "SELECT t.sym, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0) AS h " +
-                            "GROUP BY t.sym " +
-                            "ORDER BY t.sym",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6305,14 +5969,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL, val DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL, val DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(t2.val) " +
-                            "FROM t1 " +
-                            "HORIZON JOIN t2 ON (t1.sym = t2.sym) LIST (0) AS h1 " +
-                            "HORIZON JOIN t3 ON (t1.sym = t3.sym) LIST (0) AS h2",
-                    79,
-                    "RANGE or LIST must only appear on the last HORIZON JOIN"
-            );
+            assertQuery("SELECT avg(t2.val) " +
+                    "FROM t1 " +
+                    "HORIZON JOIN t2 ON (t1.sym = t2.sym) LIST (0) AS h1 " +
+                    "HORIZON JOIN t3 ON (t1.sym = t3.sym) LIST (0) AS h2")
+                    .noLeakCheck()
+                    .fails(79, "RANGE or LIST must only appear on the last HORIZON JOIN");
         });
     }
 
@@ -6324,14 +5986,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL, val DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL, val DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(t2.val) " +
-                            "FROM t1 " +
-                            "HORIZON JOIN t2 ON (t1.sym = t2.sym) LIST (0) AS h " +
-                            "HORIZON JOIN t3 ON (t1.sym = t3.sym)",
-                    78,
-                    "RANGE or LIST must only appear on the last HORIZON JOIN"
-            );
+            assertQuery("SELECT avg(t2.val) " +
+                    "FROM t1 " +
+                    "HORIZON JOIN t2 ON (t1.sym = t2.sym) LIST (0) AS h " +
+                    "HORIZON JOIN t3 ON (t1.sym = t3.sym)")
+                    .noLeakCheck()
+                    .fails(78, "RANGE or LIST must only appear on the last HORIZON JOIN");
         });
     }
 
@@ -6343,15 +6003,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(b.bid), avg(a.ask) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN (SELECT * FROM asks LIMIT 100) AS a ON (t.sym = a.sym) " +
-                            "LIST (0) AS h",
-                    89,
-                    "right-hand side of HORIZON JOIN can only be a table with an optional filter"
-            );
+            assertQuery("SELECT avg(b.bid), avg(a.ask) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN (SELECT * FROM asks LIMIT 100) AS a ON (t.sym = a.sym) " +
+                    "LIST (0) AS h")
+                    .noLeakCheck()
+                    .fails(89, "right-hand side of HORIZON JOIN can only be a table with an optional filter");
         });
     }
 
@@ -6363,15 +6021,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             execute("CREATE TABLE asks (sym SYMBOL, ask DOUBLE)"); // No timestamp
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(b.bid), avg(a.ask) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0) AS h",
-                    89,
-                    "right side of time series join has no timestamp"
-            );
+            assertQuery("SELECT avg(b.bid), avg(a.ask) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (0) AS h")
+                    .noLeakCheck()
+                    .fails(89, "right side of time series join has no timestamp");
         });
     }
 
@@ -6418,22 +6074,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade Alice (ts=1s): bid=100.0, ask=101.0
             //   Trade Bob   (ts=2s): bid=200.0, ask=201.0
             // avg(bid) = 150, avg(ask) = 151
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b ON (t.name = b.name)
+                    HORIZON JOIN asks AS a ON (t.name = a.name)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask
                             150.0\t151.0
-                            """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.name = b.name)
-                            HORIZON JOIN asks AS a ON (t.name = a.name)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6479,23 +6133,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade 1 (ts=1s): bid=100.0, ask=101.0, mid=100.5
             //   Trade 2 (ts=2s): bid=150.0, ask=151.0, mid=150.5
             // avg(bid) = 125, avg(ask) = 126, avg(mid) = 125.5
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask, avg(m.mid) AS avg_mid
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                    HORIZON JOIN mids AS m ON (t.sym = m.sym)
+                        LIST (0) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask\tavg_mid
                             125.0\t126.0\t125.5
-                            """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask, avg(m.mid) AS avg_mid
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                            HORIZON JOIN mids AS m ON (t.sym = m.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6508,15 +6160,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE t4 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(t2.sym) " +
-                            "FROM t1 " +
-                            "HORIZON JOIN t2 ON (t1.sym = t2.sym) " +
-                            "HORIZON JOIN t3 ON (t1.sym = t3.sym) " +
-                            "HORIZON JOIN t4 ON (t1.sym = t4.sym)",
-                    27,
-                    "HORIZON JOIN requires offset configuration (RANGE or LIST)"
-            );
+            assertQuery("SELECT avg(t2.sym) " +
+                    "FROM t1 " +
+                    "HORIZON JOIN t2 ON (t1.sym = t2.sym) " +
+                    "HORIZON JOIN t3 ON (t1.sym = t3.sym) " +
+                    "HORIZON JOIN t4 ON (t1.sym = t4.sym)")
+                    .noLeakCheck()
+                    .fails(27, "HORIZON JOIN requires offset configuration (RANGE or LIST)");
         });
     }
 
@@ -6554,15 +6204,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, k INT, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(b.bid), avg(a.ask) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.k) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0) AS h",
-                    82,
-                    "join column type mismatch"
-            );
+            assertQuery("SELECT avg(b.bid), avg(a.ask) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.k) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (0) AS h")
+                    .noLeakCheck()
+                    .fails(82, "join column type mismatch");
         });
     }
 
@@ -6574,16 +6222,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT h.typo, avg(b.bid) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0) AS h " +
-                            "GROUP BY h.typo",
-                    7,
-                    "Invalid column: h.typo"
-            );
+            assertQuery("SELECT h.typo, avg(b.bid) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY h.typo")
+                    .noLeakCheck()
+                    .fails(7, "Invalid column: h.typo");
         });
     }
 
@@ -6595,15 +6241,13 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(b.nonexistent) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0) AS h",
-                    11,
-                    "Invalid column: b.nonexistent"
-            );
+            assertQuery("SELECT avg(b.nonexistent) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (0) AS h")
+                    .noLeakCheck()
+                    .fails(11, "Invalid column: b.nonexistent");
         });
     }
 
@@ -6615,16 +6259,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(b.bid), avg(a.ask) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0) AS h " +
-                            "WHERE a.ask > 0",
-                    157,
-                    "WHERE clause of HORIZON JOIN can only reference left-hand side columns"
-            );
+            assertQuery("SELECT avg(b.bid), avg(a.ask) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (0) AS h " +
+                    "WHERE a.ask > 0")
+                    .noLeakCheck()
+                    .fails(157, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         });
     }
 
@@ -6636,16 +6278,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(b.bid), avg(a.ask) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0) AS h " +
-                            "WHERE b.bid > 0",
-                    157,
-                    "WHERE clause of HORIZON JOIN can only reference left-hand side columns"
-            );
+            assertQuery("SELECT avg(b.bid), avg(a.ask) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (0) AS h " +
+                    "WHERE b.bid > 0")
+                    .noLeakCheck()
+                    .fails(157, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         });
     }
 
@@ -6657,16 +6297,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(b.bid), avg(a.ask) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0, 1s) AS h " +
-                            "WHERE h.offset > 0",
-                    164,
-                    "WHERE clause of HORIZON JOIN can only reference left-hand side columns"
-            );
+            assertQuery("SELECT avg(b.bid), avg(a.ask) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "LIST (0, 1s) AS h " +
+                    "WHERE h.offset > 0")
+                    .noLeakCheck()
+                    .fails(164, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         });
     }
 
@@ -6708,23 +6346,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade A at 1s: bid=100.0, ask=101.0
             //   Trade A at 3s: bid=300.0, ask=301.0
             // avg(bid) = 200, avg(ask) = 201
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                        LIST (0) AS h
+                    WHERE t.sym = 'A'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             avg_bid\tavg_ask
                             200.0\t201.0
-                            """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            WHERE t.sym = 'A'
-                            """,
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6762,24 +6398,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   offset -2s (horizon=3s): bid=null, ask=null
             //   offset  0s (horizon=5s): bid=100.0 (at 4s), ask=101.0 (at 4s)
             //   offset  2s (horizon=7s): bid=200.0 (at 6s), ask=201.0 (at 6s)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                    "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                    "RANGE FROM -2s TO 2s STEP 2s AS h " +
+                    "GROUP BY sec_offs " +
+                    "ORDER BY sec_offs")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg_bid\tavg_ask
                             -2\tnull\tnull
                             0\t100.0\t101.0
                             2\t200.0\t201.0
-                            """,
-                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "RANGE FROM -2s TO 2s STEP 2s AS h " +
-                            "GROUP BY sec_offs " +
-                            "ORDER BY sec_offs",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6794,14 +6427,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     rightTableTimestampType.getTypeName()
             );
 
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(p.price) " +
-                            "FROM orders AS t " +
-                            "HORIZON JOIN prices AS p ON (t.k = p.k) " +
-                            "RANGE FROM 0s TO 0s STEP 1s AS h",
-                    72,
-                    "join column type mismatch"
-            );
+            assertQuery("SELECT avg(p.price) " +
+                    "FROM orders AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h")
+                    .noLeakCheck()
+                    .fails(72, "join column type mismatch");
         });
     }
 
@@ -6838,17 +6469,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
                     "ORDER BY sec_offs";
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             sec_offs\tavg\tsum
                             0\t150.0\t300
                             1\t160.0\t300
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 

@@ -1253,6 +1253,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return viewExpr != null ? viewExpr.position : 0;
     }
 
+    /**
+     * Returns true when the base factory delivers rows in ascending designated-timestamp order, which the
+     * TWAP and sparkline aggregates require: their single-batch step-function integration trusts each page
+     * frame to already be sorted by the designated timestamp. A forward scan alone is not enough. A sort by
+     * a non-timestamp column also reports SCAN_DIRECTION_FORWARD, yet it drops the designated timestamp from
+     * its metadata (so getTimestampIndex() no longer matches the timestampIndex that an outer timestamp(col)
+     * clause re-attaches by name). Requiring the metadata timestamp to equal timestampIndex rejects such
+     * reordered bases, which would otherwise feed the aggregates rows out of timestamp order.
+     */
+    private static boolean isBaseTimestampAscending(RecordCursorFactory factory, int timestampIndex) {
+        return factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD
+                && factory.getMetadata().getTimestampIndex() == timestampIndex;
+    }
+
     // Fixed-size scalars and wide types that MapValue can put/get directly.
     // SYMBOL is cached as the int symbol id. UUID, INTERVAL, and variable-width
     // types fall back to the recordAt path -- MapValue lacks symmetric put APIs
@@ -1926,6 +1940,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new int[][]{masterSymbolKeyCols.toArray(), slaveSymbolKeyCols.toArray()};
         }
         return null;
+    }
+
+    /**
+     * Whether the covering index's forward scan order is the query's final order.
+     * The covering scan yields rows in ascending designated-timestamp order, so
+     * this holds only when there is no ORDER BY (natural timestamp order), or the
+     * sole ORDER BY is the designated timestamp ascending. Any other ORDER BY
+     * (descending, or a different column) forces a downstream sort that would
+     * reorder the scan's output -- meaning a pushed-down LIMIT would truncate the
+     * scan before the sort and feed it the wrong rows.
+     */
+    private boolean coveringScanOrderMatchesQuery(IQueryModel model) {
+        if (model.getOrderByAdvice().size() == 0) {
+            return true;
+        }
+        return isOrderByDesignatedTimestampOnly(model)
+                && getOrderByDirectionOrDefault(model, 0) == IQueryModel.ORDER_DIRECTION_ASCENDING;
     }
 
     @NotNull
@@ -4410,6 +4441,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext,
                     innerMetadata,
                     timestampIndex,
+                    false,
                     true,
                     groupByFunctions,
                     groupByFunctionPositions,
@@ -5660,6 +5692,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         executionContext,
                                         joinMetadata,
                                         masterMetadata.getTimestampIndex(),
+                                        false,
                                         true,
                                         groupByFunctions,
                                         groupByFunctionPositions,
@@ -6833,6 +6866,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext,
                     innerMetadata,
                     timestampIndex,
+                    false,
                     true,
                     groupByFunctions,
                     groupByFunctionPositions,
@@ -7829,6 +7863,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         executionContext,
                         baseMetadata,
                         timestampIndex,
+                        isBaseTimestampAscending(factory, timestampIndex),
                         false,
                         groupByFunctions,
                         groupByFunctionPositions,
@@ -7887,6 +7922,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext,
                     baseMetadata,
                     timestampIndex,
+                    isBaseTimestampAscending(factory, timestampIndex),
                     false,
                     groupByFunctions,
                     groupByFunctionPositions,
@@ -8742,6 +8778,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
+            // After rewriteSampleBy clears sampleBy, SqlOptimiser.rewriteSelectClause0
+            // re-exposes the fill list here via setSampleByFill so each aggregate's
+            // getSampleByFlags() can be validated against the fill mode.
+            final ObjList<ExpressionNode> rewrittenSampleByFill = model.getSampleByFill();
+
             GroupByUtils.assembleGroupByFunctions(
                     functionParser,
                     sqlNodeStack,
@@ -8749,6 +8790,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext,
                     baseMetadata,
                     timestampIndex,
+                    isBaseTimestampAscending(factory, timestampIndex),
                     true,
                     groupByFunctions,
                     groupByFunctionPositions,
@@ -8760,7 +8802,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     valueTypes,
                     keyTypes,
                     listColumnFilterA,
-                    null,
+                    rewrittenSampleByFill,
                     validateSampleByFillType,
                     model.getColumns(),
                     sharedOuterProjectionFunctions
@@ -10113,7 +10155,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // below code block generates index-based filter
             final boolean intervalHitsOnlyOnePartition;
             final int order = model.isForceBackwardScan() ? ORDER_DESC : ORDER_ASC;
-            final PartitionFrameCursorFactory dfcFactory;
+            // Non-final: covering paths null this after handing it to the
+            // covering factory, so the outer catch will not double-free it.
+            PartitionFrameCursorFactory dfcFactory;
 
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
@@ -10262,7 +10306,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             reader, keyReaderColIdx, columnIndexes, queryMeta
                                     );
                                     if (coveringMapping != null) {
-                                        RecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
+                                        CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
                                                 queryMeta,
                                                 dfcFactory,
                                                 keyReaderColIdx,
@@ -10275,6 +10319,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 false,
                                                 null
                                         );
+                                        // coveringFactory now owns dfcFactory and symbolFunc; clear our
+                                        // references so the outer catch and finally do not double-free them.
+                                        dfcFactory = null;
                                         symbolFunc = null;
                                         if (filter != null) {
                                             return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
@@ -10363,7 +10410,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     reader, keyReaderColIdx, columnIndexes, queryMeta
                             );
                             if (coveringMapping != null) {
-                                RecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
+                                CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
                                         queryMeta,
                                         dfcFactory,
                                         keyReaderColIdx,
@@ -10376,6 +10423,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         false,
                                         null
                                 );
+                                // coveringFactory now owns dfcFactory; clear our reference so the
+                                // outer catch does not double-free it.
+                                dfcFactory = null;
                                 if (filter != null) {
                                     return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
                                 }
@@ -11079,6 +11129,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Whether the limit lo function might evaluate to a negative value. A
+     * non-constant (e.g. bind-variable) limit has an unknown sign at compile
+     * time, so we conservatively treat it as possibly negative.
+     */
+    private boolean mayBeNegativeLimit(Function limitLoFunction, SqlExecutionContext executionContext) throws SqlException {
+        if (!limitLoFunction.isConstant()) {
+            return true;
+        }
+        limitLoFunction.init(null, executionContext);
+        return limitLoFunction.getLong(null) < 0;
+    }
+
     private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, RecordMetadata myMeta) throws SqlException {
         keyTypes.clear();
         listColumnFilterA.clear();
@@ -11333,41 +11396,94 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory wrapCoveringWithFilter(
-            RecordCursorFactory coveringFactory,
+            CoveringIndexRecordCursorFactory coveringFactory,
             Function filter,
             ExpressionNode filterExpr,
             RecordMetadata queryMeta,
             IQueryModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
-            IntHashSet filterUsedColumnIndexes = new IntHashSet();
-            collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
-            Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
-            int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
-            return new AsyncFilteredRecordCursorFactory(
-                    executionContext.getCairoEngine(),
-                    configuration,
-                    executionContext.getMessageBus(),
-                    coveringFactory,
-                    filter,
-                    filterUsedColumnIndexes,
-                    reduceTaskFactory,
-                    compileWorkerFiltersConditionally(
-                            executionContext,
+        // The caller transferred dfcFactory ownership into coveringFactory and
+        // cleared its own reference, so any throw below leaves this method to free
+        // coveringFactory (which closes dfcFactory, the index cursors, and the key
+        // functions), the filter, and the limit function we may create here.
+        Function limitLoFunction = null;
+        try {
+            if (executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
+                limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                // A pushed-down LIMIT lets the async filter stop early (positive limit)
+                // or scan the tail backward (negative limit). Both are correct only
+                // when the covering forward scan order is the query's final order; if
+                // an ORDER BY forces a downstream sort, a truncated scan would feed the
+                // sort the wrong rows, so we leave the limit to the outer
+                // LimitRecordCursorFactory that runs after the sort.
+                boolean pushLimit = limitLoFunction != null && coveringScanOrderMatchesQuery(model);
+                // A possibly-negative limit makes the async filter drive its backward
+                // page-frame path, which requires the base to honor ORDER_DESC. The
+                // covering factory only serves a correct backward scan for single-key
+                // queries; for multi-key it cannot, so fall back to the serial path
+                // where LimitRecordCursorFactory computes last-N via size + skip.
+                boolean serialFallback = false;
+                if (pushLimit
+                        && !coveringFactory.supportsNegativeLimitPageFrame()
+                        && mayBeNegativeLimit(limitLoFunction, executionContext)) {
+                    pushLimit = false;
+                    serialFallback = true;
+                }
+                if (!serialFallback) {
+                    final Function asyncLimitLoFunction;
+                    final int limitLoPos;
+                    if (pushLimit) {
+                        asyncLimitLoFunction = limitLoFunction;
+                        limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+                    } else {
+                        // Not pushed: either there is no limit, or a downstream sort
+                        // reorders our output. Drop the function we created so it does
+                        // not leak (generateLimit applies its own limit on top).
+                        limitLoFunction = Misc.free(limitLoFunction);
+                        asyncLimitLoFunction = null;
+                        limitLoPos = 0;
+                    }
+                    IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                    collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
+                    return new AsyncFilteredRecordCursorFactory(
+                            executionContext.getCairoEngine(),
+                            configuration,
+                            executionContext.getMessageBus(),
+                            coveringFactory,
                             filter,
+                            filterUsedColumnIndexes,
+                            reduceTaskFactory,
+                            compileWorkerFiltersConditionally(
+                                    executionContext,
+                                    filter,
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    filterExpr,
+                                    queryMeta
+                            ),
+                            deepClone(expressionNodePool, filterExpr),
+                            asyncLimitLoFunction,
+                            limitLoPos,
                             executionContext.getSharedQueryWorkerCount(),
-                            filterExpr,
-                            queryMeta
-                    ),
-                    deepClone(expressionNodePool, filterExpr),
-                    limitLoFunction,
-                    limitLoPos,
-                    executionContext.getSharedQueryWorkerCount(),
-                    SqlHints.hasEnablePreTouchHint(model, model.getName())
-            );
+                            SqlHints.hasEnablePreTouchHint(model, model.getName())
+                    );
+                }
+                // Serial fallback owns no limit function; drop the one we created so
+                // it does not leak (generateLimit wraps the result in its own
+                // LimitRecordCursorFactory).
+                limitLoFunction = Misc.free(limitLoFunction);
+            }
+            return new FilteredRecordCursorFactory(coveringFactory, filter);
+        } catch (Throwable th) {
+            // The factory constructors do not free their inputs on failure, and the
+            // outer catch no longer owns dfcFactory, so release everything this
+            // method is responsible for. limitLoFunction is null once freed above or
+            // transferred to the returned factory, keeping this free idempotent.
+            Misc.free(limitLoFunction);
+            Misc.free(filter);
+            Misc.free(coveringFactory);
+            throw th;
         }
-        return new FilteredRecordCursorFactory(coveringFactory, filter);
     }
 
     // used in tests
