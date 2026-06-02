@@ -6181,6 +6181,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         currentTableTxn,
                         linkPostingIndexOrphanSealTxns
                 );
+                // Mirror PostingIndexWriter.close(): trim the .pk to the live
+                // regionLimit before the CMARW close truncates it. The head-trim
+                // branch relocates the trimmed head entry to the old regionLimit
+                // via positional writes that grow the mapping but not the append
+                // offset; without this setSize the close would truncate back to
+                // ceilPageSize(keyFileSize) and lop off the relocated head,
+                // leaving the linked .pk header pointing past EOF.
+                long liveSize = chain.getRegionLimit();
+                if (liveSize < PostingIndexUtils.KEY_FILE_RESERVED) {
+                    liveSize = PostingIndexUtils.KEY_FILE_RESERVED;
+                }
+                keyMem.setSize(liveSize);
                 return chain.getHeadSealTxn();
             }
         } finally {

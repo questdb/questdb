@@ -1145,6 +1145,99 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Review C1: link-time chain recovery in
+     * {@code TableWriter.dropFuturePostingIndexChainEntriesBeforeLink} must trim
+     * the {@code .pk} to {@code chain.getRegionLimit()} before the CMARW closes,
+     * exactly like {@code PostingIndexWriter.close()} does.
+     * <p>
+     * When recovery takes the head-trim branch it relocates the trimmed head
+     * entry to the original {@code regionLimit} via positional writes. Those
+     * grow the file mapping but NOT the CMARW append offset, so the close
+     * truncates the file back to {@code ceilPageSize(keyFileSize)}. When the
+     * relocated head spans past that page boundary the on-disk header points
+     * {@code headEntryOffset} past EOF, and a reader of the renamed column's
+     * posting index maps past the mapping -- SIGBUS or corruption.
+     * <p>
+     * The test plants a committed-visible head carrying one in-flight (future
+     * {@code txnAtSeal}) tail gen on a historic partition, sized so the trimmed
+     * head spans at least one OS page. With {@code newLen >= PAGE_SIZE} the
+     * relocation crosses the page boundary regardless of where
+     * {@code regionLimit} lands, so the trigger is deterministic and not
+     * alignment-dependent. RENAME COLUMN runs the link recovery. The assertion
+     * reads only the on-disk header and file length -- it never maps the
+     * dangling head entry -- so a buggy build fails the assertion cleanly
+     * instead of crashing the test JVM with SIGBUS.
+     */
+    @Test
+    public void testRenameColumnLinkRecoveryHeadTrimKeepsRelocatedHeadOnDisk() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_link_headtrim (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_link_headtrim VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.getTableTokenIfExists("t_link_headtrim");
+            Assert.assertNotNull("test table must exist", token);
+            final long currentTxn;
+            final long firstPartitionTimestamp;
+            final long firstPartitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                currentTxn = reader.getTxn();
+                firstPartitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            // Plant a committed-visible head with a single in-flight tail gen on
+            // the historic first partition, large enough that the trimmed head
+            // spans >= one OS page.
+            appendVisibleHeadWithFutureTailGen(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
+
+            execute("ALTER TABLE t_link_headtrim RENAME COLUMN sym TO new_sym");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long newColumnNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                int colIndex = reader.getMetadata().getColumnIndex("new_sym");
+                int writerIndex = reader.getMetadata().getWriterIndex(colIndex);
+                newColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(firstPartitionTimestamp, writerIndex);
+            }
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, firstPartitionTimestamp, firstPartitionNameTxn);
+                int plen = path.size();
+                LPSZ dstKeyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), "new_sym", newColumnNameTxn);
+                long fileSize = ff.length(dstKeyFile);
+                Assert.assertTrue("dst .pk must exist after rename, path=" + dstKeyFile, fileSize > 0);
+                // Read the header only (readUnderSeqlock never touches the head
+                // entry), so a header that points past EOF does not SIGBUS here.
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        ff, dstKeyFile, ff.getPageSize(), fileSize, MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+                    Assert.assertTrue("dst .pk header unreadable, path=" + dstKeyFile,
+                            PostingIndexChainHeader.readUnderSeqlock(mem, header));
+                    Assert.assertTrue(
+                            "link recovery truncated the renamed column's .pk below its header regionLimit: "
+                                    + "fileSize=" + fileSize + " regionLimit=" + header.regionLimit
+                                    + " headEntryOffset=" + header.headEntryOffset
+                                    + " -- a reader of new_sym's posting index would map past EOF (SIGBUS).",
+                            fileSize >= header.regionLimit
+                    );
+                }
+            }
+        });
+    }
+
+    /**
      * {@code TableWriter.linkPostingIndexAuxFiles} must hardlink only the
      * live seal generation's {@code .pc<N>} files to the dst column's
      * namespace. Two reasons:
@@ -3956,6 +4049,64 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             writer.discardForRebuild();
             writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), 0);
             writer.setMaxValue(0);
+            writer.commit();
+        }
+    }
+
+    /**
+     * Plant a committed-visible head entry carrying a single in-flight (future
+     * {@code txnAtSeal}) tail gen on the given partition's {@code sym} posting
+     * index. The head is grown via {@code extendHead} to enough visible gens
+     * that the recovery head-trim's relocated entry spans at least one OS page,
+     * so the link-time truncation drops it regardless of page alignment.
+     * <p>
+     * Uses the real {@link PostingIndexWriter} so the corresponding
+     * {@code .pv.{sealTxn}} exists on disk and the subsequent hard-link does not
+     * fail for an unrelated reason.
+     */
+    private void appendVisibleHeadWithFutureTailGen(
+            TableToken token,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long currentTxn
+    ) {
+        // entrySize(visibleGens, 0) must exceed PAGE_SIZE so the trimmed head
+        // cannot fit in the slack between regionLimit and the next page
+        // boundary. PAGE_SIZE is the granularity the CMARW close truncates to.
+        final int visibleGens = (int) ((io.questdb.std.Files.PAGE_SIZE - PostingIndexUtils.V2_ENTRY_HEADER_SIZE)
+                / PostingIndexUtils.GEN_DIR_ENTRY_SIZE) + 2;
+        try (Path path = new Path().of(configuration.getDbRoot()).concat(token);
+             PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+            setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
+            final int plen = path.size();
+            // No setCurrentTableTxn: recovery must not run on this open, or it
+            // would drop the future tail gen we are about to plant.
+            writer.of(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE, false);
+
+            // Fresh head whose entry-level txnAtSeal is committed/visible.
+            // discardForRebuild rotates sealTxn so the first commit takes the
+            // appendNewEntry branch instead of extending the INSERT head.
+            writer.discardForRebuild();
+            writer.setNextTxnAtSeal(currentTxn);
+            writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), 0);
+            writer.setMaxValue(0);
+            writer.commit();
+
+            // Extend the same head with visible gens (extendHead keeps the same
+            // sealTxn) until the trimmed head will span a full page.
+            for (int g = 1; g < visibleGens; g++) {
+                writer.setNextTxnAtSeal(currentTxn);
+                writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), g);
+                writer.setMaxValue(g);
+                writer.commit();
+            }
+
+            // One in-flight tail gen tagged with a future txnAtSeal. Recovery at
+            // link time trims this (and only this) slot, taking the head-trim
+            // branch while the entry itself stays visible.
+            writer.setNextTxnAtSeal(currentTxn + 1);
+            writer.add(io.questdb.cairo.TableUtils.toIndexKey(0), visibleGens);
+            writer.setMaxValue(visibleGens);
             writer.commit();
         }
     }
