@@ -678,6 +678,28 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPersistTaskDirectRejectsUnclampedToTxnSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tok = createPostingTable("posting_purge_sentinel");
+            PostingSealPurgeTask task = new PostingSealPurgeTask();
+            task.of(
+                    tok,
+                    "c",
+                    TableUtils.COLUMN_NAME_TXN_NONE,
+                    1L,
+                    0L,
+                    -1L,
+                    PartitionBy.NONE,
+                    ColumnType.TIMESTAMP_MICRO,
+                    0L,
+                    Long.MAX_VALUE
+            );
+
+            assertFalse(PostingSealPurgeJob.persistTaskDirect(engine, task));
+        });
+    }
+
+    @Test
     public void testSnapshotRestoreRemoveIndexFilesClearsSidecars() throws Exception {
         // Regression test for #18: TableSnapshotRestore.removeIndexFiles
         // must clear every sealed .pv.{N}, every .pc<N>.*.* covering file,

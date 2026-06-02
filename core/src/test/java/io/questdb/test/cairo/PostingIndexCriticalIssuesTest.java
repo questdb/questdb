@@ -476,6 +476,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // rowid 34. It must remain readable if a later in-flight seal is
             // rolled back during recovery.
             execute(insertPostingRowsSql(0, 35));
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(
+                    tableName,
+                    "new_col_11",
+                    null,
+                    MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z"),
+                    -1L
+            );
+            assertPostingSealFilesExist(oldFiles, true);
 
             // The next O3 batch publishes a newer posting seal before the
             // table _txn is durable. Fail later, in setAppendPosition(), so
@@ -495,6 +503,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
                 runPostingSealPurgeJob(purgeJob);
             }
+            assertPostingSealFilesExist(oldFiles, true);
 
             // Reopen after the distressed writer. Recovery drops/trims the
             // failed future posting chain entry and should fall back to the
@@ -558,6 +567,51 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             final PostingSealFileNames liveFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
             final long liveSealTxn = liveFiles.sealTxn;
             Assert.assertTrue("successful O3 commit must advance posting sealTxn", liveSealTxn > oldSealTxn);
+            assertPostingSealFilesExist(oldFiles, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            assertPostingSealFilesExist(oldFiles, false);
+            assertPostingSealFilesExist(liveFiles, true);
+        });
+    }
+
+    @Test
+    public void testWalO3DeferredPostingSealPurgeRunsAfterCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_recovery";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            drainWalQueue();
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            drainWalQueue();
+            execute(insertPostingRowsSql(0, 10));
+            drainWalQueue();
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            drainWalQueue();
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+            drainWalQueue();
+
+            execute(insertPostingRowsSql(0, 35));
+            drainWalQueue();
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            final long oldSealTxn = oldFiles.sealTxn;
+            assertPostingSealFilesExist(oldFiles, true);
+
+            execute(insertPostingRowsSql(35, 92));
+            drainWalQueue();
+            final PostingSealFileNames liveFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            final long liveSealTxn = liveFiles.sealTxn;
+            Assert.assertTrue("successful WAL O3 apply must advance posting sealTxn", liveSealTxn > oldSealTxn);
             assertPostingSealFilesExist(oldFiles, true);
 
             try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
@@ -3652,9 +3706,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             if (expected) {
                 Assert.assertTrue(".pv must exist [path=" + files.valueFile + ']', ff.exists(path.of(files.valueFile).$()));
-                Assert.assertTrue(".pc must exist [path=" + files.coverFile + ']', ff.exists(path.of(files.coverFile).$()));
             } else {
                 Assert.assertFalse(".pv must be purged [path=" + files.valueFile + ']', ff.exists(path.of(files.valueFile).$()));
+            }
+            if (files.coverFile == null) {
+                return;
+            }
+            if (expected) {
+                Assert.assertTrue(".pc must exist [path=" + files.coverFile + ']', ff.exists(path.of(files.coverFile).$()));
+            } else {
                 Assert.assertFalse(".pc must be purged [path=" + files.coverFile + ']', ff.exists(path.of(files.coverFile).$()));
             }
         }
@@ -3697,21 +3757,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             int indexWriterIndex = reader.getMetadata().getWriterIndex(indexColumnIndex);
             long postingColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, indexWriterIndex);
 
-            int coveredColumnIndex = reader.getMetadata().getColumnIndex(coveredColumnName);
-            int coveredWriterIndex = reader.getMetadata().getWriterIndex(coveredColumnIndex);
-            long coveredColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, coveredWriterIndex);
-
-            IntList coveringColumnIndices = reader.getMetadata().getColumnMetadata(indexColumnIndex).getCoveringColumnIndices();
-            Assert.assertNotNull("posting index must have covering columns", coveringColumnIndices);
-            int includeIdx = -1;
-            for (int i = 0, n = coveringColumnIndices.size(); i < n; i++) {
-                if (coveringColumnIndices.getQuick(i) == coveredWriterIndex) {
-                    includeIdx = i;
-                    break;
-                }
-            }
-            Assert.assertTrue("covered column must be present in INCLUDE list", includeIdx >= 0);
-
             path.of(configuration.getDbRoot()).concat(token);
             setPathForNativePartition(
                     path,
@@ -3727,8 +3772,25 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             );
             PostingIndexUtils.valueFileName(path.trimTo(plen), indexColumnName, postingColumnNameTxn, resolvedSealTxn);
             String valueFilePath = path.toString();
-            PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexColumnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, resolvedSealTxn);
-            String coverFilePath = path.toString();
+            String coverFilePath = null;
+            if (coveredColumnName != null) {
+                int coveredColumnIndex = reader.getMetadata().getColumnIndex(coveredColumnName);
+                int coveredWriterIndex = reader.getMetadata().getWriterIndex(coveredColumnIndex);
+                long coveredColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, coveredWriterIndex);
+
+                IntList coveringColumnIndices = reader.getMetadata().getColumnMetadata(indexColumnIndex).getCoveringColumnIndices();
+                Assert.assertNotNull("posting index must have covering columns", coveringColumnIndices);
+                int includeIdx = -1;
+                for (int i = 0, n = coveringColumnIndices.size(); i < n; i++) {
+                    if (coveringColumnIndices.getQuick(i) == coveredWriterIndex) {
+                        includeIdx = i;
+                        break;
+                    }
+                }
+                Assert.assertTrue("covered column must be present in INCLUDE list", includeIdx >= 0);
+                PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexColumnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, resolvedSealTxn);
+                coverFilePath = path.toString();
+            }
             return new PostingSealFileNames(resolvedSealTxn, valueFilePath, coverFilePath);
         }
     }
