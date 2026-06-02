@@ -970,11 +970,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         // overwrite. So for a mat view the scan passes the MAT_VIEW_INVALIDATE barrier and the INSERT before
         // it is skipped, exactly as before the fix.
         //
-        // This is path coverage: the skip is a physical-write optimization, not a data change (the covering
-        // REPLACE_RANGE overwrites the inserted rows either way), so the assertion pins that the mat-view
-        // barrier path applies cleanly and returns correct data, and exercises the isMatView() branch. That
-        // the INSERT is actually skipped (rather than applied then overwritten) shows up as a "skipping
-        // replaced WAL transactions" line in the apply log; a regular table logs no such skip here.
+        // The skip is a physical-write optimization, not a data change: the covering REPLACE_RANGE overwrites
+        // the inserted rows either way, so the rendered data is identical whether or not the INSERT is skipped.
+        // The test therefore guards the exemption through physically-written rows rather than the data: when the
+        // INSERT is skipped, only the REPLACE_RANGE's rows reach disk; if the isMatView() branch regressed and
+        // applied the INSERT, twice as many rows would be written and the assertion below would fail.
         assertMemoryLeak(() -> {
             execute("create table base (s string, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
@@ -1014,6 +1014,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             }
 
             // Apply insert + mat-view-invalidate + replace in one batch.
+            final long physicalRowsBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
             drainWalQueue();
 
             // Only the replacement values remain.
@@ -1033,6 +1034,15 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             """,
                     "select s, v from mv order by ts"
             );
+
+            // The data assertion above is identical whether or not the INSERT is skipped, so it does not guard
+            // the mat-view exemption on its own. Pin the skip directly via physically-written rows: skipping the
+            // INSERT means only the covering REPLACE_RANGE's 10 rows reach disk, not the INSERT's 10 as well.
+            // If the isMatView() exemption regressed and applied the INSERT, this delta would be 20.
+            Assert.assertEquals(
+                    10,
+                    engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - physicalRowsBefore
+            );
         });
     }
 
@@ -1049,10 +1059,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         // materialised first.
         //
         // ADD COLUMN (the barrier in the original trace) cannot run on a mat view, so MAT_VIEW_INVALIDATE is
-        // the realistic mat-view barrier. Path coverage on the data - the truncate wipes the insert either
-        // way - so the assertion pins correct data and that the apply path is clean; that the INSERT is
-        // actually skipped (clamped to the barrier) shows up as a "skipping replaced WAL transactions" line in
-        // the apply log.
+        // the realistic mat-view barrier. The truncate wipes the insert either way, so the rendered data is
+        // identical whether or not the INSERT is skipped. The test therefore guards the exemption through
+        // physically-written rows rather than the data: when the INSERT is skipped, its rows never reach disk;
+        // if the isMatView() branch regressed and applied the INSERT before the truncate, those rows would be
+        // written first and the assertion below would fail.
         assertMemoryLeak(() -> {
             execute("create table base (s string, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
@@ -1087,6 +1098,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             }
 
             // Apply insert + mat-view-invalidate + truncate + insert in one batch.
+            final long physicalRowsBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
             drainWalQueue();
 
             // Only the post-truncate row survives.
@@ -1096,6 +1108,16 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             kept\t42.0
                             """,
                     "select s, v from mv order by ts"
+            );
+
+            // The truncate wipes the INSERT either way, so the data assertion above does not guard the mat-view
+            // exemption. Pin the skip directly via physically-written rows: skipping the INSERT (clamped to the
+            // barrier) means only the single surviving post-truncate row reaches disk, not the INSERT's 10 rows
+            // first. If the isMatView() exemption regressed and applied the INSERT before the truncate, this
+            // delta would be 11.
+            Assert.assertEquals(
+                    1,
+                    engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - physicalRowsBefore
             );
         });
     }
