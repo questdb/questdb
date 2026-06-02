@@ -320,6 +320,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private String designatedTimestampColumnName;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
+    private boolean hasPostingIndexers;
     private int indexCount;
     private boolean isInCtorRecovery;
     private int lastErrno;
@@ -8632,13 +8633,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void populateDenseIndexerList() {
         denseIndexers.clear();
+        boolean hasPostingIndexers = false;
         for (int i = 0, n = indexers.size(); i < n; i++) {
             ColumnIndexer indexer = indexers.getQuick(i);
             if (indexer != null) {
                 denseIndexers.add(indexer);
+                if (IndexType.isPosting(indexer.getWriter().getIndexType())) {
+                    hasPostingIndexers = true;
+                }
             }
         }
         indexCount = denseIndexers.size();
+        this.hasPostingIndexers = hasPostingIndexers;
     }
 
     /**
@@ -10779,6 +10785,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void publishPendingPostingSealPurges(long currentTableTxn) {
+        if (!hasPostingIndexers) {
+            return;
+        }
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
             denseIndexers.getQuick(i).publishPendingPurges(
                     messageBus,
