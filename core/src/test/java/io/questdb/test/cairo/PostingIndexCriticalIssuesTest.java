@@ -802,8 +802,18 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A live PostingSealPurgeJob owns the purge-log writer and the ring is
+     * full, so the close-time handoff in closeDeferredPostingSealPurges()
+     * reaches neither the ring nor the shared log. Rather than dropping the
+     * ready intent, the close spills it to the table-local pending file
+     * (spilled == true), so nothing reaches the shared log yet the intent
+     * survives on disk for the next open to replay. This covers the spill
+     * fallback; the spill-write-failure drop path is covered by
+     * {@link #testCloseDropsReadyDeferredPostingSealPurgeWhenSpillFileWriteFails()}.
+     */
     @Test
-    public void testCloseWithLivePurgeJobDropsReadyDeferredPostingSealPurgeWhenQueueIsFull() throws Exception {
+    public void testCloseWithLivePurgeJobSpillsReadyDeferredPostingSealPurgeWhenQueueIsFull() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
                 return;
@@ -834,15 +844,113 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             try (PostingSealPurgeJob ignoredLiveJob = new PostingSealPurgeJob(engine)) {
                 fillPostingSealPurgeQueue(tableToken);
                 try {
+                    // The O3 commit advances _txn so the deferred purge is
+                    // ready, but the ring is full so it stays in the
+                    // TableWriter until close.
                     execute(insertPostingRowsSql(tableName, 35, 92, false));
                     engine.releaseAllWriters();
 
+                    // The handoff reached neither the ring nor the shared log,
+                    // but the ready intent was spilled to the table-local
+                    // pending file instead of being dropped.
                     assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName, oldFiles.sealTxn, 0);
+                    assertPostingSealPurgePendingFileExists(tableToken, true);
                     assertPostingSealFilesExist(oldFiles, true);
                 } finally {
                     drainPostingSealPurgeQueue();
                 }
             }
+        });
+    }
+
+    /**
+     * The genuine data-losing branch of closeDeferredPostingSealPurges(): a
+     * live PostingSealPurgeJob owns the purge-log writer and the ring is full
+     * (so the handoff fails), AND the close-time spill to the table-local
+     * pending file also fails. With spilled == false the ready intent is
+     * dropped with a LOG.critical and the superseded .pv/.pc sidecar files are
+     * orphaned for the process lifetime - the next open finds no spill file to
+     * replay, so a later purge job cannot reclaim them. Contrast with
+     * {@link #testCloseWithLivePurgeJobSpillsReadyDeferredPostingSealPurgeWhenQueueIsFull()},
+     * where the spill succeeds and the intent survives.
+     */
+    @Test
+    public void testCloseDropsReadyDeferredPostingSealPurgeWhenSpillFileWriteFails() throws Exception {
+        final AtomicBoolean failSpillWrite = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failSpillWrite.get() && Utf8s.endsWithAscii(name, "_posting_seal_purge_pending.d")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            drainPostingSealPurgeQueue();
+            final String tableName = "posting_close_spill_fail_deferred";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(tableName, -85, 0, false));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(tableName, 0, 10, false));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(tableName, 0, 35, false));
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            assertPostingSealFilesExist(oldFiles, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+            try (PostingSealPurgeJob ignoredLiveJob = new PostingSealPurgeJob(engine)) {
+                fillPostingSealPurgeQueue(tableToken);
+                try {
+                    // The O3 commit advances _txn so the deferred purge is
+                    // ready, but the ring is full so it stays in the
+                    // TableWriter until close.
+                    execute(insertPostingRowsSql(tableName, 35, 92, false));
+
+                    // Close while the live job holds the purge-log writer and
+                    // the spill write fails. The ready intent reaches neither
+                    // the ring, nor the shared log, nor the spill file, so the
+                    // drop branch fires.
+                    failSpillWrite.set(true);
+                    engine.releaseAllWriters();
+                    failSpillWrite.set(false);
+
+                    // No record of the intent anywhere: the shared log is
+                    // untouched and the spill file was never created.
+                    assertOpenDeferredPostingSealPurgeLogRowCount(tableToken, indexColumnName, oldFiles.sealTxn, 0);
+                    assertPostingSealPurgePendingFileExists(tableToken, false);
+                    // The superseded files are orphaned by the drop.
+                    assertPostingSealFilesExist(oldFiles, true);
+                } finally {
+                    drainPostingSealPurgeQueue();
+                }
+            }
+
+            // Reopen and run a purge job. With no spill file to replay and the
+            // intent dropped, the orphaned files cannot be reclaimed - the data
+            // loss the LOG.critical warns about.
+            try (TableWriter ignore = engine.getWriter(tableToken, "posting seal purge drop test")) {
+                Assert.assertNotNull(ignore);
+            }
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+            assertPostingSealFilesExist(oldFiles, true);
         });
     }
 
