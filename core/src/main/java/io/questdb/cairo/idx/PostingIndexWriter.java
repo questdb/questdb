@@ -697,6 +697,50 @@ public class PostingIndexWriter implements IndexWriter {
         allocateNativeBuffers();
     }
 
+    @Override
+    public void drainPendingFuturePurges(
+            ObjList<PostingSealPurgeTask> sink,
+            ObjectStackPool<PostingSealPurgeTask> pool,
+            TableToken tableToken,
+            int partitionBy,
+            int timestampType,
+            long currentTableTxn
+    ) {
+        if (pendingPurges.size() == 0 || partitionPath.size() == 0 || tableToken == null) {
+            return;
+        }
+        int writePos = 0;
+        for (int readPos = 0, n = pendingPurges.size(); readPos < n; readPos++) {
+            PendingSealPurge entry = pendingPurges.getQuick(readPos);
+            if (entry.partitionTimestamp != Long.MIN_VALUE
+                    && entry.toTableTxn != Long.MAX_VALUE
+                    && entry.toTableTxn > currentTableTxn) {
+                PostingSealPurgeTask task = pool.next();
+                task.of(
+                        tableToken,
+                        indexName,
+                        entry.postingColumnNameTxn,
+                        entry.sealTxn,
+                        entry.partitionTimestamp,
+                        entry.partitionNameTxn,
+                        partitionBy,
+                        timestampType,
+                        entry.fromTableTxn,
+                        entry.toTableTxn
+                );
+                assert task.getToTableTxn() != Long.MAX_VALUE && task.getToTableTxn() > currentTableTxn;
+                sink.add(task);
+                entry.of(0L, 0L, 0L, 0L, Long.MIN_VALUE, -1L);
+                pendingPurgePool.add(entry);
+            } else {
+                pendingPurges.setQuick(writePos++, entry);
+            }
+        }
+        for (int i = pendingPurges.size() - 1; i >= writePos; i--) {
+            pendingPurges.remove(i);
+        }
+    }
+
     @TestOnly
     public int getAdaptiveDeltaAtOrAbove() {
         return encodeCtx.adaptiveDeltaAtOrAbove;
@@ -1087,50 +1131,6 @@ public class PostingIndexWriter implements IndexWriter {
             }
             entry.of(0L, 0L, 0L, 0L, Long.MIN_VALUE, -1L);
             pendingPurgePool.add(entry);
-        }
-        for (int i = pendingPurges.size() - 1; i >= writePos; i--) {
-            pendingPurges.remove(i);
-        }
-    }
-
-    @Override
-    public void drainPendingFuturePurges(
-            ObjList<PostingSealPurgeTask> sink,
-            ObjectStackPool<PostingSealPurgeTask> pool,
-            TableToken tableToken,
-            int partitionBy,
-            int timestampType,
-            long currentTableTxn
-    ) {
-        if (pendingPurges.size() == 0 || partitionPath.size() == 0 || tableToken == null) {
-            return;
-        }
-        int writePos = 0;
-        for (int readPos = 0, n = pendingPurges.size(); readPos < n; readPos++) {
-            PendingSealPurge entry = pendingPurges.getQuick(readPos);
-            if (entry.partitionTimestamp != Long.MIN_VALUE
-                    && entry.toTableTxn != Long.MAX_VALUE
-                    && entry.toTableTxn > currentTableTxn) {
-                PostingSealPurgeTask task = pool.next();
-                task.of(
-                        tableToken,
-                        indexName,
-                        entry.postingColumnNameTxn,
-                        entry.sealTxn,
-                        entry.partitionTimestamp,
-                        entry.partitionNameTxn,
-                        partitionBy,
-                        timestampType,
-                        entry.fromTableTxn,
-                        entry.toTableTxn
-                );
-                assert task.getToTableTxn() != Long.MAX_VALUE && task.getToTableTxn() > currentTableTxn;
-                sink.add(task);
-                entry.of(0L, 0L, 0L, 0L, Long.MIN_VALUE, -1L);
-                pendingPurgePool.add(entry);
-            } else {
-                pendingPurges.setQuick(writePos++, entry);
-            }
         }
         for (int i = pendingPurges.size() - 1; i >= writePos; i--) {
             pendingPurges.remove(i);

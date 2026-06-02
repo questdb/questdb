@@ -54,8 +54,6 @@ import java.util.PriorityQueue;
 public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
 
     private static final int COLUMN_NAME_COLUMN = 3;
-    private static final int FROM_TABLE_TXN_COLUMN = 9;
-    private static final Log LOG = LogFactory.getLog(PostingSealPurgeJob.class);
     // Hitting this many consecutive errors switches the job into throttled
     // mode: subsequent iterations are skipped until ERROR_BACKOFF_MICROS
     // elapses, at which point one more attempt is allowed. A clean
@@ -63,6 +61,8 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     // disabled — that would leak orphan sidecar files for the rest of the
     // process lifetime.
     private static final long ERROR_BACKOFF_MICROS = 60L * 1_000_000L;
+    private static final int FROM_TABLE_TXN_COLUMN = 9;
+    private static final Log LOG = LogFactory.getLog(PostingSealPurgeJob.class);
     private static final int MAX_ERRORS = 11;
     private static final int PARTITION_BY_COLUMN = 8;
     private static final int PARTITION_NAME_TXN_COLUMN = 7;
@@ -161,6 +161,109 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         return persistTasksDirect0(engine, tasks, lo, hi, currentTableTxn);
     }
 
+    @Override
+    public void close() {
+        closeCompletedFd();
+        Misc.free(completedPath);
+        if (longBuf != 0L) {
+            Unsafe.free(longBuf, Long.BYTES, MemoryTag.NATIVE_SQL_COMPILER);
+            longBuf = 0L;
+        }
+        this.writer = Misc.free(writer);
+        this.sqlExecutionContext = Misc.free(sqlExecutionContext);
+        this.operator = Misc.free(operator);
+        this.taskPool = Misc.free(taskPool);
+    }
+
+    @TestOnly
+    public int getErrorCountForTesting() {
+        return errorCount;
+    }
+
+    @TestOnly
+    public String getLogTableName() {
+        return tableToken == null ? null : tableToken.getTableName();
+    }
+
+    @TestOnly
+    public int getOutstandingPurgeTasks() {
+        return retryQueue.size();
+    }
+
+    @TestOnly
+    public boolean isJobAliveForTesting() {
+        // Returns true while the job is still attempting work. Before the
+        // fix, hitting MAX_ERRORS called close() and made this false
+        // forever; after the fix, error overflow only throttles via a
+        // backoff window and the job remains alive.
+        return writer != null;
+    }
+
+    @TestOnly
+    public void setErrorCountForTesting(int v) {
+        errorCount = v;
+    }
+
+    private static long appendTask(TableWriter writer, PostingSealPurgeTask task, long scheduledAt) {
+        TableToken tok = task.getTableToken();
+        TableWriter.Row row = writer.newRow(scheduledAt);
+        row.putSym(TABLE_NAME_COLUMN, tok.getDirName());
+        row.putInt(TABLE_ID_COLUMN, tok.getTableId());
+        row.putSym(COLUMN_NAME_COLUMN, task.getIndexColumnName());
+        row.putLong(POSTING_COLUMN_NAME_TXN_COLUMN, task.getPostingColumnNameTxn());
+        row.putLong(SEAL_TXN_COLUMN, task.getSealTxn());
+        row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, task.getPartitionTimestamp());
+        row.putLong(PARTITION_NAME_TXN_COLUMN, task.getPartitionNameTxn());
+        row.putInt(PARTITION_BY_COLUMN, task.getPartitionBy());
+        row.putLong(FROM_TABLE_TXN_COLUMN, task.getFromTableTxn());
+        row.putLong(TO_TABLE_TXN_COLUMN, task.getToTableTxn());
+        row.putInt(TIMESTAMP_TYPE_COLUMN, task.getTimestampType());
+        row.append();
+        return Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1);
+    }
+
+    private static void closeDirectPersistResource(Closeable resource) {
+        if (resource != null) {
+            try {
+                resource.close();
+            } catch (Throwable th) {
+                LOG.error().$("posting seal purge: direct persist cleanup failed [err=").$(th).I$();
+            }
+        }
+    }
+
+    private static int compareRetry(RetryEntry a, RetryEntry b) {
+        return Long.compare(a.nextRunTime, b.nextRunTime);
+    }
+
+    private static TableToken createLogTable(
+            CairoConfiguration configuration,
+            SqlCompiler compiler,
+            SqlExecutionContextImpl sqlExecutionContext
+    ) throws SqlException {
+        String tableName = configuration.getSystemTableNamePrefix() + "posting_seal_purge_log";
+        return compiler.query()
+                .$("CREATE TABLE IF NOT EXISTS \"")
+                .$(tableName)
+                .$("\" (" +
+                        "ts timestamp, " +
+                        "table_name symbol, " +
+                        "table_id int, " +
+                        "column_name symbol, " +
+                        "posting_column_name_txn long, " +
+                        "seal_txn long, " +
+                        "partition_timestamp timestamp, " +
+                        "partition_name_txn long, " +
+                        "partition_by int, " +
+                        "from_table_txn long, " +
+                        "to_table_txn long, " +
+                        "timestamp_type int, " +
+                        "completed timestamp" +
+                        ") timestamp(ts) partition by MONTH BYPASS WAL"
+                )
+                .createTable(sqlExecutionContext);
+    }
+
     private static void logUnclampedSentinel(PostingSealPurgeTask task) {
         LOG.error().$("posting seal purge: refusing to persist unclamped sentinel toTxn [table=")
                 .$(task.getTableToken())
@@ -207,109 +310,6 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             closeDirectPersistResource(logWriter);
             closeDirectPersistResource(sqlExecutionContext);
         }
-    }
-
-    private static void closeDirectPersistResource(Closeable resource) {
-        if (resource != null) {
-            try {
-                resource.close();
-            } catch (Throwable th) {
-                LOG.error().$("posting seal purge: direct persist cleanup failed [err=").$(th).I$();
-            }
-        }
-    }
-
-    @Override
-    public void close() {
-        closeCompletedFd();
-        Misc.free(completedPath);
-        if (longBuf != 0L) {
-            Unsafe.free(longBuf, Long.BYTES, MemoryTag.NATIVE_SQL_COMPILER);
-            longBuf = 0L;
-        }
-        this.writer = Misc.free(writer);
-        this.sqlExecutionContext = Misc.free(sqlExecutionContext);
-        this.operator = Misc.free(operator);
-        this.taskPool = Misc.free(taskPool);
-    }
-
-    @TestOnly
-    public String getLogTableName() {
-        return tableToken == null ? null : tableToken.getTableName();
-    }
-
-    @TestOnly
-    public int getErrorCountForTesting() {
-        return errorCount;
-    }
-
-    @TestOnly
-    public int getOutstandingPurgeTasks() {
-        return retryQueue.size();
-    }
-
-    @TestOnly
-    public boolean isJobAliveForTesting() {
-        // Returns true while the job is still attempting work. Before the
-        // fix, hitting MAX_ERRORS called close() and made this false
-        // forever; after the fix, error overflow only throttles via a
-        // backoff window and the job remains alive.
-        return writer != null;
-    }
-
-    @TestOnly
-    public void setErrorCountForTesting(int v) {
-        errorCount = v;
-    }
-
-    private static int compareRetry(RetryEntry a, RetryEntry b) {
-        return Long.compare(a.nextRunTime, b.nextRunTime);
-    }
-
-    private static long appendTask(TableWriter writer, PostingSealPurgeTask task, long scheduledAt) {
-        TableToken tok = task.getTableToken();
-        TableWriter.Row row = writer.newRow(scheduledAt);
-        row.putSym(TABLE_NAME_COLUMN, tok.getDirName());
-        row.putInt(TABLE_ID_COLUMN, tok.getTableId());
-        row.putSym(COLUMN_NAME_COLUMN, task.getIndexColumnName());
-        row.putLong(POSTING_COLUMN_NAME_TXN_COLUMN, task.getPostingColumnNameTxn());
-        row.putLong(SEAL_TXN_COLUMN, task.getSealTxn());
-        row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, task.getPartitionTimestamp());
-        row.putLong(PARTITION_NAME_TXN_COLUMN, task.getPartitionNameTxn());
-        row.putInt(PARTITION_BY_COLUMN, task.getPartitionBy());
-        row.putLong(FROM_TABLE_TXN_COLUMN, task.getFromTableTxn());
-        row.putLong(TO_TABLE_TXN_COLUMN, task.getToTableTxn());
-        row.putInt(TIMESTAMP_TYPE_COLUMN, task.getTimestampType());
-        row.append();
-        return Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1);
-    }
-
-    private static TableToken createLogTable(
-            CairoConfiguration configuration,
-            SqlCompiler compiler,
-            SqlExecutionContextImpl sqlExecutionContext
-    ) throws SqlException {
-        String tableName = configuration.getSystemTableNamePrefix() + "posting_seal_purge_log";
-        return compiler.query()
-                .$("CREATE TABLE IF NOT EXISTS \"")
-                .$(tableName)
-                .$("\" (" +
-                        "ts timestamp, " +
-                        "table_name symbol, " +
-                        "table_id int, " +
-                        "column_name symbol, " +
-                        "posting_column_name_txn long, " +
-                        "seal_txn long, " +
-                        "partition_timestamp timestamp, " +
-                        "partition_name_txn long, " +
-                        "partition_by int, " +
-                        "from_table_txn long, " +
-                        "to_table_txn long, " +
-                        "timestamp_type int, " +
-                        "completed timestamp" +
-                        ") timestamp(ts) partition by MONTH BYPASS WAL"
-                )
-                .createTable(sqlExecutionContext);
     }
 
     private void calculateNextRunTime(RetryEntry entry, long now) {
