@@ -437,10 +437,32 @@ public class SqlOptimiser implements Mutable {
 
     private static boolean allOrderByColumnsPresentIn(IQueryModel src, IQueryModel target) {
         final LowerCaseCharSequenceObjHashMap<QueryColumn> targetMap = target.getAliasToColumnMap();
+        final ObjList<QueryColumn> projection = src.getColumns();
+        final int columnCount = projection.size();
+        // The gate runs before rewriteOrderByPosition / rewriteOrderBy, so normalize each token
+        // the way they would before the lookup.
         for (IQueryModel m = src; m != null; m = m.getNestedModel()) {
             final ObjList<ExpressionNode> orderBy = m.getOrderBy();
             for (int i = 0, n = orderBy.size(); i < n; i++) {
-                if (!targetMap.contains(orderBy.getQuick(i).token)) {
+                CharSequence token = orderBy.getQuick(i).token;
+                // Positional (ORDER BY 5): the projection column's name. Out-of-range or
+                // non-numeric falls through to the name lookup below.
+                final char first = token.charAt(0);
+                if (first >= '0' && first <= '9') {
+                    try {
+                        final int position = Numbers.parseInt(token);
+                        if (position >= 1 && position <= columnCount) {
+                            token = projection.getQuick(position - 1).getName();
+                        }
+                    } catch (NumericException ignore) {
+                        // not a position; fall through to the name lookup
+                    }
+                }
+                // Qualified (ORDER BY t.x): the bare name. Single join model (see caller), so the
+                // strip is unambiguous.
+                final int dot = Chars.indexOfLastUnquoted(token, '.');
+                final CharSequence name = dot > -1 ? token.subSequence(dot + 1, token.length()) : token;
+                if (!targetMap.contains(name)) {
                     return false;
                 }
             }

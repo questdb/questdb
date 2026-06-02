@@ -179,6 +179,66 @@ public class DistinctTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctOrderByPositionLimitPush() throws Exception {
+        // The trivial-group-by rewrite pushes the outer LIMIT onto the nested group by, but the
+        // gate runs before ORDER BY tokens are normalized, so it resolves positions/qualifiers
+        // itself. A position over a key (2 == e1) must push like the alias form; one over the
+        // virtual-only constant (1 == e0) must not, else rewriteOrderBy later crashes (AIOOBE).
+        assertMemoryLeak(() -> {
+            final String base = "SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ";
+
+            // position 2 == e1 (a key): pushed, same plan as the alias form. Asserting both against
+            // one literal proves the positional form normalizes to the same column.
+            final String pushedPlan = """
+                    VirtualRecord
+                      functions: [-1,e1,e4]
+                        Long Top K lo: 2
+                          keys: [e1 desc]
+                            GroupBy vectorized: false
+                              keys: [e1,e4]
+                                long_sequence count: 3
+                    """;
+            assertPlanNoLeakCheck(base + "ORDER BY e1 DESC LIMIT 2", pushedPlan);
+            assertPlanNoLeakCheck(base + "ORDER BY 2 DESC LIMIT 2", pushedPlan);
+
+            // position 1 == e0 (virtual-only constant): not pushed, same plan as the alias form, no AIOOBE.
+            final String notPushedPlan = """
+                    Sort light lo: 2
+                      keys: [e0 desc]
+                        VirtualRecord
+                          functions: [-1,e1,e4]
+                            GroupBy vectorized: false
+                              keys: [e1,e4]
+                                long_sequence count: 3
+                    """;
+            assertPlanNoLeakCheck(base + "ORDER BY e0 DESC LIMIT 2", notPushedPlan);
+            assertPlanNoLeakCheck(base + "ORDER BY 1 DESC LIMIT 2", notPushedPlan);
+
+            // e1 is unique, so the key-ordered result is deterministic.
+            assertSql("e0\te1\te4\n-1\t3\t3\n-1\t2\t2\n", base + "ORDER BY 2 DESC LIMIT 2");
+            // constant order is unspecified (all e0 equal); assert only the row count and no crash.
+            assertSql("c\n2\n", "SELECT count() c FROM (" + base + "ORDER BY 1 DESC LIMIT 2)");
+
+            // Qualified ORDER BY t0.x strips to x (single join model). The constant e0 forces the
+            // outer virtual, and the unaliased middle column makes x a group-by key, so the
+            // qualified form pushes like the bare column.
+            final String base2 = "SELECT DISTINCT -1 AS e0, t0.x, t0.x AS e4 FROM long_sequence(3) t0 ";
+            final String pushedPlan2 = """
+                    VirtualRecord
+                      functions: [-1,x,e4]
+                        Long Top K lo: 2
+                          keys: [x desc]
+                            GroupBy vectorized: false
+                              keys: [x,e4]
+                                long_sequence count: 3
+                    """;
+            assertPlanNoLeakCheck(base2 + "ORDER BY x DESC LIMIT 2", pushedPlan2);
+            assertPlanNoLeakCheck(base2 + "ORDER BY t0.x DESC LIMIT 2", pushedPlan2);
+            assertSql("e0\tx\te4\n-1\t3\t3\n-1\t2\t2\n", base2 + "ORDER BY t0.x DESC LIMIT 2");
+        });
+    }
+
+    @Test
     public void testDistinctQualifiedColumnInExprWithBindVariableFromFuzzer() throws Exception {
         // Bind-form of the prior fuzzer query. The bind cast steals the early aliases
         // ("cast", "cast1") so the bare t0.x projection keeps its user alias "x". The
