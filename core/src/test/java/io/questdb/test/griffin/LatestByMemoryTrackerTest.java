@@ -233,6 +233,39 @@ public class LatestByMemoryTrackerTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testOpenFailureReleasesAllocations() throws Exception {
+        // Drive the breach during cursor open() instead of during the scan: with the rows list
+        // sized far above the limit, of() first allocates the LATEST BY map and then rows.reopen()
+        // breaches, orphaning the map unless the failed open frees it under the still-bound tracker.
+        // The key cardinality is small so the scan itself never breaches - only open does. Reusing
+        // one factory across opens under assertMemoryLeak catches the resulting leak / counter desync.
+        setProperty(PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 100_000);
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE tab_open AS (" +
+                            "  SELECT (x * 1000000L)::timestamp ts, x % 100 k, x v" +
+                            "  FROM long_sequence(1000)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY"
+            );
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT * FROM tab_open LATEST ON ts PARTITION BY k", sqlExecutionContext
+                 ).getRecordCursorFactory()) {
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertNotNull(cursor);
+                        Assert.fail("expected a per-query memory breach during cursor open");
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    }
+                }
+            }
+        });
+    }
+
     private static void assertBreach(String sql) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);

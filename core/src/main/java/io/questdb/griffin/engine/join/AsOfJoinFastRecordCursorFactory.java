@@ -108,6 +108,8 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable th) {
+            // close() also frees the SingleRecordSinks under the still-bound per-query tracker
+            cursor.close();
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
             throw th;

@@ -207,8 +207,14 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        cursor.of(baseCursor, executionContext);
-        return cursor;
+        try {
+            cursor.of(baseCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // free partial allocations under the still-bound per-query tracker on a failed open
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override

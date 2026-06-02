@@ -147,6 +147,8 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             cursor.of(masterCursor, slaveCursor, filterRecord, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
+            // close() also frees the SingleRecordSinks under the still-bound per-query tracker
+            cursor.close();
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
             throw e;

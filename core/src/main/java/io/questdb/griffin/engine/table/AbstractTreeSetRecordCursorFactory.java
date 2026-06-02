@@ -87,7 +87,13 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractPageFrameRecor
             PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        cursor.of(pageFrameCursor, executionContext);
+        try {
+            cursor.of(pageFrameCursor, executionContext);
+        } catch (Throwable th) {
+            // free partial allocations under the still-bound per-query tracker on a failed open
+            cursor.close();
+            throw th;
+        }
         return cursor;
     }
 }

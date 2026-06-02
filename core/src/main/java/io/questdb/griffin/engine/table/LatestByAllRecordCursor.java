@@ -64,6 +64,8 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
 
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        // open before the first allocation so close() frees the map if a later alloc in of() breaches
+        isOpen = true;
         map.setMemoryTracker(executionContext.getMemoryTracker());
         map.reopen();
         super.of(pageFrameCursor, executionContext);
