@@ -131,6 +131,20 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
+     * Moves unsafe finite-future purge entries into a TableWriter-owned queue
+     * before this index writer is closed or reopened.
+     */
+    default void drainPendingFuturePurges(
+            ObjList<PostingSealPurgeTask> sink,
+            ObjectStackPool<PostingSealPurgeTask> pool,
+            TableToken tableToken,
+            int partitionBy,
+            int timestampType,
+            long currentTableTxn
+    ) {
+    }
+
+    /**
      * Returns the index type for this writer.
      *
      * @return the index type constant from {@link IndexType}
@@ -236,20 +250,6 @@ public interface IndexWriter extends Closeable, Mutable {
 
     default void publishPendingPurges(
             MessageBus messageBus,
-            TableToken tableToken,
-            int partitionBy,
-            int timestampType,
-            long currentTableTxn
-    ) {
-    }
-
-    /**
-     * Moves unsafe finite-future purge entries into a TableWriter-owned queue
-     * before this index writer is closed or reopened.
-     */
-    default void drainPendingFuturePurges(
-            ObjList<PostingSealPurgeTask> sink,
-            ObjectStackPool<PostingSealPurgeTask> pool,
             TableToken tableToken,
             int partitionBy,
             int timestampType,
