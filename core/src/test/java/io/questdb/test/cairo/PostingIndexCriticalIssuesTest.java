@@ -24,10 +24,12 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -46,16 +48,21 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -495,6 +502,62 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             assertPostingSealFilesExist(oldFiles, false);
             assertPostingSealFilesExist(liveFiles, true);
+        });
+    }
+
+    @Test
+    public void testO3DeferredPostingSealPurgePersistsOnCloseWhenQueueIsFull() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String tableName = "posting_o3_recovery";
+            final String indexColumnName = "new_col_11";
+            final String coveredColumnName = "marker";
+            final long targetPartitionTimestamp = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00.000000Z");
+
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute(insertPostingRowsSql(-85, 0));
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN sym2 TO " + indexColumnName);
+            execute(insertPostingRowsSql(0, 10));
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-02-25'");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym_top SYMBOL CAPACITY 64");
+
+            execute(insertPostingRowsSql(0, 35));
+            final PostingSealFileNames oldFiles = resolvePostingSealFileNames(tableName, indexColumnName, coveredColumnName, targetPartitionTimestamp, -1L);
+            final long oldSealTxn = oldFiles.sealTxn;
+            assertPostingSealFilesExist(oldFiles, true);
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            Assert.assertNotNull("table must exist", tableToken);
+            fillPostingSealPurgeQueue(tableToken);
+
+            // The O3 commit advances _txn while the ring is full, so the now
+            // ready deferred purge remains in TableWriter until close. Close
+            // must persist it to sys.posting_seal_purge_log instead of dropping
+            // the task.
+            try {
+                execute(insertPostingRowsSql(35, 92));
+                engine.releaseAllWriters();
+                assertPostingSealFilesExist(oldFiles, true);
+                assertOpenDeferredPostingSealPurgeLogRow(
+                        tableToken,
+                        indexColumnName,
+                        oldSealTxn
+                );
+            } finally {
+                drainPostingSealPurgeQueue();
+            }
+
+            try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
+                runPostingSealPurgeJob(purgeJob);
+            }
+
+            assertPostingSealFilesExist(oldFiles, false);
         });
     }
 
@@ -3763,6 +3826,91 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         for (int i = 0; i < 32; i++) {
             if (!purgeJob.run(0)) {
                 break;
+            }
+        }
+    }
+
+    private void assertOpenDeferredPostingSealPurgeLogRow(
+            TableToken tableToken,
+            String indexColumnName,
+            long sealTxn
+    ) throws Exception {
+        assertQuery("SELECT count() FROM \"" + configuration.getSystemTableNamePrefix()
+                + "posting_seal_purge_log\" WHERE table_name = '" + tableToken.getDirName()
+                + "' AND table_id = " + tableToken.getTableId()
+                + " AND column_name = '" + indexColumnName
+                + "' AND seal_txn = " + sealTxn
+                + " AND completed = null")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        count
+                        1
+                        """);
+    }
+
+    private void fillPostingSealPurgeQueue(TableToken liveToken) {
+        MessageBus bus = engine.getMessageBus();
+        MPSequence pubSeq = bus.getPostingSealPurgePubSeq();
+        RingQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
+        TableToken missingToken = new TableToken(
+                "__missing_posting_seal_purge_queue_fill",
+                "__missing_posting_seal_purge_queue_fill",
+                null,
+                liveToken.getTableId() + 1_000_000,
+                false,
+                false,
+                false
+        );
+        int published = 0;
+        while (true) {
+            long cursor = pubSeq.next();
+            if (cursor == -2) {
+                Os.pause();
+                continue;
+            }
+            if (cursor < 0) {
+                break;
+            }
+            try {
+                queue.get(cursor).of(
+                        missingToken,
+                        "missing_col",
+                        COLUMN_NAME_TXN_NONE,
+                        published,
+                        0L,
+                        -1L,
+                        PartitionBy.NONE,
+                        ColumnType.TIMESTAMP_MICRO,
+                        0L,
+                        0L
+                );
+            } finally {
+                pubSeq.done(cursor);
+            }
+            published++;
+        }
+        Assert.assertTrue("posting seal purge queue must be saturated by the test", published > 0);
+    }
+
+    private void drainPostingSealPurgeQueue() {
+        MessageBus bus = engine.getMessageBus();
+        SCSequence subSeq = bus.getPostingSealPurgeSubSeq();
+        RingQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
+        while (true) {
+            long cursor = subSeq.next();
+            if (cursor == -2) {
+                Os.pause();
+                continue;
+            }
+            if (cursor < 0) {
+                break;
+            }
+            try {
+                queue.get(cursor).clear();
+            } finally {
+                subSeq.done(cursor);
             }
         }
     }
