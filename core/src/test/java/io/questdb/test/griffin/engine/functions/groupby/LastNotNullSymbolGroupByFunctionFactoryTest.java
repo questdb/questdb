@@ -56,7 +56,7 @@ public class LastNotNullSymbolGroupByFunctionFactoryTest extends AbstractCairoTe
                 .expectSize()
                 .returns("""
                         a0
-
+                        
                         """);
     }
 }

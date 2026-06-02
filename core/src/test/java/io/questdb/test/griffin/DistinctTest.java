@@ -44,6 +44,32 @@ public class DistinctTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctConstAliasOrderByLimitFromFuzzer() throws Exception {
+        // Original failing query from the query fuzzer (seed s0=104514844543552, s1=1779785264959).
+        assertQuery("SELECT DISTINCT -676 AS e0, t0.x AS e1, -97 AS e2," +
+                " '2024-01-23T16:57:00.000000Z'::TIMESTAMP AS e3, t0.x AS e4" +
+                " FROM long_sequence(73) t0" +
+                " WHERE (t0.x > (t0.x - t0.x) AND t0.x IS NOT NULL)" +
+                " ORDER BY e0 DESC LIMIT 2")
+                .expectSize()
+                .returns("e0\te1\te2\te3\te4\n" +
+                        "-676\t36\t-97\t2024-01-23T16:57:00.000000Z\t36\n" +
+                        "-676\t26\t-97\t2024-01-23T16:57:00.000000Z\t26\n");
+    }
+
+    @Test
+    public void testDistinctConstAliasOrderByLimitWithDuplicateCol() throws Exception {
+        // Duplicate column refs trigger rewriteTrivialGroupByExpressions which used to push
+        // LIMIT past the virtual carrying the constant alias; ORDER BY e0 then resolved at the
+        // limited group-by and crashed with AIOOBE.
+        assertQuery("SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ORDER BY e0 DESC LIMIT 2")
+                .expectSize()
+                .returns("e0\te1\te4\n" +
+                        "-1\t3\t3\n" +
+                        "-1\t2\t2\n");
+    }
+
+    @Test
     public void testDistinctImplementsLimitLoPositive() throws Exception {
         execute(
                 "create table x as (" +
@@ -153,6 +179,58 @@ public class DistinctTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctQualifiedColumnInExprWithBindVariableFromFuzzer() throws Exception {
+        // Bind-form of the prior fuzzer query. The bind cast steals the early aliases
+        // ("cast", "cast1") so the bare t0.x projection keeps its user alias "x". The
+        // earlier qualified emit for (t0.x)::CHAR had already registered "x" in the
+        // translating model under the stripped key, and createSelectColumn needed the
+        // same qualified-vs-stripped retry as doReplaceLiteral0 to reuse that entry
+        // instead of renaming the bare projection to "x1" and breaking the DISTINCT
+        // wrapper's lookup.
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "Y");
+            assertSql(
+                    "cast\tcast1\tx\n" +
+                            "Y\t\t1\n" +
+                            "Y\t\t2\n" +
+                            "Y\t\t3\n",
+                    "SELECT DISTINCT :b0::CHAR, (t0.x)::CHAR, t0.x" +
+                            " FROM long_sequence(3) t0"
+            );
+        });
+    }
+
+    @Test
+    public void testDistinctQualifiedColumnInExpressionFromFuzzer() throws Exception {
+        // Qualified t0.x inside the expression must resolve to the same column as the bare
+        // t0.x projection above; otherwise the expression's literal misses the translating
+        // entry, overwrites the columnNameToAlias mapping with a duplicate, and the parent
+        // virtual model raises Invalid column.
+        assertQuery("SELECT DISTINCT -614 AS e0, t0.x AS e1, 786 AS e2, -716 AS e3," +
+                " (278444 * t0.x) AS e4" +
+                " FROM long_sequence(2) t0" +
+                " ORDER BY e1")
+                .expectSize()
+                .returns("e0\te1\te2\te3\te4\n" +
+                        "-614\t1\t786\t-716\t278444\n" +
+                        "-614\t2\t786\t-716\t556888\n");
+    }
+
+    @Test
+    public void testDistinctReusedColumnWithUserAliasRepro() throws Exception {
+        // Duplicate aliased refs to the same column (x AS e1, x AS e2) under DISTINCT
+        // pointed the outer projection at the translating-model alias "x" while the
+        // group-by metadata only exposed "e1"; generateSelectChoose hit "wtf? x".
+        assertQuery("SELECT DISTINCT abs(x) AS e0, x AS e1, x AS e2 FROM long_sequence(3)")
+                .expectSize()
+                .returns("e0\te1\te2\n" +
+                        "1\t1\t1\n" +
+                        "2\t2\t2\n" +
+                        "3\t3\t3\n");
+    }
+
+    @Test
     public void testDistinctWithAlias() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
         assertQuery("SELECT distinct sa.created FROM x sa;")
@@ -187,84 +265,6 @@ public class DistinctTest extends AbstractCairoTest {
                         -13027\t-13027
                         -22955\t-22955
                         """);
-    }
-
-    @Test
-    public void testDistinctConstAliasOrderByLimitWithDuplicateCol() throws Exception {
-        // Duplicate column refs trigger rewriteTrivialGroupByExpressions which used to push
-        // LIMIT past the virtual carrying the constant alias; ORDER BY e0 then resolved at the
-        // limited group-by and crashed with AIOOBE.
-        assertQuery("SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ORDER BY e0 DESC LIMIT 2")
-                .expectSize()
-                .returns("e0\te1\te4\n" +
-                        "-1\t3\t3\n" +
-                        "-1\t2\t2\n");
-    }
-
-    @Test
-    public void testDistinctReusedColumnWithUserAliasRepro() throws Exception {
-        // Duplicate aliased refs to the same column (x AS e1, x AS e2) under DISTINCT
-        // pointed the outer projection at the translating-model alias "x" while the
-        // group-by metadata only exposed "e1"; generateSelectChoose hit "wtf? x".
-        assertQuery("SELECT DISTINCT abs(x) AS e0, x AS e1, x AS e2 FROM long_sequence(3)")
-                .expectSize()
-                .returns("e0\te1\te2\n" +
-                        "1\t1\t1\n" +
-                        "2\t2\t2\n" +
-                        "3\t3\t3\n");
-    }
-
-    @Test
-    public void testDistinctConstAliasOrderByLimitFromFuzzer() throws Exception {
-        // Original failing query from the query fuzzer (seed s0=104514844543552, s1=1779785264959).
-        assertQuery("SELECT DISTINCT -676 AS e0, t0.x AS e1, -97 AS e2," +
-                        " '2024-01-23T16:57:00.000000Z'::TIMESTAMP AS e3, t0.x AS e4" +
-                        " FROM long_sequence(73) t0" +
-                        " WHERE (t0.x > (t0.x - t0.x) AND t0.x IS NOT NULL)" +
-                        " ORDER BY e0 DESC LIMIT 2")
-                .expectSize()
-                .returns("e0\te1\te2\te3\te4\n" +
-                        "-676\t36\t-97\t2024-01-23T16:57:00.000000Z\t36\n" +
-                        "-676\t26\t-97\t2024-01-23T16:57:00.000000Z\t26\n");
-    }
-
-    @Test
-    public void testDistinctQualifiedColumnInExpressionFromFuzzer() throws Exception {
-        // Qualified t0.x inside the expression must resolve to the same column as the bare
-        // t0.x projection above; otherwise the expression's literal misses the translating
-        // entry, overwrites the columnNameToAlias mapping with a duplicate, and the parent
-        // virtual model raises Invalid column.
-        assertQuery("SELECT DISTINCT -614 AS e0, t0.x AS e1, 786 AS e2, -716 AS e3," +
-                        " (278444 * t0.x) AS e4" +
-                        " FROM long_sequence(2) t0" +
-                        " ORDER BY e1")
-                .expectSize()
-                .returns("e0\te1\te2\te3\te4\n" +
-                        "-614\t1\t786\t-716\t278444\n" +
-                        "-614\t2\t786\t-716\t556888\n");
-    }
-
-    @Test
-    public void testDistinctQualifiedColumnInExprWithBindVariableFromFuzzer() throws Exception {
-        // Bind-form of the prior fuzzer query. The bind cast steals the early aliases
-        // ("cast", "cast1") so the bare t0.x projection keeps its user alias "x". The
-        // earlier qualified emit for (t0.x)::CHAR had already registered "x" in the
-        // translating model under the stripped key, and createSelectColumn needed the
-        // same qualified-vs-stripped retry as doReplaceLiteral0 to reuse that entry
-        // instead of renaming the bare projection to "x1" and breaking the DISTINCT
-        // wrapper's lookup.
-        assertMemoryLeak(() -> {
-            bindVariableService.clear();
-            bindVariableService.setStr("b0", "Y");
-            assertSql(
-                    "cast\tcast1\tx\n" +
-                            "Y\t\t1\n" +
-                            "Y\t\t2\n" +
-                            "Y\t\t3\n",
-                    "SELECT DISTINCT :b0::CHAR, (t0.x)::CHAR, t0.x" +
-                            " FROM long_sequence(3) t0"
-            );
-        });
     }
 
     @Test

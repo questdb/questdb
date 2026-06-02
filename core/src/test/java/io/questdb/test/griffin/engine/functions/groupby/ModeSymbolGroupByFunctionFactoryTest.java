@@ -72,7 +72,7 @@ public class ModeSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("""
                         a0
-
+                        
                         """);
     }
 

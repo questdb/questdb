@@ -65,7 +65,7 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("""
                         a0
-
+                        
                         """);
     }
 

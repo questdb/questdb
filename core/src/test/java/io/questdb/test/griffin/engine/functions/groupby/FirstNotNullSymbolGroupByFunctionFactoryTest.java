@@ -56,7 +56,7 @@ public class FirstNotNullSymbolGroupByFunctionFactoryTest extends AbstractCairoT
                 .expectSize()
                 .returns("""
                         a0
-
+                        
                         """);
     }
 }
