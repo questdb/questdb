@@ -228,9 +228,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int fileOperationRetryCount;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
+    private final ObjList<ColumnIndexer> indexers;
     private final PostingIndexChainWriter linkPostingIndexChainWriter = new PostingIndexChainWriter();
     private final LongList linkPostingIndexOrphanSealTxns = new LongList();
-    private final ObjList<ColumnIndexer> indexers;
     // This is the same message bus. When TableWriter instance is created via CairoEngine, message bus is shared
     // and is owned by the engine. Since TableWriter would not have ownership of the bus, it must not free it up.
     // On another hand, when TableWrite is created outside CairoEngine, primarily in tests, the ownership of the
@@ -8599,18 +8599,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private int releaseDirectPersistedPostingSealPurges(int readPos, int writePos, int n, long currentTableTxn) {
-        for (int i = readPos; i < n; i++) {
-            PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
-            if (task.isEmpty() || task.getToTableTxn() <= currentTableTxn) {
-                releaseDeferredPostingSealPurgeTask(task);
-            } else {
-                deferredPostingSealPurges.setQuick(writePos++, task);
-            }
-        }
-        return writePos;
-    }
-
     private void populateDenseIndexerList() {
         denseIndexers.clear();
         for (int i = 0, n = indexers.size(); i < n; i++) {
@@ -11290,6 +11278,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (deferredPostingSealPurgeTaskPool != null) {
             deferredPostingSealPurgeTaskPool.release(task);
         }
+    }
+
+    private int releaseDirectPersistedPostingSealPurges(int readPos, int writePos, int n, long currentTableTxn) {
+        for (int i = readPos; i < n; i++) {
+            PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
+            if (task.isEmpty() || task.getToTableTxn() <= currentTableTxn) {
+                releaseDeferredPostingSealPurgeTask(task);
+            } else {
+                deferredPostingSealPurges.setQuick(writePos++, task);
+            }
+        }
+        return writePos;
     }
 
     private void releaseIndexerWriters() {
