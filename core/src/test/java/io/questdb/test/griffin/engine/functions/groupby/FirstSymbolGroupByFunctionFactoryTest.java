@@ -31,34 +31,27 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testKeyed() throws Exception {
-        assertQuery(
-                """
+        assertMemoryLeak(() -> assertQuery("select a, first(sym) sym from tab order by a")
+                .ddl("create table tab as (select rnd_int() % 2 a, rnd_symbol('aa', 'bb', 'cc') sym from long_sequence(10))")
+                .expectSize()
+                .returns("""
                         a\tsym
                         -1\tbb
                         0\taa
                         1\tcc
-                        """,
-                "select a, first(sym) sym from tab order by a",
-                "create table tab as (select rnd_int() % 2 a, rnd_symbol('aa', 'bb', 'cc') sym from long_sequence(10))",
-                null,
-                true,
-                true
-        );
+                        """));
     }
 
     @Test
     public void testNotKeyed() throws Exception {
-        assertQuery(
-                """
+        assertMemoryLeak(() -> assertQuery("select first(sym) sym from tab")
+                .ddl("create table tab as (select rnd_int() % 2 a, rnd_symbol('aa', 'bb', 'cc') sym from long_sequence(10))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sym
                         aa
-                        """,
-                "select first(sym) sym from tab",
-                "create table tab as (select rnd_int() % 2 a, rnd_symbol('aa', 'bb', 'cc') sym from long_sequence(10))",
-                null,
-                false,
-                true
-        );
+                        """));
     }
 
     @Test
@@ -66,23 +59,39 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
         // first(constant) over a WHERE-folded empty table must return NULL: setEmpty
         // stores VALUE_IS_NULL on the group-by state, and SymbolConstant.valueOf must
         // honour that key. Before the fix the constant was returned verbatim.
-        assertQuery(
-                """
+        assertQuery("select first(('0.83055')::symbol) a0 from tab where 1 = 0")
+                .ddl("create table tab as (select rnd_int() a from long_sequence(10))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         a0
-                        
-                        """,
-                "select first(('0.83055')::symbol) a0 from tab where 1 = 0",
-                "create table tab as (select rnd_int() a from long_sequence(10))",
-                null,
-                false,
-                true
-        );
+
+                        """);
     }
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select b, first(a) a, k from x sample by 3h align to first observation")
+                .ddl("create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('l1', 'kl2', 'ss4') a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE")
+                .mutateWith("insert into x select * from (" +
+                        "select" +
+                        " rnd_symbol('zz8', 'zz9') a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(277200000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(35)" +
+                        ") timestamp(k)")
+                .timestamp("k")
+                .noRandomAccess()
+                .returns("""
                         b\ta\tk
                         \tkl2\t1970-01-03T00:00:00.000000Z
                         VTJW\tl1\t1970-01-03T00:00:00.000000Z
@@ -106,27 +115,7 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                         \tl1\t1970-01-03T09:00:00.000000Z
                         PEHN\tss4\t1970-01-03T09:00:00.000000Z
                         VTJW\tss4\t1970-01-03T09:00:00.000000Z
-                        """,
-                "select b, first(a) a, k from x sample by 3h align to first observation",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_symbol('l1', 'kl2', 'ss4') a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_symbol('zz8', 'zz9') a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(35)" +
-                        ") timestamp(k)",
-                """
+                        """, """
                         b\ta\tk
                         \tkl2\t1970-01-03T00:00:00.000000Z
                         VTJW\tl1\t1970-01-03T00:00:00.000000Z
@@ -157,8 +146,6 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                         QEBN\tzz8\t1970-01-04T06:00:00.000000Z
                         \tzz8\t1970-01-04T06:00:00.000000Z
                         FOUS\tzz9\t1970-01-04T06:00:00.000000Z
-                        """,
-                false
-        );
+                        """);
     }
 }

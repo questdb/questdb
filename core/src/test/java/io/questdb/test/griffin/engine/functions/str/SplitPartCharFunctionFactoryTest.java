@@ -55,13 +55,9 @@ public class SplitPartCharFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testNegativeIndex() throws Exception {
-        assertQuery(
-                "split_part\n" + "ghi\n",
-                "select split_part('abc,def,ghi,jkl', ',', -2)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select split_part('abc,def,ghi,jkl', ',', -2)")
+                .expectSize()
+                .returns("split_part\nghi\n");
     }
 
     @Test
@@ -74,34 +70,29 @@ public class SplitPartCharFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testPositiveIndex() throws Exception {
-        assertQuery(
-                "split_part\n" + "def\n",
-                "select split_part('abc,def,ghi,jkl', ',', 2)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select split_part('abc,def,ghi,jkl', ',', 2)")
+                .expectSize()
+                .returns("split_part\ndef\n");
     }
 
     @Test
     public void testSinkIsCleared() throws Exception {
         for (int i = 0; i < 10; i++) {
-            assertQuery(
-                    "split_part\n" +
+            assertQuery("select split_part(x, '.'::char, 3) from\n" +
+                    "(select 'a.b' as x\n" +
+                    "union select 'c.d' as x\n" +
+                    "union select 'e.f.g' as x\n" +
+                    "union select 'h.i.j' as x\n" +
+                    "union select 'k.l' as x\n" +
+                    "union select 'm.n' as x)")
+                    .noRandomAccess()
+                    .returns("split_part\n" +
                             "\n" +
                             "\n" +
                             "g\n" +
                             "j\n" +
                             "\n" +
-                            "\n",
-                    "select split_part(x, '.'::char, 3) from\n" +
-                            "(select 'a.b' as x\n" +
-                            "union select 'c.d' as x\n" +
-                            "union select 'e.f.g' as x\n" +
-                            "union select 'h.i.j' as x\n" +
-                            "union select 'k.l' as x\n" +
-                            "union select 'm.n' as x)", null, false, false
-            );
+                            "\n");
         }
     }
 

@@ -33,17 +33,14 @@ public class LastNotNullSymbolGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testNotKeyed() throws Exception {
         // last_not_null skips trailing NULL symbols and returns the last
         // non-null value in scan order.
-        assertQuery(
-                """
+        assertQuery("select last_not_null(s) sym from tab")
+                .ddl("create table tab as (select (case x when 2 then 'aa' when 4 then 'bb' end)::symbol s from long_sequence(5))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         sym
                         bb
-                        """,
-                "select last_not_null(s) sym from tab",
-                "create table tab as (select (case x when 2 then 'aa' when 4 then 'bb' end)::symbol s from long_sequence(5))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -53,16 +50,13 @@ public class LastNotNullSymbolGroupByFunctionFactoryTest extends AbstractCairoTe
         // must honour that key. LastNotNullSymbolGroupByFunction extends
         // FirstSymbolGroupByFunction and inherits the same VALUE_IS_NULL read-back, so
         // before the fix the constant was returned verbatim.
-        assertQuery(
-                """
+        assertQuery("select last_not_null(('0.83055')::symbol) a0 from tab where 1 = 0")
+                .ddl("create table tab as (select rnd_int() a from long_sequence(10))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         a0
-                        
-                        """,
-                "select last_not_null(('0.83055')::symbol) a0 from tab where 1 = 0",
-                "create table tab as (select rnd_int() a from long_sequence(10))",
-                null,
-                false,
-                true
-        );
+
+                        """);
     }
 }

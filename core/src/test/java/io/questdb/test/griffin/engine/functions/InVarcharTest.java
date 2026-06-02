@@ -38,33 +38,29 @@ public class InVarcharTest extends AbstractCairoTest {
     public void testAllConst() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
-            assertQueryNoLeakCheck("a\tts\n", "test where a in NULL", false);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where a in NULL")
+                    .noLeakCheck()
+                    .returns("a\tts\n");
+            assertQuery("test where a in ('16', NULL)")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             16\t1970-01-01T00:00:15.000000Z
-                            """,
-                    "test where a in ('16', NULL)",
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("test where a in '3'")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             3\t1970-01-01T00:00:02.000000Z
-                            """,
-                    "test where a in '3'",
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("test where a in ('3', '22', '79')")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             3\t1970-01-01T00:00:02.000000Z
                             22\t1970-01-01T00:00:21.000000Z
                             79\t1970-01-01T00:01:18.000000Z
-                            """,
-                    "test where a in ('3', '22', '79')",
-                    false
-            );
+                            """);
         });
     }
 
@@ -135,24 +131,20 @@ public class InVarcharTest extends AbstractCairoTest {
     public void testChar() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where a in '3'::char")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             3\t1970-01-01T00:00:02.000000Z
-                            """,
-                    "test where a in '3'::char",
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("test where a in ('3'::char, '22', '79')")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             3\t1970-01-01T00:00:02.000000Z
                             22\t1970-01-01T00:00:21.000000Z
                             79\t1970-01-01T00:01:18.000000Z
-                            """,
-                    "test where a in ('3'::char, '22', '79')",
-                    false
-            );
+                            """);
 
             final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
             tuples.add(new BindVariableTestTuple(
@@ -187,69 +179,56 @@ public class InVarcharTest extends AbstractCairoTest {
             execute("insert into test values (NULL, '1970-01-01T00:03:00.000000Z')");
             // CHAR(0) alongside another literal: the NULL row matches via CHAR(0), '1' picks
             // up its own row.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where a in ('1', (0)::char)")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             1\t1970-01-01T00:00:00.000000Z
                             \t1970-01-01T00:03:00.000000Z
-                            """,
-                    "test where a in ('1', (0)::char)",
-                    false
-            );
+                            """);
             // CHAR(0) alone in the list: only the NULL row matches.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where a in ((0)::char)")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             \t1970-01-01T00:03:00.000000Z
-                            """,
-                    "test where a in ((0)::char)",
-                    false
-            );
+                            """);
             // CHAR(0) alongside an explicit NULL: both map to set-null, no double-add or
             // false-mismatch; only the NULL row matches.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where a in (NULL, (0)::char)")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             \t1970-01-01T00:03:00.000000Z
-                            """,
-                    "test where a in (NULL, (0)::char)",
-                    false
-            );
+                            """);
             // A non-zero CHAR keeps its 1-byte encoding and only matches the corresponding
             // varchar row, never the NULL row.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where a in (('1')::char)")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             1\t1970-01-01T00:00:00.000000Z
-                            """,
-                    "test where a in (('1')::char)",
-                    false
-            );
+                            """);
             // Bind variant of CHAR(0): LHS is the varchar column, the IN list element is a
             // runtime-constant CHAR(0) routed through the RuntimeConstFunc path. The
             // factory's parseToVarchar runs in init(), so the same null-mirror behavior
             // must hold there too.
             bindVariableService.clear();
             bindVariableService.setStr("b0", "0");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where a in ((:b0::int)::char)")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             \t1970-01-01T00:03:00.000000Z
-                            """,
-                    "test where a in ((:b0::int)::char)",
-                    false
-            );
+                            """);
         });
     }
 
     @Test
     public void testColumn() throws Exception {
-        assertException(
-                "test where a in ('6', '81', b)",
-                "create table test as (select cast(x as varchar) a, x b, timestamp_sequence(0, 1000000) ts from long_sequence(100))",
-                28,
-                "constant expected"
-        );
+        assertQuery("test where a in ('6', '81', b)")
+                .ddl("create table test as (select cast(x as varchar) a, x b, timestamp_sequence(0, 1000000) ts from long_sequence(100))")
+                .fails(28, "constant expected");
     }
 
     @Test
@@ -281,35 +260,32 @@ public class InVarcharTest extends AbstractCairoTest {
     public void testConstConst() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where 'a'::varchar in ('a', 'b')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:00:01.000000Z
                             3\t1970-01-01T00:00:02.000000Z
                             4\t1970-01-01T00:00:03.000000Z
                             5\t1970-01-01T00:00:04.000000Z
-                            """,
-                    "test where 'a'::varchar in ('a', 'b')",
-                    null,
-                    true,
-                    true
-            );
-            assertQueryNoLeakCheck("a\tts\n", "test where NULL::varchar in ('a', 'b')", null, true, true);
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("test where NULL::varchar in ('a', 'b')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tts\n");
+            assertQuery("test where NULL::varchar in ('a', NULL)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:00:01.000000Z
                             3\t1970-01-01T00:00:02.000000Z
                             4\t1970-01-01T00:00:03.000000Z
                             5\t1970-01-01T00:00:04.000000Z
-                            """,
-                    "test where NULL::varchar in ('a', NULL)",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -318,23 +294,18 @@ public class InVarcharTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table in_values as (select cast(x as varchar) value, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
 
-            assertExceptionNoLeakCheck(
-                    "test where a in (select value from in_values)",
-                    "create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))",
-                    17,
-                    "constant expected"
-            );
+            assertQuery("test where a in (select value from in_values)")
+                    .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))")
+                    .noLeakCheck()
+                    .fails(17, "constant expected");
         });
     }
 
     @Test
     public void testNonSupportedType() throws Exception {
-        assertException(
-                "test where a in (12.34)",
-                "create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))",
-                17,
-                "cannot compare VARCHAR with type DOUBLE"
-        );
+        assertQuery("test where a in (12.34)")
+                .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))")
+                .fails(17, "cannot compare VARCHAR with type DOUBLE");
     }
 
     @Test
@@ -343,41 +314,33 @@ public class InVarcharTest extends AbstractCairoTest {
             execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
             execute("insert into test values (NULL, '1970-01-01T00:03:00.000000Z')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where a in NULL")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             \t1970-01-01T00:03:00.000000Z
-                            """,
-                    "test where a in NULL",
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("test where a in ('16', NULL)")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             16\t1970-01-01T00:00:15.000000Z
                             \t1970-01-01T00:03:00.000000Z
-                            """,
-                    "test where a in ('16', NULL)",
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("test where a in '3'")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             3\t1970-01-01T00:00:02.000000Z
-                            """,
-                    "test where a in '3'",
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("test where a in ('3', '22', '79')")
+                    .noLeakCheck()
+                    .returns("""
                             a\tts
                             3\t1970-01-01T00:00:02.000000Z
                             22\t1970-01-01T00:00:21.000000Z
                             79\t1970-01-01T00:01:18.000000Z
-                            """,
-                    "test where a in ('3', '22', '79')",
-                    false
-            );
+                            """);
 
             final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
             tuples.add(new BindVariableTestTuple(

@@ -79,17 +79,15 @@ public class LatestByTest extends AbstractCairoTest {
                             "  from long_sequence(100)\n" +
                             ") timestamp(ts);\n"
             );
-            assertQuery(
-                    """
+            assertQuery("select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 3 latest on ts partition by x order by x;")
+                    .expectSize()
+                    .returns("""
                             x\tohoh
                             7\t25
                             9\t29
                             15\t29
                             17\t26
-                            """,
-                    "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 3 latest on ts partition by x order by x;",
-                    true
-            );
+                            """);
         });
     }
 
@@ -108,17 +106,13 @@ public class LatestByTest extends AbstractCairoTest {
                 timestampType.getTypeName()
         );
 
-        assertQuery(
-                "devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",
-                """
-                        SELECT * FROM history_P4v
-                        WHERE
-                          devid = 'LLLAHFZHYA'
-                        LATEST ON ts PARTITION BY address""",
-                "ts",
-                true,
-                false
-        );
+        assertQuery("""
+                SELECT * FROM history_P4v
+                WHERE
+                  devid = 'LLLAHFZHYA'
+                LATEST ON ts PARTITION BY address""")
+                .timestamp("ts")
+                .returns("devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n");
     }
 
     @Test
@@ -170,16 +164,13 @@ public class LatestByTest extends AbstractCairoTest {
                         "  LATEST ON ts PARTITION BY sym \n" +
                         ") \n" +
                         "ON (sym)";
-                assertQuery(
-                        """
+                assertQuery(query)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
                                 count
                                 1
-                                """,
-                        query,
-                        null,
-                        false,
-                        true
-                );
+                                """);
 
                 timestamp += 10000L;
             }
@@ -229,14 +220,11 @@ public class LatestByTest extends AbstractCairoTest {
             );
 
             // prefix filter is applied AFTER latest on
-            assertQuery(
-                    "ts\tdevice_id\tg8c\n" +
-                            "2021-09-02T00:00:00.000001" + getTimestampSuffix(timestampType.getTypeName()) + "\tdevice_2\t46swgj10\n",
-                    query,
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery(query)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tdevice_id\tg8c\n" +
+                            "2021-09-02T00:00:00.000001" + getTimestampSuffix(timestampType.getTypeName()) + "\tdevice_2\t46swgj10\n");
         });
     }
 
@@ -259,17 +247,14 @@ public class LatestByTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts\n" +
+            assertQuery("select ts, s from t " +
+                    "where s in ('a', 'b') " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\n" +
                             "1970-01-02T23:00:00.000000" + suffix + "\ta\n" +
-                            "1970-01-03T00:00:00.000000" + suffix + "\tb\n",
-                    "select ts, s from t " +
-                            "where s in ('a', 'b') " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-03T00:00:00.000000" + suffix + "\tb\n");
         });
     }
 
@@ -280,18 +265,15 @@ public class LatestByTest extends AbstractCairoTest {
             execute("create table t (ts timestamp, s symbol, s2 symbol) timestamp (ts) partition by month");
             execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
             execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
-            assertQuery(
-                    """
+            assertQuery("select ts, s2, s from t " +
+                    "latest on ts partition by s, s2")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\ts2\ts
                             2025-01-03T00:00:00.000000Z\t\t
                             2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA
-                            """,
-                    "select ts, s2, s from t " +
-                            "latest on ts partition by s, s2",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -303,18 +285,43 @@ public class LatestByTest extends AbstractCairoTest {
             execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
             execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
             drainWalQueue();
-            assertQuery(
-                    """
+            assertQuery("select ts, s2, s from t " +
+                    "latest on ts partition by s, s2")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\ts2\ts
                             2025-01-03T00:00:00.000000Z\t\t
                             2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA
-                            """,
-                    "select ts, s2, s from t " +
-                            "latest on ts partition by s, s2",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
+        });
+    }
+
+    @Test
+    public void testLatestByLightSubQueryOrderByTimestampNotElided() throws Exception {
+        // A LATEST ON ... over a derived sub-query compiles to LatestByLightRecordCursorFactory,
+        // which emits one row per partition key in map order, NOT in designated-timestamp order.
+        // It must report SCAN_DIRECTION_OTHER so an explicit ORDER BY timestamp is honored with a
+        // real sort instead of being elided as already-sorted. Here key-insertion order (A, B) is
+        // the reverse of latest-timestamp order, so without the sort the rows come back descending.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (i INT, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a VALUES
+                    (1, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (1, 'B', '2024-01-01T00:00:10.000000Z'),
+                    (1, 'B', '2024-01-01T00:00:50.000000Z'),
+                    (1, 'A', '2024-01-01T00:01:40.000000Z')
+                    """);
+            assertQuery("SELECT ts FROM (SELECT ts, sym, i AS i1 FROM a) WHERE i1 > 0 LATEST ON ts PARTITION BY sym ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts
+                            2024-01-01T00:00:50.000000Z
+                            2024-01-01T00:01:40.000000Z
+                            """);
         });
     }
 
@@ -331,18 +338,15 @@ public class LatestByTest extends AbstractCairoTest {
                     "('2025-01-04', 'symSA', 'symS2A')");
             execute("alter table t alter column s type symbol");
             execute("alter table t alter column s2 type symbol");
-            assertQuery(
-                    """
+            assertQuery("select ts, s2, s from t " +
+                    "latest on ts partition by s, s2")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\ts2\ts
                             2025-01-03T00:00:00.000000Z\t\t
                             2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA
-                            """,
-                    "select ts, s2, s from t " +
-                            "latest on ts partition by s, s2",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -359,18 +363,15 @@ public class LatestByTest extends AbstractCairoTest {
                     "('2025-01-04')");
             execute("alter table t add column s symbol, s2 symbol");
             execute("insert into t values('2025-01-05', 'symSA', 'symS2A');");
-            assertQuery(
-                    """
+            assertQuery("select ts, s2, s from t " +
+                    "latest on ts partition by s, s2")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\ts2\ts
                             2025-01-04T00:00:00.000000Z\t\t
                             2025-01-05T00:00:00.000000Z\tsymS2A\tsymSA
-                            """,
-                    "select ts, s2, s from t " +
-                            "latest on ts partition by s, s2",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -394,17 +395,14 @@ public class LatestByTest extends AbstractCairoTest {
             execute("insert into t values ('e', 'f', '1970-01-01T01:01:01.000000Z')");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts2\ts\n" +
+            assertQuery("select ts, s2, s from t " +
+                    "where s = 'a' and s2 in ('c', 'd') " +
+                    "latest on ts partition by s, s2")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts2\ts\n" +
                             "1970-01-02T18:00:00.000000" + suffix + "\td\ta\n" +
-                            "1970-01-02T23:00:00.000000" + suffix + "\tc\ta\n",
-                    "select ts, s2, s from t " +
-                            "where s = 'a' and s2 in ('c', 'd') " +
-                            "latest on ts partition by s, s2",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-02T23:00:00.000000" + suffix + "\tc\ta\n");
         });
     }
 
@@ -428,17 +426,14 @@ public class LatestByTest extends AbstractCairoTest {
             execute("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts2\ts\n" +
+            assertQuery("select ts, s2, s from t " +
+                    "where s2 = 'c' " +
+                    "latest on ts partition by s, s2")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts2\ts\n" +
                             "1970-01-02T23:00:00.000000" + suffix + "\tc\ta\n" +
-                            "1970-01-03T00:00:00.000000" + suffix + "\tc\tb\n",
-                    "select ts, s2, s from t " +
-                            "where s2 = 'c' " +
-                            "latest on ts partition by s, s2",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-03T00:00:00.000000" + suffix + "\tc\tb\n");
         });
     }
 
@@ -462,19 +457,16 @@ public class LatestByTest extends AbstractCairoTest {
             execute("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "s\ts2\tts\n" +
+            assertQuery("select * from t where s2 = 'c' latest on ts partition by s, s2 " +
+                    "union all " +
+                    "select * from t where s2 = 'd' latest on ts partition by s, s2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("s\ts2\tts\n" +
                             "a\tc\t1970-01-02T23:00:00.000000" + suffix + "\n" +
                             "b\tc\t1970-01-03T00:00:00.000000" + suffix + "\n" +
                             "a\td\t1970-01-02T18:00:00.000000" + suffix + "\n" +
-                            "b\td\t1970-01-02T19:00:00.000000" + suffix + "\n",
-                    "select * from t where s2 = 'c' latest on ts partition by s, s2 " +
-                            "union all " +
-                            "select * from t where s2 = 'd' latest on ts partition by s, s2",
-                    null,
-                    false,
-                    true
-            );
+                            "b\td\t1970-01-02T19:00:00.000000" + suffix + "\n");
         });
     }
 
@@ -497,18 +489,15 @@ public class LatestByTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts2\ts\n" +
+            assertQuery("select ts, s2, s from t " +
+                    "latest on ts partition by s, s2")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts2\ts\n" +
                             "1970-01-02T18:00:00.000000" + suffix + "\td\ta\n" +
                             "1970-01-02T19:00:00.000000" + suffix + "\td\tb\n" +
                             "1970-01-02T23:00:00.000000" + suffix + "\tc\ta\n" +
-                            "1970-01-03T00:00:00.000000" + suffix + "\tc\tb\n",
-                    "select ts, s2, s from t " +
-                            "latest on ts partition by s, s2",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-03T00:00:00.000000" + suffix + "\tc\tb\n");
         });
     }
 
@@ -532,8 +521,12 @@ public class LatestByTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "s\ts2\ts3\tts\n" +
+            assertQuery("t " +
+                    "where s in ('a', 'b', null) " +
+                    "latest on ts partition by s3, s2, s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("s\ts2\ts3\tts\n" +
                             "\tc\t\t1970-01-03T19:00:00.000000" + suffix + "\n" +
                             "b\tc\t\t1970-01-04T00:00:00.000000" + suffix + "\n" +
                             "\t\td\t1970-01-04T05:00:00.000000" + suffix + "\n" +
@@ -545,14 +538,7 @@ public class LatestByTest extends AbstractCairoTest {
                             "\t\t\t1970-01-05T00:00:00.000000" + suffix + "\n" +
                             "a\tc\td\t1970-01-05T01:00:00.000000" + suffix + "\n" +
                             "b\t\td\t1970-01-05T02:00:00.000000" + suffix + "\n" +
-                            "\tc\td\t1970-01-05T03:00:00.000000" + suffix + "\n",
-                    "t " +
-                            "where s in ('a', 'b', null) " +
-                            "latest on ts partition by s3, s2, s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "\tc\td\t1970-01-05T03:00:00.000000" + suffix + "\n");
         });
     }
 
@@ -576,8 +562,11 @@ public class LatestByTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "s\ts2\ts3\tts\n" +
+            assertQuery("t " +
+                    "latest on ts partition by s3, s2, s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("s\ts2\ts3\tts\n" +
                             "\tc\t\t1970-01-03T19:00:00.000000" + suffix + "\n" +
                             "b\tc\t\t1970-01-04T00:00:00.000000" + suffix + "\n" +
                             "\t\td\t1970-01-04T05:00:00.000000" + suffix + "\n" +
@@ -589,13 +578,7 @@ public class LatestByTest extends AbstractCairoTest {
                             "\t\t\t1970-01-05T00:00:00.000000" + suffix + "\n" +
                             "a\tc\td\t1970-01-05T01:00:00.000000" + suffix + "\n" +
                             "b\t\td\t1970-01-05T02:00:00.000000" + suffix + "\n" +
-                            "\tc\td\t1970-01-05T03:00:00.000000" + suffix + "\n",
-                    "t " +
-                            "latest on ts partition by s3, s2, s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "\tc\td\t1970-01-05T03:00:00.000000" + suffix + "\n");
         });
     }
 
@@ -639,7 +622,10 @@ public class LatestByTest extends AbstractCairoTest {
                     "2020-05-05T00:00:00.000000" + suffix + "\t2020-05-04T00:00:00.000000" + suffix + "\t42.0\n" +
                     "2020-05-07T00:00:00.000000" + suffix + "\t2020-05-05T00:00:00.000000" + suffix + "\t143.0\n";
 
-            assertQuery(expected, query, "ts", true, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -698,7 +684,10 @@ public class LatestByTest extends AbstractCairoTest {
                     "2020-05-05T00:00:00.000000" + suffix + "\t2020-05-04T00:00:00.000000" + suffix + "\t42.0\n" +
                     "2020-05-06T00:00:00.000000" + suffix + "\t2020-05-05T00:00:00.000000" + suffix + "\t142.0\n";
 
-            assertQuery(expected, query, "version", true, true);
+            assertQuery(query)
+                    .timestamp("version")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -724,30 +713,26 @@ public class LatestByTest extends AbstractCairoTest {
             execute("insert into offer_exchanges values ('abc', 1.1, 1.1, 1.1, 'abc', 'def', 'zxy', 'a', 'some hash', 'foo', 123, 5, '2024-01-30T15:01:00.000Z')");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "pair\topen\tclose\tlow\thigh\tbase_volume\tcounter_volume\texchanges\tprev_rate\tprev_ts\n" +
-                            "abc\t1.1\t1.1\t1.1\t1.1\t1.1\t1.1\t1\t1.1\t2024-01-29T15:00:00.000000" + suffix + "\n",
-                    "WITH first_selection as (" +
-                            "  SELECT pair, first(rate) AS open, last(rate) AS close, min(rate) AS low, max(rate) AS high, " +
-                            "         sum(volume_a) AS base_volume, sum(volume_b) AS counter_volume, count(*) AS exchanges " +
-                            "  FROM 'offer_exchanges' " +
-                            "  WHERE ts >= '2024-01-30T15:00:00.000Z'" +
-                            "), " +
-                            "second_selection as (" +
-                            "  SELECT pair, rate as prev_rate, ts as prev_ts " +
-                            "  FROM 'offer_exchanges' " +
-                            "  WHERE ts < '2024-01-30T15:00:00.000Z' and pair in (SELECT pair FROM first_selection) " +
-                            "  LATEST ON ts PARTITION BY pair " +
-                            ") " +
-                            "SELECT first_selection.pair, first_selection.open, first_selection.close, first_selection.low, first_selection.high," +
-                            "       first_selection.base_volume, first_selection.counter_volume, first_selection.exchanges, second_selection.prev_rate, " +
-                            "       second_selection.prev_ts " +
-                            "FROM first_selection " +
-                            "JOIN second_selection on (pair);",
-                    null,
-                    false,
-                    false
-            );
+            assertQuery("WITH first_selection as (" +
+                    "  SELECT pair, first(rate) AS open, last(rate) AS close, min(rate) AS low, max(rate) AS high, " +
+                    "         sum(volume_a) AS base_volume, sum(volume_b) AS counter_volume, count(*) AS exchanges " +
+                    "  FROM 'offer_exchanges' " +
+                    "  WHERE ts >= '2024-01-30T15:00:00.000Z'" +
+                    "), " +
+                    "second_selection as (" +
+                    "  SELECT pair, rate as prev_rate, ts as prev_ts " +
+                    "  FROM 'offer_exchanges' " +
+                    "  WHERE ts < '2024-01-30T15:00:00.000Z' and pair in (SELECT pair FROM first_selection) " +
+                    "  LATEST ON ts PARTITION BY pair " +
+                    ") " +
+                    "SELECT first_selection.pair, first_selection.open, first_selection.close, first_selection.low, first_selection.high," +
+                    "       first_selection.base_volume, first_selection.counter_volume, first_selection.exchanges, second_selection.prev_rate, " +
+                    "       second_selection.prev_ts " +
+                    "FROM first_selection " +
+                    "JOIN second_selection on (pair);")
+                    .noRandomAccess()
+                    .returns("pair\topen\tclose\tlow\thigh\tbase_volume\tcounter_volume\texchanges\tprev_rate\tprev_ts\n" +
+                            "abc\t1.1\t1.1\t1.1\t1.1\t1.1\t1.1\t1\t1.1\t2024-01-29T15:00:00.000000" + suffix + "\n");
         });
     }
 
@@ -834,13 +819,10 @@ public class LatestByTest extends AbstractCairoTest {
                     "from long_sequence(40)" +
                     ") timestamp(ts) partition by DAY");
 
-            assertQuery(
-                    "x\ts\tts\n",
-                    "t where s in ('a', 'b') latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("t where s in ('a', 'b') latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("x\ts\tts\n");
         });
     }
 
@@ -872,28 +854,22 @@ public class LatestByTest extends AbstractCairoTest {
             };
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "min\tmax\n" +
-                            "1970-01-11T15:33:16.000000" + suffix + "\t1970-01-12T13:46:39.000000" + suffix + "\n",
-                    "select min(ts), max(ts) from (select ts, x, s from t latest on ts partition by s)",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select min(ts), max(ts) from (select ts, x, s from t latest on ts partition by s)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("min\tmax\n" +
+                            "1970-01-11T15:33:16.000000" + suffix + "\t1970-01-12T13:46:39.000000" + suffix + "\n");
 
-            assertQuery(
-                    "min\tmax\n" +
-                            "1970-01-11T16:57:53.000000" + suffix + "\t1970-01-12T13:46:05.000000" + suffix + "\n",
-                    "select min(ts), max(ts) from (" +
-                            "select ts, x, s " +
-                            "from t " +
-                            "where s in (" + distinctSymbols + ") " +
-                            "latest on ts partition by s" +
-                            ")",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select min(ts), max(ts) from (" +
+                    "select ts, x, s " +
+                    "from t " +
+                    "where s in (" + distinctSymbols + ") " +
+                    "latest on ts partition by s" +
+                    ")")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("min\tmax\n" +
+                            "1970-01-11T16:57:53.000000" + suffix + "\t1970-01-12T13:46:05.000000" + suffix + "\n");
         });
     }
 
@@ -921,16 +897,13 @@ public class LatestByTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\tx\ts\n" +
+            assertQuery("select ts, x, s from t latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\ts\n" +
                             "1970-01-02T22:00:00.000000" + suffix + "\t47\tb\n" +
                             "1970-01-02T23:00:00.000000" + suffix + "\t48\ta\n" +
-                            "1970-01-03T00:00:00.000000" + suffix + "\t49\t\n",
-                    "select ts, x, s from t latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-03T00:00:00.000000" + suffix + "\t49\t\n");
         });
     }
 
@@ -958,33 +931,26 @@ public class LatestByTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\tx\ts\n" +
+            assertQuery("select ts, x, s from t latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\ts\n" +
                             "1970-01-02T17:00:00.000000" + suffix + "\t42\td\n" +
                             "1970-01-02T19:00:00.000000" + suffix + "\t44\te\n" +
                             "1970-01-02T21:00:00.000000" + suffix + "\t46\tc\n" +
                             "1970-01-02T22:00:00.000000" + suffix + "\t47\tb\n" +
                             "1970-01-02T23:00:00.000000" + suffix + "\t48\ta\n" +
-                            "1970-01-03T00:00:00.000000" + suffix + "\t49\tf\n",
-                    "select ts, x, s from t latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-03T00:00:00.000000" + suffix + "\t49\tf\n");
 
-            assertQuery(
-                    "ts\tx\ts\n" +
+            assertQuery("select ts, x, s from t latest on ts partition by s order by s desc")
+                    .expectSize()
+                    .returns("ts\tx\ts\n" +
                             "1970-01-03T00:00:00.000000" + suffix + "\t49\tf\n" +
                             "1970-01-02T19:00:00.000000" + suffix + "\t44\te\n" +
                             "1970-01-02T17:00:00.000000" + suffix + "\t42\td\n" +
                             "1970-01-02T21:00:00.000000" + suffix + "\t46\tc\n" +
                             "1970-01-02T22:00:00.000000" + suffix + "\t47\tb\n" +
-                            "1970-01-02T23:00:00.000000" + suffix + "\t48\ta\n",
-                    "select ts, x, s from t latest on ts partition by s order by s desc",
-                    null,
-                    true,
-                    true
-            );
+                            "1970-01-02T23:00:00.000000" + suffix + "\t48\ta\n");
         });
     }
 
@@ -994,13 +960,9 @@ public class LatestByTest extends AbstractCairoTest {
                 "create table a ( sym symbol, ts #TIMESTAMP ) timestamp(ts) partition by day",
                 timestampType.getTypeName()
         );
-        assertQuery(
-                "sym\tts\n",
-                "select sym, ts from a where sym != 'x' latest on ts partition by sym",
-                "ts",
-                true,
-                false
-        );
+        assertQuery("select sym, ts from a where sym != 'x' latest on ts partition by sym")
+                .timestamp("ts")
+                .returns("sym\tts\n");
     }
 
     @Test
@@ -1009,13 +971,9 @@ public class LatestByTest extends AbstractCairoTest {
                 "create table a ( sym symbol, ts #TIMESTAMP ) timestamp(ts) partition by day",
                 timestampType.getTypeName()
         );
-        assertQuery(
-                "sym\tts\n",
-                "select sym, ts from a latest on ts partition by sym",
-                "ts",
-                true,
-                false
-        );
+        assertQuery("select sym, ts from a latest on ts partition by sym")
+                .timestamp("ts")
+                .returns("sym\tts\n");
     }
 
     @Test
@@ -1024,17 +982,13 @@ public class LatestByTest extends AbstractCairoTest {
                 "create table a ( i int, s symbol, ts #TIMESTAMP ) timestamp(ts)",
                 timestampType.getTypeName()
         );
-        assertQuery(
-                "s\ti\tts\n",
-                "select s, i, ts " +
-                        "from a " +
-                        "where s in (select distinct s from a) " +
-                        "and s = 'ABC' " +
-                        "latest on ts partition by s",
-                "ts",
-                true,
-                false
-        );
+        assertQuery("select s, i, ts " +
+                "from a " +
+                "where s in (select distinct s from a) " +
+                "and s = 'ABC' " +
+                "latest on ts partition by s")
+                .timestamp("ts")
+                .returns("s\ti\tts\n");
     }
 
     @Test
@@ -1046,15 +1000,15 @@ public class LatestByTest extends AbstractCairoTest {
                     select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)
                     from long_sequence(1000);""");
 
-            assertQuery("id\tv\tr_1M\n",
-                    """
-                            with r as (select id, value v from tab where id = 'apc' || rnd_int() LATEST ON ts PARTITION BY id),
-                                 rr as (select id, value v from tab where id = 'apc' || rnd_int() and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)
-                                    select r.id, r.v, cast((r.v - rr.v) as float) r_1M
-                                    from r
-                                    join rr on id
-                            """, null, false, false
-            );
+            assertQuery("""
+                    with r as (select id, value v from tab where id = 'apc' || rnd_int() LATEST ON ts PARTITION BY id),
+                         rr as (select id, value v from tab where id = 'apc' || rnd_int() and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)
+                            select r.id, r.v, cast((r.v - rr.v) as float) r_1M
+                            from r
+                            join rr on id
+                    """)
+                    .noRandomAccess()
+                    .returns("id\tv\tr_1M\n");
         });
     }
 
@@ -1070,16 +1024,13 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.setStr("sym2", "b");
             bindVariableService.setStr("sym3", "b");
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts\n" +
-                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
-                    "select ts, s from t " +
-                            "where s in (:sym1, :sym2) and s != :sym3 " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("select ts, s from t " +
+                    "where s in (:sym1, :sym2) and s != :sym3 " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n");
         });
     }
 
@@ -1093,15 +1044,11 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("sym1", "a");
             bindVariableService.setStr("sym2", "a");
-            assertQuery(
-                    "ts\ts\n",
-                    "select ts, s from t " +
-                            "where s = :sym1 and s != :sym2 " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    false
-            );
+            assertQuery("select ts, s from t " +
+                    "where s = :sym1 and s != :sym2 " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .returns("ts\ts\n");
         });
     }
 
@@ -1117,16 +1064,13 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.setStr("sym2", "b");
             bindVariableService.setStr("sym3", "b");
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts\n" +
-                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
-                    "select ts, s from t " +
-                            "where s in (:sym1, :sym2) and s != :sym3 " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("select ts, s from t " +
+                    "where s in (:sym1, :sym2) and s != :sym3 " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n");
         });
     }
 
@@ -1141,16 +1085,12 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.setStr("sym1", "a");
             bindVariableService.setStr("sym2", "b");
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts\n" +
-                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
-                    "select ts, s from t " +
-                            "where s = :sym1 and s != :sym2 " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    false
-            );
+            assertQuery("select ts, s from t " +
+                    "where s = :sym1 and s != :sym2 " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .returns("ts\ts\n" +
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n");
         });
     }
 
@@ -1164,17 +1104,14 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("sym", "c");
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts\n" +
+            assertQuery("select ts, s from t " +
+                    "where s in ('a', 'b', 'c') and s != :sym " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\n" +
                             "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
-                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
-                    "select ts, s from t " +
-                            "where s in ('a', 'b', 'c') and s != :sym " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n");
         });
     }
 
@@ -1189,33 +1126,27 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.setStr("sym1", "d");
             bindVariableService.setStr("sym2", null);
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts\n" +
+            assertQuery("select ts, s from t " +
+                    "where s not in (:sym1, :sym2) " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\n" +
                             "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
                             "1970-01-02T23:00:00.000000" + suffix + "\ta\n" +
-                            "1970-01-03T00:00:00.000000" + suffix + "\tc\n",
-                    "select ts, s from t " +
-                            "where s not in (:sym1, :sym2) " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-03T00:00:00.000000" + suffix + "\tc\n");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", null);
             bindVariableService.setStr("sym2", "a");
-            assertQuery(
-                    "ts\ts\n" +
+            assertQuery("select ts, s from t " +
+                    "where s not in (:sym1, :sym2) " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\n" +
                             "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
-                            "1970-01-03T00:00:00.000000" + suffix + "\tc\n",
-                    "select ts, s from t " +
-                            "where s not in (:sym1, :sym2) " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-03T00:00:00.000000" + suffix + "\tc\n");
         });
     }
 
@@ -1231,18 +1162,15 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.setStr("sym2", null);
             bindVariableService.setStr("sym3", "d");
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts\n" +
+            assertQuery("select ts, s from t " +
+                    "where s not in (:sym1, :sym2) and s2 = :sym3 " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\n" +
                             "1970-01-02T14:00:00.000000" + suffix + "\ta\n" +
                             "1970-01-02T16:00:00.000000" + suffix + "\tb\n" +
-                            "1970-01-02T19:00:00.000000" + suffix + "\tc\n",
-                    "select ts, s from t " +
-                            "where s not in (:sym1, :sym2) and s2 = :sym3 " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-02T19:00:00.000000" + suffix + "\tc\n");
         });
     }
 
@@ -1257,33 +1185,27 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.setStr("sym1", "d");
             bindVariableService.setStr("sym2", null);
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts\n" +
+            assertQuery("select ts, s from t " +
+                    "where s not in (:sym1, :sym2) " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\n" +
                             "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
                             "1970-01-02T23:00:00.000000" + suffix + "\ta\n" +
-                            "1970-01-03T00:00:00.000000" + suffix + "\tc\n",
-                    "select ts, s from t " +
-                            "where s not in (:sym1, :sym2) " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-03T00:00:00.000000" + suffix + "\tc\n");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", null);
             bindVariableService.setStr("sym2", "a");
-            assertQuery(
-                    "ts\ts\n" +
+            assertQuery("select ts, s from t " +
+                    "where s not in (:sym1, :sym2) " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\n" +
                             "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
-                            "1970-01-03T00:00:00.000000" + suffix + "\tc\n",
-                    "select ts, s from t " +
-                            "where s not in (:sym1, :sym2) " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-03T00:00:00.000000" + suffix + "\tc\n");
         });
     }
 
@@ -1299,18 +1221,15 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.setStr("sym2", null);
             bindVariableService.setStr("sym3", "d");
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts\n" +
+            assertQuery("select ts, s from t " +
+                    "where s not in (:sym1, :sym2) and s2 = :sym3 " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\n" +
                             "1970-01-02T14:00:00.000000" + suffix + "\ta\n" +
                             "1970-01-02T16:00:00.000000" + suffix + "\tb\n" +
-                            "1970-01-02T19:00:00.000000" + suffix + "\tc\n",
-                    "select ts, s from t " +
-                            "where s not in (:sym1, :sym2) and s2 = :sym3 " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-02T19:00:00.000000" + suffix + "\tc\n");
         });
     }
 
@@ -1324,17 +1243,14 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("sym", "c");
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts\n" +
+            assertQuery("select ts, s from t " +
+                    "where s <> :sym " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\n" +
                             "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
-                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
-                    "select ts, s from t " +
-                            "where s <> :sym " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n");
         });
     }
 
@@ -1348,17 +1264,14 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("sym", "c");
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "ts\ts\n" +
+            assertQuery("select ts, s from t " +
+                    "where s <> :sym " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ts\n" +
                             "1970-01-02T22:00:00.000000" + suffix + "\tb\n" +
-                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n",
-                    "select ts, s from t " +
-                            "where s <> :sym " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "1970-01-02T23:00:00.000000" + suffix + "\ta\n");
         });
     }
 
@@ -1371,15 +1284,15 @@ public class LatestByTest extends AbstractCairoTest {
                     select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)
                     from long_sequence(1000);""");
 
-            assertQuery("id\tv\tr_1M\n",
-                    """
-                            with r as (select id, value v from tab where id = 'apc' LATEST ON ts PARTITION BY id),
-                                 rr as (select id, value v from tab where id = 'apc' and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)
-                                    select r.id, r.v, cast((r.v - rr.v) as float) r_1M
-                                    from r
-                                    join rr on id
-                            """, null, false, false
-            );
+            assertQuery("""
+                    with r as (select id, value v from tab where id = 'apc' LATEST ON ts PARTITION BY id),
+                         rr as (select id, value v from tab where id = 'apc' and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)
+                            select r.id, r.v, cast((r.v - rr.v) as float) r_1M
+                            from r
+                            join rr on id
+                    """)
+                    .noRandomAccess()
+                    .returns("id\tv\tr_1M\n");
         });
     }
 
@@ -1388,70 +1301,62 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
 
-            assertQuery("id\tv\tr_1M\n",
-                    """
-                            with r as (select id, value v from tab where id = 'apc' LATEST ON ts PARTITION BY id),
-                                    rr as (select id, value v from tab where id = 'apc' and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)
-                                    select r.id, r.v, cast((r.v - rr.v) as float) r_1M
-                                    from r
-                                    join rr on id
-                            """, null, false, false
-            );
+            assertQuery("""
+                    with r as (select id, value v from tab where id = 'apc' LATEST ON ts PARTITION BY id),
+                            rr as (select id, value v from tab where id = 'apc' and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)
+                            select r.id, r.v, cast((r.v - rr.v) as float) r_1M
+                            from r
+                            join rr on id
+                    """)
+                    .noRandomAccess()
+                    .returns("id\tv\tr_1M\n");
         });
     }
 
     @Test
     public void testLatestOnVarchar() throws Exception {
         String suffix = getTimestampSuffix(timestampType.getTypeName());
-        assertQuery(
-                "x\tv\tts\n" +
-                        "42\tb\t1970-01-02T17:00:00.000000" + suffix + "\n" +
-                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n",
-                "t " +
-                        "where v in ('a', 'b', 'd') and x%2 = 0 " +
-                        "latest on ts partition by v",
-                "create table t as (" +
+        assertQuery("t " +
+                "where v in ('a', 'b', 'd') and x%2 = 0 " +
+                "latest on ts partition by v")
+                .ddl("create table t as (" +
                         "select " +
                         "x, " +
                         "rnd_varchar('a', 'b', 'c', null) v, " +
                         "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                         "from long_sequence(49)" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into t values (1000, 'd', '1970-01-02T20:00')",
-                "x\tv\tts\n" +
+                        ") timestamp(ts) partition by DAY")
+                .mutateWith("insert into t values (1000, 'd', '1970-01-02T20:00')")
+                .timestamp("ts")
+                .expectSize()
+                .returns("x\tv\tts\n" +
+                        "42\tb\t1970-01-02T17:00:00.000000" + suffix + "\n" +
+                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n", "x\tv\tts\n" +
                         "42\tb\t1970-01-02T17:00:00.000000" + suffix + "\n" +
                         "1000\td\t1970-01-02T20:00:00.000000" + suffix + "\n" +
-                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n",
-                true,
-                true,
-                false
-        );
+                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n");
     }
 
     @Test
     public void testLatestOnVarcharNonAscii() throws Exception {
         String suffix = getTimestampSuffix(timestampType.getTypeName());
-        assertQuery(
-                "x\tv\tts\n" +
-                        "14\t\t1970-01-01T13:00:00.000000" + suffix + "\n" +
-                        "17\tраз\t1970-01-01T16:00:00.000000" + suffix + "\n" +
-                        "19\tдва\t1970-01-01T18:00:00.000000" + suffix + "\n" +
-                        "20\tтри\t1970-01-01T19:00:00.000000" + suffix + "\n",
-                "select * " +
-                        "from t " +
-                        "latest on ts partition by v",
-                "create table t as (" +
+        assertQuery("select * " +
+                "from t " +
+                "latest on ts partition by v")
+                .ddl("create table t as (" +
                         "select " +
                         "x, " +
                         "rnd_varchar('раз', 'два', 'три', null) v, " +
                         "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                         "from long_sequence(20)" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                true,
-                true
-        );
+                        ") timestamp(ts) partition by DAY")
+                .timestamp("ts")
+                .expectSize()
+                .returns("x\tv\tts\n" +
+                        "14\t\t1970-01-01T13:00:00.000000" + suffix + "\n" +
+                        "17\tраз\t1970-01-01T16:00:00.000000" + suffix + "\n" +
+                        "19\tдва\t1970-01-01T18:00:00.000000" + suffix + "\n" +
+                        "20\tтри\t1970-01-01T19:00:00.000000" + suffix + "\n");
     }
 
     @Test
@@ -1478,17 +1383,14 @@ public class LatestByTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "x\ts\tts\n" +
+            assertQuery("t " +
+                    "where s in ('a', 'b') and x%2 = 0 " +
+                    "latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("x\ts\tts\n" +
                             "44\tb\t1970-01-02T19:00:00.000000" + suffix + "\n" +
-                            "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n",
-                    "t " +
-                            "where s in ('a', 'b') and x%2 = 0 " +
-                            "latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n");
         });
     }
 
@@ -1507,30 +1409,25 @@ public class LatestByTest extends AbstractCairoTest {
         };
 
         String suffix = getTimestampSuffix(timestampType.getTypeName());
-        assertQuery(
-                "x\ts\tts\n" +
-                        "44\tb\t1970-01-02T19:00:00.000000" + suffix + "\n" +
-                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n",
-                "t " +
-                        "where s in ('a', 'b', 'c') and x%2 = 0 " +
-                        "latest on ts partition by s",
-                "create table t as (" +
+        assertQuery("t " +
+                "where s in ('a', 'b', 'c') and x%2 = 0 " +
+                "latest on ts partition by s")
+                .ddl("create table t as (" +
                         "select " +
                         "x, " +
                         "rnd_symbol('a', 'b', null) s, " +
                         "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                         "from long_sequence(49)" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into t values (1000, 'c', '1970-01-02T20:00')",
-                "x\ts\tts\n" +
+                        ") timestamp(ts) partition by DAY")
+                .mutateWith("insert into t values (1000, 'c', '1970-01-02T20:00')")
+                .timestamp("ts")
+                .expectSize()
+                .returns("x\ts\tts\n" +
+                        "44\tb\t1970-01-02T19:00:00.000000" + suffix + "\n" +
+                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n", "x\ts\tts\n" +
                         "44\tb\t1970-01-02T19:00:00.000000" + suffix + "\n" +
                         "1000\tc\t1970-01-02T20:00:00.000000" + suffix + "\n" +
-                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n",
-                true,
-                true,
-                false
-        );
+                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n");
     }
 
     @Test
@@ -1567,15 +1464,12 @@ public class LatestByTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "x\ts\tts\n" +
+            assertQuery("t where s in ('a', null) latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("x\ts\tts\n" +
                             "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n" +
-                            "49\t\t1970-01-03T00:00:00.000000" + suffix + "\n",
-                    "t where s in ('a', null) latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "49\t\t1970-01-03T00:00:00.000000" + suffix + "\n");
         });
     }
 
@@ -1603,16 +1497,13 @@ public class LatestByTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
-            assertQuery(
-                    "x\ts\tts\n" +
+            assertQuery("t where x%2 = 1 latest on ts partition by s")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("x\ts\tts\n" +
                             "35\ta\t1970-01-02T10:00:00.000000" + suffix + "\n" +
                             "47\tb\t1970-01-02T22:00:00.000000" + suffix + "\n" +
-                            "49\t\t1970-01-03T00:00:00.000000" + suffix + "\n",
-                    "t where x%2 = 1 latest on ts partition by s",
-                    "ts",
-                    true,
-                    true
-            );
+                            "49\t\t1970-01-03T00:00:00.000000" + suffix + "\n");
         });
     }
 
@@ -1628,7 +1519,10 @@ public class LatestByTest extends AbstractCairoTest {
                     SELECT * FROM trades
                     WHERE symbol in ('BTC') and side in 'buy'
                     LATEST ON timestamp PARTITION BY symbol;""";
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns(expected);
         });
     }
 
@@ -1670,7 +1564,11 @@ public class LatestByTest extends AbstractCairoTest {
                     valueA.replaceAll("['#]", "") + "\t2020-05-04T00:00:00.000000" + suffix + "\t42.0\n" +
                     valueB.replaceAll("['#]", "") + "\t2020-05-05T00:00:00.000000" + suffix + "\t142.0\n";
 
-            assertQueryNoLeakCheck(expected, query, "version", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("version")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 

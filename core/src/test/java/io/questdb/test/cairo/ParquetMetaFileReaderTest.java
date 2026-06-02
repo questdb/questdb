@@ -283,6 +283,32 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorruptedSortingColumnCountValidatedBeforeArrayRead() throws Exception {
+        assertMemoryLeak(() -> {
+            // buildFile sets dts=-1 and no sorting columns, so SORTING_IS_DTS_ASC
+            // is clear and resolveFooter enters the explicit sorting-array bound
+            // check. The first resolveFooter caches the CRC; the second skips
+            // verifyChecksum0 (which would otherwise reject the corrupt count via
+            // the Rust header parse) and reaches the Java-side bound check, which
+            // must reject before any accessor reads past the sorting array.
+            try (ParquetMetaTestFile file = buildFile(1, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                reader.resolveFooter(Long.MAX_VALUE);
+
+                Unsafe.putInt(file.dataPtr + 20, 1_000_000_000); // HEADER_SORTING_COL_CNT_OFF
+
+                try {
+                    reader.resolveFooter(Long.MAX_VALUE);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage(), e.getMessage().contains("invalid _pm sorting column count"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCorruptedTrailer() throws Exception {
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
@@ -392,6 +418,73 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     reader.of(dataPtr, parquetMetaSize);
                     reader.resolveFooter(Long.MAX_VALUE);
                     Assert.assertEquals(0, reader.getDesignatedTimestampColumnIndex());
+                } finally {
+                    ParquetMetaFileWriter.destroyResult(resultPtr);
+                }
+            } finally {
+                ParquetMetaFileWriter.destroyWriter(writerPtr);
+            }
+        });
+    }
+
+    @Test
+    public void testSortingColumnIndexDtsAsc() throws Exception {
+        assertMemoryLeak(() -> {
+            // Sort column == ascending designated timestamp -> SORTING_IS_DTS_ASC,
+            // no explicit array; getSortingColumnIndex reads the designated index.
+            long writerPtr = ParquetMetaFileWriter.create();
+            try {
+                ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, 0);
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("ts");
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), 0, 8, 0, 0, 0, 0, 0);
+                }
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("val");
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), 1, 5, 0, 0, 0, 0, 0);
+                }
+                ParquetMetaFileWriter.addSortingColumn(writerPtr, 0);
+                long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
+                try {
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    reader.of(ParquetMetaFileWriter.resultDataPtr(resultPtr), ParquetMetaFileWriter.resultParquetMetaFileSize(resultPtr));
+                    reader.resolveFooter(Long.MAX_VALUE);
+                    Assert.assertEquals(1, reader.getSortingColumnCount());
+                    Assert.assertEquals(0, reader.getSortingColumnIndex(0));
+                } finally {
+                    ParquetMetaFileWriter.destroyResult(resultPtr);
+                }
+            } finally {
+                ParquetMetaFileWriter.destroyWriter(writerPtr);
+            }
+        });
+    }
+
+    @Test
+    public void testSortingColumnIndexExplicitArray() throws Exception {
+        assertMemoryLeak(() -> {
+            // Sort column != designated timestamp -> the index comes from the
+            // explicit on-disk array, not getDesignatedTimestampColumnIndex().
+            long writerPtr = ParquetMetaFileWriter.create();
+            try {
+                ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, 0);
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("ts");
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), 0, 8, 0, 0, 0, 0, 0);
+                }
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("val");
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), 1, 5, 0, 0, 0, 0, 0);
+                }
+                ParquetMetaFileWriter.addSortingColumn(writerPtr, 1);
+                long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
+                try {
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    reader.of(ParquetMetaFileWriter.resultDataPtr(resultPtr), ParquetMetaFileWriter.resultParquetMetaFileSize(resultPtr));
+                    reader.resolveFooter(Long.MAX_VALUE);
+                    Assert.assertEquals(1, reader.getSortingColumnCount());
+                    Assert.assertEquals(0, reader.getDesignatedTimestampColumnIndex());
+                    Assert.assertEquals(1, reader.getSortingColumnIndex(0));
                 } finally {
                     ParquetMetaFileWriter.destroyResult(resultPtr);
                 }

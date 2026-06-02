@@ -48,13 +48,17 @@ public class LtNullComparisonTest extends AbstractCairoTest {
                     "b\t\t1970-01-01T00:00:00.000001Z\n";
             // Literal form: 'BGZT' folds at compile time, optimiseBooleanNot
             // rewrites NOT(X > null) into X <= null which evaluates to FALSE.
-            assertSql(expected,
-                    "SELECT * FROM t WHERE (upper(c4) IS NULL OR NOT (upper(upper('BGZT')) > null)) ORDER BY ts ASC");
+            assertQuery("SELECT * FROM t WHERE (upper(c4) IS NULL OR NOT (upper(upper('BGZT')) > null)) ORDER BY ts ASC")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             // Bind variant: same predicate must match the literal pivot.
             bindVariableService.clear();
             bindVariableService.setStr("b0", "BGZT");
-            assertSql(expected,
-                    "SELECT * FROM t WHERE (upper(c4) IS NULL OR NOT (upper(upper(:b0::SYMBOL)) > null)) ORDER BY ts ASC");
+            assertQuery("SELECT * FROM t WHERE (upper(c4) IS NULL OR NOT (upper(upper(:b0::SYMBOL)) > null)) ORDER BY ts ASC")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -67,14 +71,30 @@ public class LtNullComparisonTest extends AbstractCairoTest {
             // four directions filter the row out: the one-null branch in
             // Chars.lessThan / Utf8s.lessThan returns false regardless of the
             // negated flag, and the compile-time short-circuit must agree.
-            assertSql("s\n", "SELECT * FROM t WHERE s > null");
-            assertSql("s\n", "SELECT * FROM t WHERE s < null");
-            assertSql("s\n", "SELECT * FROM t WHERE s >= null");
-            assertSql("s\n", "SELECT * FROM t WHERE s <= null");
-            assertSql("s\n", "SELECT * FROM t WHERE null > s");
-            assertSql("s\n", "SELECT * FROM t WHERE null < s");
-            assertSql("s\n", "SELECT * FROM t WHERE null >= s");
-            assertSql("s\n", "SELECT * FROM t WHERE null <= s");
+            assertQuery("SELECT * FROM t WHERE s > null")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT * FROM t WHERE s < null")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT * FROM t WHERE s >= null")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT * FROM t WHERE s <= null")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT * FROM t WHERE null > s")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT * FROM t WHERE null < s")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT * FROM t WHERE null >= s")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT * FROM t WHERE null <= s")
+                    .noLeakCheck()
+                    .returns("s\n");
         });
     }
 
@@ -92,36 +112,76 @@ public class LtNullComparisonTest extends AbstractCairoTest {
             execute("CREATE TABLE tv (s VARCHAR)");
             execute("INSERT INTO tv VALUES (null), ('A')");
             // <, > stay false in both directions
-            assertSql("s\n", "SELECT s FROM tv WHERE s > null");
-            assertSql("s\n", "SELECT s FROM tv WHERE s < null");
-            assertSql("s\n", "SELECT s FROM tv WHERE null > s");
-            assertSql("s\n", "SELECT s FROM tv WHERE null < s");
+            assertQuery("SELECT s FROM tv WHERE s > null")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT s FROM tv WHERE s < null")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT s FROM tv WHERE null > s")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT s FROM tv WHERE null < s")
+                    .noLeakCheck()
+                    .returns("s\n");
             // <=, >= return the both-null row only
-            assertSql("s\n\n", "SELECT s FROM tv WHERE s <= null");
-            assertSql("s\n\n", "SELECT s FROM tv WHERE s >= null");
-            assertSql("s\n\n", "SELECT s FROM tv WHERE null <= s");
-            assertSql("s\n\n", "SELECT s FROM tv WHERE null >= s");
+            assertQuery("SELECT s FROM tv WHERE s <= null")
+                    .noLeakCheck()
+                    .returns("s\n\n");
+            assertQuery("SELECT s FROM tv WHERE s >= null")
+                    .noLeakCheck()
+                    .returns("s\n\n");
+            assertQuery("SELECT s FROM tv WHERE null <= s")
+                    .noLeakCheck()
+                    .returns("s\n\n");
+            assertQuery("SELECT s FROM tv WHERE null >= s")
+                    .noLeakCheck()
+                    .returns("s\n\n");
 
             execute("CREATE TABLE ts (s STRING)");
             execute("INSERT INTO ts VALUES (null), ('A')");
-            assertSql("s\n", "SELECT s FROM ts WHERE s > null");
-            assertSql("s\n", "SELECT s FROM ts WHERE s < null");
-            assertSql("s\n", "SELECT s FROM ts WHERE null > s");
-            assertSql("s\n", "SELECT s FROM ts WHERE null < s");
-            assertSql("s\n\n", "SELECT s FROM ts WHERE s <= null");
-            assertSql("s\n\n", "SELECT s FROM ts WHERE s >= null");
-            assertSql("s\n\n", "SELECT s FROM ts WHERE null <= s");
-            assertSql("s\n\n", "SELECT s FROM ts WHERE null >= s");
+            assertQuery("SELECT s FROM ts WHERE s > null")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT s FROM ts WHERE s < null")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT s FROM ts WHERE null > s")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT s FROM ts WHERE null < s")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT s FROM ts WHERE s <= null")
+                    .noLeakCheck()
+                    .returns("s\n\n");
+            assertQuery("SELECT s FROM ts WHERE s >= null")
+                    .noLeakCheck()
+                    .returns("s\n\n");
+            assertQuery("SELECT s FROM ts WHERE null <= s")
+                    .noLeakCheck()
+                    .returns("s\n\n");
+            assertQuery("SELECT s FROM ts WHERE null >= s")
+                    .noLeakCheck()
+                    .returns("s\n\n");
 
             // Bind-variable parity: a NULL bind variable goes through the
             // runtime Func instead of the short-circuit; the row-set must
             // still match the literal form.
             bindVariableService.clear();
             bindVariableService.setVarchar("b0", null);
-            assertSql("s\n", "SELECT s FROM tv WHERE s > :b0");
-            assertSql("s\n", "SELECT s FROM tv WHERE s < :b0");
-            assertSql("s\n\n", "SELECT s FROM tv WHERE s <= :b0");
-            assertSql("s\n\n", "SELECT s FROM tv WHERE s >= :b0");
+            assertQuery("SELECT s FROM tv WHERE s > :b0")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT s FROM tv WHERE s < :b0")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("SELECT s FROM tv WHERE s <= :b0")
+                    .noLeakCheck()
+                    .returns("s\n\n");
+            assertQuery("SELECT s FROM tv WHERE s >= :b0")
+                    .noLeakCheck()
+                    .returns("s\n\n");
         });
     }
 }

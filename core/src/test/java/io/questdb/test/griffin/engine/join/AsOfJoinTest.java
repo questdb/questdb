@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -104,7 +103,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     900.0\t700.0\t200.0
                     """;
 
-            printSqlResult(expected, query, null, false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -129,7 +132,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\tnull\t
                     5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\tnull\t
                     """, leftTableTimestampType.getTypeName());
-            printSqlResult(expected, query, "ts", false, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -141,8 +148,21 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "select x, cast(x * 1000000L" + (leftTableTimestampType == TestTimestampType.NANO ? "*1000L" : "") + " as #TIMESTAMP) time from long_sequence(10)" +
                             ") timestamp(time)", leftTableTimestampType.getTypeName());
 
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("""
+                    select t1.time1 + 1 as time, t1.x, t2.x, t1.x - t2.x
+                    from\s
+                    (
+                        (
+                            select time - 1 as time1, x
+                            from positions2
+                        )
+                        timestamp(time1)
+                    ) t1
+                    asof join positions2 t2""")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                                     time\tx\tx1\tcolumn
                                     1970-01-01T00:00:01.000000Z\t1\tnull\tnull
                                     1970-01-01T00:00:02.000000Z\t2\t1\t1
@@ -155,19 +175,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     1970-01-01T00:00:09.000000Z\t9\t8\t1
                                     1970-01-01T00:00:10.000000Z\t10\t9\t1
                                     """,
-                            leftTableTimestampType.getTypeName()),
-                    """
-                            select t1.time1 + 1 as time, t1.x, t2.x, t1.x - t2.x
-                            from\s
-                            (
-                                (
-                                    select time - 1 as time1, x
-                                    from positions2
-                                )
-                                timestamp(time1)
-                            ) t1
-                            asof join positions2 t2"""
-            );
+                            leftTableTimestampType.getTypeName()));
         });
     }
 
@@ -188,24 +196,20 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     AA\t339631474\t339631474\t1970-01-03T00:54:00.000000%1$s\t1970-01-03T00:54:00.000000%1$s
                     """);
 
-            assertQuery(
-                    "tag\thi\tlo\tts\tts1\n",
-                    "select a.tag, a.seq hi, b.seq lo,  a.ts, b.ts from tab a asof join tab b on (tag)",
-                    "create table tab (\n" +
+            assertQuery("select a.tag, a.seq hi, b.seq lo,  a.ts, b.ts from tab a asof join tab b on (tag)")
+                    .ddl("create table tab (\n" +
                             "    tag symbol index,\n" +
                             "    seq int,\n" +
                             "    ts " + leftTableTimestampType.getTypeName() + "\n" +
-                            ") timestamp(ts) partition by DAY",
-                    "ts",
-                    "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
+                            ") timestamp(ts) partition by DAY")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .mutateWith("insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
                             "        rnd_int() seq, \n" +
                             "        timestamp_sequence(172800000000, 360000000)::" + leftTableTimestampType.getTypeName() + " ts \n" +
-                            "    from long_sequence(10)) timestamp (ts)",
-                    expected,
-                    false,
-                    true,
-                    false
-            );
+                            "    from long_sequence(10)) timestamp (ts)")
+                    .returns("tag\thi\tlo\tts\tts1\n", expected);
         });
     }
 
@@ -234,12 +238,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ) timestamp(ts) partition by DAY""",
                 leftTableTimestampType.getTypeName());
 
-        assertQuery("tag\thi\tlo\n",
-                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
-                null,
-                false,
-                true
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("tag\thi\tlo\n");
         execute(
                 """
                         insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,\s
@@ -248,12 +250,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             from long_sequence(10)) timestamp (ts)"""
 
         );
-        assertQuery(expected,
-                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
-                null,
-                false,
-                true
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -295,23 +295,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 "create table test(seq long, ts #TIMESTAMP) timestamp(ts)",
                 leftTableTimestampType.getTypeName());
 
-        assertQuery("hi\tlo\n",
-                "(select a.seq hi, b.seq lo from test a lt join test b) where lo != null",
-                null,
-                false,
-                false
-        );
+        assertQuery("(select a.seq hi, b.seq lo from test a lt join test b) where lo != null")
+                .noRandomAccess()
+                .returns("hi\tlo\n");
         executeWithRewriteTimestamp(
                 "insert into test select x, cast(x+10 as #TIMESTAMP) from (select x, rnd_double() rnd from long_sequence(30)) where rnd<0.9999",
                 leftTableTimestampType.getTypeName()
 
         );
-        assertQuery(expected,
-                "(select a.seq hi, b.seq lo from test a lt join test b) where lo != null",
-                null,
-                false,
-                false
-        );
+        assertQuery("(select a.seq hi, b.seq lo from test a lt join test b) where lo != null")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -327,12 +321,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ) timestamp(ts) partition by DAY""",
                 leftTableTimestampType.getTypeName());
 
-        assertQuery(expected,
-                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq",
-                null,
-                false,
-                false
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq")
+                .noRandomAccess()
+                .returns(expected);
         execute(
                 """
                         insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,
@@ -341,12 +332,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             from long_sequence(10)) timestamp (ts)"""
 
         );
-        assertQuery(expected,
-                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq",
-                null,
-                false,
-                false
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -383,12 +371,20 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         + "B\tB\t2.0\n"
                         + "C\t\tnull\n"
                         + "\t\t9.0\n";
-                assertQueryNoLeakCheck(compiler, expected,
-                        "SELECT m.s, s.sym, s.price FROM master_str m ASOF JOIN slave_sym s ON m.s = s.sym",
-                        null, false, sqlExecutionContext, true);
-                assertQueryNoLeakCheck(compiler, expected,
-                        "SELECT m.s, s.sym, s.price FROM master_str m LT JOIN slave_sym s ON m.s = s.sym",
-                        null, false, sqlExecutionContext, true);
+                assertQuery("SELECT m.s, s.sym, s.price FROM master_str m ASOF JOIN slave_sym s ON m.s = s.sym")
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expected);
+                assertQuery("SELECT m.s, s.sym, s.price FROM master_str m LT JOIN slave_sym s ON m.s = s.sym")
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expected);
             }
         });
     }
@@ -429,12 +425,20 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         + "B\tB\t2.0\n"
                         + "C\t\tnull\n"
                         + "\t\t9.0\n";
-                assertQueryNoLeakCheck(compiler, expected,
-                        "SELECT m.v, s.sym, s.price FROM master_vch m ASOF JOIN slave_sym s ON m.v = s.sym",
-                        null, false, sqlExecutionContext, true);
-                assertQueryNoLeakCheck(compiler, expected,
-                        "SELECT m.v, s.sym, s.price FROM master_vch m LT JOIN slave_sym s ON m.v = s.sym",
-                        null, false, sqlExecutionContext, true);
+                assertQuery("SELECT m.v, s.sym, s.price FROM master_vch m ASOF JOIN slave_sym s ON m.v = s.sym")
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expected);
+                assertQuery("SELECT m.v, s.sym, s.price FROM master_vch m LT JOIN slave_sym s ON m.v = s.sym")
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expected);
             }
         });
     }
@@ -961,18 +965,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // Trade A (day3 12:00) → price 100.0 (day1 06:00, sym A)
             // Trade B (day3 18:00) → price 200.0 (day2 06:00, sym B)
             // Trade C (day3 23:00) → price 300.0 (day3 06:00, sym C)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT t.sym, t.qty, p.price FROM trades t ASOF JOIN prices p ON (t.sym = p.sym)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             sym\tqty\tprice
                             A\t10\t100.0
                             B\t20\t200.0
                             C\t30\t300.0
-                            """,
-                    "SELECT t.sym, t.qty, p.price FROM trades t ASOF JOIN prices p ON (t.sym = p.sym)",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1015,7 +1017,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String queryWithLinearHint = "select /*+ asof_linear(orders md) */ " + queryBody;
 
             // plan with the linear search hint should NOT use the FAST ASOF
-            assertQueryNoLeakCheck("QUERY PLAN\n" +
+            assertQuery("EXPLAIN " + queryWithLinearHint)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Filter filter: oRdERS.price<MD.bid\n" +
                             "        AsOf Join\n" +
@@ -1030,8 +1036,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "                  filter: market_data_symbol='sym_1'\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
-                            "                        Frame forward scan on: market_data\n",
-                    "EXPLAIN " + queryWithLinearHint, null, false, true);
+                            "                        Frame forward scan on: market_data\n");
 
             String expectedPlan = "QUERY PLAN\n" +
                     "SelectedRecord\n" +
@@ -1048,8 +1053,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "                Row forward scan\n" +
                     "                Frame forward scan on: market_data\n";
             // query without Linear hint should use the fast asof join
-            assertQueryNoLeakCheck(expectedPlan,
-                    "EXPLAIN " + queryWithoutHint, null, false, true);
+            assertQuery("EXPLAIN " + queryWithoutHint)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expectedPlan);
 
             // both queries must return the same result
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
@@ -1063,8 +1071,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2025-01-01T00:16:40.009947%1$s\t0.5071618579762882\tsym_1\tsym_6\t2025-01-01T00:16:39.800653%2$s\t0.3100545983862456
                     """, leftSuffix, rightSuffix);
 
-            assertQueryNoLeakCheck(expectedResult, queryWithLinearHint, "ts", false, false);
-            assertQueryNoLeakCheck(expectedResult, queryWithoutHint, "ts", false, false);
+            assertQuery(queryWithLinearHint)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expectedResult);
+            assertQuery(queryWithoutHint)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expectedResult);
         });
     }
 
@@ -1110,28 +1126,28 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """);
 
             // STRING (master) = SYMBOL (slave) on the Light path
-            assertQueryNoLeakCheck(
-                    "s\tsym\tprice\n"
+            assertQuery("SELECT /*+ asof_linear(m s) */ m.s, s.sym, s.price "
+                    + "FROM master_str m ASOF JOIN slave_sym s ON m.s = s.sym")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("s\tsym\tprice\n"
                             + "A\tA\t1.0\n"
                             + "B\tB\t2.0\n"
                             + "C\t\tnull\n"
-                            + "\t\t9.0\n",
-                    "SELECT /*+ asof_linear(m s) */ m.s, s.sym, s.price "
-                            + "FROM master_str m ASOF JOIN slave_sym s ON m.s = s.sym",
-                    null, false, true
-            );
+                            + "\t\t9.0\n");
 
             // VARCHAR (master) = SYMBOL (slave) on the Light path
-            assertQueryNoLeakCheck(
-                    "v\tsym\tprice\n"
+            assertQuery("SELECT /*+ asof_linear(m s) */ m.v, s.sym, s.price "
+                    + "FROM master_str m ASOF JOIN slave_sym s ON m.v = s.sym")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("v\tsym\tprice\n"
                             + "A\tA\t1.0\n"
                             + "B\tB\t2.0\n"
                             + "C\t\tnull\n"
-                            + "\t\t9.0\n",
-                    "SELECT /*+ asof_linear(m s) */ m.v, s.sym, s.price "
-                            + "FROM master_str m ASOF JOIN slave_sym s ON m.v = s.sym",
-                    null, false, true
-            );
+                            + "\t\t9.0\n");
         });
     }
 
@@ -1177,7 +1193,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000005%2$s\t1970-01-01T00:00:00.000004%1$s\t103\t102
                     """, leftSuffix, rightSuffix);
 
-            printSqlResult(expected, query, "timebid", false, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timebid")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -1215,35 +1235,33 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ('2026-04-14T00:01:30.000000Z', 'EURUSD', 1.19, 1.21)
                     """);
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("""
+                    WITH trades_yday AS (
+                        SELECT timestamp, trade_id, symbol
+                        FROM fx_trades
+                        WHERE symbol = 'EURUSD'
+                            AND timestamp >= '2026-04-14T00:00:00Z'
+                            AND timestamp < '2026-04-15T00:00:00Z'
+                        LIMIT 2
+                    ),
+                    market_data_p30 AS (
+                        SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
+                        FROM market_data
+                        WHERE symbol = 'EURUSD'
+                    )
+                    SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
+                    FROM trades_yday t
+                    ASOF JOIN market_data_p30 md
+                    """)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                                     trade_id\ttimestamp\tbest_bid\tbest_ask
                                     1\t2026-04-14T00:00:10.000000Z\t1.09\t1.11
                                     2\t2026-04-14T00:01:10.000000Z\t1.19\t1.21
                                     """,
-                            leftTableTimestampType.getTypeName()),
-                    """
-                            WITH trades_yday AS (
-                                SELECT timestamp, trade_id, symbol
-                                FROM fx_trades
-                                WHERE symbol = 'EURUSD'
-                                    AND timestamp >= '2026-04-14T00:00:00Z'
-                                    AND timestamp < '2026-04-15T00:00:00Z'
-                                LIMIT 2
-                            ),
-                            market_data_p30 AS (
-                                SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
-                                FROM market_data
-                                WHERE symbol = 'EURUSD'
-                            )
-                            SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
-                            FROM trades_yday t
-                            ASOF JOIN market_data_p30 md
-                            """,
-                    "timestamp",
-                    false,
-                    false
-            );
+                            leftTableTimestampType.getTypeName()));
         });
     }
 
@@ -1263,7 +1281,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     4\t1970-01-01T00:00:00.000004Z\tnull\t
                     5\t1970-01-01T00:00:00.000005Z\tnull\t
                     """;
-            printSqlResult(replaceTimestampSuffix(expected, leftTableTimestampType.getTypeName()), query, "ts", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix(expected, leftTableTimestampType.getTypeName()));
         });
     }
 
@@ -1292,29 +1315,27 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             ) timestamp(ts) partition by DAY""",
                     leftTableTimestampType.getTypeName()
             );
-            assertQuery(
-                    "tag\thi\tlo\n",
-                    "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("tag\thi\tlo\n");
             execute("""
                     insert into tab select * from (select rnd_symbol('AA', 'BB', null) tag,\s
                             rnd_int() seq,\s
                             timestamp_sequence(172800000000, 360000000) ts\s
                         from long_sequence(10)) timestamp (ts)"""
             );
-            assertQuery(
-                    expected,
-                    "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute("create table tab2 as (select * from tab where tag is not null)");
-            assertQueryNoLeakCheck("""
+            assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab2 b on (tag)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             tag\thi\tlo
                             AA\t315515118\t315515118
                             BB\t-727724771\t-727724771
@@ -1326,15 +1347,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             BB\t1545253512\t1545253512
                             AA\t1573662097\t1573662097
                             AA\t339631474\t339631474
-                            """,
-                    "select a.tag, a.seq hi, b.seq lo from tab a asof join tab2 b on (tag)", null, null, false, true);
+                            """);
         });
     }
 
     @Test
     public void testAsOfJoinOnTripleSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (SqlCompiler _ = engine.getSqlCompiler()) {
                 executeWithRewriteTimestamp(
                         """
                                 CREATE TABLE bids (
@@ -1420,8 +1440,18 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%1$s\t11\tSCAM\tMSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%2$s\t11\tEXCELLENT
                         AAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%1$s\t3\tSCAM\tAAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%2$s\t3\tEXCELLENT
                         """, leftSuffix, rightSuffix);
-                assertQueryNoLeakCheck(compiler, expected, queryWithoutHint, "ts", false, sqlExecutionContext, true);
-                assertQueryNoLeakCheck(compiler, expected, queryWithDenseHint, "ts", false, sqlExecutionContext, true);
+                assertQuery(queryWithoutHint)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                assertQuery(queryWithDenseHint)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
 
                 printSql("EXPLAIN " + queryWithoutHint);
                 TestUtils.assertContains(sink, "AsOf Join Fast");
@@ -1434,7 +1464,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinOnTripleSymbolKeyLastKeyMissing() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (SqlCompiler _ = engine.getSqlCompiler()) {
                 executeWithRewriteTimestamp(
                         "CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts #TIMESTAMP, i INT, rating STRING) TIMESTAMP(ts) PARTITION BY DAY",
                         leftTableTimestampType.getTypeName()
@@ -1495,7 +1525,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%1$s\t11\tSCAM\t\t\t\t\tnull\t
                         \tNASDAQ\tUS\t2002-01-01T00:00:00.000000%1$s\t3\tSCAM\t\t\t\t\tnull\t
                         """, leftSuffix, rightSuffix);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -1733,16 +1768,32 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     9\t1970-01-01T00:00:09.000009%1$s\tnull\t
                     10\t1970-01-01T00:00:10.000010%1$s\tnull\t
                     """, leftSuffix, rightSuffix);
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // keyed join and slave has a stealable filter -> should use FilteredAsOfJoinFastRecordCursorFactory
             query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) ON id TOLERANCE 2s;";
             // sanity check: uses FilteredAsOfJoinFastRecordCursorFactory
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
-            assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
 
             // non-keyed join and slave supports timeframe -> should use AsOfJoinNoKeyFastRecordCursorFactory
@@ -1763,13 +1814,23 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """, leftSuffix, rightSuffix);
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "AsOf Join Fast");
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // non-keyed join, slave has a filter, no hint -> should also use FilteredAsOfJoinNoKeyFastRecordCursorFactory
             query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // non-keyed join, slave has a filter, linear hint -> should also use AsOfJoinNoKeyRecordCursorFactory
             query = "SELECT /*+ asof_linear(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
@@ -1785,16 +1846,24 @@ public class AsOfJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table t2 as (select x as id, (x)::#TIMESTAMP ts from long_sequence(5)) timestamp(ts) partition by day;", rightTableTimestampType.getTypeName());
 
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE -2s;";
-            assertExceptionNoLeakCheck(query, 49, "ASOF JOIN TOLERANCE must be positive");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fails(49, "ASOF JOIN TOLERANCE must be positive");
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 0s;";
-            assertExceptionNoLeakCheck(query, 46, "zero is not a valid tolerance value");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fails(46, "zero is not a valid tolerance value");
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 0;";
-            assertExceptionNoLeakCheck(query, 46, "zero is not a valid tolerance value");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fails(46, "zero is not a valid tolerance value");
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1Q;";
-            assertExceptionNoLeakCheck(query, 46, "unsupported TOLERANCE unit [unit=Q]");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fails(46, "unsupported TOLERANCE unit [unit=Q]");
         });
     }
 
@@ -1836,19 +1905,44 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """, leftSuffix, rightSuffix);
 
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000U;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000000n;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000T;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1s;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1n;";
-            assertQueryNoLeakCheck(String.format("""
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(String.format("""
                             id\tts\tid1\tts1
                             1\t1970-01-01T00:00:01.000001%1$s\tnull\t
                             2\t1970-01-01T00:00:02.000002%1$s\tnull\t
@@ -1860,8 +1954,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             8\t1970-01-01T00:00:08.000008%1$s\tnull\t
                             9\t1970-01-01T00:00:09.000009%1$s\tnull\t
                             10\t1970-01-01T00:00:10.000010%1$s\tnull\t
-                            """, leftSuffix),
-                    query, null, "ts", false, true);
+                            """, leftSuffix));
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1m;";
             expected = String.format("""
@@ -1877,16 +1970,36 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     9\t1970-01-01T00:00:09.000009%1$s\tnull\t
                     10\t1970-01-01T00:00:10.000010%1$s\tnull\t
                     """, leftSuffix, rightSuffix);
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1h;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1d;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1w;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -1928,19 +2041,44 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """, leftSuffix, rightSuffix);
 
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000U;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000000n;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000T;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1s;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1n;";
-            assertQueryNoLeakCheck(String.format("""
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(String.format("""
                             id\tts\tid1\tts1
                             1\t1970-01-01T00:00:01.000001%1$s\tnull\t
                             2\t1970-01-01T00:00:02.000002%1$s\tnull\t
@@ -1952,8 +2090,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             8\t1970-01-01T00:00:08.000008%1$s\tnull\t
                             9\t1970-01-01T00:00:09.000009%1$s\tnull\t
                             10\t1970-01-01T00:00:10.000010%1$s\tnull\t
-                            """, leftSuffix),
-                    query, null, "ts", false, true);
+                            """, leftSuffix));
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1m;";
             expected = String.format("""
@@ -1969,16 +2106,36 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     9\t1970-01-01T00:00:09.000009%1$s\tnull\t
                     10\t1970-01-01T00:00:10.000010%1$s\tnull\t
                     """, leftSuffix, rightSuffix);
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1h;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1d;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1w;";
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -2551,13 +2708,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                       ASOF JOIN slave s ON (ma.sym1 = s.sym1 AND ma.sym2 = s.sym2)
                     ) asof_result
                     """;
-            assertQueryNoLeakCheck(
-                    expected,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -2614,13 +2769,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
             TestUtils.assertContains(sink, "symbolKeyJoin: true");
-            assertQueryNoLeakCheck(
-                    expected,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // asof_linear hint bypasses filter stealing, exercising the Light
             // factory with multi-symbol key optimization on a pre-filtered subquery.
@@ -2821,7 +2974,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String queryWithLinearHint = "select /*+ asof_linear(orders md) */ " + queryBody;
 
             // plan with the linear search hint should NOT use the FAST ASOF
-            assertQueryNoLeakCheck("QUERY PLAN\n" +
+            assertQuery("EXPLAIN " + queryWithLinearHint)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Filter filter: oRdERS.price<MD.bid\n" +
                             "        AsOf Join\n" +
@@ -2836,8 +2993,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "                  filter: market_data_symbol='sym_1'\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
-                            "                        Frame forward scan on: market_data\n",
-                    "EXPLAIN " + queryWithLinearHint, null, false, true);
+                            "                        Frame forward scan on: market_data\n");
 
             String expectedPlan = "QUERY PLAN\n" +
                     "SelectedRecord\n" +
@@ -2854,8 +3010,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "                Row forward scan\n" +
                     "                Frame forward scan on: market_data\n";
             // query without Linear hint should use the fast asof join
-            assertQueryNoLeakCheck(expectedPlan,
-                    "EXPLAIN " + queryWithoutHint, null, false, true);
+            assertQuery("EXPLAIN " + queryWithoutHint)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expectedPlan);
 
             // both queries must return the same result
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
@@ -2867,8 +3026,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "2025-01-01T00:13:20.002056" + leftSuffix + "\t0.24872951622414008\tsym_1\tsym_4\t2025-01-01T00:13:19.909382" + rightSuffix + "\t0.0367581207471136\n" +
                     "2025-01-01T00:16:40.009947" + leftSuffix + "\t0.5071618579762882\tsym_1\tsym_6\t2025-01-01T00:16:39.800653" + rightSuffix + "\t0.3100545983862456\n";
 
-            assertQueryNoLeakCheck(expectedResult, queryWithLinearHint, "ts", false, false);
-            assertQueryNoLeakCheck(expectedResult, queryWithoutHint, "ts", false, false);
+            assertQuery(queryWithLinearHint)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expectedResult);
+            assertQuery(queryWithoutHint)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expectedResult);
         });
     }
 
@@ -2987,7 +3154,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     A\t1\t2024-01-01T10:00:00.000000%1$s\tA\t1\t2024-01-01T09:00:00.000000%2$s
                     """, leftSuffix, rightSuffix);
 
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -3038,7 +3210,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     A\t1\t2024-01-01T10:00:00.000000%1$s\tA\t1\t2024-01-01T09:00:00.000000%2$s
                     """, leftSuffix, rightSuffix);
 
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -3082,7 +3259,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     A\t1\t2024-01-01T10:00:00.000000%1$s\tA\t1\t2024-01-01T09:00:00.000000%2$s
                     """, leftSuffix, rightSuffix);
 
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -3120,35 +3302,33 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ('2026-04-14T00:01:30.000000Z', 'EURUSD', 1.19, 1.21)
                     """);
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("""
+                    WITH trades_yday AS (
+                        SELECT timestamp, trade_id, symbol
+                        FROM fx_trades
+                        WHERE symbol = 'EURUSD'
+                            AND timestamp >= '2026-04-14T00:00:00Z'
+                            AND timestamp < '2026-04-15T00:00:00Z'
+                        LIMIT 2
+                    ),
+                    market_data_p30 AS (
+                        SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
+                        FROM market_data
+                        WHERE symbol = 'EURUSD'
+                    )
+                    SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
+                    FROM trades_yday t
+                    ASOF JOIN market_data_p30 md ON (symbol)
+                    """)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                                     trade_id\ttimestamp\tbest_bid\tbest_ask
                                     1\t2026-04-14T00:00:10.000000Z\t1.09\t1.11
                                     2\t2026-04-14T00:01:10.000000Z\t1.19\t1.21
                                     """,
-                            leftTableTimestampType.getTypeName()),
-                    """
-                            WITH trades_yday AS (
-                                SELECT timestamp, trade_id, symbol
-                                FROM fx_trades
-                                WHERE symbol = 'EURUSD'
-                                    AND timestamp >= '2026-04-14T00:00:00Z'
-                                    AND timestamp < '2026-04-15T00:00:00Z'
-                                LIMIT 2
-                            ),
-                            market_data_p30 AS (
-                                SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
-                                FROM market_data
-                                WHERE symbol = 'EURUSD'
-                            )
-                            SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
-                            FROM trades_yday t
-                            ASOF JOIN market_data_p30 md ON (symbol)
-                            """,
-                    "timestamp",
-                    false,
-                    false
-            );
+                            leftTableTimestampType.getTypeName()));
         });
     }
 
@@ -3185,26 +3365,23 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ('2026-04-14T00:01:20.000000Z', 'EURUSD', 1.19)
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                            WITH trades_p30 AS (
+                                SELECT dateadd('s', -30, timestamp) AS timestamp, trade_id, symbol
+                                FROM fx_trades
+                                WHERE symbol = 'EURUSD'
+                            )
+                            SELECT t.trade_id, md.best_bid
+                            FROM trades_p30 t
+                            ASOF JOIN market_data md ON (symbol)
+                    """)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
                             trade_id\tbest_bid
                             1\tnull
                             2\t1.09
-                            """,
-                    """
-                                    WITH trades_p30 AS (
-                                        SELECT dateadd('s', -30, timestamp) AS timestamp, trade_id, symbol
-                                        FROM fx_trades
-                                        WHERE symbol = 'EURUSD'
-                                    )
-                                    SELECT t.trade_id, md.best_bid
-                                    FROM trades_p30 t
-                                    ASOF JOIN market_data md ON (symbol)
-                            """,
-                    null,
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -3299,7 +3476,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2\tMSFT\t201.0\t200.5\t201.5
                     """;
 
-            assertQueryNoLeakCheck(expected, query, null, false, true);
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // Verify the plan uses Memoized scan
             sink.clear();
@@ -3352,9 +3533,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
                       ('HRK', 'buy', 1.11, 3.0, '2025-11-01T02');
                     """);
             assertQuery("""
-                    bid_ts	symbol	bid_size	ask_price	ask_size
-                    2025-11-01T02:00:00.000000Z	HRK	3.0	2.22	2.0
-                    """, """
                     WITH bids AS (
                       SELECT timestamp AS bid_ts, symbol, amount AS bid_size
                       FROM trades WHERE side = 'buy'
@@ -3365,7 +3543,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     )
                     SELECT bid_ts, bids.symbol, bid_size, ask_price, ask_size
                     FROM bids ASOF JOIN asks ON (symbol)
-                    """, null, "bid_ts", false, false);
+                    """)
+                    .timestamp("bid_ts")
+                    .noRandomAccess()
+                    .returns("""
+                            bid_ts	symbol	bid_size	ask_price	ask_size
+                            2025-11-01T02:00:00.000000Z	HRK	3.0	2.22	2.0
+                            """);
         });
     }
 
@@ -3391,14 +3575,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("insert into t2 values (6, '2023-10-05T09:00:00.000000Z')");
 
             String leftSuffix = getTimestampSuffix(leftTsTypeName);
-            assertQuery(String.format("""
+            assertQuery("select ts from t1 asof join (select x from t2)")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(String.format("""
                             ts
                             2022-10-05T08:15:00.000000%1$s
                             2022-10-05T08:17:00.000000%1$s
                             2022-10-05T08:21:00.000000%1$s
-                            """, leftSuffix),
-                    "select ts from t1 asof join (select x from t2)",
-                    null, "ts", false, true);
+                            """, leftSuffix));
         });
     }
 
@@ -3494,7 +3680,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         AAPL\t2004-01-01T00:00:00.000000%1$s\tAAPL\t2003-01-01T00:00:00.000000%1$s\tAAPL\t2002-01-01T00:00:00.000000%1$s\tAAPL\t2001-01-01T00:00:00.000000%1$s
                         AAPL\t2005-01-01T00:00:00.000000%1$s\tAAPL\t2004-01-01T00:00:00.000000%1$s\tAAPL\t2003-01-01T00:00:00.000000%1$s\tAAPL\t2002-01-01T00:00:00.000000%1$s
                         """);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -3536,7 +3727,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2\t2000-01-01T00:00:03.000000%1$s\t2\t2000-01-01T00:00:03.000000%2$s
                     4\t2000-01-01T00:00:04.000000%1$s\t4\t2000-01-01T00:00:01.000000%2$s
                     """, leftSuffix, rightSuffix);
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // LT JOIN
             query = "SELECT * FROM (select sym, ts from x) x " +
@@ -3549,7 +3745,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2\t2000-01-01T00:00:03.000000%1$s\t2\t2000-01-01T00:00:00.000000%2$s
                     4\t2000-01-01T00:00:04.000000%1$s\t4\t2000-01-01T00:00:01.000000%2$s
                     """, leftSuffix, rightSuffix);
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // SPLICE JOIN
             query = "SELECT * FROM (select sym, ts from x) x " +
@@ -3562,7 +3763,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2\t2000-01-01T00:00:03.000000%1$s\t2\t2000-01-01T00:00:03.000000%2$s
                     4\t2000-01-01T00:00:04.000000%1$s\t\t
                     """, leftSuffix, rightSuffix);
-            assertQueryNoLeakCheck(expected, query, null, false, false);
+            assertQuery(query)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -3595,14 +3799,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("INSERT INTO t2 VALUES ('A', '2024-01-01T10:00:00.000000Z')");
 
             // ASOF JOIN with symbol AND timestamp in ON clause - timestamp as join key is not allowed
-            assertExceptionNoLeakCheck(
-                    "SELECT * FROM t1 ASOF JOIN (SELECT * FROM t2 LIMIT 1000) t2 ON (t1.sym = t2.sym) AND (t1.ts = t2.ts)",
-                    17,
-                    "ASOF/LT JOIN cannot use designated timestamp as a join key");
-            assertExceptionNoLeakCheck(
-                    "SELECT * FROM t1 LT JOIN (SELECT * FROM t2 LIMIT 1000) t2 ON (t1.sym = t2.sym) AND (t1.ts = t2.ts)",
-                    17,
-                    "ASOF/LT JOIN cannot use designated timestamp as a join key");
+            assertQuery("SELECT * FROM t1 ASOF JOIN (SELECT * FROM t2 LIMIT 1000) t2 ON (t1.sym = t2.sym) AND (t1.ts = t2.ts)")
+                    .noLeakCheck()
+                    .fails(17, "ASOF/LT JOIN cannot use designated timestamp as a join key");
+            assertQuery("SELECT * FROM t1 LT JOIN (SELECT * FROM t2 LIMIT 1000) t2 ON (t1.sym = t2.sym) AND (t1.ts = t2.ts)")
+                    .noLeakCheck()
+                    .fails(17, "ASOF/LT JOIN cannot use designated timestamp as a join key");
         });
     }
 
@@ -3646,7 +3848,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2\t2000-01-01T00:00:03.000000%1$s\t2\t2000-01-01T00:00:00.000000%2$s
                     4\t2000-01-01T00:00:04.000000%1$s\t4\t2000-01-01T00:00:01.000000%2$s
                     """, leftSuffix, rightSuffix);
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // ASOF JOIN
             String queryBody = "* FROM x ASOF JOIN y ON(sym)";
@@ -3661,13 +3868,28 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2\t2000-01-01T00:00:03.000000%1$s\t2\t2000-01-01T00:00:03.000000%2$s
                     4\t2000-01-01T00:00:04.000000%1$s\t4\t2000-01-01T00:00:01.000000%2$s
                     """, leftSuffix, rightSuffix);
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             String hintedQuery = "SELECT /*+ asof_index(x y) */ " + queryBody;
             printSql("EXPLAIN " + hintedQuery);
             TestUtils.assertContains(sink, "AsOf Join Indexed");
-            assertSql(expected, hintedQuery);
-            assertQueryNoLeakCheck(expected, hintedQuery, "ts", false, true);
+            assertQuery(hintedQuery)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(hintedQuery)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -3713,7 +3935,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2\t2000-01-01T00:00:03.000000%1$s\t2\t2000-01-01T00:00:00.000000%2$s
                     4\t2000-01-01T00:00:04.000000%1$s\t4\t2000-01-01T00:00:01.000000%2$s
                     """, leftSuffix, rightSuffix);
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // ASOF JOIN
             String queryBody = "* FROM x ASOF JOIN y ON(sym)";
@@ -3728,13 +3955,28 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2\t2000-01-01T00:00:03.000000%1$s\t2\t2000-01-01T00:00:03.000000%2$s
                     4\t2000-01-01T00:00:04.000000%1$s\t4\t2000-01-01T00:00:01.000000%2$s
                     """, leftSuffix, rightSuffix);
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             String hintedQuery = "SELECT /*+ asof_index(x y) */ " + queryBody;
             printSql("EXPLAIN " + hintedQuery);
             TestUtils.assertContains(sink, "AsOf Join Indexed");
-            assertSql(expected, hintedQuery);
-            assertQueryNoLeakCheck(expected, hintedQuery, "ts", false, true);
+            assertQuery(hintedQuery)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(hintedQuery)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -3770,7 +4012,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\t2\t1970-01-01T00:00:00.040000%1$s
                     B\t3\t1970-01-01T00:00:00.050000%1$s
                     """, leftSuffix);
-            printSqlResult(ex, "tabY", "ts", true, true);
+            assertQuery("tabY")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ex);
             ex = String.format("""
                     tag\tx\tts
                     B\t1\t1970-01-01T00:00:00.010000%1$s
@@ -3780,7 +4026,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     A\t6\t1970-01-01T00:00:00.040000%1$s
                     A\t7\t1970-01-01T00:00:00.050000%1$s
                     """, rightSuffix);
-            printSqlResult(ex, "tabZ", "ts", true, true);
+            assertQuery("tabZ")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ex);
             // test
             ex = """
                     tag\thi\tlo
@@ -3792,7 +4042,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\t3\t3
                     """;
             String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabZ b on (tag) ";
-            printSqlResult(ex, query, null, false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(ex);
         });
     }
 
@@ -3821,7 +4075,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2021-07-26T02:36:03.098000%1$s\t8\t6\t2
                     """);
             String query = "select w1.ts ts, w1.SequenceNumber, w2.SequenceNumber, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
-            printSqlResult(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -3839,20 +4098,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 91369\t91367
                 """;
         executeWithRewriteTimestamp("create table test(seq long, ts #TIMESTAMP) timestamp(ts)", leftTableTimestampType.getTypeName());
-        assertQuery(
-                "hi\tlo\n",
-                "(select a.seq hi, b.seq lo from test a lt join test b) where hi > lo + 1",
-                null,
-                false
-        );
+        assertQuery("(select a.seq hi, b.seq lo from test a lt join test b) where hi > lo + 1")
+                .noRandomAccess()
+                .returns("hi\tlo\n");
         execute("insert into test select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(100000)) where rnd<0.9999");
 
-        assertQuery(
-                expected,
-                "(select a.seq hi, b.seq lo from test a lt join test b) where hi > lo + 1",
-                null,
-                false
-        );
+        assertQuery("(select a.seq hi, b.seq lo from test a lt join test b) where hi > lo + 1")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -3911,7 +4164,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                      from long_sequence(30)
                     """
             );
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute("""
                     insert into x select * from (
@@ -3937,7 +4195,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """
             );
 
-            assertQueryFullFatNoLeakCheck(String.format("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(String.format("""
                             i\tsym\tamt\tprice\ttimestamp\ttimestamp1
                             1\tmsft\t22.463\tnull\t2018-01-01T00:12:00.000000%1$s\t
                             2\tgoogl\t29.92\t0.423\t2018-01-01T00:24:00.000000%1$s\t2018-01-01T00:16:00.000000%2$s
@@ -3959,13 +4223,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             18\tmsft\t36.798\t0.051000000000000004\t2018-01-01T03:36:00.000000%1$s\t2018-01-01T01:50:00.000000%2$s
                             19\tmsft\t66.98\t0.051000000000000004\t2018-01-01T03:48:00.000000%1$s\t2018-01-01T01:50:00.000000%2$s
                             20\tgoogl\t26.369\t0.6900000000000001\t2018-01-01T04:00:00.000000%1$s\t2018-01-01T02:00:00.000000%2$s
-                            """, leftSuffix, rightSuffix),
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    true
-            );
+                            """, leftSuffix, rightSuffix));
         });
     }
 
@@ -4033,13 +4291,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ) timestamp(ts) partition by DAY""",
                 leftTableTimestampType.getTypeName()
         );
-        assertQuery(
-                "tag\thi\tlo\tts\tts1\n",
-                "select a.tag, a.seq hi, b.seq lo , a.ts, b.ts from tab a lt join tab b on (tag)",
-                "ts",
-                false,
-                true
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo , a.ts, b.ts from tab a lt join tab b on (tag)")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("tag\thi\tlo\tts\tts1\n");
         execute(
                 """
                         insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,\s
@@ -4047,13 +4303,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                 timestamp_sequence(172800000000, 360000000) ts\s
                             from long_sequence(10)) timestamp (ts)"""
         );
-        assertQuery(
-                expected,
-                "select a.tag, a.seq hi, b.seq lo , a.ts, b.ts from tab a lt join tab b on (tag)",
-                "ts",
-                false,
-                true
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo , a.ts, b.ts from tab a lt join tab b on (tag)")
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
@@ -4092,7 +4346,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000005%2$s\t1970-01-01T00:00:00.000004%1$s\t103\t102
                     """, leftSuffix, rightSuffix);
 
-            printSqlResult(expected, query, "timebid", false, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timebid")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -4121,32 +4379,26 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ) timestamp(ts) partition by DAY""",
                 leftTableTimestampType.getTypeName()
         );
-        assertQuery(
-                "tag\thi\tlo\n",
-                "select a.tag, a.seq hi, b.seq lo from tab a lt join tab b on (tag)",
-                null,
-                false,
-                true
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a lt join tab b on (tag)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("tag\thi\tlo\n");
         execute("""
                 insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,\s
                         rnd_int() seq,\s
                         timestamp_sequence(172800000000, 360000000) ts\s
                     from long_sequence(10)) timestamp (ts)"""
         );
-        assertQuery(
-                expected,
-                "select a.tag, a.seq hi, b.seq lo from tab a lt join tab b on (tag)",
-                null,
-                false,
-                true
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a lt join tab b on (tag)")
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     @Test
     public void testLtJoinNonKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (SqlCompiler _ = engine.getSqlCompiler()) {
                 executeWithRewriteTimestamp("""
                             CREATE TABLE bids (
                             stock SYMBOL,
@@ -4216,7 +4468,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         MSFT\tNASDAQ\t2002-01-01T00:00:00.000000%1$s\t9\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000%2$s\t11\tSCAM
                         AAPL\tNASDAQ\t2002-01-01T00:00:00.000000%1$s\t3\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000%2$s\t11\tSCAM
                         """, leftSuffix, rightSuffix);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -4296,7 +4553,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         MSFT\tNASDAQ\t2002-01-01T00:00:00.000000%1$s\t9\tSCAM\tMSFT\tNASDAQ\t2001-01-01T00:00:00.000000%2$s\t8\tGOOD
                         AAPL\tNASDAQ\t2002-01-01T00:00:00.000000%1$s\t3\tSCAM\tAAPL\tNASDAQ\t2001-01-01T00:00:00.000000%2$s\t2\tEXCELLENT
                         """, leftSuffix, rightSuffix);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -4316,7 +4578,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     4\t1970-01-01T00:00:00.000004Z\tnull\t
                     5\t1970-01-01T00:00:00.000005Z\tnull\t
                     """, leftTableTimestampType.getTypeName());
-            printSqlResult(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -4338,24 +4605,18 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ) timestamp(ts) partition by DAY""",
                 leftTableTimestampType.getTypeName()
         );
-        assertQuery(
-                "tag\thi\tlo\n",
-                "select a.tag, a.seq hi, b.seq lo from tab a lt join tab b where a.seq > b.seq + 1",
-                null,
-                false
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a lt join tab b where a.seq > b.seq + 1")
+                .noRandomAccess()
+                .returns("tag\thi\tlo\n");
         execute("""
                 insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,\s
                         rnd_int() seq,\s
                         timestamp_sequence(172800000000, 360000000) ts\s
                     from long_sequence(10)) timestamp (ts)"""
         );
-        assertQuery(
-                expected,
-                "select a.tag, a.seq hi, b.seq lo from tab a lt join tab b where a.seq > b.seq + 1",
-                null,
-                false
-        );
+        assertQuery("select a.tag, a.seq hi, b.seq lo from tab a lt join tab b where a.seq > b.seq + 1")
+                .noRandomAccess()
+                .returns(expected);
     }
 
     @Test
@@ -4409,7 +4670,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         A\t2020-09-28T05:20:00.000000%1$s\t2020-02-09T17:46:39.999999%2$s\tA
                         B\t2021-01-21T23:06:40.000000%1$s\t2020-06-04T11:33:19.999999%2$s\tB
                         """, leftSuffix, rightSuffix);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -4438,7 +4704,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     c\t2\t2001-01-01T00:00:00.000000%1$s\tc\t0\t1990-01-01T00:00:00.000000%2$s
                     """, leftSuffix, rightSuffix);
 
-            assertQueryNoLeakCheck(expected, query, "xts", false, true);
+            assertQuery(query)
+                    .timestamp("xts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -4464,7 +4735,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\t2\t1970-01-01T00:00:00.040000%1$s
                     B\t3\t1970-01-01T00:00:00.050000%1$s
                     """, leftSuffix);
-            printSqlResult(ex, "tabY", "ts", true, true);
+            assertQuery("tabY")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ex);
             // test
             ex = """
                     tag\thi\tlo
@@ -4476,7 +4751,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\t3\t2
                     """;
             String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
-            printSqlResult(ex, query, null, false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(ex);
         });
     }
 
@@ -4502,7 +4781,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\t2\t1970-01-01T00:00:00.050000%1$s
                     B\t3\t1970-01-01T00:00:00.060000%1$s
                     """, leftSuffix);
-            printSqlResult(ex, "tabY", "ts", true, true);
+            assertQuery("tabY")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ex);
             // test
             ex = """
                     tag\thi\tlo
@@ -4514,7 +4797,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\t3\t2
                     """;
             String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
-            printSqlResult(ex, query, null, false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(ex);
         });
     }
 
@@ -4560,7 +4847,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     CC\t25\t1970-01-01T00:00:00.220000%1$s
                     """);
             String query = "tab";
-            printSqlResult(ex, query, "ts", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ex);
             // test
             ex = """
                     tag\thi\tlo
@@ -4570,7 +4861,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "from tab a " +
                     "lt join tab b " +
                     "where a.x > b.x + 1";
-            printSqlResult(ex, query, null, false, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(ex);
         });
     }
 
@@ -4616,7 +4910,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     CC\t25\t1970-01-01T00:00:00.220000%1$s
                     """);
             String query = "tab";
-            printSqlResult(ex, query, "ts", true, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(ex);
             // test
             ex = """
                     tag\thi\tlo
@@ -4629,7 +4927,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     AA\t20\t17
                     """;
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
-            printSqlResult(ex, query, null, false, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(ex);
         });
     }
 
@@ -4675,8 +4976,19 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // sanity check: uses Lt Join Light
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Lt Join Light");
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
-            assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
 
             // non-keyed join and slave supports timeframe -> should use Lt Join Fast
@@ -4696,19 +5008,34 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """, leftSuffix, rightSuffix);
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Lt Join Fast");
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // non-keyed join, slave supports timeframe but avoid BINARY_SEARCH hint -> should use Lt Join (full fat)
             query = "SELECT /*+ avoid_lt_binary_search(t1 t2) */ * FROM t1 LT JOIN t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Lt Join");
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // non-keyed join, slave has a filter -> should also use Lt Join
             query = "SELECT * FROM t1 LT JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Lt Join");
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -4766,13 +5093,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Lt Join Light");
             TestUtils.assertContains(sink, "symbolKeyJoin: true");
-            assertQueryNoLeakCheck(
-                    expected,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -4831,13 +5156,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Lt Join Light");
             TestUtils.assertContains(sink, "symbolKeyJoin: true");
-            assertQueryNoLeakCheck(
-                    expected,
-                    query,
-                    null,
-                    false,
-                    true
-            );
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -4915,27 +5238,26 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ('2026-04-14T00:01:30.000000Z', 'EURUSD', 1.19, 1.21)
                     """);
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
+            assertQuery("""
+                            WITH market_data_p30 AS (
+                                SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
+                                FROM market_data
+                                WHERE symbol = 'EURUSD'
+                            )
+                            SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
+                            FROM fx_trades t
+                            LT JOIN market_data_p30 md ON (symbol)
+                    """)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
                                     trade_id\ttimestamp\tbest_bid\tbest_ask
                                     1\t2026-04-14T00:00:10.000000Z\t1.09\t1.11
                                     2\t2026-04-14T00:01:10.000000Z\t1.19\t1.21
                                     """,
-                            leftTableTimestampType.getTypeName()),
-                    """
-                                    WITH market_data_p30 AS (
-                                        SELECT dateadd('s', -30, timestamp) AS timestamp, symbol, best_bid, best_ask
-                                        FROM market_data
-                                        WHERE symbol = 'EURUSD'
-                                    )
-                                    SELECT t.trade_id, t.timestamp, md.best_bid, md.best_ask
-                                    FROM fx_trades t
-                                    LT JOIN market_data_p30 md ON (symbol)
-                            """,
-                    "timestamp",
-                    false,
-                    true
-            );
+                            leftTableTimestampType.getTypeName()));
         });
     }
 
@@ -4996,7 +5318,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         QSTDB\t2007-01-01T00:00:00.000000%1$s\tQSTDB\t2007-01-01T00:00:00.000000%1$s\tQSTDB\t2007-01-01T00:00:00.000000%1$s\tQSTDB\t2007-01-01T00:00:00.000000%1$s
                         QSTDB\t2008-01-01T00:00:00.000000%1$s\tQSTDB\t2008-01-01T00:00:00.000000%1$s\tQSTDB\t2008-01-01T00:00:00.000000%1$s\tQSTDB\t2008-01-01T00:00:00.000000%1$s
                         """, leftSuffix);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -5058,7 +5385,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         QSTDB\t2007-01-01T00:00:00.000000%1$s\tQSTDB\t2006-01-01T00:00:00.000000%1$s\tQSTDB\t2005-01-01T00:00:00.000000%1$s\tQSTDB\t2004-01-01T00:00:00.000000%1$s
                         QSTDB\t2008-01-01T00:00:00.000000%1$s\tQSTDB\t2007-01-01T00:00:00.000000%1$s\tQSTDB\t2006-01-01T00:00:00.000000%1$s\tQSTDB\t2005-01-01T00:00:00.000000%1$s
                         """, leftSuffix);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -5125,7 +5457,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         Whatever\tQSTDB\t2008-01-01T00:00:00.000000%1$s\tQSTDB\t2007-01-01T00:00:00.000000%1$s\tQSTDB\t2006-01-01T00:00:00.000000%1$s\tQSTDB\t2005-01-01T00:00:00.000000%1$s
                         """, leftSuffix);
 
-                assertQueryNoLeakCheck(compiler, expected, query, "t0ts", false, sqlExecutionContext, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("t0ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
             }
         });
     }
@@ -5284,7 +5621,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ETH-USD\t2001-01-01T00:00:03.000000%1$s\t6\tETH-USD\t2001-01-01T00:00:03.000000%1$s\t6
                     BTC-USD\t2002-01-01T00:00:03.000000%1$s\t3\tBTC-USD\t2002-01-01T00:00:03.000000%1$s\t3
                     """, leftSuffix);
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // LT JOIN
             query = "SELECT * FROM trades t1 LT JOIN trades t2 ON (pair)";
@@ -5297,7 +5639,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ETH-USD\t2001-01-01T00:00:03.000000%1$s\t6\tETH-USD\t2001-01-01T00:00:01.000000%1$s\t5
                     BTC-USD\t2002-01-01T00:00:03.000000%1$s\t3\tBTC-USD\t2001-01-01T00:00:01.000000%1$s\t2
                     """, leftSuffix);
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // SPLICE JOIN
             query = "SELECT * FROM trades t1 SPLICE JOIN trades t2 ON (pair)";
@@ -5310,7 +5657,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ETH-USD\t2001-01-01T00:00:03.000000%1$s\t6\tETH-USD\t2001-01-01T00:00:03.000000%1$s\t6
                     BTC-USD\t2002-01-01T00:00:03.000000%1$s\t3\tBTC-USD\t2002-01-01T00:00:03.000000%1$s\t3
                     """, leftSuffix);
-            assertQueryNoLeakCheck(expected, query, null, false, false);
+            assertQuery(query)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -5343,7 +5693,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ETH-USD\t2001-01-01T00:00:03.000000%1$s\t6\t2001-01-01T00:00:03.000000%1$s\t6\tETH-USD
                     BTC-USD\t2002-01-01T00:00:03.000000%1$s\t3\t2002-01-01T00:00:03.000000%1$s\t3\tBTC-USD
                     """, leftSuffix);
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // LT JOIN
             query = "SELECT * FROM (select pair p1, ts, price from trades) t1 " +
@@ -5357,7 +5712,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ETH-USD\t2001-01-01T00:00:03.000000%1$s\t6\t2001-01-01T00:00:01.000000%1$s\t5\tETH-USD
                     BTC-USD\t2002-01-01T00:00:03.000000%1$s\t3\t2001-01-01T00:00:01.000000%1$s\t2\tBTC-USD
                     """, leftSuffix);
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // SPLICE JOIN
             query = "SELECT * FROM (select pair p1, ts, price from trades) t1 " +
@@ -5371,7 +5731,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ETH-USD\t2001-01-01T00:00:03.000000%1$s\t6\t2001-01-01T00:00:03.000000%1$s\t6\tETH-USD
                     BTC-USD\t2002-01-01T00:00:03.000000%1$s\t3\t2002-01-01T00:00:03.000000%1$s\t3\tBTC-USD
                     """, leftSuffix);
-            assertQueryNoLeakCheck(expected, query, null, false, false);
+            assertQuery(query)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -5401,7 +5764,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ETH-USD\tsell\t2001-01-01T00:00:03.000000Z\t6\tETH-USD\tsell\t2001-01-01T00:00:03.000000Z\t6
                     BTC-USD\tsell\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\tsell\t2002-01-01T00:00:03.000000Z\t3
                     """, leftTableTimestampType.getTypeName());
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // LT JOIN
             query = "SELECT * FROM trades t1 LT JOIN trades t2 ON(pair, side)";
@@ -5414,7 +5782,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ETH-USD\tsell\t2001-01-01T00:00:03.000000Z\t6\tETH-USD\tsell\t2001-01-01T00:00:00.000000Z\t4
                     BTC-USD\tsell\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\tsell\t2000-01-01T00:00:00.000000Z\t1
                     """, leftTableTimestampType.getTypeName());
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // SPLICE JOIN
             query = "SELECT * FROM trades t1 SPLICE JOIN trades t2 ON(pair, side)";
@@ -5427,7 +5800,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ETH-USD\tsell\t2001-01-01T00:00:03.000000Z\t6\tETH-USD\tsell\t2001-01-01T00:00:03.000000Z\t6
                     BTC-USD\tsell\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\tsell\t2002-01-01T00:00:03.000000Z\t3
                     """, leftTableTimestampType.getTypeName());
-            assertQueryNoLeakCheck(expected, query, null, false, false);
+            assertQuery(query)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -5457,7 +5833,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:03.000000Z
                     4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z
                     """, leftTableTimestampType.getTypeName());
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // LT JOIN
             query = "SELECT * FROM (select sym1 s, ts from x) x1 " +
@@ -5470,7 +5851,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:00.000000Z
                     4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z
                     """, leftTableTimestampType.getTypeName());
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // SPLICE JOIN
             query = "SELECT * FROM (select sym1 s, ts from x) x1 " +
@@ -5483,7 +5869,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:03.000000Z
                     4\t2000-01-01T00:00:04.000000Z\t\t
                     """, leftTableTimestampType.getTypeName());
-            assertQueryNoLeakCheck(expected, query, null, false, false);
+            assertQuery(query)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -5512,7 +5901,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2
                     BTC-USD\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\t2002-01-01T00:00:03.000000Z\t3
                     """, leftTableTimestampType.getTypeName());
-            assertQueryNoLeakCheck(expected, query, "ts", false, false);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // LT JOIN
             query = "SELECT * FROM (select * from trades where pair = 'BTC-USD') t1 " +
@@ -5523,7 +5916,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2000-01-01T00:00:00.000000Z\t1
                     BTC-USD\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2
                     """, leftTableTimestampType.getTypeName());
-            assertQueryNoLeakCheck(expected, query, "ts", false, false);
+            assertQuery(query)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expected);
 
             // SPLICE JOIN
             query = "SELECT * FROM (select * from trades where pair = 'BTC-USD') t1 " +
@@ -5534,7 +5931,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2
                     BTC-USD\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\t2002-01-01T00:00:03.000000Z\t3
                     """, leftTableTimestampType.getTypeName());
-            assertQueryNoLeakCheck(expected, query, null, false, false);
+            assertQuery(query)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -5635,8 +6035,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ) s ON m.sym = s.sym
                     """;
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery(sql)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                                     sym	ts
                                     A	2025-01-01T00:00:00.000000Z
                                     C	2025-01-01T00:05:00.000000Z
@@ -5647,14 +6050,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     A	2025-01-01T00:30:00.000000Z
                                     """,
                             rightTableTimestampType.getTypeName()
-                    ),
-                    sql,
-                    null,
-                    false,
-                    true
-            );
-            assertSql(
-                    """
+                    ));
+            assertQuery("explain " + sql)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             QUERY PLAN
                             SelectedRecord
                                 AsOf Join Light
@@ -5667,9 +6066,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: dyn_slave_src
-                            """,
-                    "explain " + sql
-            );
+                            """);
         });
     }
 
@@ -5688,7 +6085,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "('BTC-USD', '2000-06-01T00:00:00.000000Z', 6)"
             );
 
-            assertQuery(replaceTimestampSuffix("""
+            assertQuery("""
+                    select * from trades
+                    asof join (
+                      select * from trades
+                      where ts in '2000-03'
+                    ) t;""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             pair\tts\tprice\tpair1\tts1\tprice1
                             BTC-USD\t2000-01-01T00:00:00.000000Z\t1\t\t\tnull
                             BTC-USD\t2000-02-01T00:00:00.000000Z\t2\t\t\tnull
@@ -5696,29 +6102,15 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             BTC-USD\t2000-04-01T00:00:00.000000Z\t4\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3
                             BTC-USD\t2000-05-01T00:00:00.000000Z\t5\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3
                             BTC-USD\t2000-06-01T00:00:00.000000Z\t6\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3
-                            """, leftTableTimestampType.getTypeName()),
-                    """
-                            select * from trades
-                            asof join (
-                              select * from trades
-                              where ts in '2000-03'
-                            ) t;""",
-                    null,
-                    "ts",
-                    null,
-                    null,
-                    false,
-                    true,
-                    false
-            );
+                            """, leftTableTimestampType.getTypeName()));
         });
     }
 
-    private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult) throws SqlException {
+    private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult) throws Exception {
         assertAlgoAndResult(queryBody, hint, expectedAlgo, expectedResult, false);
     }
 
-    private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult, boolean expectSymbolKeyJoin) throws SqlException {
+    private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult, boolean expectSymbolKeyJoin) throws Exception {
         String hintedQuery;
         if (!hint.isEmpty()) {
             hintedQuery = "SELECT /*+ " + hint + "*/ " + queryBody;
@@ -5733,7 +6125,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
         if (expectSymbolKeyJoin) {
             TestUtils.assertContains(sink, "symbolKeyJoin: true");
         }
-        assertSql(expectedResult, hintedQuery);
+        assertQuery(hintedQuery)
+                .noLeakCheck()
+                .returnsOnce(expectedResult);
     }
 
     private void assertAsOfJoinSymbolAndDecimalKey(String tableSuffix, String decimalType, String id1, String id2) throws Exception {
@@ -5811,16 +6205,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {
-        assertQuery(
-                "ts\ty\tts1\ty1\n",
-                "select * from " +
-                        "(select * from (select * from x where y = 10 order by ts desc limit 20) order by ts ) a " +
-                        joinType +
-                        "(select * from x order by ts limit 5) b",
-                "create table x (ts timestamp, y int) timestamp(ts)",
-                timestamp,
-                false
-        );
+        assertQuery("select * from " +
+                "(select * from (select * from x where y = 10 order by ts desc limit 20) order by ts ) a " +
+                joinType +
+                "(select * from x order by ts limit 5) b")
+                .ddl("create table x (ts timestamp, y int) timestamp(ts)")
+                .timestamp(timestamp)
+                .noRandomAccess()
+                .returns("ts\ty\tts1\ty1\n");
     }
 
     private void testFullJoinDoesNotConvertSymbolKeyToString(String joinType) throws Exception {

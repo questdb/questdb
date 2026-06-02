@@ -107,8 +107,11 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertPartitionDoesNotExist(tableName, "2024-06-10.12");
             assertPartitionDoesNotExist(tableName, "2024-06-11.11");
             assertPartitionDoesNotExist(tableName, "2024-06-12.10");
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select * from " + tableName)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             id\tstr\ttimestamp
                             1\tabc\t2024-06-10T00:00:00.000000Z
                             2\tedf\t2024-06-11T00:00:00.000000Z
@@ -116,9 +119,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             4\tedf\t2024-06-12T00:00:01.000000Z
                             6\tedf\t2024-06-12T00:00:02.000000Z
                             5\tabc\t2024-06-15T00:00:00.000000Z
-                            """, timestampType.getTypeName()),
-                    "select * from " + tableName
-            );
+                            """, timestampType.getTypeName()));
         });
     }
 
@@ -200,81 +201,48 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             );
 
             // missing '('
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH bloom_filter_columns",
-                    66,
-                    "'(' expected"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH bloom_filter_columns")
+                    .fails(66, "'(' expected");
 
             // unknown option
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (unknown_option = 'val')",
-                    67,
-                    "bloom_filter_columns or fpp expected"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (unknown_option = 'val')")
+                    .fails(67, "bloom_filter_columns or fpp expected");
 
             // missing '=' after bloom_filter_columns
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (bloom_filter_columns 'id')",
-                    88,
-                    "'=' expected"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (bloom_filter_columns 'id')")
+                    .fails(88, "'=' expected");
 
             // missing '=' after fpp
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp '0.05')",
-                    71,
-                    "'=' expected"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp '0.05')")
+                    .fails(71, "'=' expected");
 
             // fpp = 0 (out of range)
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = 0)",
-                    73,
-                    "fpp must be between 0 and 1 (exclusive)"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = 0)")
+                    .fails(73, "fpp must be between 0 and 1 (exclusive)");
 
             // fpp = 1 (out of range)
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = 1)",
-                    73,
-                    "fpp must be between 0 and 1 (exclusive)"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = 1)")
+                    .fails(73, "fpp must be between 0 and 1 (exclusive)");
 
             // fpp = 1.5 (out of range)
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = '1.5')",
-                    73,
-                    "fpp must be between 0 and 1 (exclusive)"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = '1.5')")
+                    .fails(73, "fpp must be between 0 and 1 (exclusive)");
 
             // fpp = -0.1 (negative, out of range)
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = '-0.1')",
-                    73,
-                    "fpp must be between 0 and 1 (exclusive)"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = '-0.1')")
+                    .fails(73, "fpp must be between 0 and 1 (exclusive)");
 
             // fpp = non-numeric
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = abc)",
-                    73,
-                    "invalid fpp value"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = abc)")
+                    .fails(73, "invalid fpp value");
 
             // non-existent bloom filter column
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (bloom_filter_columns = 'nonexistent')",
-                    90,
-                    "bloom_filter_columns contains non-existent column: nonexistent"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (bloom_filter_columns = 'nonexistent')")
+                    .fails(90, "bloom_filter_columns contains non-existent column: nonexistent");
 
             // bad delimiter (missing ',' or ')')
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (bloom_filter_columns = 'id' fpp = 0.05)",
-                    95,
-                    "',' or ')' expected"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (bloom_filter_columns = 'id' fpp = 0.05)")
+                    .fails(95, "',' or ')' expected");
         });
     }
 
@@ -304,12 +272,16 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             // Verify bloom filter is active by querying for a non-existent value
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue("metadata bloom filter should enable row group skipping",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             // Verify existing value is still found
-            assertQueryNoLeakCheck("val\n50000\n", "SELECT val FROM x WHERE val = 50_000", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 50_000")
+                    .noLeakCheck()
+                    .returns("val\n50000\n");
         });
     }
 
@@ -335,7 +307,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             // Column 'a' has bloom filter — row groups should be skipped
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("a\n", "SELECT a FROM x WHERE a = 25_000", null, true, false);
+            assertQuery("SELECT a FROM x WHERE a = 25_000")
+                    .noLeakCheck()
+                    .returns("a\n");
             long skippedWithBloom = ParquetRowGroupFilter.getRowGroupsSkipped();
             Assert.assertTrue("column with BLOOM_FILTER should skip row groups", skippedWithBloom > 0);
         });
@@ -359,10 +333,12 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             // No bloom filter columns — should convert without error
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck("""
-                    val
-                    1
-                    """, "SELECT val FROM x WHERE val = 1", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 1")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            1
+                            """);
         });
     }
 
@@ -386,7 +362,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue("bloom filter with custom encoding should still skip row groups",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
@@ -416,7 +394,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             // Column 'b' should have bloom filter (from explicit override)
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("b\n", "SELECT b FROM x WHERE b = 25_000", null, true, false);
+            assertQuery("SELECT b FROM x WHERE b = 25_000")
+                    .noLeakCheck()
+                    .returns("b\n");
             Assert.assertTrue("explicit bloom_filter_columns should override metadata",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
@@ -444,7 +424,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue("bloom filter set via ALTER TABLE should be used during conversion",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
@@ -473,7 +455,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             // With bloom filter cleared, row group skipping should not happen via bloom filter
             // (min/max statistics may still skip some groups, so we just verify no error)
-            assertQueryNoLeakCheck("val\n50000\n", "SELECT val FROM x WHERE val = 50_000", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 50_000")
+                    .noLeakCheck()
+                    .returns("val\n50000\n");
         });
     }
 
@@ -500,7 +484,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("b\n", "SELECT b FROM x WHERE b = 25_000", null, true, false);
+            assertQuery("SELECT b FROM x WHERE b = 25_000")
+                    .noLeakCheck()
+                    .returns("b\n");
             Assert.assertTrue("bloom filter on remaining column should work after sibling column dropped",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
@@ -534,12 +520,15 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             // Verify data is correct (nulls for column top rows)
-            assertSql("""
-                    a\tts\tb
-                    1\t2024-01-01T00:00:00.000000Z\tnull
-                    2\t2024-01-01T01:00:00.000000Z\tnull
-                    3\t2024-01-01T02:00:00.000000Z\t50000
-                    """, "SELECT * FROM x WHERE ts < '2024-01-02'");
+            assertQuery("SELECT * FROM x WHERE ts < '2024-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            a\tts\tb
+                            1\t2024-01-01T00:00:00.000000Z\tnull
+                            2\t2024-01-01T01:00:00.000000Z\tnull
+                            3\t2024-01-01T02:00:00.000000Z\t50000
+                            """);
         });
     }
 
@@ -563,11 +552,15 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("s\n", "SELECT s FROM x WHERE s = 'zzz'", null, true, false);
+            assertQuery("SELECT s FROM x WHERE s = 'zzz'")
+                    .noLeakCheck()
+                    .returns("s\n");
             Assert.assertTrue("bloom filter on SYMBOL column should enable row group skipping",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-            assertQueryNoLeakCheck("s\naaa\n", "SELECT s FROM x WHERE s = 'aaa'", null, true, false);
+            assertQuery("SELECT s FROM x WHERE s = 'aaa'")
+                    .noLeakCheck()
+                    .returns("s\naaa\n");
         });
     }
 
@@ -595,7 +588,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             // Bloom filter metadata should still be active after round-trip
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue("bloom filter should survive parquet→native→parquet cycle",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
@@ -622,12 +617,16 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             // Bloom filter should still skip row groups for absent values
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue("bloom filter should handle NULL values and still skip row groups",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             // Present value should still be found
-            assertQueryNoLeakCheck("val\n50000\n", "SELECT val FROM x WHERE val = 50_000", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 50_000")
+                    .noLeakCheck()
+                    .returns("val\n50000\n");
         });
     }
 
@@ -652,12 +651,16 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             // Bloom filter should skip row groups for absent values
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 'nonexistent'", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 'nonexistent'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue("bloom filter should handle empty strings and skip row groups for absent values",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             // Empty string should still be found
-            assertQueryNoLeakCheck("val\n\n", "SELECT val FROM x WHERE val = ''", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = ''")
+                    .noLeakCheck()
+                    .returns("val\n\n");
         });
     }
 
@@ -686,12 +689,16 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             // Bloom filter should work across multiple parquet partitions
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue("bloom filter should work across multiple converted partitions",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             // Verify a value in a later partition is found
-            assertQueryNoLeakCheck("val\n300000\n", "SELECT val FROM x WHERE val = 300_000", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 300_000")
+                    .noLeakCheck()
+                    .returns("val\n300000\n");
         });
     }
 
@@ -715,12 +722,15 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 5_000_000_000", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 5_000_000_000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue("bloom filter on LONG column should skip row groups",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-            assertQueryNoLeakCheck("val\n10000000000\n",
-                    "SELECT val FROM x WHERE val = 10_000_000_000", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 10_000_000_000")
+                    .noLeakCheck()
+                    .returns("val\n10000000000\n");
         });
     }
 
@@ -744,12 +754,15 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 'zulu'", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 'zulu'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue("bloom filter on VARCHAR column should skip row groups",
                     ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-            assertQueryNoLeakCheck("val\nalpha\n",
-                    "SELECT val FROM x WHERE val = 'alpha'", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 'alpha'")
+                    .noLeakCheck()
+                    .returns("val\nalpha\n");
         });
     }
 
@@ -787,11 +800,11 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Verify initial row count.
-            assertQueryNoLeakCheck(
-                    "count\n10\n",
-                    "SELECT count() FROM x",
-                    null, false, true
-            );
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n10\n");
 
             // Convert the last (and only) partition to parquet.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06'");
@@ -799,27 +812,29 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             // Verify parquet file exists and count is still correct after conversion.
             assertPartitionExists("x", "2024-06.1");
-            assertSql(
-                    "count\n10\n",
-                    "SELECT count() FROM x"
-            );
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n10\n");
 
             // Insert O3 data into the same parquet partition.
             execute("INSERT INTO x(id, designated_ts) VALUES (100, '2024-06-15T00:00:00.000000Z')");
             drainWalQueue();
 
             // Verify data correctness: original 10 rows + 1 new row.
-            assertSql(
-                    "count\n11\n",
-                    "SELECT count() FROM x"
-            );
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n11\n");
 
             // Verify the O3-inserted row is present.
-            assertSql(
-                    "id\tdesignated_ts\n" +
-                            "100\t2024-06-15T00:00:00.000000" + (timestampType == TestTimestampType.NANO ? "000Z" : "Z") + "\n",
-                    "SELECT id, designated_ts FROM x WHERE id = 100"
-            );
+            assertQuery("SELECT id, designated_ts FROM x WHERE id = 100")
+                    .noLeakCheck()
+                    .timestamp("designated_ts")
+                    .returns("id\tdesignated_ts\n" +
+                            "100\t2024-06-15T00:00:00.000000" + (timestampType == TestTimestampType.NANO ? "000Z" : "Z") + "\n");
         });
     }
 
@@ -913,11 +928,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06'",
-                    0,
-                    "cannot convert partition to parquet, partition does not exist"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06'")
+                    .fails(0, "cannot convert partition to parquet, partition does not exist");
 
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '1970-01', '1970-02'");
             assertPartitionExists("x", "1970-01.1");
@@ -1133,11 +1145,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             execute("create table y as (select * from x)", sqlExecutionContext);
 
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06'",
-                    0,
-                    "cannot convert partition to parquet, partition does not exist"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06'")
+                    .fails(0, "cannot convert partition to parquet, partition does not exist");
 
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '1970-01'");
             assertPartitionExists("x", "1970-01.1");
@@ -1225,23 +1234,17 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE timestamp >= 0");
 
-            assertQuery(
-                    replaceTimestampSuffix("""
-                            id\ttimestamp\ta
-                            1\t2024-11-01T00:00:00.000000Z\tnull
-                            2\t2024-11-02T00:00:00.000000Z\tnull
-                            3\t2024-11-03T00:00:00.000000Z\tnull
-                            4\t2024-11-04T00:00:00.000000Z\tnull
-                            5\t2024-11-05T00:00:00.000000Z\tnull
-                            5\t2024-11-05T00:00:00.000000Z\t5
-                            6\t2024-11-06T00:00:00.000000Z\t6
-                            7\t2024-11-07T00:00:00.000000Z\t7
-                            """, timestampType.getTypeName()),
-                    tableName,
-                    "timestamp",
-                    true,
-                    true
-            );
+            assertQuery(tableName).timestamp("timestamp").expectSize().returns(replaceTimestampSuffix("""
+                    id\ttimestamp\ta
+                    1\t2024-11-01T00:00:00.000000Z\tnull
+                    2\t2024-11-02T00:00:00.000000Z\tnull
+                    3\t2024-11-03T00:00:00.000000Z\tnull
+                    4\t2024-11-04T00:00:00.000000Z\tnull
+                    5\t2024-11-05T00:00:00.000000Z\tnull
+                    5\t2024-11-05T00:00:00.000000Z\t5
+                    6\t2024-11-06T00:00:00.000000Z\t6
+                    7\t2024-11-07T00:00:00.000000Z\t7
+                    """, timestampType.getTypeName()));
         });
     }
 
@@ -1279,24 +1282,25 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "INSERT INTO " + tableName + " VALUES(6, '2024-06-12T00:00:02.000000Z')"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select index, name, readOnly, isParquet, parquetFileSize from table_partitions('" + tableName + "')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             index\tname\treadOnly\tisParquet\tparquetFileSize
                             0\t2024-06-10\tfalse\tfalse\t-1
                             1\t2024-06-11\tfalse\tfalse\t-1
                             2\t2024-06-12\tfalse\tfalse\t-1
                             3\t2024-06-15\tfalse\tfalse\t-1
-                            """,
-                    "select index, name, readOnly, isParquet, parquetFileSize from table_partitions('" + tableName + "')",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
             execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE timestamp = to_timestamp('2024-06-12', 'yyyy-MM-dd')");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix(
+            assertQuery("select index, name, readOnly, isParquet, parquetFileSize   > 0 isNonEmpty, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix(
                             """
                                     index\tname\treadOnly\tisParquet\tisNonEmpty\tminTimestamp\tmaxTimestamp
                                     0\t2024-06-10\tfalse\tfalse\tfalse\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z
@@ -1305,12 +1309,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                                     3\t2024-06-15\tfalse\tfalse\tfalse\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z
                                     """,
                             timestampType.getTypeName()
-                    ),
-                    "select index, name, readOnly, isParquet, parquetFileSize   > 0 isNonEmpty, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
-                    null,
-                    false,
-                    true
-            );
+                    ));
 
             assertPartitionDoesNotExist(tableName, "2024-06-10");
             assertPartitionDoesNotExist(tableName, "2024-06-11.0");

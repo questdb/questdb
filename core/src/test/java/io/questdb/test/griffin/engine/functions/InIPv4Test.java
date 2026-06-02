@@ -43,39 +43,30 @@ public class InIPv4Test extends AbstractCairoTest {
                             "('10.0.0.5', 2000000), " +
                             "('255.255.255.255', 3000000)"
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where ip in '192.168.0.1'")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tts
                             192.168.0.1\t1970-01-01T00:00:01.000000Z
-                            """,
-                    "test where ip in '192.168.0.1'",
-                    "ts",
-                    true,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("test where ip in ('127.0.0.1', '10.0.0.5')")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tts
                             127.0.0.1\t1970-01-01T00:00:00.000000Z
                             10.0.0.5\t1970-01-01T00:00:02.000000Z
-                            """,
-                    "test where ip in ('127.0.0.1', '10.0.0.5')",
-                    "ts",
-                    true,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("test where ip in ('127.0.0.1'::ipv4, '192.168.0.1'::ipv4, '255.255.255.255'::ipv4)")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tts
                             127.0.0.1\t1970-01-01T00:00:00.000000Z
                             192.168.0.1\t1970-01-01T00:00:01.000000Z
                             255.255.255.255\t1970-01-01T00:00:03.000000Z
-                            """,
-                    "test where ip in ('127.0.0.1'::ipv4, '192.168.0.1'::ipv4, '255.255.255.255'::ipv4)",
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -176,25 +167,21 @@ public class InIPv4Test extends AbstractCairoTest {
             execute("create table test (ip ipv4, ts timestamp) timestamp(ts)");
             execute("insert into test values ('127.0.0.1', 0), ('192.168.0.1', 1000000)");
             // LHS constant IPv4 found in list - all rows pass.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where '127.0.0.1'::ipv4 in ('127.0.0.1', '8.8.8.8')")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             ip\tts
                             127.0.0.1\t1970-01-01T00:00:00.000000Z
                             192.168.0.1\t1970-01-01T00:00:01.000000Z
-                            """,
-                    "test where '127.0.0.1'::ipv4 in ('127.0.0.1', '8.8.8.8')",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
             // LHS constant IPv4 not in list - no rows pass.
-            assertQueryNoLeakCheck(
-                    "ip\tts\n",
-                    "test where '1.1.1.1'::ipv4 in ('127.0.0.1', '8.8.8.8')",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("test where '1.1.1.1'::ipv4 in ('127.0.0.1', '8.8.8.8')")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ip\tts\n");
         });
     }
 
@@ -257,17 +244,14 @@ public class InIPv4Test extends AbstractCairoTest {
                             "('192.168.0.1', 1000000), " +
                             "('10.0.0.5', 2000000)"
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where ip in ('127.0.0.1', '192.168.0.1'::ipv4)")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tts
                             127.0.0.1\t1970-01-01T00:00:00.000000Z
                             192.168.0.1\t1970-01-01T00:00:01.000000Z
-                            """,
-                    "test where ip in ('127.0.0.1', '192.168.0.1'::ipv4)",
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -283,17 +267,14 @@ public class InIPv4Test extends AbstractCairoTest {
             );
             // Regression for the query that surfaced in the query fuzzer:
             // NOT IN on an IPv4 column with an IPv4-typed list element.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where not (ip in ('192.168.0.1'::ipv4))")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tts
                             127.0.0.1\t1970-01-01T00:00:00.000000Z
                             10.0.0.5\t1970-01-01T00:00:02.000000Z
-                            """,
-                    "test where not (ip in ('192.168.0.1'::ipv4))",
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -308,40 +289,31 @@ public class InIPv4Test extends AbstractCairoTest {
                             "('192.168.0.1', 2000000)"
             );
             // Explicit NULL in the list matches the IPv4 NULL row.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where ip in NULL")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tts
                             \t1970-01-01T00:00:01.000000Z
-                            """,
-                    "test where ip in NULL",
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
             // NULL mixed with concrete IPs matches both the NULL row and the IP rows.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where ip in ('127.0.0.1', NULL)")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tts
                             127.0.0.1\t1970-01-01T00:00:00.000000Z
                             \t1970-01-01T00:00:01.000000Z
-                            """,
-                    "test where ip in ('127.0.0.1', NULL)",
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
             // '0.0.0.0' is the IPv4 NULL marker (Numbers.IPv4_NULL = 0), so an IN
             // entry of '0.0.0.0'::ipv4 matches NULL rows the same way as explicit NULL.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where ip in ('0.0.0.0'::ipv4)")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tts
                             \t1970-01-01T00:00:01.000000Z
-                            """,
-                    "test where ip in ('0.0.0.0'::ipv4)",
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -375,17 +347,14 @@ public class InIPv4Test extends AbstractCairoTest {
             // All-const list with SYMBOL elements: addIPv4ToSet must read them via
             // the type-agnostic getStrA, since SymbolFunction.getIPv4 is final and
             // throws UnsupportedOperationException.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("test where ip in ('192.168.0.1'::symbol, '10.0.0.5'::symbol)")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
                             ip\tts
                             192.168.0.1\t1970-01-01T00:00:01.000000Z
                             10.0.0.5\t1970-01-01T00:00:02.000000Z
-                            """,
-                    "test where ip in ('192.168.0.1'::symbol, '10.0.0.5'::symbol)",
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
