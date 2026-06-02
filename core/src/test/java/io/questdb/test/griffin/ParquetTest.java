@@ -2092,10 +2092,12 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParquetCacheVarcharStillCorrectWithoutSpill() throws Exception {
+    public void testParquetCacheVarcharRoundTripsThroughSpill() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 8 * 1024);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 128L * 1024 * 1024);
         PageFrameAddressCache.FORCE_COLD_PARQUET_PARTITION_FOR_TEST = true;
+        final ParquetDecodeMetrics metrics = configuration.getMetrics().parquetDecodeMetrics();
+        metrics.clear();
         assertMemoryLeak(() -> {
             execute("""
                     create table src (k int, label varchar, ts timestamp)
@@ -2119,6 +2121,9 @@ public class ParquetTest extends AbstractCairoTest {
                     "select label, k, ts from src_native order by label",
                     "select label, k, ts from src order by label"
             );
+
+            Assert.assertTrue("spill path never fired on varchar workload [spills=" + metrics.spills() + "]", metrics.spills() > 0);
+            Assert.assertTrue("restore path never fired on varchar workload [restores=" + metrics.restores() + "]", metrics.restores() > 0);
         });
     }
 

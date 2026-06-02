@@ -50,12 +50,12 @@ import io.questdb.std.Transient;
  * Meant to be used along with {@link PageFrameMemoryPool}.
  */
 public class PageFrameAddressCache implements QuietCloseable, Mutable {
+    private static final int ADDRESS_LIST_INITIAL_CAPACITY = 64;
     // Test-only override: when true, every Parquet frame is marked cold on
     // add(), regardless of frame.isColdParquetPartition(). Lets integration
     // tests exercise the cold-tier spill path without real cold-storage
     // wiring. Production code never flips this; tests reset it in @After.
     public static volatile boolean FORCE_COLD_PARQUET_PARTITION_FOR_TEST = false;
-    private static final int ADDRESS_LIST_INITIAL_CAPACITY = 64;
     // Flat arrays storing per-frame, per-column data. Indexed as: frameIndex * columnCount + columnIndex.
     // These are off-heap to reduce GC pressure for large and wide tables.
     private final DirectLongList auxPageAddresses;
@@ -277,7 +277,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         }
     }
 
-     boolean isColdParquetPartition(int frameIndex) {
+    boolean isColdParquetPartition(int frameIndex) {
         return coldParquetPartition.get(frameIndex);
     }
 }
