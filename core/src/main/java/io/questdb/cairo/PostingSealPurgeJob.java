@@ -38,6 +38,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
@@ -134,17 +135,57 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             return true;
         }
         if (task.getToTableTxn() == Long.MAX_VALUE) {
-            LOG.error().$("posting seal purge: refusing to persist unclamped sentinel toTxn [table=")
-                    .$(task.getTableToken())
-                    .$(", column=").$(task.getIndexColumnName())
-                    .$(", sealTxn=").$(task.getSealTxn())
-                    .I$();
+            logUnclampedSentinel(task);
             return false;
         }
+        return persistTaskDirect0(engine, task);
+    }
+
+    public static boolean persistReadyTasksDirect(
+            CairoEngine engine,
+            ObjList<PostingSealPurgeTask> tasks,
+            int lo,
+            int hi,
+            long currentTableTxn
+    ) {
+        if (tasks == null || hi <= lo) {
+            return true;
+        }
+        boolean hasReadyTask = false;
+        for (int i = lo, n = Math.min(hi, tasks.size()); i < n; i++) {
+            PostingSealPurgeTask task = tasks.getQuick(i);
+            if (task == null || task.isEmpty()) {
+                continue;
+            }
+            long toTxn = task.getToTableTxn();
+            if (toTxn == Long.MAX_VALUE) {
+                logUnclampedSentinel(task);
+                return false;
+            }
+            if (toTxn <= currentTableTxn) {
+                hasReadyTask = true;
+            }
+        }
+        if (!hasReadyTask) {
+            return true;
+        }
+        return persistTasksDirect0(engine, tasks, lo, hi, currentTableTxn);
+    }
+
+    private static void logUnclampedSentinel(PostingSealPurgeTask task) {
+        LOG.error().$("posting seal purge: refusing to persist unclamped sentinel toTxn [table=")
+                .$(task.getTableToken())
+                .$(", column=").$(task.getIndexColumnName())
+                .$(", sealTxn=").$(task.getSealTxn())
+                .I$();
+    }
+
+    private static boolean persistTaskDirect0(CairoEngine engine, PostingSealPurgeTask task) {
         TableWriter logWriter = null;
+        SqlExecutionContextImpl sqlExecutionContext = null;
         try {
             CairoConfiguration configuration = engine.getConfiguration();
-            SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
             sqlExecutionContext.with(
                     configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
                     null,
@@ -162,7 +203,58 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             LOG.error().$("posting seal purge: direct task persist failed [err=").$(th).I$();
             return false;
         } finally {
-            Misc.free(logWriter);
+            closeDirectPersistResource(logWriter);
+            closeDirectPersistResource(sqlExecutionContext);
+        }
+    }
+
+    private static boolean persistTasksDirect0(
+            CairoEngine engine,
+            ObjList<PostingSealPurgeTask> tasks,
+            int lo,
+            int hi,
+            long currentTableTxn
+    ) {
+        TableWriter logWriter = null;
+        SqlExecutionContextImpl sqlExecutionContext = null;
+        try {
+            CairoConfiguration configuration = engine.getConfiguration();
+            sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            sqlExecutionContext.with(
+                    configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                    null,
+                    null
+            );
+            TableToken logTableToken;
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                logTableToken = createLogTable(configuration, compiler, sqlExecutionContext);
+            }
+            logWriter = engine.getWriter(logTableToken, "QuestDB system");
+            long scheduledAt = configuration.getMicrosecondClock().getTicks();
+            for (int i = lo, n = Math.min(hi, tasks.size()); i < n; i++) {
+                PostingSealPurgeTask task = tasks.getQuick(i);
+                if (task != null && !task.isEmpty() && task.getToTableTxn() <= currentTableTxn) {
+                    appendTask(logWriter, task, scheduledAt);
+                }
+            }
+            logWriter.commit();
+            return true;
+        } catch (Throwable th) {
+            LOG.error().$("posting seal purge: direct task batch persist failed [err=").$(th).I$();
+            return false;
+        } finally {
+            closeDirectPersistResource(logWriter);
+            closeDirectPersistResource(sqlExecutionContext);
+        }
+    }
+
+    private static void closeDirectPersistResource(Closeable resource) {
+        if (resource != null) {
+            try {
+                resource.close();
+            } catch (Throwable th) {
+                LOG.error().$("posting seal purge: direct persist cleanup failed [err=").$(th).I$();
+            }
         }
     }
 

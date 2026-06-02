@@ -8591,11 +8591,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void persistDeferredPostingSealPurgesDirect(long currentTableTxn) {
+        if (!PostingSealPurgeJob.persistReadyTasksDirect(engine, deferredPostingSealPurges, 0, deferredPostingSealPurges.size(), currentTableTxn)) {
+            return;
+        }
         int writePos = 0;
         for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(readPos);
-            long toTxn = task.getToTableTxn();
-            if (toTxn <= currentTableTxn && PostingSealPurgeJob.persistTaskDirect(engine, task)) {
+            if (task.isEmpty() || task.getToTableTxn() <= currentTableTxn) {
                 releaseDeferredPostingSealPurgeTask(task);
             } else {
                 deferredPostingSealPurges.setQuick(writePos++, task);
@@ -8604,6 +8606,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = deferredPostingSealPurges.size() - 1; i >= writePos; i--) {
             deferredPostingSealPurges.remove(i);
         }
+    }
+
+    private int releaseDirectPersistedPostingSealPurges(int readPos, int writePos, int n, long currentTableTxn) {
+        for (int i = readPos; i < n; i++) {
+            PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
+            if (task.isEmpty() || task.getToTableTxn() <= currentTableTxn) {
+                releaseDeferredPostingSealPurgeTask(task);
+            } else {
+                deferredPostingSealPurges.setQuick(writePos++, task);
+            }
+        }
+        return writePos;
     }
 
     private void populateDenseIndexerList() {
@@ -10710,12 +10724,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             long cursor = pubSeq.next();
             if (cursor < 0) {
-                if (persistOnQueueFull && PostingSealPurgeJob.persistTaskDirect(engine, deferredTask)) {
-                    releaseDeferredPostingSealPurgeTask(deferredTask);
-                    continue;
+                if (persistOnQueueFull && PostingSealPurgeJob.persistReadyTasksDirect(engine, deferredPostingSealPurges, readPos, n, currentTableTxn)) {
+                    writePos = releaseDirectPersistedPostingSealPurges(readPos, writePos, n, currentTableTxn);
+                } else {
+                    for (int i = readPos; i < n; i++) {
+                        deferredPostingSealPurges.setQuick(writePos++, deferredPostingSealPurges.getQuick(i));
+                    }
                 }
-                deferredPostingSealPurges.setQuick(writePos++, deferredTask);
-                continue;
+                break;
             }
             try {
                 PostingSealPurgeTask queueTask = queue.get(cursor);
