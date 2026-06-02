@@ -7468,6 +7468,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return row;
     }
 
+    private long nextPostingSealPurgePubSeq(Sequence pubSeq, int retryCount) {
+        long cursor = pubSeq.next();
+        for (int i = 0; cursor < 0 && i < retryCount; i++) {
+            if (i > 0) {
+                Os.sleep(1);
+            } else {
+                Os.pause();
+            }
+            cursor = pubSeq.next();
+        }
+        return cursor;
+    }
+
     /**
      * Commits O3 data. Lag is optional. When 0 is specified, the entire O3 segment is committed.
      *
@@ -11302,19 +11315,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return writePos;
-    }
-
-    private long nextPostingSealPurgePubSeq(Sequence pubSeq, int retryCount) {
-        long cursor = pubSeq.next();
-        for (int i = 0; cursor < 0 && i < retryCount; i++) {
-            if (i > 0) {
-                Os.sleep(1);
-            } else {
-                Os.pause();
-            }
-            cursor = pubSeq.next();
-        }
-        return cursor;
     }
 
     private void releaseIndexerWriters() {
