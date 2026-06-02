@@ -495,7 +495,7 @@ public class QwpSymbolDecoderTest {
             boolean useNullBitmap = nulls != null;
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = getQwpTableBuffer(values, nulls, useNullBitmap);
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
                 try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {

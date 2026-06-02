@@ -549,7 +549,7 @@ public class QwpCursorBoundsCheckTest {
             encoder.setGorillaEnabled((iter & 1) != 0);
             populateFuzzTable(buffer, rnd, iter);
 
-            int size = encoder.encode(buffer, false);
+            int size = encoder.encode(buffer);
             QwpBufferWriter writer = encoder.getBuffer();
             return copyFromNative(writer.getBufferPtr(), size);
         }

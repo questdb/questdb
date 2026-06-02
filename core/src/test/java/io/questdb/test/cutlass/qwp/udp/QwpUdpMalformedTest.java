@@ -608,7 +608,6 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                         1, 'x',             // table name: varint(1) + "x"
                         1,                   // row count = 1
                         1,                   // column count = 1
-                        0x00,                // schema mode FULL
                         1, 's',              // column name: varint(1) + "s"
                         0x09,                // TYPE_SYMBOL (not nullable)
                 };

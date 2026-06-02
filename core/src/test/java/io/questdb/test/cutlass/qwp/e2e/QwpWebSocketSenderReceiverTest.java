@@ -3208,10 +3208,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     }
 
     /**
-     * Sends 5 batches with the same schema on a single connection. Batch 1 sends
-     * the full schema; batches 2-5 implicitly use schema reference mode (varint
-     * schemaId only) because the schema ID is already below maxSentSchemaId
-     * after the first successful ACK.
+     * Sends 5 batches with the same schema on a single connection. Every batch
+     * carries the full column schema inline (there is no schema-reference mode),
+     * so this exercises repeated same-schema ingestion over one connection.
      */
     @Test
     public void testSchemaReference_registryHitAfterMultipleBatches() throws Exception {
