@@ -623,6 +623,14 @@ public class CairoEngine implements Closeable, WriterSource {
         // partial-construction path where the constructor's catch block calls
         // close() before timerShards has been assigned.
         if (timerShards != null) {
+            // close() must be reached through signalClose() whenever there are
+            // parked continuations: signalClose() drains them while the worker
+            // pools are still RUNNING, so the bodies remount and unwind. halt()
+            // only joins the daemon threads, so a parked cont reaching here with
+            // closing == false would be stranded (never resumed, native stack
+            // abandoned). A non-empty shard set at this point is that bug.
+            assert closing || timerShards.size() == 0
+                    : "close() reached with parked continuations but without a prior signalClose(); they will be stranded";
             timerShards.halt();
         }
     }
