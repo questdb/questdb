@@ -693,8 +693,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL("debug.mat.view.refresh.missing.wal.files.fatal", false, true),
     CAIRO_QUERY_MEMORY_LIMIT_BYTES("cairo.query.memory.limit.bytes"),
     CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES("cairo.mat.view.refresh.memory.limit.bytes"),
-    CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES("cairo.wal.apply.memory.limit.bytes"),
-    CAIRO_MEMORY_TRACKER_POOL_CAPACITY("cairo.memory.tracker.pool.capacity");
+    CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES("cairo.wal.apply.memory.limit.bytes");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

@@ -588,11 +588,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getMemoryTrackerPoolCapacity() {
-        return getDelegate().getMemoryTrackerPoolCapacity();
-    }
-
-    @Override
     public int getMetadataPoolCapacity() {
         return getDelegate().getMetadataPoolCapacity();
     }

@@ -35,8 +35,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  * OSS {@link MemoryTrackerProvider}: hands out one
  * {@link PerQueryMemoryTracker} per workload invocation. Trackers are pooled
  * across invocations so the steady state performs no native alloc/free per
- * workload start. The pool is unbounded unless {@code poolCapacity > 0}, in
- * which case trackers returned past the cap are destroyed instead of pooled.
+ * workload start. The pool is unbounded; a tracker's native {@code {used, limit}}
+ * block is freed only when the provider closes (engine shutdown), never on the
+ * per-workload release path. That keeps cross-thread readers of the block -- the
+ * {@code query_activity} view's {@code memory_used} / {@code memory_limit}
+ * columns -- free of use-after-free: a concurrently released tracker's block
+ * stays mapped (and may be reused by the next acquisition), so a racing read is
+ * at worst stale, never freed underneath the reader. Engine shutdown joins every
+ * worker thread before closing the provider, so no reader is live when the pool
+ * is finally drained.
  * <p>
  * The provider's {@link #close()} drains the pool and releases every retained
  * native block. It is invoked from {@code CairoEngine.close()}.
@@ -45,7 +52,6 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
 
     private final AtomicInteger pooled = new AtomicInteger();
     private final ConcurrentPool<PerQueryMemoryTracker> pool = new ConcurrentPool<>();
-    private final int poolCapacity;
     private final long limitMatViewRefresh;
     private final long limitQuery;
     private final long limitWalApply;
@@ -59,18 +65,14 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
      *                             {@code 0} means unlimited.
      * @param limitWalApply        byte limit for {@link MemoryTrackerWorkload#WAL_APPLY};
      *                             {@code 0} means unlimited.
-     * @param poolCapacity         optional cap on retained pooled trackers;
-     *                             {@code 0} means unbounded.
      */
-    public PerQueryMemoryTrackerProvider(long limitQuery, long limitMatViewRefresh, long limitWalApply, int poolCapacity) {
+    public PerQueryMemoryTrackerProvider(long limitQuery, long limitMatViewRefresh, long limitWalApply) {
         assert limitQuery >= 0;
         assert limitMatViewRefresh >= 0;
         assert limitWalApply >= 0;
-        assert poolCapacity >= 0;
         this.limitQuery = limitQuery;
         this.limitMatViewRefresh = limitMatViewRefresh;
         this.limitWalApply = limitWalApply;
-        this.poolCapacity = poolCapacity;
     }
 
     @Override
@@ -104,10 +106,6 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
 
     void release(PerQueryMemoryTracker tracker) {
         if (closed) {
-            tracker.destroy();
-            return;
-        }
-        if (poolCapacity > 0 && pooled.get() >= poolCapacity) {
             tracker.destroy();
             return;
         }

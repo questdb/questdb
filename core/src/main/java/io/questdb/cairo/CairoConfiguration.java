@@ -385,12 +385,6 @@ public interface CairoConfiguration {
 
     int getMaxUncommittedRows();
 
-    /**
-     * @return optional cap on the {@code MemoryTracker} handle pool. {@code 0}
-     * means unbounded.
-     */
-    int getMemoryTrackerPoolCapacity();
-
     int getMetadataPoolCapacity();
 
     Metrics getMetrics();

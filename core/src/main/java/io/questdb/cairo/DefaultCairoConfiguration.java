@@ -612,11 +612,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getMemoryTrackerPoolCapacity() {
-        return 0;
-    }
-
-    @Override
     public int getMetadataPoolCapacity() {
         return getSqlModelPoolCapacity();
     }

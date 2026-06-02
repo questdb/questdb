@@ -90,8 +90,7 @@ public interface FactoryProvider extends QuietCloseable {
         return new PerQueryMemoryTrackerProvider(
                 cairoConfiguration.getQueryMemoryLimitBytes(),
                 cairoConfiguration.getMatViewRefreshMemoryLimitBytes(),
-                cairoConfiguration.getWalApplyMemoryLimitBytes(),
-                cairoConfiguration.getMemoryTrackerPoolCapacity()
+                cairoConfiguration.getWalApplyMemoryLimitBytes()
         );
     }
 

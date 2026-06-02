@@ -365,7 +365,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxSwapFileCount;
     private final int maxUncommittedRows;
     private final MemoryConfiguration memoryConfiguration;
-    private final int memoryTrackerPoolCapacity;
     private final int metadataStringPoolCapacity;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
@@ -1631,7 +1630,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.queryMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
             this.matViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
             this.walApplyMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 0);
-            this.memoryTrackerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MEMORY_TRACKER_POOL_CAPACITY, 0);
             this.sqlCompileViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY, 8);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
@@ -4171,11 +4169,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxUncommittedRows() {
             return maxUncommittedRows;
-        }
-
-        @Override
-        public int getMemoryTrackerPoolCapacity() {
-            return memoryTrackerPoolCapacity;
         }
 
         @Override
