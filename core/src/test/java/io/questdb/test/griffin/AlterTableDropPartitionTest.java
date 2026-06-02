@@ -316,6 +316,30 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropPartitionListPreservesUnlistedDayPartitionBetweenDroppedPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            createX("DAY", 720000000);
+
+            String expectedBeforeDrop = "count\n" +
+                    "120\n";
+
+            assertPartitionResult(expectedBeforeDrop, "2018-01-05");
+            assertPartitionResult(expectedBeforeDrop, "2018-01-06");
+            assertPartitionResult(expectedBeforeDrop, "2018-01-07");
+
+            execute("alter table x drop partition list '2018-01-05', '2018-01-07'");
+
+            String expectedAfterDrop = "count\n" +
+                    "0\n";
+
+            assertPartitionResult(expectedAfterDrop, "2018-01-05");
+            assertPartitionResult(expectedBeforeDrop, "2018-01-06");
+            assertPartitionResult(expectedAfterDrop, "2018-01-07");
+        });
+    }
+
+
+    @Test
     public void testDropPartitionMacFileReadTimeoutError() throws Exception {
         assertMemoryLeak(new FilesFacadeImpl() {
                              private boolean returnError = true;
