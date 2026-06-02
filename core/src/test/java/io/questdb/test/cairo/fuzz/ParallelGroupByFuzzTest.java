@@ -145,19 +145,17 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 execute("alter table t convert partition to parquet where created >= 0");
             }
 
-            assertQuery(
-                    """
+            assertQuery("""
+                    SELECT count(1)
+                    FROM t as T1 JOIN t as T2 ON T1.created = T2.created
+                    WHERE T1.event = 1.0""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count
                             2
-                            """,
-                    """
-                            SELECT count(1)
-                            FROM t as T1 JOIN t as T2 ON T1.created = T2.created
-                            WHERE T1.event = 1.0""",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -185,20 +183,18 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 execute("alter table t convert partition to parquet where created >= 0");
             }
 
-            assertQuery(
-                    """
+            assertQuery("""
+                    SELECT count()
+                    FROM t
+                    WHERE origin = 'c'
+                    LATEST ON created PARTITION BY event""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count
                             2
-                            """,
-                    """
-                            SELECT count()
-                            FROM t
-                            WHERE origin = 'c'
-                            LATEST ON created PARTITION BY event""",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -235,18 +231,15 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 execute("alter table t2 convert partition to parquet where created >= 0");
             }
 
-            assertQuery(
-                    """
+            assertQuery("SELECT event, count()\n" +
+                    "FROM (t1 UNION t2) WHERE origin = 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             event\tcount
                             1\t1
                             3\t1
-                            """,
-                    "SELECT event, count()\n" +
-                            "FROM (t1 UNION t2) WHERE origin = 1",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -288,7 +281,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         engine.execute("CREATE TABLE tab (ts TIMESTAMP, v INT) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
                         // 40 partitions, each holding rows with a single distinct value
                         // ((x - 1) / rows_per_partition). Workers picking up disjoint
@@ -357,11 +350,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         // open re-runs merge with that stale scale on A and
                         // scale 0 (default) on B.
                         final String sql = "SELECT k, avg(v, 1) avg FROM tab GROUP BY k ORDER BY k";
-                        final String expected = "k\tavg\n" +
-                                "0\t99999999999999999999999999999999999999.0\n" +
-                                "1\t99999999999999999999999999999999999999.0\n" +
-                                "2\t99999999999999999999999999999999999999.0\n" +
-                                "3\t99999999999999999999999999999999999999.0\n";
+                        final String expected = """
+                                k\tavg
+                                0\t99999999999999999999999999999999999999.0
+                                1\t99999999999999999999999999999999999999.0
+                                2\t99999999999999999999999999999999999999.0
+                                3\t99999999999999999999999999999999999999.0
+                                """;
                         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                             for (int i = 0; i < 2; i++) {
                                 sink.clear();
@@ -640,7 +635,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         engine.execute(
                                 "CREATE TABLE tab (ts TIMESTAMP, k INT, v DECIMAL(20, 2)) timestamp(ts) PARTITION BY DAY",
                                 sqlExecutionContext
@@ -685,7 +680,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         engine.execute(
                                 "CREATE TABLE tab (ts TIMESTAMP, k INT, v FLOAT) timestamp(ts) PARTITION BY DAY",
                                 sqlExecutionContext
@@ -752,7 +747,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         engine.execute(
                                 "CREATE TABLE tab (ts TIMESTAMP, k INT, v FLOAT) timestamp(ts) PARTITION BY DAY",
                                 sqlExecutionContext
@@ -4860,7 +4855,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
                         engine.execute(
@@ -5162,7 +5157,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
                         engine.execute(

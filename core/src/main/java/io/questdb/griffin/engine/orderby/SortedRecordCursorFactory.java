@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ListColumnFilter;
@@ -69,9 +70,11 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
                     recordSink,
                     comparator,
                     configuration.getSqlSortKeyPageSize(),
-                    configuration.getSqlSortKeyMaxPages(),
+                    configuration.getSqlSortKeyMaxBytes(),
                     configuration.getSqlSortValuePageSize(),
-                    configuration.getSqlSortValueMaxPages(),
+                    configuration.getSqlSortValueMaxBytes(),
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath(),
                     false
             );
             // Hoist rankMaps into a named local so the catch can free the

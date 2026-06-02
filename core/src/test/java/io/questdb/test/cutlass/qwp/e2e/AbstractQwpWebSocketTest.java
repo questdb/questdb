@@ -34,7 +34,6 @@ import io.questdb.client.Sender;
 import io.questdb.client.SenderErrorHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolUtils;
@@ -64,14 +63,6 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         recvChunk = 1 + rnd.nextInt(500);
         sendChunk = 1 + rnd.nextInt(500);
-    }
-
-    protected void assertSql(String sql, String expected) {
-        try {
-            TestUtils.assertSql(engine, sqlExecutionContext, sql, sink, expected);
-        } catch (SqlException e) {
-            throw new AssertionError(e);
-        }
     }
 
     /**

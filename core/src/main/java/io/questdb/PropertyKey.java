@@ -83,11 +83,13 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_MODEL_POOL_CAPACITY("cairo.model.pool.capacity"),
     CAIRO_SQL_MAX_NEGATIVE_LIMIT("cairo.sql.max.negative.limit"),
     CAIRO_SQL_SORT_KEY_PAGE_SIZE("cairo.sql.sort.key.page.size"),
-    CAIRO_SQL_SORT_KEY_MAX_PAGES("cairo.sql.sort.key.max.pages"),
+    CAIRO_SQL_SORT_KEY_MAX_PAGES("cairo.sql.sort.key.max.pages"), // deprecated, use CAIRO_SQL_SORT_KEY_MAX_BYTES
+    CAIRO_SQL_SORT_KEY_MAX_BYTES("cairo.sql.sort.key.max.bytes"),
     CAIRO_SQL_SORT_KEY_MATERIALIZATION_THRESHOLD("cairo.sql.sort.key.materialization.threshold"),
     CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD("cairo.sql.sort.encoded.parallel.threshold"),
     CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE("cairo.sql.sort.light.value.page.size"),
-    CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES("cairo.sql.sort.light.value.max.pages"),
+    CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES("cairo.sql.sort.light.value.max.pages"), // deprecated, use CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES
+    CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES("cairo.sql.sort.light.value.max.bytes"),
     CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE("cairo.sql.hash.join.value.page.size"),
     CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES("cairo.sql.hash.join.value.max.pages"),
     CAIRO_SQL_LATEST_BY_ROW_COUNT("cairo.sql.latest.by.row.count"),
@@ -97,7 +99,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY("cairo.sql.asof.join.short.circuit.cache.capacity"),
     CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD("cairo.sql.asof.join.evacuation.threshold"),
     CAIRO_SQL_SORT_VALUE_PAGE_SIZE("cairo.sql.sort.value.page.size"),
-    CAIRO_SQL_SORT_VALUE_MAX_PAGES("cairo.sql.sort.value.max.pages"),
+    CAIRO_SQL_SORT_VALUE_MAX_PAGES("cairo.sql.sort.value.max.pages"), // deprecated, use CAIRO_SQL_SORT_VALUE_MAX_BYTES
+    CAIRO_SQL_SORT_VALUE_MAX_BYTES("cairo.sql.sort.value.max.bytes"),
     CAIRO_WORK_STEAL_TIMEOUT_NANOS("cairo.work.steal.timeout.nanos"),
     CAIRO_PARALLEL_INDEXING_ENABLED("cairo.parallel.indexing.enabled"),
     CAIRO_POSTING_INDEX_ADAPTIVE_DELTA_AT_OR_ABOVE("cairo.posting.index.adaptive.delta.at.or.above"),
@@ -251,14 +254,17 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_WINDOW_STORE_PAGE_SIZE("cairo.sql.window.store.page.size"),
     CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES("cairo.sql.analytic.store.max.pages"),
     CAIRO_SQL_WINDOW_STORE_MAX_PAGES("cairo.sql.window.store.max.pages"),
+    CAIRO_SQL_WINDOW_CACHE_MAX_BYTES("cairo.sql.window.cache.max.bytes"),
     CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE("cairo.sql.analytic.rowid.page.size"),
     CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE("cairo.sql.window.rowid.page.size"),
-    CAIRO_SQL_ANALYTIC_ROWID_MAX_PAGES("cairo.sql.analytic.rowid.max.pages"),
-    CAIRO_SQL_WINDOW_ROWID_MAX_PAGES("cairo.sql.window.rowid.max.pages"),
+    CAIRO_SQL_ANALYTIC_ROWID_MAX_PAGES("cairo.sql.analytic.rowid.max.pages"), // deprecated, use CAIRO_SQL_WINDOW_ROWID_MAX_BYTES
+    CAIRO_SQL_WINDOW_ROWID_MAX_PAGES("cairo.sql.window.rowid.max.pages"), // deprecated, use CAIRO_SQL_WINDOW_ROWID_MAX_BYTES
+    CAIRO_SQL_WINDOW_ROWID_MAX_BYTES("cairo.sql.window.rowid.max.bytes"),
     CAIRO_SQL_ANALYTIC_TREE_PAGE_SIZE("cairo.sql.analytic.tree.page.size"),
     CAIRO_SQL_WINDOW_TREE_PAGE_SIZE("cairo.sql.window.tree.page.size"),
-    CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES("cairo.sql.analytic.tree.max.pages"),
-    CAIRO_SQL_WINDOW_TREE_MAX_PAGES("cairo.sql.window.tree.max.pages"),
+    CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES("cairo.sql.analytic.tree.max.pages"), // deprecated, use CAIRO_SQL_WINDOW_TREE_MAX_BYTES
+    CAIRO_SQL_WINDOW_TREE_MAX_PAGES("cairo.sql.window.tree.max.pages"), // deprecated, use CAIRO_SQL_WINDOW_TREE_MAX_BYTES
+    CAIRO_SQL_WINDOW_TREE_MAX_BYTES("cairo.sql.window.tree.max.bytes"),
     CAIRO_SQL_INTERVAL_MAX_BRACKET_DEPTH("cairo.sql.interval.max.bracket.depth"),
     CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE("cairo.sql.interval.max.intervals.after.merge"),
     CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD("cairo.sql.interval.incremental.merge.threshold"),

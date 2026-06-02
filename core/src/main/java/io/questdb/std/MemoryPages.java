@@ -38,6 +38,7 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
     private final int bits;
     private final long mask;
     private final int maxPages;
+    private final String maxPagesConfigKey;
     private final long pageSize;
     private final LongList pages = new LongList();
     private long cachePageHi;
@@ -49,14 +50,15 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
     private MemoryTracker memoryTracker;
 
     public MemoryPages(long pageSize, int maxPages) {
-        this(pageSize, maxPages, true);
+        this(pageSize, maxPages, null, true);
     }
 
-    public MemoryPages(long pageSize, int maxPages, boolean openOnInit) {
+    public MemoryPages(long pageSize, int maxPages, String maxPagesConfigKey, boolean openOnInit) {
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
         this.maxPages = maxPages;
+        this.maxPagesConfigKey = maxPagesConfigKey;
         if (openOnInit) {
             try {
                 allocate0(0);
@@ -122,7 +124,12 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
         }
 
         if (index > maxPages) {
-            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in MemoryPages");
+            LimitOverflowException ex = LimitOverflowException.instance();
+            ex.put("Maximum number of pages (").put(maxPages).put(") breached in MemoryPages");
+            if (maxPagesConfigKey != null) {
+                ex.put(" (raise ").put(maxPagesConfigKey).put(')');
+            }
+            throw ex;
         }
 
         if (index >= pages.size()) {

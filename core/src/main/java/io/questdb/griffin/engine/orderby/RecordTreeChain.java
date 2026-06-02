@@ -36,6 +36,7 @@ import io.questdb.std.MemoryPages;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -64,11 +65,13 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
             @NotNull RecordSink recordSink,
             @NotNull RecordComparator comparator,
             long keyPageSize,
-            int keyMaxPages,
+            long maxKeyHeapBytes,
             long valuePageSize,
-            int valueMaxPages
+            long maxValueHeapBytes,
+            String keyHeapConfigKey,
+            String valueHeapConfigKey
     ) {
-        this(columnTypes, recordSink, comparator, keyPageSize, keyMaxPages, valuePageSize, valueMaxPages, true);
+        this(columnTypes, recordSink, comparator, keyPageSize, maxKeyHeapBytes, valuePageSize, maxValueHeapBytes, keyHeapConfigKey, valueHeapConfigKey, true);
     }
 
     public RecordTreeChain(
@@ -76,24 +79,42 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
             @NotNull RecordSink recordSink,
             @NotNull RecordComparator comparator,
             long keyPageSize,
-            int keyMaxPages,
+            long maxKeyHeapBytes,
             long valuePageSize,
-            int valueMaxPages,
+            long maxValueHeapBytes,
+            String keyHeapConfigKey,
+            String valueHeapConfigKey,
             boolean openOnInit
     ) {
         try {
             this.comparator = comparator;
+            // MemoryPages can't hold a block straddling its ceilPow2 page (config rejects sub-block key pages).
+            assert Numbers.ceilPow2(keyPageSize) >= BLOCK_SIZE;
             // Both children participate in the per-query lifetime:
-            // - MemoryPages is eager by default, so openOnInit threads through.
+            // - MemoryPages threads openOnInit so its key heap is allocated
+            //   lazily under whatever MemoryTracker is bound at cursor start.
             // - RecordChain's inner MemoryCARW is lazy by construction (no
             //   native alloc until first write), so it does not need a knob.
-            this.mem = new MemoryPages(keyPageSize, keyMaxPages, openOnInit);
-            this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize, valueMaxPages);
+            this.mem = new MemoryPages(keyPageSize, derivePageBudget(keyPageSize, maxKeyHeapBytes), keyHeapConfigKey, openOnInit);
+            this.recordChain = new RecordChain(
+                    columnTypes,
+                    recordSink,
+                    valuePageSize,
+                    derivePageBudget(valuePageSize, maxValueHeapBytes),
+                    valueHeapConfigKey
+            );
             this.recordChainRecord = this.recordChain.getRecordB();
         } catch (Throwable th) {
             close();
             throw th;
         }
+    }
+
+    private static int derivePageBudget(long pageSize, long maxBytes) {
+        // Divide by the rounded page: MemoryPages/MemoryCARWImpl ceilPow2 the page before allocating,
+        // so dividing by the raw value would let the heap overshoot maxBytes (up to ~2x for non-pow2).
+        long pages = Math.max(1L, maxBytes / Numbers.ceilPow2(pageSize));
+        return (int) Math.min(pages, Integer.MAX_VALUE);
     }
 
     @Override

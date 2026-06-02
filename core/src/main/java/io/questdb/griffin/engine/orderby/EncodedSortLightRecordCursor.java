@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -69,11 +70,11 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
         try {
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
             this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true); // 128KB
-            this.maxEntryMemBytes = Math.min(
-                    configuration.getSqlSortKeyPageSize() * (long) configuration.getSqlSortKeyMaxPages()
-                            + configuration.getSqlSortLightValuePageSize() * (long) configuration.getSqlSortLightValueMaxPages(),
-                    MAX_HEAP_SIZE_LIMIT
-            );
+            // Clamp each operand to MAX_HEAP_SIZE_LIMIT before adding so an unset (Long.MAX_VALUE)
+            // cap does not overflow into a negative budget.
+            final long keyCap = Math.min(configuration.getSqlSortKeyMaxBytes(), MAX_HEAP_SIZE_LIMIT);
+            final long valueCap = Math.min(configuration.getSqlSortLightValueMaxBytes(), MAX_HEAP_SIZE_LIMIT);
+            this.maxEntryMemBytes = Math.min(keyCap + valueCap, MAX_HEAP_SIZE_LIMIT);
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             this.isOpen = true;
         } finally {
@@ -174,7 +175,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             long maxEntries = maxEntryMemBytes / entrySize;
             if (estimatedSize > 0) {
                 if (estimatedSize > maxEntries) {
-                    throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
+                    throwLimitOverflow();
                 }
                 entryMem.setCapacity(estimatedSize * longsPerEntry);
             }
@@ -194,7 +195,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     if (count >= maxEntries) {
-                        throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
+                        throwLimitOverflow();
                     }
                     entryMem.ensureCapacity(longsPerEntry);
                     long addr = entryMem.getAppendAddress();
@@ -224,5 +225,15 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
         Misc.free(encoder);
         baseCursor = Misc.free(baseCursor);
         baseRecord = null;
+    }
+
+    private void throwLimitOverflow() {
+        throw LimitOverflowException.instance()
+                .put("limit of ").put(maxEntryMemBytes)
+                .put(" memory exceeded in EncodedSort (raise ")
+                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
+                .put(" or ")
+                .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
+                .put(')');
     }
 }

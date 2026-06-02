@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ListColumnFilter;
@@ -137,9 +138,11 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         // counter from the very first cursor.
         this.chain = new LimitedSizeLongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxPages(),
+                configuration.getSqlSortKeyMaxBytes(),
                 configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages(),
+                configuration.getSqlSortLightValueMaxBytes(),
+                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
                 false
         );
 
@@ -268,9 +271,11 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         // counter from the very first cursor.
         LongTreeChain chain = new LongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxPages(),
+                configuration.getSqlSortKeyMaxBytes(),
                 configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages(),
+                configuration.getSqlSortLightValueMaxBytes(),
+                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
                 false
         );
         this.cursor = new SortedLightRecordCursor(chain, comparator, rankMaps);

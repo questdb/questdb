@@ -53,13 +53,9 @@ public class QueryActivityMemoryTrackerTest extends AbstractCairoTest {
     public void testMemoryLimitColumnReflectsConfiguredLimit() throws Exception {
         // query_activity reports the running query against itself; with a limit
         // configured, memory_limit shows the cap and memory_used is non-negative.
-        assertQuery(
-                "used_ok\tmemory_limit\n" +
-                        "true\t134217728\n",
-                "select memory_used >= 0 used_ok, memory_limit from query_activity()",
-                null,
-                false,
-                false
-        );
+        assertQuery("select memory_used >= 0 used_ok, memory_limit from query_activity()")
+                .noRandomAccess()
+                .returns("used_ok\tmemory_limit\n" +
+                        "true\t134217728\n");
     }
 }

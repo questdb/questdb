@@ -36,13 +36,15 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (0), " +
                     "(1), (127), " +
                     "(-1), (-128)");
-            assertSql("b\tsign\n" +
+            assertQuery("select b, sign(b) from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("b\tsign\n" +
                             "0\t0\n" +
                             "1\t1\n" +
                             "127\t1\n" +
                             "-1\t-1\n" +
-                            "-128\t-1\n",
-                    "select b, sign(b) from tab");
+                            "-128\t-1\n");
         });
     }
 
@@ -54,7 +56,10 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
                     "(2.2250738585072014E-308), (1.0), (1.7976931348623157E308), ('Infinity'::double), " +
                     "(-2.2250738585072014E-308), (-1.0), (-1.7976931348623157E308), ('-Infinity'::double)," +
                     "(null) ");
-            assertSql("d\tsign\n" +
+            assertQuery("select d, sign(d) from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("d\tsign\n" +
                             "0.0\t0.0\n" +
                             "-0.0\t0.0\n" +
                             "2.2250738585072014E-308\t1.0\n" +
@@ -65,8 +70,7 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
                             "-1.0\t-1.0\n" +
                             "-1.7976931348623157E308\t-1.0\n" +
                             "null\tnull\n" +
-                            "null\tnull\n",
-                    "select d, sign(d) from tab");
+                            "null\tnull\n");
         });
     }
 
@@ -78,7 +82,10 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
                     "(1.4E-45F), (1.0), (3.4028235E38F), (cast('Infinity' as float)), " +
                     "(-1.4E-45F), (-1.0), (-3.4028235E38F), (cast('-Infinity' as float))," +
                     "(null) ");
-            assertSql("f\tsign\n" +
+            assertQuery("select f, sign(f) from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("f\tsign\n" +
                             "0.0\t0.0\n" +
                             "-0.0\t-0.0\n" +
                             "1.4E-45\t1.0\n" +
@@ -89,8 +96,7 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
                             "-1.0\t-1.0\n" +
                             "-3.4028235E38\t-1.0\n" +
                             "null\tnull\n" +
-                            "null\tnull\n",
-                    "select f, sign(f) from tab");
+                            "null\tnull\n");
         });
     }
 
@@ -102,14 +108,16 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
                     "(1), (2147483647), " +
                     "(-1), (-2147483647)," +
                     "(null) ");
-            assertSql("i\tsign\n" +
+            assertQuery("select i, sign(i) from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("i\tsign\n" +
                             "0\t0\n" +
                             "1\t1\n" +
                             "2147483647\t1\n" +
                             "-1\t-1\n" +
                             "-2147483647\t-1\n" +
-                            "null\tnull\n",
-                    "select i, sign(i) from tab");
+                            "null\tnull\n");
         });
     }
 
@@ -121,14 +129,16 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
                     "(1L), (9223372036854775807L), " +
                     "(-1L), (-9223372036854775807L)," +
                     "(null) ");
-            assertSql("l\tsign\n" +
+            assertQuery("select l, sign(l) from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("l\tsign\n" +
                             "0\t0\n" +
                             "1\t1\n" +
                             "9223372036854775807\t1\n" +
                             "-1\t-1\n" +
                             "-9223372036854775807\t-1\n" +
-                            "null\tnull\n",
-                    "select l, sign(l) from tab");
+                            "null\tnull\n");
         });
     }
 
@@ -139,13 +149,15 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (0), " +
                     "(1), (32767), " +
                     "(-1), (-32768)");
-            assertSql("s\tsign\n" +
+            assertQuery("select s, sign(s) from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("s\tsign\n" +
                             "0\t0\n" +
                             "1\t1\n" +
                             "32767\t1\n" +
                             "-1\t-1\n" +
-                            "-32768\t-1\n",
-                    "select s, sign(s) from tab");
+                            "-32768\t-1\n");
         });
     }
 }

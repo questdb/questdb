@@ -75,7 +75,11 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
             // Force-open partition 0 via a regular query so that the table reader
             // has it open before we create the time frame cursor. This exercises
             // the addOpenPartitionFrames() fast path for already-open partitions.
-            assertSql("count\n24\n", "SELECT count() FROM x WHERE t < '1970-01-02'");
+            assertQuery("SELECT count() FROM x WHERE t < '1970-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n24\n");
 
             try (RecordCursorFactory factory = select("x")) {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());
@@ -85,10 +89,10 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
 
                 // TimeFrameCursorImpl: partition 0 is already open, partitions 1-2 are lazy.
                 try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
-                    assertForwardScanWithColumnData(cursor, metadata, sink);
+                    assertForwardScanWithColumnData(cursor, metadata);
                 }
                 // ConcurrentTimeFrameCursorImpl: same scenario.
-                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata, sink));
+                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata));
             }
             execute("DROP TABLE x");
         });
@@ -214,7 +218,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     Assert.assertNotNull(cursor);
                     try {
                         cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());
-                        assertForwardScanWithColumnData(cursor, metadata, sink);
+                        assertForwardScanWithColumnData(cursor, metadata);
                     } finally {
                         Misc.free(cursor);
                     }
@@ -334,7 +338,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
 
                     Assert.assertTrue(sharedState.getFrameCount() > 0);
                     TestUtils.printSql(engine, sqlExecutionContext, "x WHERE t < '1970-01-03'", sink);
-                    assertForwardScanWithColumnData(cursor, metadata, sink);
+                    assertForwardScanWithColumnData(cursor, metadata);
                 } finally {
                     Misc.free(cursor);
                     Misc.free(sharedState);
@@ -530,9 +534,9 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());
                 RecordMetadata metadata = factory.getMetadata();
                 try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
-                    assertForwardScanWithColumnData(cursor, metadata, sink);
+                    assertForwardScanWithColumnData(cursor, metadata);
                 }
-                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata, sink));
+                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata));
             }
             execute("DROP TABLE x");
         });
@@ -568,9 +572,9 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());
                 RecordMetadata metadata = factory.getMetadata();
                 try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
-                    assertForwardScanWithColumnData(cursor, metadata, sink);
+                    assertForwardScanWithColumnData(cursor, metadata);
                 }
-                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata, sink));
+                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata));
             }
             execute("DROP TABLE x");
         });
@@ -599,9 +603,9 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());
                 RecordMetadata metadata = factory.getMetadata();
                 try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
-                    assertForwardScanWithColumnData(cursor, metadata, sink);
+                    assertForwardScanWithColumnData(cursor, metadata);
                 }
-                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata, sink));
+                testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata));
             }
             execute("DROP TABLE x");
         });
@@ -1282,8 +1286,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
 
     private static void assertForwardScanWithColumnData(
             TimeFrameCursor cursor,
-            RecordMetadata metadata,
-            CharSequence expected
+            RecordMetadata metadata
     ) {
         Record record = cursor.getRecord();
         TimeFrame frame = cursor.getTimeFrame();
@@ -1296,7 +1299,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                 TestUtils.println(record, metadata, actualSink);
             }
         }
-        TestUtils.assertEquals(expected, actualSink);
+        TestUtils.assertEquals(AbstractCairoTest.sink, actualSink);
     }
 
     private static void executeWithPool(CustomisableRunnable runnable) throws Exception {

@@ -48,6 +48,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     private static final Log LOG = LogFactory.getLog(MemoryCARWImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private final int maxPages;
+    private final String maxPagesConfigKey;
     private final int memoryTag;
     private long appendAddress = 0;
     // Per-query native memory tracker bound by the owning factory / function at
@@ -60,8 +61,13 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     private long sizeMsb;
 
     public MemoryCARWImpl(long pageSize, int maxPages, int memoryTag) {
+        this(pageSize, maxPages, memoryTag, null);
+    }
+
+    public MemoryCARWImpl(long pageSize, int maxPages, int memoryTag, String maxPagesConfigKey) {
         this.memoryTag = memoryTag;
         this.maxPages = maxPages;
+        this.maxPagesConfigKey = maxPagesConfigKey;
         setPageSize(pageSize);
     }
 
@@ -204,7 +210,12 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         }
 
         if (newPageCount > maxPages) {
-            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
+            LimitOverflowException ex = LimitOverflowException.instance();
+            ex.put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
+            if (maxPagesConfigKey != null) {
+                ex.put(" (raise ").put(maxPagesConfigKey).put(')');
+            }
+            throw ex;
         }
 
         long newBaseAddress;

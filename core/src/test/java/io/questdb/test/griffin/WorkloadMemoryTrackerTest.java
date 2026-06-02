@@ -97,15 +97,14 @@ public class WorkloadMemoryTrackerTest extends AbstractCairoTest {
 
             // The refresh breached the MAT_VIEW_REFRESH limit, so the view is invalid
             // and its reason carries the per-query message tagged with the workload.
-            assertQueryNoLeakCheck(
-                    "view_status\toom\tworkload\n" +
-                            "invalid\ttrue\ttrue\n",
-                    "SELECT view_status, " +
-                            "invalidation_reason LIKE '%query memory limit exceeded%' AS oom, " +
-                            "invalidation_reason LIKE '%workload=MAT_VIEW_REFRESH%' AS workload " +
-                            "FROM materialized_views WHERE view_name = 'mv'",
-                    null
-            );
+            assertQuery("SELECT view_status, " +
+                    "invalidation_reason LIKE '%query memory limit exceeded%' AS oom, " +
+                    "invalidation_reason LIKE '%workload=MAT_VIEW_REFRESH%' AS workload " +
+                    "FROM materialized_views WHERE view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\toom\tworkload\n" +
+                            "invalid\ttrue\ttrue\n");
         });
     }
 
@@ -125,12 +124,11 @@ public class WorkloadMemoryTrackerTest extends AbstractCairoTest {
                 );
                 drainWalAndMatViewQueues();
             }
-            assertQueryNoLeakCheck(
-                    "view_status\n" +
-                            "valid\n",
-                    "SELECT view_status FROM materialized_views WHERE view_name = 'mv'",
-                    null
-            );
+            assertQuery("SELECT view_status FROM materialized_views WHERE view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\n" +
+                            "valid\n");
         });
     }
 
@@ -145,12 +143,11 @@ public class WorkloadMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE MATERIALIZED VIEW mv AS (SELECT k, last(v) AS v, ts FROM base SAMPLE BY 1h) PARTITION BY DAY");
             drainWalAndMatViewQueues();
 
-            assertQueryNoLeakCheck(
-                    "view_status\n" +
-                            "valid\n",
-                    "SELECT view_status FROM materialized_views WHERE view_name = 'mv'",
-                    null
-            );
+            assertQuery("SELECT view_status FROM materialized_views WHERE view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\n" +
+                            "valid\n");
         });
     }
 
@@ -167,15 +164,14 @@ public class WorkloadMemoryTrackerTest extends AbstractCairoTest {
             execute("UPDATE t SET v = alloc_tracked(1_048_576)");
             drainWalQueue();
 
-            assertQueryNoLeakCheck(
-                    "name\tsuspended\toom\tworkload\n" +
-                            "t\ttrue\ttrue\ttrue\n",
-                    "SELECT name, suspended, " +
-                            "errorMessage LIKE '%query memory limit exceeded%' AS oom, " +
-                            "errorMessage LIKE '%workload=WAL_APPLY%' AS workload " +
-                            "FROM wal_tables() WHERE name = 't'",
-                    null
-            );
+            assertQuery("SELECT name, suspended, " +
+                    "errorMessage LIKE '%query memory limit exceeded%' AS oom, " +
+                    "errorMessage LIKE '%workload=WAL_APPLY%' AS workload " +
+                    "FROM wal_tables() WHERE name = 't'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("name\tsuspended\toom\tworkload\n" +
+                            "t\ttrue\ttrue\ttrue\n");
         });
     }
 
@@ -194,12 +190,11 @@ public class WorkloadMemoryTrackerTest extends AbstractCairoTest {
                 execute("UPDATE t SET v = alloc_tracked(1024)");
                 drainWalQueue();
             }
-            assertQueryNoLeakCheck(
-                    "suspended\n" +
-                            "false\n",
-                    "SELECT suspended FROM wal_tables() WHERE name = 't'",
-                    null
-            );
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("suspended\n" +
+                            "false\n");
         });
     }
 
@@ -216,23 +211,19 @@ public class WorkloadMemoryTrackerTest extends AbstractCairoTest {
             execute("UPDATE t SET v = alloc_tracked(1024)");
             drainWalQueue();
 
-            assertQueryNoLeakCheck(
-                    "suspended\n" +
-                            "false\n",
-                    "SELECT suspended FROM wal_tables() WHERE name = 't'",
-                    null
-            );
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("suspended\n" +
+                            "false\n");
             // alloc_tracked() returns 42 for all 10 rows -> sum 420. The non-keyed
             // aggregate cursor reports a fixed size of 1, hence the explicit expectSize.
-            assertQueryNoLeakCheck(
-                    "sum\n" +
-                            "420\n",
-                    "SELECT sum(v) AS sum FROM t",
-                    null,
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("SELECT sum(v) AS sum FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("sum\n" +
+                            "420\n");
         });
     }
 }
