@@ -390,10 +390,14 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         // (WalWriter does not validate the table type), the same technique RecentWriteTrackerIntegrationTest
         // uses to drive this branch deterministically.
         //
-        // Like the ADD COLUMN case this is path coverage, not a strict regression guard: a MAT_VIEW_INVALIDATE
-        // builds no row-derived state, so a single instance is self-consistent whether or not the insert is
-        // skipped (the covering REPLACE_RANGE overwrites the inserted rows either way). The barrier is
-        // conservative future-proofing; this test pins that the path applies cleanly and returns correct data.
+        // STRICT guard. A MAT_VIEW_INVALIDATE builds no row-derived state, so the covering REPLACE_RANGE
+        // overwrites the inserted rows either way and the rendered data is identical with or without the fix.
+        // The barrier is therefore pinned via physically-written rows, the same proxy the mat-view exemption
+        // tests use: on a REGULAR table the barrier stops the scan, so the INSERT is applied - its 10 rows
+        // reach disk ahead of the REPLACE_RANGE's 10 - for a delta of 20. This is the exact opposite of
+        // testReplaceRangeSkipsInsertBeforeBarrierOnMatView, where a mat view scans past the same barrier and
+        // skips the INSERT for a delta of 10. If the fix regressed and a regular table scanned past the
+        // MAT_VIEW_INVALIDATE, the INSERT would be skipped and this delta would be 10.
         assertMemoryLeak(() -> {
             execute("create table x (id int, ts timestamp) timestamp(ts) partition by DAY WAL");
             final TableToken tableToken = engine.verifyTableName("x");
@@ -413,15 +417,12 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             }
             execute(insert.toString());
 
-            // Surviving rows at HIGHER timestamps, outside the REPLACE_RANGE.
-            execute("insert into x values (100,'2022-02-24T05:00:00.000000Z'),(101,'2022-02-24T05:01:00.000000Z')");
-
             // MAT_VIEW_INVALIDATE - the non-data (walId > 0) barrier between the insert and the replace.
             try (WalWriter ww = engine.getWalWriter(tableToken)) {
                 ww.resetMatViewState(1, 1, true, "test invalidation", Numbers.LONG_NULL, null, -1);
             }
 
-            // REPLACE_RANGE fully covering the first insert, with new id values.
+            // REPLACE_RANGE fully covering the insert, with new id values.
             try (WalWriter ww = engine.getWalWriter(tableToken)) {
                 final int idIdx = ww.getMetadata().getColumnIndex("id");
                 for (int i = 0; i < 10; i++) {
@@ -433,9 +434,10 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             }
 
             // Apply insert + mat-view-invalidate + replace in one batch.
+            final long physicalRowsBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
             drainWalQueue();
 
-            // The replaced rows carry their new id values; the surviving rows are untouched.
+            // Only the replacement values remain; the path applies cleanly and returns correct data.
             assertSql(
                     """
                             id\tts
@@ -449,10 +451,17 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             1007\t2022-02-24T00:07:00.000000Z
                             1008\t2022-02-24T00:08:00.000000Z
                             1009\t2022-02-24T00:09:00.000000Z
-                            100\t2022-02-24T05:00:00.000000Z
-                            101\t2022-02-24T05:01:00.000000Z
                             """,
                     "select * from x order by ts"
+            );
+
+            // The data assertion above is identical whether or not the INSERT is skipped, so it does not
+            // guard the barrier. Pin it via physically-written rows: the barrier stops the scan, so the
+            // INSERT's 10 rows are materialised ahead of the REPLACE_RANGE's 10. If the fix regressed and a
+            // regular table scanned past the MAT_VIEW_INVALIDATE, the INSERT would be skipped, delta 10.
+            Assert.assertEquals(
+                    20,
+                    engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - physicalRowsBefore
             );
         });
     }
