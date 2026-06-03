@@ -136,7 +136,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARQUET_CACHE_DISK_DIR("cairo.sql.parquet.cache.disk.dir"),
     CAIRO_SQL_PARQUET_CACHE_DISK_SIZE("cairo.sql.parquet.cache.disk.size"),
     CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE("cairo.sql.parquet.cache.memory.size"),
-    CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY("cairo.sql.parquet.frame.cache.capacity"),
+    CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY("cairo.sql.parquet.frame.cache.capacity"), // deprecated, use CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE
     CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED("cairo.sql.parquet.row.group.pruning.enabled"),
     CAIRO_PAGE_FRAME_SHARD_COUNT("cairo.page.frame.shard.count"),
     CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY("cairo.page.frame.task.pool.capacity"),

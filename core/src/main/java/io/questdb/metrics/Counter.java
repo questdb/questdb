@@ -24,8 +24,6 @@
 
 package io.questdb.metrics;
 
-import org.jetbrains.annotations.TestOnly;
-
 public interface Counter extends Target {
 
     void add(long value);
@@ -36,6 +34,5 @@ public interface Counter extends Target {
         add(1);
     }
 
-    @TestOnly
     void reset();
 }

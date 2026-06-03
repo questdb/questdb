@@ -38,10 +38,12 @@ public class ParquetDecodeMetrics implements Mutable {
     private final Counter restoresCounter;
     private final Counter spillFailuresCounter;
     private final Counter spillsCounter;
+    private final Counter spillsSkippedQuotaCounter;
 
     public ParquetDecodeMetrics(MetricsRegistry metricsRegistry) {
         this.spillsCounter = metricsRegistry.newCounter("parquet_decode_buffer_spills");
         this.spillFailuresCounter = metricsRegistry.newCounter("parquet_decode_buffer_spill_failures");
+        this.spillsSkippedQuotaCounter = metricsRegistry.newCounter("parquet_decode_buffer_spills_skipped_quota");
         this.restoresCounter = metricsRegistry.newCounter("parquet_decode_buffer_restores");
     }
 
@@ -49,6 +51,7 @@ public class ParquetDecodeMetrics implements Mutable {
     public void clear() {
         spillsCounter.reset();
         spillFailuresCounter.reset();
+        spillsSkippedQuotaCounter.reset();
         restoresCounter.reset();
     }
 
@@ -64,6 +67,10 @@ public class ParquetDecodeMetrics implements Mutable {
         spillsCounter.add(1);
     }
 
+    public void incSpillsSkippedQuota() {
+        spillsSkippedQuotaCounter.add(1);
+    }
+
     public long restores() {
         return restoresCounter.getValue();
     }
@@ -74,5 +81,9 @@ public class ParquetDecodeMetrics implements Mutable {
 
     public long spills() {
         return spillsCounter.getValue();
+    }
+
+    public long spillsSkippedQuota() {
+        return spillsSkippedQuotaCounter.getValue();
     }
 }

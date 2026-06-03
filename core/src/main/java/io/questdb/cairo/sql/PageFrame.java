@@ -78,6 +78,9 @@ public interface PageFrame {
      * the Parquet decode-buffer pool consults this via
      * {@link PageFrameAddressCache#isColdParquetPartition(int)} to gate the
      * disk-spill path.
+     * <p>
+     * TODO: wire to real cold-tier metadata once remote storage lands. Until
+     * then this stub keeps the disk-spill path unreachable in production.
      */
     default boolean isColdParquetPartition() {
         return false;

@@ -251,6 +251,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         this.external = external;
     }
 
+    /**
+     * Converts a frame index to an offset into the flat column arrays.
+     * Usage: {@code cache.getPageAddresses().getQuick(cache.toColumnOffset(frameIndex) + columnIndex)}
+     */
     public int toColumnOffset(int frameIndex) {
         return frameIndex * columnCount;
     }

@@ -131,16 +131,6 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
     void close();
 
     /**
-     * Declares the access pattern the enclosing factory will use when calling
-     * {@link #recordAt(Record, long)} on this cursor. The Parquet decode-buffer
-     * pool scales its byte budget by the hint: monotonic walks get a smaller
-     * effective ceiling, scattered walks get the full configured budget.
-     * Wrappers that hold a delegate cursor must forward the call.
-     */
-    default void setParquetDecodeHint(ParquetDecodeHint hint) {
-    }
-
-    /**
      * Signals the cursor that outer code/cursor will do a limited iteration through
      * the rows, e.g. it implements LIMIT N. In such a case, some parallel cursors
      * like async filtered cursor may optimize their execution by limiting the number
@@ -301,6 +291,16 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * a memory size in bytes, but a stable value used to detect state changes.
      */
     long preComputedStateSize();
+
+    /**
+     * Declares the access pattern the enclosing factory will use when calling
+     * {@link #recordAt(Record, long)} on this cursor. The Parquet decode-buffer
+     * pool scales its byte budget by the hint: monotonic walks get a smaller
+     * effective ceiling, scattered walks get the full configured budget.
+     * Wrappers that hold a delegate cursor must forward the call.
+     */
+    default void setParquetDecodeHint(ParquetDecodeHint hint) {
+    }
 
     /**
      * Returns the total number of records available in this cursor.

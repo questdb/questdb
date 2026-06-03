@@ -1174,6 +1174,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         return sqlParquetCacheDiskDir;
     }
 
+    // TODO: pick a non-zero default once PageFrame.isColdParquetPartition() is wired to real cold-tier metadata.
     @Override
     public long getSqlParquetCacheDiskSize() {
         return 0;

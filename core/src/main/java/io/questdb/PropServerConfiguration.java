@@ -2213,8 +2213,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewCoveringIndexEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_COVERING_INDEX_ENABLED, false);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.sqlParallelWorkStealingSpinTimeout = getNanos(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 50_000);
-            this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
+            this.sqlParquetFrameCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8);
             this.sqlParquetCacheMemorySize = Math.max(getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256L * Numbers.SIZE_1MB), 0L);
+            // TODO: pick a non-zero default once PageFrame.isColdParquetPartition() is wired to real cold-tier metadata.
             this.sqlParquetCacheDiskSize = Math.max(getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_SIZE, 0L), 0L);
             this.sqlParquetCacheDiskDir = getString(properties, env, PropertyKey.CAIRO_SQL_PARQUET_CACHE_DISK_DIR, tmpRoot);
             this.sqlParquetRowGroupPruningEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED, true);
