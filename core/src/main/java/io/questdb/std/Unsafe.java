@@ -46,9 +46,14 @@ public final class Unsafe {
     public static final long INT_SCALE;
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
-    // Layout of the 16-byte `{used, limit}` block backing a MemoryTracker.
-    // Must match `struct MemoryTracker` in `allocator.rs`.
-    public static final long MEMORY_TRACKER_BLOCK_SIZE = 16;
+    // The `{used, limit}` counters backing a MemoryTracker occupy the first 16
+    // bytes and must match `struct MemoryTracker` in `allocator.rs` (Rust reads
+    // `used` at offset 0, `limit` at offset 8). The block is allocated a full
+    // cache line wide with the counters at offset 0 so each pooled tracker owns
+    // its own line: a query's workers updating `used` cannot invalidate an
+    // unrelated concurrent query's counter (cross-query false sharing). Rust
+    // views only the 16-byte head, never the trailing padding.
+    public static final long MEMORY_TRACKER_BLOCK_SIZE = Misc.CACHE_LINE_SIZE;
     public static final long MEMORY_TRACKER_LIMIT_OFFSET = 8;
     public static final long MEMORY_TRACKER_USED_OFFSET = 0;
     // Size of the native QdbAllocator block. Layout: {mem_tracking, memory_tracker, tagged_used, memory_tag}.

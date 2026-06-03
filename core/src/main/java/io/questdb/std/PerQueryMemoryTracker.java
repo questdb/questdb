@@ -42,7 +42,7 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
     PerQueryMemoryTracker(PerQueryMemoryTrackerProvider provider) {
         this.provider = provider;
         this.nativeAddress = Unsafe.malloc(Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
-        // The 16-byte block must start zeroed: used = 0, limit = 0.
+        // The counters must start zeroed: used = 0, limit = 0.
         Unsafe.getUnsafe().putLong(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
         Unsafe.getUnsafe().putLong(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, 0L);
     }
@@ -89,7 +89,7 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
     }
 
     /**
-     * Releases all native memory owned by this tracker: the 16-byte
+     * Releases all native memory owned by this tracker: the
      * {@code {used, limit}} block and every per-tag Rust allocator block. Called
      * by the provider when the pooled tracker is finally disposed (engine
      * shutdown or pool-capacity overflow).
