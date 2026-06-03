@@ -758,7 +758,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                                             rnd_str('hello', 'world', '!') a_string,
                                             rnd_varchar('alpha', 'beta', 'gamma', 'delta') a_varchar,
                                             rnd_symbol('s1','s2','s3') a_symbol,
-                                            timestamp_sequence(0, 36000000) as ts
+                                            timestamp_sequence(0, 36_000_000) as ts
                                           from long_sequence(5000)
                                         ) timestamp(ts) partition by hour;""",
                                 sqlExecutionContext
@@ -798,7 +798,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                                             rnd_varchar('row', 'col', 'item', 'pad-large-string-here') a_varchar,
                                             rnd_varchar(null, 'optional', '') a_varchar_nullable,
                                             rnd_int() an_int,
-                                            timestamp_sequence(0, 36000000) as ts
+                                            timestamp_sequence(0, 36_000_000) as ts
                                           from long_sequence(3000)
                                         ) timestamp(ts) partition by hour;""",
                                 sqlExecutionContext

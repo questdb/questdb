@@ -152,6 +152,11 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            baseCursor.setParquetDecodeHint(hint);
+        }
+
+        @Override
         public long size() {
             return baseCursor.size();
         }

@@ -52,17 +52,22 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
             @NotNull RecordMetadata metadata
     ) {
         this.metadata = metadata;
-        recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-        recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
-        frameAddressCache = new PageFrameAddressCache();
-        frameMemoryPool = new PageFrameMemoryPool(
-                configuration.getSqlParquetCacheMemorySize(),
-                configuration.getSqlParquetCacheDiskSize(),
-                configuration.getSqlParquetCacheDiskDir(),
-                configuration.getFilesFacade(),
-                configuration.getMkDirMode(),
-                configuration.getMetrics().parquetDecodeMetrics()
-        );
+        try {
+            recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
+            frameAddressCache = new PageFrameAddressCache();
+            frameMemoryPool = new PageFrameMemoryPool(
+                    configuration.getSqlParquetCacheMemorySize(),
+                    configuration.getSqlParquetCacheDiskSize(),
+                    configuration.getSqlParquetCacheDiskDir(),
+                    configuration.getFilesFacade(),
+                    configuration.getMkDirMode(),
+                    configuration.getMetrics().parquetDecodeMetrics()
+            );
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
