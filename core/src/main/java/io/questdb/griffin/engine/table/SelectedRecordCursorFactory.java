@@ -477,6 +477,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             return baseFrame.getPartitionLo();
         }
 
+        @Override
+        public boolean isColdParquetPartition() {
+            return baseFrame.isColdParquetPartition();
+        }
+
         public SelectedPageFrame of(PageFrame basePageFrame) {
             this.baseFrame = basePageFrame;
             return this;

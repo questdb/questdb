@@ -781,9 +781,8 @@ public interface CairoConfiguration {
     long getSqlParquetCacheMemorySize();
 
     /**
-     * @deprecated Replaced by {@link #getSqlParquetCacheMemorySize()}.
-     * The value is still read by existing config wiring but no longer controls
-     * eviction; the byte budget is the sole trigger.
+     * @deprecated Replaced by {@link #getSqlParquetCacheMemorySize()}. The value is
+     * parsed for backward-compatible config files but no longer consulted at runtime.
      */
     @Deprecated
     int getSqlParquetFrameCacheCapacity();

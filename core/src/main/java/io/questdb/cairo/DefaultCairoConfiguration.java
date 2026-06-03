@@ -89,7 +89,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
         this.checkpointRoot = PropServerConfiguration.rootSubdir(dbRoot, TableUtils.CHECKPOINT_DIRECTORY);
         this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(dbRoot, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
-        this.sqlParquetCacheDiskDir = this.dbRoot + Files.SEPARATOR + "tmp";
+        this.sqlParquetCacheDiskDir = this.dbRoot != null ? this.dbRoot + Files.SEPARATOR + "tmp" : null;
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
@@ -1181,7 +1181,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSqlParquetCacheMemorySize() {
-        return 256L * 1024 * 1024;
+        return 256L * Numbers.SIZE_1MB;
     }
 
     @Override

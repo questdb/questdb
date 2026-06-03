@@ -2018,6 +2018,11 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetCacheCleanStaleSpillFilesNoOpWhenDirEmpty() throws Exception {
+        TestUtils.assertMemoryLeak(() -> PageFrameMemoryPool.cleanStaleDiskSpillFiles(FilesFacadeImpl.INSTANCE, ""));
+    }
+
+    @Test
     public void testParquetCacheCleanStaleSpillFilesNoOpWhenDirMissing() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
@@ -2026,6 +2031,30 @@ public class ParquetTest extends AbstractCairoTest {
                 Assert.assertFalse(ff.exists(p.of(missingDir).$()));
                 PageFrameMemoryPool.cleanStaleDiskSpillFiles(ff, missingDir);
                 Assert.assertFalse(ff.exists(p.of(missingDir).$()));
+            }
+        });
+    }
+
+    @Test
+    public void testParquetCacheCleanStaleSpillFilesPreservesSubdirectories() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            String dir = temp.getRoot().getAbsolutePath();
+            try (Path path = new Path()) {
+                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put("subdir").$();
+                Assert.assertEquals(0, ff.mkdirs(path.slash(), configuration.getMkDirMode()));
+
+                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put(1L).put('-').put(0).$();
+                long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd >= 0);
+                ff.close(fd);
+
+                PageFrameMemoryPool.cleanStaleDiskSpillFiles(ff, dir);
+
+                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put("subdir").$();
+                Assert.assertTrue(ff.exists(path.$()));
+                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put(1L).put('-').put(0).$();
+                Assert.assertFalse(ff.exists(path.$()));
             }
         });
     }
@@ -2120,6 +2149,32 @@ public class ParquetTest extends AbstractCairoTest {
                     "select k, sum(v), count() from src_native order by k",
                     "select k, sum(v), count() from src order by k"
             );
+        });
+    }
+
+    @Test
+    public void testParquetCacheSpillDirMkdirsFailureThrows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String missingDir = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "spill-" + System.nanoTime();
+            FilesFacade ff = new FilesFacadeImpl() {
+                @Override
+                public int mkdirs(Path path, int mode) {
+                    return 13;
+                }
+            };
+            try {
+                new PageFrameMemoryPool(
+                        1024L,
+                        1024L,
+                        missingDir,
+                        ff,
+                        configuration.getMkDirMode(),
+                        configuration.getMetrics().parquetDecodeMetrics()
+                ).close();
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not create parquet spill directory");
+            }
         });
     }
 
