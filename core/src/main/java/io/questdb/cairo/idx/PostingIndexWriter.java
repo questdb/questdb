@@ -492,11 +492,11 @@ public class PostingIndexWriter implements IndexWriter {
             // non-covering path returns short counts. Consolidate every gen into
             // a single dense gen-0 at offset 0 via the seal path instead: seal()
             // first runs flushAllPending to drain the final pending batch, then
-            // sealFull re-encodes all gens (all sparse here, so never the
-            // incremental path) into one dense gen-0 at offset 0 -- exactly the
-            // shape the by-copy rebuild and the fast path both expect.
-            // coverCount == 0 keeps seal() sidecar-free, matching commitDense's
-            // contract; rebuildSidecars writes the sidecars afterward.
+            // re-encodes all gens into one dense gen-0 at offset 0 -- exactly the
+            // shape the by-copy rebuild and the fast path both expect. (Whether
+            // seal takes the full or incremental re-encode, gen-0 lands at offset
+            // 0.) coverCount == 0 keeps seal() sidecar-free, matching
+            // commitDense's contract; rebuildSidecars writes the sidecars after.
             seal();
         } else {
             flushAllPendingDense();

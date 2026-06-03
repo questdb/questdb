@@ -499,7 +499,7 @@ public class PostingIndexBenchmarkSuite {
     @OutputTimeUnit(TimeUnit.MILLISECONDS)
     @Fork(1)
     @Warmup(iterations = 1)
-    @Measurement(iterations = 3)
+    @Measurement(iterations = 2)
     public void walLargePartitionO3SpillReseal(WalLargePartitionO3SpillState s) throws Exception {
         // Same O3-mutating insert as walLargePartitionO3Insert (forces
         // sealPostingIndexForPartition's canSkipRebuild=false reseal:
@@ -2361,6 +2361,17 @@ public class PostingIndexBenchmarkSuite {
                 @Override
                 public int getRndFunctionMemoryMaxPages() {
                     return 4096;
+                }
+
+                @Override
+                public boolean isPostingIndexAutoIncludeTimestamp() {
+                    // Without this, POSTING auto-covers the designated timestamp,
+                    // so the "posting" variant would also be covering and the two
+                    // @Param values would measure the same path. Disabling it keeps
+                    // "posting" on the non-covering reseal (commitDense -> seal,
+                    // no rebuildSidecars) and "posting_covering" on the covering
+                    // reseal via the explicit INCLUDE (price) below.
+                    return false;
                 }
             };
             engine = new CairoEngine(config);
