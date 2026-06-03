@@ -6092,7 +6092,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void doClose(boolean truncate) {
         // destroy() may have already closed everything
         boolean tx = inTransaction();
-        closeDeferredPostingSealPurges();
+        // Best-effort cleanup that now does I/O: a spill mmap, and a direct
+        // purge-log persist that can open a TableWriter+SqlCompiler. A throw
+        // here would skip every free below and the lock release, leaking the
+        // writer's native memory and stranding the table lock. The I/O leaf
+        // methods already log-and-swallow, but the orchestration around them
+        // is not guarded, so an Error or a future throwing edit could still
+        // escape. Wrap the call to keep doClose's cleanup invariant intact.
+        try {
+            closeDeferredPostingSealPurges();
+        } catch (Throwable th) {
+            LOG.critical()
+                    .$("posting seal-purge close cleanup failed [table=").$(tableToken)
+                    .$(", err=").$(th)
+                    .I$();
+        }
         freeSymbolMapWriters();
         Misc.freeObjList(indexers);
         denseIndexers.clear();
