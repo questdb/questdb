@@ -111,16 +111,11 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
     }
 
     private long limitFor(MemoryTrackerWorkload workload) {
-        switch (workload) {
-            case QUERY:
-                return limitQuery;
-            case MAT_VIEW_REFRESH:
-                return limitMatViewRefresh;
-            case WAL_APPLY:
-                return limitWalApply;
-            default:
-                throw new AssertionError("unknown workload: " + workload);
-        }
+        return switch (workload) {
+            case QUERY -> limitQuery;
+            case MAT_VIEW_REFRESH -> limitMatViewRefresh;
+            case WAL_APPLY -> limitWalApply;
+        };
     }
 
     void release(PerQueryMemoryTracker tracker) {
