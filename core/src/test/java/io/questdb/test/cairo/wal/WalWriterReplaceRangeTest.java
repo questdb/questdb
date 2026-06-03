@@ -31,6 +31,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -124,6 +125,24 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             // rejected on a mat view, so it never reaches the exempted soft-barrier path.
             assertAlterIsStructural("alter table t alter column s1 type varchar", true);
         });
+    }
+
+    @Test
+    public void testNonDataWalTxnTypesStopTheSkipScan() {
+        // calculateSkipTransactionCount stops the skip look-ahead at every non-data WAL transaction via
+        // !isDataType(futureType) - a structural change, an SQL statement, a TRUNCATE, a MAT_VIEW_INVALIDATE or
+        // a VIEW_DEFINITION. The end-to-end tests drive the MAT_VIEW_INVALIDATE, structural and SQL arms, but
+        // VIEW_DEFINITION (type 5) has no WalWriter entry point here to commit, so its barrier behaviour rests
+        // entirely on this classification. Pin it: only DATA and MAT_VIEW_DATA are data types, every other type
+        // is a barrier. If a new type were added and wrongly classified as data, an insert before it could be
+        // skipped and reopen the cross-instance symbol-map divergence this guards against.
+        Assert.assertTrue(WalTxnType.isDataType(WalTxnType.DATA));
+        Assert.assertTrue(WalTxnType.isDataType(WalTxnType.MAT_VIEW_DATA));
+        Assert.assertFalse(WalTxnType.isDataType(WalTxnType.NONE));
+        Assert.assertFalse(WalTxnType.isDataType(WalTxnType.SQL));
+        Assert.assertFalse(WalTxnType.isDataType(WalTxnType.TRUNCATE));
+        Assert.assertFalse(WalTxnType.isDataType(WalTxnType.MAT_VIEW_INVALIDATE));
+        Assert.assertFalse(WalTxnType.isDataType(WalTxnType.VIEW_DEFINITION));
     }
 
     @Test
@@ -434,6 +453,81 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             101\t2022-02-24T05:01:00.000000Z
                             """,
                     "select * from x order by ts"
+            );
+        });
+    }
+
+    @Test
+    public void testReplaceRangeDoesNotSkipInsertBeforeSqlBarrierAndTruncateOnMatView() throws Exception {
+        // The mat-view exemption keeps an SQL transaction a HARD barrier even when a TRUNCATE follows it. This is
+        // the truncate-clamp counterpart of testReplaceRangeDoesNotSkipInsertBeforeSqlBarrierOnMatView (which
+        // puts the SQL barrier before a REPLACE_RANGE) and the SQL-barrier counterpart of
+        // testReplaceRangeSkipsInsertBeforeTruncateAfterBarrierOnMatView (which uses a MAT_VIEW_INVALIDATE soft
+        // barrier and so DOES skip the insert).
+        //
+        // Sequence on a mat view: INSERT(0) -> ADD INDEX (SQL, walId>0)(1) -> TRUNCATE(2). At the SQL barrier the
+        // `isMatView && futureType != SQL` check is false (futureType IS SQL), so the scan breaks there and never
+        // reaches the truncate clamp; the insert is applied, then truncated. If the futureType != SQL carve-out
+        // regressed and treated SQL as a soft barrier on a mat view, the scan would record the barrier, reach the
+        // truncate, and skip the insert (clamped to the barrier) - so its rows would never reach disk.
+        //
+        // STRICT guard: the truncate wipes the insert either way so the rendered data is identical, but applying
+        // vs skipping the insert changes the physically-written row count, which the assertion pins.
+        assertMemoryLeak(() -> {
+            execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("mv");
+            Assert.assertTrue("mv must be a materialized view", tableToken.isMatView());
+
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
+
+            // INSERT - skippable only if the scan passes the SQL barrier and reaches the truncate.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putSym(0, "old" + i);
+                    row.putDouble(1, i);
+                    row.append();
+                }
+                ww.commit();
+            }
+
+            // ADD INDEX - a non-structural ALTER that commits as a SQL (walId > 0) transaction: the hard barrier
+            // the futureType != SQL carve-out keeps even when a TRUNCATE follows it.
+            execute("alter materialized view mv alter column s add index");
+
+            // TRUNCATE - the same call a full refresh makes - plus one surviving row so there is observable data.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                ww.truncateSoft();
+                TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2022-02-25T00"));
+                row.putSym(0, "kept");
+                row.putDouble(1, 42);
+                row.append();
+                ww.commit();
+            }
+
+            // Apply insert + add-index + truncate + insert in one batch.
+            final long physicalRowsBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+            drainWalQueue();
+
+            // Only the post-truncate row survives.
+            assertSql(
+                    """
+                            s\tv
+                            kept\t42.0
+                            """,
+                    "select s, v from mv order by ts"
+            );
+
+            // The truncate wipes the INSERT either way, so the data assertion above does not guard the SQL hard
+            // barrier. Pin it via physically-written rows: the SQL barrier stops the scan before the truncate, so
+            // the INSERT's 10 rows are materialised (then truncated) ahead of the single surviving row. If the
+            // futureType != SQL carve-out regressed and skipped the INSERT, those 10 rows would never be written
+            // and this delta would be 1.
+            Assert.assertEquals(
+                    11,
+                    engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - physicalRowsBefore
             );
         });
     }
@@ -1041,6 +1135,75 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             // If the isMatView() exemption regressed and applied the INSERT, this delta would be 20.
             Assert.assertEquals(
                     10,
+                    engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - physicalRowsBefore
+            );
+        });
+    }
+
+    @Test
+    public void testReplaceRangeSkipsInsertBeforeMultipleBarriersAndTruncateOnMatView() throws Exception {
+        // Stacked-barrier variant of testReplaceRangeSkipsInsertBeforeTruncateAfterBarrierOnMatView:
+        //   INSERT(0) -> MAT_VIEW_INVALIDATE(1) -> MAT_VIEW_INVALIDATE(2) -> TRUNCATE(3)
+        // For a mat view the scan records each soft barrier (firstNonSkippableTxn = min over both) and continues
+        // to the truncate, returning min(firstNonSkippableTxn, truncate) = the FIRST barrier. So the INSERT is
+        // skipped, but the skip is clamped to the first invalidate - neither invalidate is skipped past. This
+        // exercises the firstNonSkippableTxn = Math.min(...) accumulation across more than one barrier, which the
+        // single-barrier tests do not.
+        //
+        // The truncate wipes the insert either way, so this is guarded through physically-written rows: a skipped
+        // insert never reaches disk, so only the single surviving post-truncate row is written.
+        assertMemoryLeak(() -> {
+            execute("create table base (s string, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("mv");
+            Assert.assertTrue("mv must be a materialized view", tableToken.isMatView());
+
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
+
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                // INSERT - skippable only if the scan passes both barriers and reaches the truncate.
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putStr(0, "old" + i);
+                    row.putDouble(1, i);
+                    row.append();
+                }
+                ww.commit();
+
+                // Two MAT_VIEW_INVALIDATE barriers between the insert and the truncate.
+                ww.resetMatViewState(1, 1, true, "first invalidation", Numbers.LONG_NULL, null, -1);
+                ww.resetMatViewState(2, 2, true, "second invalidation", Numbers.LONG_NULL, null, -1);
+
+                // TRUNCATE - the same call a full refresh makes.
+                ww.truncateSoft();
+
+                // One surviving row after the truncate, so there is observable data.
+                TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2022-02-25T00"));
+                row.putStr(0, "kept");
+                row.putDouble(1, 42);
+                row.append();
+                ww.commit();
+            }
+
+            // Apply insert + two invalidates + truncate + insert in one batch.
+            final long physicalRowsBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+            drainWalQueue();
+
+            // Only the post-truncate row survives.
+            assertSql(
+                    """
+                            s\tv
+                            kept\t42.0
+                            """,
+                    "select s, v from mv order by ts"
+            );
+
+            // Skipping the INSERT (clamped to the first barrier) means only the single surviving post-truncate row
+            // reaches disk, not the INSERT's 10 rows first. If the exemption regressed and applied the INSERT
+            // before the truncate, this delta would be 11.
+            Assert.assertEquals(
+                    1,
                     engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - physicalRowsBefore
             );
         });
