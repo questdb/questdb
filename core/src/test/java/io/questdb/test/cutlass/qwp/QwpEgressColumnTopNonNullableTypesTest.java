@@ -37,7 +37,8 @@ import org.junit.Test;
 /**
  * Regression for the columnar egress fast-path's handling of column-tops on
  * non-nullable wire types (BOOLEAN, BYTE, SHORT, CHAR). The wire spec
- * (docs/qwp/wire-egress.md sec 11.5) states that these types "cannot carry
+ * (https://questdb.com/docs/connect/wire-protocols/qwp-egress-websocket/)
+ * states that these types "cannot carry
  * NULL in QuestDB; INSERT NULL stores false/0 and the wire row has the null
  * bitmap bit clear."
  * <p>

@@ -40,9 +40,8 @@ import org.junit.Test;
 /**
  * End-to-end tests for the QWP egress {@code CACHE_RESET} frame and the soft
  * caps that trigger it. Sets tight caps per test via
- * {@link QwpEgressProcessorState#defaultMaxDictEntriesOverrideForTest},
- * {@link QwpEgressProcessorState#defaultMaxDictHeapBytesOverrideForTest}, and
- * {@link QwpEgressProcessorState#defaultMaxSchemasOverrideForTest}, restores
+ * {@link QwpEgressProcessorState#defaultMaxDictEntriesOverrideForTest} and
+ * {@link QwpEgressProcessorState#defaultMaxDictHeapBytesOverrideForTest}, restores
  * them in {@code @After} so subsequent tests start clean, and asserts both the
  * observable client behaviour (dict resolves across the reset, subsequent
  * queries decode normally) and the server-side metrics counters.
