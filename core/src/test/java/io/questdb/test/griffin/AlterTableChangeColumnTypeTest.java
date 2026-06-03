@@ -1074,12 +1074,27 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         AtomicBoolean failRead = new AtomicBoolean();
 
         FilesFacade ff = new TestFilesFacadeImpl() {
+            private int injectedErrno;
+
+            @Override
+            public int errno() {
+                // The injected failures below return -1 without a syscall, so the native
+                // errno is left at whatever the last real syscall set. A writer open
+                // probes for an absent posting-seal-purge file, leaving ENOENT behind,
+                // which would steer TableUtils.openRO into its "file does not exist"
+                // branch. The failures simulate an existing file that cannot be opened,
+                // so report a non-ENOENT errno to keep the intended error messages.
+                return injectedErrno != 0 ? injectedErrno : super.errno();
+            }
+
             @Override
             public long openRO(LPSZ name) {
                 if (failRead.get() && fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
                     fail.set(null);
+                    injectedErrno = -1;
                     return -1;
                 }
+                injectedErrno = 0;
                 return super.openRO(name);
             }
 
@@ -1087,8 +1102,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             public long openRW(LPSZ name, int opts) {
                 if (!failRead.get() && fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
                     fail.set(null);
+                    injectedErrno = -1;
                     return -1;
                 }
+                injectedErrno = 0;
                 return super.openRW(name, opts);
             }
         };
