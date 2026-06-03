@@ -2050,10 +2050,11 @@ public class ParquetTest extends AbstractCairoTest {
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
             String dir = temp.getRoot().getAbsolutePath();
             try (Path path = new Path()) {
+                final long pid = ProcessHandle.current().pid();
                 path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put("subdir").$();
                 Assert.assertEquals(0, ff.mkdirs(path.slash(), configuration.getMkDirMode()));
 
-                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put(1L).put('-').put(0).$();
+                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put(pid).put('-').put(1L).put('-').put(0).$();
                 long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
                 Assert.assertTrue(fd >= 0);
                 ff.close(fd);
@@ -2062,7 +2063,7 @@ public class ParquetTest extends AbstractCairoTest {
 
                 path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put("subdir").$();
                 Assert.assertTrue(ff.exists(path.$()));
-                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put(1L).put('-').put(0).$();
+                path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX).put(pid).put('-').put(1L).put('-').put(0).$();
                 Assert.assertFalse(ff.exists(path.$()));
             }
         });
@@ -2074,13 +2075,14 @@ public class ParquetTest extends AbstractCairoTest {
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
             String dir = temp.getRoot().getAbsolutePath();
             try (Path path = new Path()) {
+                final long pid = ProcessHandle.current().pid();
                 path.of(dir).slash().put("questdb.log").$();
                 long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
                 Assert.assertTrue(fd >= 0);
                 ff.close(fd);
                 for (int i = 0; i < 3; i++) {
                     path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX)
-                            .put(1L).put('-').put(i).$();
+                            .put(pid).put('-').put(1L).put('-').put(i).$();
                     fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
                     Assert.assertTrue(fd >= 0);
                     ff.close(fd);
@@ -2091,7 +2093,7 @@ public class ParquetTest extends AbstractCairoTest {
                 Assert.assertTrue(ff.exists(path.$()));
                 for (int i = 0; i < 3; i++) {
                     path.of(dir).slash().put(PageFrameMemoryPool.SPILL_FILE_PREFIX)
-                            .put(1L).put('-').put(i).$();
+                            .put(pid).put('-').put(1L).put('-').put(i).$();
                     Assert.assertFalse(ff.exists(path.$()));
                 }
             }
