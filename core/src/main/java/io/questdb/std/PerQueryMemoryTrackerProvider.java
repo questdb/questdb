@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.mp.ConcurrentPool;
 import org.jetbrains.annotations.NotNull;
@@ -32,7 +33,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Basic MemoryTrackerProvider: hands out one {@link PerQueryMemoryTracker}
+ * OSS {@link MemoryTrackerProvider}: hands out one {@link PerQueryMemoryTracker}
  * per workload invocation. Trackers are pooled across invocations so the steady
  * state performs no native alloc/free per workload start. The pool is unbounded;
  * a tracker's native {@code {used, limit}} block is freed only when the provider
@@ -44,33 +45,23 @@ import java.util.concurrent.atomic.AtomicInteger;
  * the reader. Engine shutdown joins every worker thread before closing the
  * provider, so no reader is live when the pool is finally drained.
  * <p>
+ * {@link #acquire} reads the workload's configured byte limit from the
+ * {@link CairoConfiguration} on every call rather than caching it at
+ * construction, so a dynamic configuration reload that changes a limit applies
+ * to every tracker acquired after the reload. An in-flight tracker keeps the
+ * limit it was initialized with.
+ * <p>
  * The provider's {@link #close()} drains the pool and releases every retained
  * native block. It is invoked from {@code CairoEngine.close()}.
  */
 public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvider {
-    private final long limitMatViewRefresh;
-    private final long limitQuery;
-    private final long limitWalApply;
+    private final CairoConfiguration configuration;
     private final ConcurrentPool<PerQueryMemoryTracker> pool = new ConcurrentPool<>();
     private final AtomicInteger pooled = new AtomicInteger();
     private volatile boolean closed;
 
-    /**
-     * @param limitQuery          byte limit for {@link MemoryTrackerWorkload#QUERY};
-     *                            {@code 0} means unlimited.
-     * @param limitMatViewRefresh byte limit for
-     *                            {@link MemoryTrackerWorkload#MAT_VIEW_REFRESH};
-     *                            {@code 0} means unlimited.
-     * @param limitWalApply       byte limit for {@link MemoryTrackerWorkload#WAL_APPLY};
-     *                            {@code 0} means unlimited.
-     */
-    public PerQueryMemoryTrackerProvider(long limitQuery, long limitMatViewRefresh, long limitWalApply) {
-        assert limitQuery >= 0;
-        assert limitMatViewRefresh >= 0;
-        assert limitWalApply >= 0;
-        this.limitQuery = limitQuery;
-        this.limitMatViewRefresh = limitMatViewRefresh;
-        this.limitWalApply = limitWalApply;
+    public PerQueryMemoryTrackerProvider(@NotNull CairoConfiguration configuration) {
+        this.configuration = configuration;
     }
 
     @Override
@@ -112,9 +103,9 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
 
     private long limitFor(MemoryTrackerWorkload workload) {
         return switch (workload) {
-            case QUERY -> limitQuery;
-            case MAT_VIEW_REFRESH -> limitMatViewRefresh;
-            case WAL_APPLY -> limitWalApply;
+            case QUERY -> configuration.getQueryMemoryLimitBytes();
+            case MAT_VIEW_REFRESH -> configuration.getMatViewRefreshMemoryLimitBytes();
+            case WAL_APPLY -> configuration.getWalApplyMemoryLimitBytes();
         };
     }
 

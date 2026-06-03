@@ -33,7 +33,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -53,17 +53,16 @@ import org.junit.Test;
  * a runaway sort crosses the limit and fails at the offending allocation
  * site.
  * <p>
- * The per-query limit is set in {@link #beforeClass()} because
- * {@code CairoEngine#getMemoryTrackerProvider} caches the
- * {@code PerQueryMemoryTrackerProvider} on first access with the limit then in
- * effect. Per-test overrides via {@code node1.setProperty} land too late on a
- * shared engine. Tests that should breach the limit use large workloads;
- * tests that should succeed use small ones.
+ * The per-query limit is applied per test in {@link #setUp()} via
+ * {@code setProperty} so it survives the per-test override reset; the provider
+ * reads it live on each tracker acquisition. Tests that should breach the limit
+ * use large workloads; tests that should succeed use small ones.
  */
 public class SortMemoryTrackerTest extends AbstractCairoTest {
 
-    @BeforeClass
-    public static void beforeClass() {
+    @Before
+    public void setUp() {
+        super.setUp();
         // 512 KiB: large enough for the 128 KiB key + 128 KiB value initial
         // sort allocations on small inputs, small enough that a runaway sort
         // breaches after one or two heap doublings.

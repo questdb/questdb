@@ -39,7 +39,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
@@ -68,13 +67,12 @@ import java.util.concurrent.atomic.AtomicLong;
  *   {@code QUERY} budget. Neither workload draws against another's limit.</li>
  * </ul>
  * <p>
- * One {@link #beforeClass()} config serves both tests: the {@code QUERY} limit
- * is low (512 KiB) so queries breach, while the two background-workload limits
- * are far higher (256 MiB) so a {@code MAT_VIEW_REFRESH} / {@code WAL_APPLY}
- * footprint above the {@code QUERY} budget still fits with room to spare. The
- * limits go in {@link #beforeClass()} because
- * {@code CairoEngine#getMemoryTrackerProvider} caches the provider on first
- * access on the shared engine.
+ * One {@link #setUp()} config serves both tests: the {@code QUERY} limit is low
+ * (512 KiB) so queries breach, while the two background-workload limits are far
+ * higher (256 MiB) so a {@code MAT_VIEW_REFRESH} / {@code WAL_APPLY} footprint
+ * above the {@code QUERY} budget still fits with room to spare. The limits are
+ * applied per test via {@code node1.setProperty} so they survive the per-test
+ * override reset; the provider reads them live on each tracker acquisition.
  * <p>
  * Every thread owns its {@link SqlExecutionContext}: sharing one context across
  * query threads would violate the single-context-per-query-thread invariant the
@@ -90,20 +88,16 @@ public class ConcurrentMemoryTrackerTest extends AbstractCairoTest {
     private static final long LOW_LIMIT = 512 * 1024L;
     private static final long MID_ALLOC = 1024 * 1024L;
 
-    @BeforeClass
-    public static void beforeClass() {
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, LOW_LIMIT);
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, HIGH_LIMIT);
-        setProperty(PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, HIGH_LIMIT);
-        // A per-query breach is deterministic across the refresh's step-reduction
-        // retries, so drop the backoff sleep -- it would only slow the test.
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 0);
-    }
-
     @Override
     @Before
     public void setUp() {
         super.setUp();
+        node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, LOW_LIMIT);
+        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, HIGH_LIMIT);
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, HIGH_LIMIT);
+        // A per-query breach is deterministic across the refresh's step-reduction
+        // retries, so drop the backoff sleep - it would only slow the test.
+        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 0);
         // alloc_tracked(l), used to drive a precise WAL_APPLY allocation, is dev-mode
         // only; the static setProperty form does not stick across the class's tests.
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);

@@ -34,7 +34,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
@@ -58,36 +57,29 @@ import org.junit.Test;
  * {@code SimpleMapValue}), so the only allocations charged to the per-query
  * counter come from the allocator.
  * <p>
- * The per-query limit is set in {@link #beforeClass()} because
- * {@code CairoEngine#getMemoryTrackerProvider} caches the
- * {@code PerQueryMemoryTrackerProvider} on first access with the limit then in
- * effect; per-test overrides via {@code setProperty} land too late on a shared
- * engine. The allocator's default chunk size is shrunk in {@link #setUp()} so
- * small workloads fit comfortably under the limit and a runaway aggregate
- * breaches after a few set doublings. The chunk size is re-read on every
- * factory construction, so {@code @Before} is sufficient for it;
- * {@code AbstractCairoTest.tearDown} clears property overrides between tests.
+ * The per-query limit and the allocator's default chunk size are applied per
+ * test in {@link #setUp()} via {@code setProperty}, re-applied because
+ * {@code AbstractCairoTest.tearDown} clears property overrides between tests;
+ * the provider reads the limit live on each tracker acquisition. The shrunk
+ * chunk size keeps small workloads comfortably under the limit so a runaway
+ * aggregate breaches only after a few set doublings.
  * <p>
  * Parallel GROUP BY is disabled per test via
- * {@code sqlExecutionContext.setParallelGroupByEnabled(false)} because the
- * parallel path runs through {@code GroupByMapFragment} / the async atoms,
- * which are not tracker-aware.
+ * {@code sqlExecutionContext.setParallelGroupByEnabled(false)} to pin the breach
+ * to a single deterministic allocation site. The parallel path
+ * ({@code AsyncGroupByAtom} / {@code GroupByMapFragment}) is tracker-aware too,
+ * but a breach inside its shard-merge job surfaces as a cancellation rather than
+ * the per-query OOM.
  */
 public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
-
-    @BeforeClass
-    public static void beforeClass() {
-        // 512 KiB: large enough for the small initial set allocations to fit
-        // comfortably, small enough that a runaway count_distinct breaches
-        // after a few set doublings. The limit is read lazily on the
-        // PerQueryMemoryTrackerProvider's first access and cached for the
-        // engine's lifetime, so @BeforeClass is the right hook for it.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
-    }
 
     @Before
     public void setUp() {
         super.setUp();
+        // 512 KiB: large enough for the small initial set allocations to fit
+        // comfortably, small enough that a runaway count_distinct breaches
+        // after a few set doublings.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
         // Shrink the GROUP BY allocator's default chunk size so the initial
         // per-group set allocations sit well under the 512 KiB per-query limit
         // and the breach tests can grow the set by doubling. The default

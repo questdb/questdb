@@ -34,7 +34,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
@@ -57,24 +56,20 @@ import org.junit.Test;
  * cursor close, so the malloc/free pairs are charged symmetrically and a runaway
  * query fails at the offending allocation site.
  * <p>
- * The per-query limit is set in {@link #beforeClass()} because
- * {@code CairoEngine#getMemoryTrackerProvider} caches the
- * {@code PerQueryMemoryTrackerProvider} on first access with the limit then in
- * effect; per-test overrides via {@code node1.setProperty} land too late on a
- * shared engine. Tests that should breach the limit use a high-cardinality key;
- * tests that should succeed use a handful of keys.
+ * The per-query limit is applied per test in {@link #setUpSortPageSize()} via
+ * {@code setProperty} so it survives the per-test override reset; the provider
+ * reads it live on each tracker acquisition. Tests that should breach the limit
+ * use a high-cardinality key; tests that should succeed use a handful of keys.
  */
 public class LatestByMemoryTrackerTest extends AbstractCairoTest {
 
     private static final int HIGH_CARDINALITY = 50_000;
 
-    @BeforeClass
-    public static void beforeClass() {
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 128 * 1024L);
-    }
-
     @Before
     public void setUpSortPageSize() {
+        // The per-query limit, re-applied per test because tearDown clears
+        // property overrides; the provider reads it live on each acquisition.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 128 * 1024L);
         // The deterministic ORDER BY in the success queries routes to the
         // non-light EncodedSort over the non-random-access LATEST BY sub-query,
         // whose RecordChain now charges the per-query tracker with a 16 MB value

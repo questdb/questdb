@@ -35,7 +35,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
@@ -68,13 +67,11 @@ import org.junit.Test;
  * keeps the per-query counter balanced across the reused cursor's
  * close/reopen cycle.
  * <p>
- * The per-query limit is set in {@link #beforeClass()} because
- * {@code CairoEngine#getMemoryTrackerProvider} caches the
- * {@code PerQueryMemoryTrackerProvider} on first access with the limit then in
- * effect; per-test overrides via {@code setProperty} land too late on a shared
- * engine. The GROUP BY allocator's default chunk size is shrunk in
- * {@link #setUp()} so small workloads fit comfortably under the limit; it is
- * re-read on every factory construction, so {@code @Before} is sufficient.
+ * The per-query limit and the GROUP BY allocator's default chunk size are
+ * applied per test in {@link #setUp()} via {@code setProperty} so they survive
+ * the per-test override reset; the provider reads the limit live on each tracker
+ * acquisition. The shrunk chunk size keeps small workloads comfortably under the
+ * limit.
  * <p>
  * Parallel GROUP BY is disabled per test via
  * {@code sqlExecutionContext.setParallelGroupByEnabled(false)} so the base scan
@@ -82,19 +79,13 @@ import org.junit.Test;
  */
 public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
 
-    @BeforeClass
-    public static void beforeClass() {
-        // 512 KiB: large enough for the small initial map/allocator allocations
-        // to fit comfortably, small enough that a high-cardinality SAMPLE BY FILL
-        // breaches after a few map doublings. The limit is read lazily on the
-        // PerQueryMemoryTrackerProvider's first access and cached for the
-        // engine's lifetime, so @BeforeClass is the right hook for it.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
-    }
-
     @Before
     public void setUp() {
         super.setUp();
+        // 512 KiB: large enough for the small initial map/allocator allocations
+        // to fit comfortably, small enough that a high-cardinality SAMPLE BY FILL
+        // breaches after a few map doublings.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
         // Shrink the GROUP BY allocator's default chunk size so allocator-backed
         // function state sits well under the 512 KiB per-query limit on small
         // workloads. Re-read on every factory construction, so @Before suffices.

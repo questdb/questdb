@@ -33,7 +33,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -48,29 +48,30 @@ import org.junit.Test;
  * symmetrically to the per-query counter; a runaway query crosses the limit
  * and fails at the offending allocation site.
  * <p>
- * The per-query limit is set in {@link #beforeClass()} because
- * {@code CairoEngine#getMemoryTrackerProvider} caches the
- * {@code PerQueryMemoryTrackerProvider} on first access with the limit then in
- * effect. Per-test overrides via {@code node1.setProperty} land too late on a
- * shared engine. Tests that should breach the limit use large workloads;
- * tests that should succeed use small ones.
+ * The per-query limit is applied per test in {@link #setUp()} via
+ * {@code node1.setProperty} so it survives the per-test override reset; the
+ * provider reads it live on each tracker acquisition. Tests that should breach
+ * the limit use large workloads; tests that should succeed use small ones.
  */
 public class MapMemoryTrackerTest extends AbstractCairoTest {
 
-    @BeforeClass
-    public static void beforeClass() {
+    @Before
+    public void setUp() {
+        super.setUp();
         // 256 KiB clears the light hash join's 128 KiB LongChain initial page --
         // now tracker-charged -- for the small-build success case, while the
         // large-workload breach tests (tens of thousands of keys / rows) still
         // exceed it.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
     }
 
     @Test
     public void testGroupByFailsOnLargeKeySet() throws Exception {
-        // Force the synchronous GROUP BY path: only the sync GroupByRecordCursorFactory
-        // is tracker-wired. Parallel GROUP BY runs through GroupByMapFragment, which is not
-        // yet wired; once a follow-up wires it, this override can be lifted.
+        // Pin the synchronous GROUP BY path so the breach lands at a single deterministic
+        // site in the OrderedMap. Parallel GROUP BY is tracker-aware too (AsyncGroupByAtom
+        // binds the tracker on its fragments and allocators), but a breach inside its
+        // shard-merge job surfaces as a cancellation rather than the per-query OOM, so the
+        // sync path keeps this test's assertion stable.
         assertMemoryLeak(() -> {
             sqlExecutionContext.setParallelGroupByEnabled(false);
             execute("CREATE TABLE tab AS (SELECT x AS k, x * 2 AS v FROM long_sequence(50_000))");

@@ -50,9 +50,6 @@ public interface FactoryProvider extends QuietCloseable {
     }
 
     @NotNull
-    TickCalendarServiceFactory getTickCalendarServiceFactory();
-
-    @NotNull
     HttpAuthenticatorFactory getHttpAuthenticatorFactory();
 
     @NotNull
@@ -81,17 +78,15 @@ public interface FactoryProvider extends QuietCloseable {
      * instances. Called once at engine construction; the returned provider is
      * owned by the engine and closed from {@code CairoEngine.close()}.
      * <p>
-     * The OSS default returns a {@link PerQueryMemoryTrackerProvider}
-     * configured from the supplied {@link CairoConfiguration}. An enterprise
-     * build overrides this to return its per-principal implementation.
+     * The OSS default returns a {@link PerQueryMemoryTrackerProvider} backed by
+     * the supplied {@link CairoConfiguration}; the provider reads each workload's
+     * limit from that configuration on every acquisition, so a dynamic reload of
+     * the limit takes effect without rebuilding the provider. An enterprise build
+     * overrides this to return its per-principal implementation.
      */
     @NotNull
     default MemoryTrackerProvider getMemoryTrackerProvider(@NotNull CairoConfiguration cairoConfiguration) {
-        return new PerQueryMemoryTrackerProvider(
-                cairoConfiguration.getQueryMemoryLimitBytes(),
-                cairoConfiguration.getMatViewRefreshMemoryLimitBytes(),
-                cairoConfiguration.getWalApplyMemoryLimitBytes()
-        );
+        return new PerQueryMemoryTrackerProvider(cairoConfiguration);
     }
 
     @NotNull
@@ -112,6 +107,9 @@ public interface FactoryProvider extends QuietCloseable {
     default TextImportRequestHeaderProcessor getTextImportRequestHeaderProcessor() {
         return TextImportRequestHeaderProcessor.DEFAULT;
     }
+
+    @NotNull
+    TickCalendarServiceFactory getTickCalendarServiceFactory();
 
     @NotNull
     WalJobFactory getWalJobFactory();

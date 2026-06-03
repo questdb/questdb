@@ -155,7 +155,9 @@ class OperationExecutor implements Closeable {
         return bindVariableService;
     }
 
-    /** Clears the apply context's tracker and returns it to the pool. */
+    /**
+     * Clears the apply context's tracker and returns it to the pool.
+     */
     public void releaseMemoryTracker(MemoryTracker memoryTracker) {
         executionContext.setMemoryTracker(null);
         Misc.free(memoryTracker);

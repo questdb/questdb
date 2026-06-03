@@ -34,7 +34,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
@@ -52,29 +51,22 @@ import org.junit.Test;
  * symmetrically to the per-query counter; a runaway operator crosses the
  * limit and fails at the offending allocation site.
  * <p>
- * The per-query limit and the various per-operator page sizes are set in
- * {@link #beforeClass()} because {@code CairoEngine#getMemoryTrackerProvider}
- * caches the {@code PerQueryMemoryTrackerProvider} on first access with the
- * limit then in effect. Tuning the page sizes down keeps initial allocations
- * comfortably under the 512 KiB limit; small workloads then fit easily and
- * runaway workloads breach after a few heap doublings.
+ * The per-query limit and the various per-operator page sizes are applied per
+ * test in {@link #setUp()} via {@code setProperty} so they survive the per-test
+ * override reset; the provider reads the limit live on each tracker acquisition.
+ * Tuning the page sizes down keeps initial allocations comfortably under the
+ * 512 KiB limit; small workloads then fit easily and runaway workloads breach
+ * after a few heap doublings.
  */
 public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
-
-    @BeforeClass
-    public static void beforeClass() {
-        // 512 KiB: large enough for the small initial heaps of each wired
-        // operator to fit comfortably, small enough that a runaway
-        // operator breaches after a few heap doublings. The limit is read
-        // lazily on the {@code PerQueryMemoryTrackerProvider}'s first access
-        // and cached for the engine's lifetime, so {@code @BeforeClass} is
-        // the right hook for it.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
-    }
 
     @Before
     public void setUp() {
         super.setUp();
+        // 512 KiB: large enough for the small initial heaps of each wired
+        // operator to fit comfortably, small enough that a runaway
+        // operator breaches after a few heap doublings.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
         // Shrink the per-operator page sizes so the initial allocations from
         // RecordChain / RecordTreeChain / SingleRecordSink / MemoryPages /
         // MemoryCARW (window store) sit well under the 512 KiB per-query

@@ -35,7 +35,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
@@ -54,24 +53,21 @@ import org.junit.Test;
  * allocation, so malloc/free stay symmetric and a runaway sort breaches the
  * limit at the offending allocation.
  * <p>
- * The per-query limit is set in {@link #beforeClass()} because
- * {@code CairoEngine#getMemoryTrackerProvider} caches the provider on first
- * access. The record-chain page size is shrunk in {@link #setUpPageSizes()}
- * (re-applied per test because tearDown clears property overrides) so the
- * non-light path's materialized pages fit under the limit.
+ * The per-query limit and the record-chain page size are applied per test in
+ * {@link #setUpPageSizes()} (re-applied because tearDown clears property
+ * overrides) so the non-light path's materialized pages fit under the limit;
+ * the provider reads the limit live on each tracker acquisition.
  */
 public class EncodedSortMemoryTrackerTest extends AbstractCairoTest {
 
-    @BeforeClass
-    public static void beforeClass() {
-        // The entry buffer reopens to a fixed 128 KiB DirectLongList, so the
-        // limit must clear that for the small-input / leak-loop cases while a
-        // 100k-row sort that grows the buffer past it breaches.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
-    }
-
     @Before
     public void setUpPageSizes() {
+        // The entry buffer reopens to a fixed 128 KiB DirectLongList, so the
+        // limit must clear that for the small-input / leak-loop cases while a
+        // 100k-row sort that grows the buffer past it breaches. Re-applied per
+        // test because tearDown clears property overrides; read live by the
+        // provider on each acquisition.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
         // Shrink the record-chain page size so the non-light EncodedSort's
         // materialized chain fits a couple of pages under the per-query limit.
         // maxEntryMemBytes keys off sort.key.page.size, not the value page size,

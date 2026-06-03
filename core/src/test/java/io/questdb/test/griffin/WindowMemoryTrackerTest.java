@@ -36,7 +36,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
@@ -60,23 +59,18 @@ import org.junit.Test;
  * the buffer. ROWS-frame buffers are sized by the frame literal (bounded) and stay on
  * global-only accounting.
  * <p>
- * The per-query limit is set in {@link #beforeClass()} because
- * {@code CairoEngine#getMemoryTrackerProvider} caches the
- * {@code PerQueryMemoryTrackerProvider} on first access with the limit then in
- * effect.
+ * The per-query limit is applied per test in {@link #setUp()} via
+ * {@code setProperty} so it survives the per-test override reset; the provider
+ * reads it live on each tracker acquisition.
  */
 public class WindowMemoryTrackerTest extends AbstractCairoTest {
-
-    @BeforeClass
-    public static void beforeClass() {
-        // 256 KiB: a high-cardinality PARTITION BY map (tens of thousands of keys)
-        // crosses it, while a handful of partitions fit comfortably.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
-    }
 
     @Before
     public void setUp() {
         super.setUp();
+        // 256 KiB: a high-cardinality PARTITION BY map (tens of thousands of keys)
+        // crosses it, while a handful of partitions fit comfortably.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
         // Shrink the window-store page so a range-frame ring buffer starts small (one
         // 4 KiB page) and a runaway frame breaches the 256 KiB limit after a few
         // doublings, while a small input stays comfortably under it. The default is

@@ -25,6 +25,7 @@
 package io.questdb.test.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.std.MemoryTag;
@@ -35,19 +36,52 @@ import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.ClassRule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class PerQueryMemoryTrackerTest {
 
+    @ClassRule
+    public static final TemporaryFolder temp = new TemporaryFolder();
     private static final SecurityContext SEC = AllowAllSecurityContext.INSTANCE;
+
+    @Test
+    public void testAcquireReadsLimitFromConfigEachAcquire() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // The provider must read the configured limit on every acquire so a dynamic
+            // config reload that changes the limit applies to subsequently acquired trackers.
+            LimitsConfiguration config = new LimitsConfiguration(1024, 0, 0);
+            try (PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(config)) {
+                MemoryTracker t1 = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
+                Assert.assertEquals(1024, t1.getLimit());
+                t1.close();
+
+                // Simulate a reload bumping the limit.
+                config.queryLimit = 4096;
+
+                // The pool hands back the same skeleton, but the freshly read limit must win.
+                MemoryTracker t2 = provider.acquire(SEC, 2, MemoryTrackerWorkload.QUERY);
+                Assert.assertSame(t1, t2);
+                Assert.assertEquals(4096, t2.getLimit());
+                t2.close();
+
+                // A reload back to unlimited must also take effect.
+                config.queryLimit = 0;
+                MemoryTracker t3 = provider.acquire(SEC, 3, MemoryTrackerWorkload.QUERY);
+                Assert.assertEquals(0, t3.getLimit());
+                t3.close();
+            }
+        });
+    }
 
     @Test
     public void testAcquireResetsUsedAndAppliesLimit() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(1024, 2048, 4096)) {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(1024, 2048, 4096)) {
                 MemoryTracker t = provider.acquire(SEC, 7, MemoryTrackerWorkload.QUERY);
                 Assert.assertEquals(0, t.getUsed());
                 Assert.assertEquals(1024, t.getLimit());
@@ -86,7 +120,7 @@ public class PerQueryMemoryTrackerTest {
     @Test
     public void testGetNativeAllocatorIsStableAcrossCalls() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(0, 0, 0)) {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(0, 0, 0)) {
                 MemoryTracker t = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
                 try {
                     long a1 = Unsafe.getNativeAllocator(MemoryTag.NATIVE_DEFAULT, t);
@@ -113,7 +147,7 @@ public class PerQueryMemoryTrackerTest {
     @Test
     public void testMallocBeyondLimitThrowsPerQueryMessage() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(1024, 0, 0)) {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(1024, 0, 0)) {
                 MemoryTracker t = provider.acquire(SEC, 11, MemoryTrackerWorkload.QUERY);
                 try {
                     long ptr = Unsafe.malloc(512, MemoryTag.NATIVE_DEFAULT, t);
@@ -146,7 +180,7 @@ public class PerQueryMemoryTrackerTest {
     @Test
     public void testMallocExactlyAtLimitSucceeds() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(1024, 0, 0)) {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(1024, 0, 0)) {
                 MemoryTracker t = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
                 try {
                     long ptr = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT, t);
@@ -173,7 +207,7 @@ public class PerQueryMemoryTrackerTest {
     @Test
     public void testMultiThreadedPoolContention() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(8192, 0, 0)) {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(8192, 0, 0)) {
                 final int threadCount = 16;
                 final int iterationsPerThread = 200;
                 final CountDownLatch start = new CountDownLatch(1);
@@ -212,7 +246,7 @@ public class PerQueryMemoryTrackerTest {
     @Test
     public void testPoolReuseKeepsSameNativeBlock() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(1024, 0, 0)) {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(1024, 0, 0)) {
                 MemoryTracker t1 = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
                 long addr1 = t1.nativeAddress();
                 t1.close();
@@ -229,7 +263,7 @@ public class PerQueryMemoryTrackerTest {
     @Test
     public void testReallocBreachLeavesOldBlockIntact() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(1024, 0, 0)) {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(1024, 0, 0)) {
                 MemoryTracker t = provider.acquire(SEC, 3, MemoryTrackerWorkload.QUERY);
                 try {
                     long ptr = Unsafe.malloc(256, MemoryTag.NATIVE_DEFAULT, t);
@@ -263,7 +297,7 @@ public class PerQueryMemoryTrackerTest {
     @Test
     public void testReallocGrowAndShrinkUpdatesBothCounters() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(4096, 0, 0)) {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(4096, 0, 0)) {
                 MemoryTracker t = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
                 try {
                     long globalBefore = Unsafe.getRssMemUsed();
@@ -293,7 +327,7 @@ public class PerQueryMemoryTrackerTest {
     @Test
     public void testUnlimitedTrackerNeverBreaches() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(0, 0, 0)) {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(0, 0, 0)) {
                 MemoryTracker t = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
                 try {
                     Assert.assertEquals(0, t.getLimit());
@@ -311,7 +345,7 @@ public class PerQueryMemoryTrackerTest {
     @Test
     public void testWorkloadSelectsRightLimit() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(100, 200, 300)) {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(100, 200, 300)) {
                 MemoryTracker q = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
                 Assert.assertEquals(100, q.getLimit());
                 q.close();
@@ -333,7 +367,7 @@ public class PerQueryMemoryTrackerTest {
         // (CairoException with isOutOfMemory()) that the global RSS breach does, so
         // existing handlers continue to apply unchanged in both scopes.
         TestUtils.assertMemoryLeak(() -> {
-            try (PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(16, 0, 0)) {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(16, 0, 0)) {
                 MemoryTracker t = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
                 try {
                     try {
@@ -353,7 +387,7 @@ public class PerQueryMemoryTrackerTest {
     @Test
     public void testProviderCloseDrainsPool() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(1024, 0, 0);
+            PerQueryMemoryTrackerProvider provider = newProvider(1024, 0, 0);
             // Pre-populate the pool with a few trackers.
             MemoryTracker a = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
             MemoryTracker b = provider.acquire(SEC, 2, MemoryTrackerWorkload.QUERY);
@@ -368,5 +402,41 @@ public class PerQueryMemoryTrackerTest {
             provider.close();
             Assert.assertEquals(0, provider.getPooledCount());
         });
+    }
+
+    private static PerQueryMemoryTrackerProvider newProvider(long queryLimit, long matViewRefreshLimit, long walApplyLimit) {
+        return new PerQueryMemoryTrackerProvider(new LimitsConfiguration(queryLimit, matViewRefreshLimit, walApplyLimit));
+    }
+
+    /**
+     * A {@link DefaultCairoConfiguration} whose three memory limits are mutable, so a test can
+     * simulate a dynamic config reload by changing a limit between two acquisitions.
+     */
+    private static final class LimitsConfiguration extends DefaultCairoConfiguration {
+        long matViewRefreshLimit;
+        long queryLimit;
+        long walApplyLimit;
+
+        LimitsConfiguration(long queryLimit, long matViewRefreshLimit, long walApplyLimit) {
+            super(temp.getRoot().getAbsolutePath());
+            this.queryLimit = queryLimit;
+            this.matViewRefreshLimit = matViewRefreshLimit;
+            this.walApplyLimit = walApplyLimit;
+        }
+
+        @Override
+        public long getMatViewRefreshMemoryLimitBytes() {
+            return matViewRefreshLimit;
+        }
+
+        @Override
+        public long getQueryMemoryLimitBytes() {
+            return queryLimit;
+        }
+
+        @Override
+        public long getWalApplyMemoryLimitBytes() {
+            return walApplyLimit;
+        }
     }
 }

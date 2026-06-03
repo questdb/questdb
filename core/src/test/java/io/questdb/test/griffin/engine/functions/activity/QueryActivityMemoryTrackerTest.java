@@ -26,23 +26,23 @@ package io.questdb.test.griffin.engine.functions.activity;
 
 import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
  * Verifies that the {@code memory_limit} column of {@code query_activity}
- * surfaces a configured per-query limit. The limit is set in
- * {@link #beforeClass()} because {@code CairoEngine#getMemoryTrackerProvider}
- * caches the {@code PerQueryMemoryTrackerProvider} on first access with the
- * limit then in effect; per-test overrides via {@code node1.setProperty} land
- * too late on a shared engine. The unlimited counterpart (memory_limit NULL)
- * lives in {@link QueryActivityFunctionFactoryTest}, which runs with the
- * default unlimited config.
+ * surfaces a configured per-query limit. The limit is applied per test in
+ * {@link #setUp()} via {@code setProperty} so it survives the per-test override
+ * reset; the provider reads it live on each tracker acquisition. The unlimited
+ * counterpart (memory_limit NULL) lives in
+ * {@link QueryActivityFunctionFactoryTest}, which runs with the default
+ * unlimited config.
  */
 public class QueryActivityMemoryTrackerTest extends AbstractCairoTest {
 
-    @BeforeClass
-    public static void beforeClass() {
+    @Before
+    public void setUp() {
+        super.setUp();
         // 128 MiB: comfortably above anything query_activity itself allocates, so
         // the self-query never breaches. The point is to prove memory_limit
         // reports a configured (non-zero) cap, not to trigger a breach.

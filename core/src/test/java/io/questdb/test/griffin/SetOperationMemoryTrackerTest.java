@@ -33,7 +33,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -50,16 +50,15 @@ import org.junit.Test;
  * UNION ALL streams without a hash map and stays out of scope: a large input
  * runs to completion under the same limit.
  * <p>
- * The per-query limit is set in {@link #beforeClass()} because
- * {@code CairoEngine#getMemoryTrackerProvider} caches the
- * {@code PerQueryMemoryTrackerProvider} on first access with the limit then in
- * effect. Per-test overrides via {@code node1.setProperty} land too late on a
- * shared engine.
+ * The per-query limit is applied per test in {@link #setUp()} via
+ * {@code setProperty} so it survives the per-test override reset; the provider
+ * reads it live on each tracker acquisition.
  */
 public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
 
-    @BeforeClass
-    public static void beforeClass() {
+    @Before
+    public void setUp() {
+        super.setUp();
         // The two-map operators (INTERSECT, EXCEPT) reopen two 32 KiB small maps
         // up front, so the limit must clear ~64 KiB for the small-input cases
         // while still tripping once a map grows past it on a large input.

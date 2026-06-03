@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
@@ -52,30 +51,27 @@ import org.junit.Test;
  * its allocation charges the WAL_APPLY tracker, so a large size breaches it and
  * suspends the table ({@code wal_tables().suspended} / {@code errorMessage}).
  * <p>
- * The limits are set in {@link #beforeClass()} because
- * {@code CairoEngine#getMemoryTrackerProvider} caches the provider on first
- * access. The QUERY limit is left unlimited so the test's own setup and
- * assertion queries are never constrained -- only the two background workloads
- * are.
+ * The limits are applied per test in {@link #setUp()} via
+ * {@code node1.setProperty} so they survive the per-test override reset; the
+ * provider reads them live on each tracker acquisition. The QUERY limit is left
+ * unlimited so the test's own setup and assertion queries are never constrained
+ * -- only the two background workloads are.
  */
 public class WorkloadMemoryTrackerTest extends AbstractCairoTest {
-
-    @BeforeClass
-    public static void beforeClass() {
-        // 512 KiB clears the small-workload initial allocations (group-by maps) for
-        // the success cases, while the large-workload breach case (tens of thousands
-        // of distinct keys) exceeds it after a few heap doublings.
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 512 * 1024L);
-        setProperty(PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 512 * 1024L);
-        // Drop the per-retry backoff sleep: a per-query breach is deterministic
-        // across the refresh's step-reduction retries, so the sleeps only slow the
-        // test down before the refresh gives up and invalidates the view.
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 0);
-    }
 
     @Before
     public void setUp() {
         super.setUp();
+        // 512 KiB clears the small-workload initial allocations (group-by maps) for
+        // the success cases, while the large-workload breach case (tens of thousands
+        // of distinct keys) exceeds it after a few heap doublings. Applied per test
+        // so they survive the per-test override reset; the provider reads them live.
+        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 512 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 512 * 1024L);
+        // Drop the per-retry backoff sleep: a per-query breach is deterministic
+        // across the refresh's step-reduction retries, so the sleeps only slow the
+        // test down before the refresh gives up and invalidates the view.
+        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 0);
         // alloc_tracked(l), used by the WAL tests, is dev-mode only. Setting it on the
         // node after super.setUp() keeps dev mode enabled for every test; the static
         // setProperty form does not stick across the class's tests.

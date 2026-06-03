@@ -63,12 +63,12 @@ import org.junit.Test;
  * {@code workload=QUERY} field - so these tests assert only the shared
  * {@code "query memory limit exceeded"} text.
  * <p>
- * The limit, the encoder row group size and the read_parquet parallelism flag
- * are set in {@link #beforeClass()}: the {@code PerQueryMemoryTrackerProvider}
- * caches the limit on first access, so per-test overrides land too late on a
- * shared engine. A large row group size keeps each converted partition in a
- * single row group so one decode crosses the limit deterministically; the
- * read_parquet path is pinned to the synchronous cursor.
+ * The encoder row group size and the read_parquet parallelism flag are set in
+ * {@link #beforeClass()}; the per-query limit is applied per test in
+ * {@link #setUp()}, and the provider reads it live on each tracker acquisition.
+ * A large row group size keeps each converted partition in a single row group
+ * so one decode crosses the limit deterministically; the read_parquet path is
+ * pinned to the synchronous cursor.
  */
 public class ParquetMemoryTrackerTest extends AbstractCairoTest {
 
@@ -78,7 +78,6 @@ public class ParquetMemoryTrackerTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void beforeClass() {
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
         // One row group per converted partition so a single decode crosses the limit.
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000_000);
         // Pin read_parquet() to the synchronous ReadParquetRecordCursor.
@@ -88,6 +87,9 @@ public class ParquetMemoryTrackerTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
+        // 512 KiB: a single ~12 MiB row-group decode crosses it, while small inputs
+        // stay under. Applied per test; the provider reads it live on each acquisition.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
         // read_parquet() resolves relative paths under the input root.
         inputRoot = root;
     }

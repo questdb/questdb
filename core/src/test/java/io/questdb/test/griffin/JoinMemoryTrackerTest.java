@@ -36,7 +36,7 @@ import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -50,14 +50,17 @@ import org.junit.Test;
  * workload's MemoryTracker in the cursor's of() before the first reopen(), so a
  * runaway join breaches the limit at the offending allocation.
  * <p>
- * The per-query limit is set to 512 KiB in {@link #beforeClass()} so it clears
- * the LongChain's fixed 128 KiB initial page (plus the small join maps) for the
- * small-input / leak-loop cases while a high-cardinality join breaches.
+ * The per-query limit is set to 512 KiB per test in {@link #setUp()} (so it
+ * survives the per-test override reset; the provider reads it live on each
+ * tracker acquisition), enough to clear the LongChain's fixed 128 KiB initial
+ * page (plus the small join maps) for the small-input / leak-loop cases while a
+ * high-cardinality join breaches.
  */
 public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
-    @BeforeClass
-    public static void beforeClass() {
+    @Before
+    public void setUp() {
+        super.setUp();
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
     }
 
