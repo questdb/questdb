@@ -4272,6 +4272,220 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Reproduces the SIGSEGV in PostingIndexWriter.decodeDenseGenStride when
+     * squashing partitions over a COVERING posting index whose reseal index()
+     * loop trips the spill budget (compactIfOverBudget -> mid-stream
+     * flushAllPending). The mid-stream sparse flush lands a gen at file
+     * offset 0; commitDense then appends the dense gen-0 at a NON-ZERO offset
+     * and publishes a single-gen chain entry that points there. rebuildSidecars
+     * takes the genCount==1 by-copy path: accumulateDenseGen0Counts reads the
+     * gen via its real FILE_OFFSET (correct), but writeSidecarForColumn decodes
+     * from valueMem.addressOf(0) (the orphaned sparse gen) -- a stride-index
+     * mismatch that over-reads native memory and SIGSEGVs (no AssertionError,
+     * just a JVM crash). The fix makes commitDense consolidate via seal() when
+     * prior gens exist, so gen-0 lands back at offset 0 with every row intact;
+     * the covering query then returns the same rows as the non-covering
+     * fallback.
+     */
+    @Test
+    public void testSquashCoveringPostingWithMidStreamSpillFlush() throws Exception {
+        // Force a mid-stream flushAllPending during the squash reseal index()
+        // loop: a tiny spill budget means a few dozen rowids for a hot key push
+        // totalSpillBytes over the threshold, so compactIfOverBudget fires
+        // before commitDense writes the final dense gen.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        // Allow the split sub-partitions to form and persist until the explicit
+        // squashPartitions() call (see testSquashPartitionsResealFailureMarks...).
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_squash_spill (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Seed a hot key 'A' with enough rowids in 2024-01-01 that the
+            // reseal index() loop spills well past the 256-byte budget.
+            execute("""
+                    INSERT INTO t_squash_spill
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE
+                    FROM long_sequence(400)
+                    """);
+            // Extend the day's max timestamp to 20:00 so there is a late tail
+            // for the O3 insert below to split off (mirrors the split recipe in
+            // testSquashPartitionsResealFailureMarksWriterDistressed).
+            execute("""
+                    INSERT INTO t_squash_spill VALUES
+                    ('2024-01-01T20:00:00.000000Z', 'A', 1000000.0)
+                    """);
+            // O3 into a late prefix (19:00 < 20:00) splits the last partition.
+            execute("""
+                    INSERT INTO t_squash_spill VALUES
+                    ('2024-01-01T19:00:00.000000Z', 'B', -1.0)
+                    """);
+
+            assertQuery("SELECT count() FROM table_partitions('t_squash_spill')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            2
+                            """);
+
+            // Truth from the non-covering fallback path.
+            printSql("SELECT /*+ no_covering */ count(), sum(price) FROM t_squash_spill WHERE sym = 'A'");
+            String truth = sink.toString();
+
+            engine.releaseAllWriters();
+            try (TableWriter w = TestUtils.getWriter(engine, "t_squash_spill")) {
+                // Squash reseals the covering posting index for the target
+                // partition: discardForRebuild -> index() (mid-stream flush) ->
+                // commitDense -> rebuildSidecars (by-copy). The buggy decode
+                // SIGSEGVs here.
+                w.squashPartitions();
+            }
+
+            assertQuery("SELECT count() FROM table_partitions('t_squash_spill')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            1
+                            """);
+
+            // The covering path must return the same rows as the fallback.
+            printSql("SELECT count(), sum(price) FROM t_squash_spill WHERE sym = 'A'");
+            TestUtils.assertEquals(
+                    "covering result after squash must match the no_covering fallback",
+                    truth, sink.toString());
+        });
+    }
+
+    /**
+     * Non-covering twin of testSquashCoveringPostingWithMidStreamSpillFlush.
+     * The non-covering squash reseal also runs discardForRebuild -> index() ->
+     * commitDense; the same mid-stream flushAllPending orphans the early sparse
+     * gen. Without a sidecar rebuild there is no SIGSEGV, but commitDense's
+     * extendHead(newGenCount=1) silently drops the pre-flush rows, so an indexed
+     * predicate returns short counts. Asserting full counts proves the
+     * commitDense consolidation fix restores completeness on this path too.
+     */
+    @Test
+    public void testSquashNonCoveringPostingWithMidStreamSpillFlush() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        // POSTING auto-includes the designated timestamp by default, which would
+        // make this a covering index (and crash, like the covering test).
+        // Disable it so the reseal genuinely takes the non-covering branch.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_squash_spill_nc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_squash_spill_nc
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE
+                    FROM long_sequence(400)
+                    """);
+            execute("""
+                    INSERT INTO t_squash_spill_nc VALUES
+                    ('2024-01-01T20:00:00.000000Z', 'A', 1000000.0)
+                    """);
+            execute("""
+                    INSERT INTO t_squash_spill_nc VALUES
+                    ('2024-01-01T19:00:00.000000Z', 'B', -1.0)
+                    """);
+
+            // 401 'A' rows total (400 + the 20:00 sentinel).
+            printSql("SELECT /*+ no_covering */ count() FROM t_squash_spill_nc WHERE sym = 'A'");
+            String truth = sink.toString();
+
+            engine.releaseAllWriters();
+            try (TableWriter w = TestUtils.getWriter(engine, "t_squash_spill_nc")) {
+                w.squashPartitions();
+            }
+
+            // Index-driven count must still see every 'A' rowid after the reseal.
+            printSql("SELECT count() FROM t_squash_spill_nc WHERE sym = 'A'");
+            TestUtils.assertEquals(
+                    "indexed count after squash must keep every rowid (no orphaned gen)",
+                    truth, sink.toString());
+        });
+    }
+
+    /**
+     * Drives the reported crash through its original entry point: WAL apply.
+     * housekeep() auto-squashes split sub-partitions inside
+     * commitWalInsertTransactions, and with a covering posting index over a hot
+     * key plus a tiny spill budget the squash reseal mid-stream flushes -- the
+     * exact wal-apply_N -> squashSplitPartitions -> sealPostingIndexForPartition
+     * -> rebuildSidecars -> decodeDenseGenStride path from the hs_err report.
+     * The crash happens inside drainWalQueue; with the fix the drained table
+     * returns the same rows as the non-covering fallback.
+     */
+    @Test
+    public void testWalApplyAutoSquashCoveringPostingWithMidStreamSpillFlush() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        // Low split ceiling so housekeep squashes the accumulated splits during
+        // a later drain rather than letting them persist.
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 2);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_wal_squash_spill (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // Hot key 'A' seeded across the day; the 23:00 sentinel keeps the
+            // partition's max late so the O3 prefixes below split rather than
+            // append.
+            execute("""
+                    INSERT INTO t_wal_squash_spill
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           'A', x::DOUBLE
+                    FROM long_sequence(400)
+                    """);
+            execute("INSERT INTO t_wal_squash_spill VALUES ('2024-01-01T23:00:00.000000Z', 'A', 1000000.0)");
+            drainWalQueue();
+
+            // Several O3 prefixes into the late tail create split sub-partitions;
+            // once they exceed MAX_SPLITS, a subsequent drain's housekeep squashes
+            // them and reseals the covering posting index over all 400+ 'A' rows.
+            for (int i = 0; i < 6; i++) {
+                execute("INSERT INTO t_wal_squash_spill VALUES " +
+                        "('2024-01-01T22:" + i + "0:00.000000Z', 'B', " + (-1 - i) + ".0)");
+                drainWalQueue();
+            }
+
+            printSql("SELECT /*+ no_covering */ count(), sum(price) FROM t_wal_squash_spill WHERE sym = 'A'");
+            String truth = sink.toString();
+            printSql("SELECT count(), sum(price) FROM t_wal_squash_spill WHERE sym = 'A'");
+            TestUtils.assertEquals(
+                    "covering result after WAL auto-squash must match the no_covering fallback",
+                    truth, sink.toString());
+        });
+    }
+
+    /**
      * Reproduces the SIGSEGV from the JMH walFastLag bench (hs_err_pid19555):
      * MemoryCR.getLong over-read inside PostingIndexChainEntry.read on a
      * covering posting index. The bench ran walFastLagInsertAndQuery in a

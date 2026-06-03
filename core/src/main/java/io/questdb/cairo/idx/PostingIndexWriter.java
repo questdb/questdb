@@ -477,7 +477,30 @@ public class PostingIndexWriter implements IndexWriter {
     // bytes on disk in non-assert builds.
     public void commitDense() {
         assert coverCount == 0 : "commitDense does not write covered sidecars; use seal()/commit() for covering indexes";
-        flushAllPendingDense();
+        if (genCount > 0) {
+            // flushAllPendingDense assumes it writes the first and only gen at
+            // offset 0. That precondition breaks when the caller's preceding
+            // add()-loop (a full index() rebuild over a large/squashed
+            // partition) tripped the spill budget: compactIfOverBudget then ran
+            // flushAllPending, persisting one or more sparse gens to this .pv.
+            // A standalone flushAllPendingDense would extendHead(newGenCount=1),
+            // overwriting gen-dir slot 0 to point at the freshly appended dense
+            // gen -- orphaning those sparse gens (silently dropping the rows
+            // they hold) and leaving the surviving gen-0 at a non-zero file
+            // offset. The covering rebuildSidecars by-copy path reads gen-0 from
+            // valueMem.addressOf(0) and SIGSEGVs on the layout mismatch; the
+            // non-covering path returns short counts. Consolidate every gen into
+            // a single dense gen-0 at offset 0 via the seal path instead: seal()
+            // first runs flushAllPending to drain the final pending batch, then
+            // sealFull re-encodes all gens (all sparse here, so never the
+            // incremental path) into one dense gen-0 at offset 0 -- exactly the
+            // shape the by-copy rebuild and the fast path both expect.
+            // coverCount == 0 keeps seal() sidecar-free, matching commitDense's
+            // contract; rebuildSidecars writes the sidecars afterward.
+            seal();
+        } else {
+            flushAllPendingDense();
+        }
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             boolean async = commitMode == CommitMode.ASYNC;
