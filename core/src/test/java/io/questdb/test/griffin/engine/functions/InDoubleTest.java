@@ -25,56 +25,45 @@
 package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.BindVariableTestTuple;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Test;
 
 public class InDoubleTest extends AbstractCairoTest {
 
 
     @Test
-    public void testBindVarConstants() throws SqlException {
-        execute("""
-                create table MovementLog(
-                ts timestamp,
-                initParticipantId long,
-                initParticipantIdType symbol,
-                movementBusinessDate date,
-                slotId double
-                ) timestamp(ts) partition by day wal
-                """);
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testBindVarConstants() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "constants",
                 "participantId\tparticipantIdType\n",
                 bindVariableService -> bindVariableService.setDate(0, 1000L)
         ));
 
-        assertSql("""
+        assertQuery("""
                 SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType
                 FROM 'MovementLog'
                 WHERE movementBusinessDate=$1 AND slotId IN (1.1, 2.1, 3.52)
                 ORDER BY participantId
-                LIMIT 0,6""", tuples);
+                LIMIT 0,6""")
+                .ddl("""
+                        create table MovementLog(
+                        ts timestamp,
+                        initParticipantId long,
+                        initParticipantIdType symbol,
+                        movementBusinessDate date,
+                        slotId double
+                        ) timestamp(ts) partition by day wal
+                        """)
+                .assertBinds(cases);
     }
 
     @Test
-    public void testBindVarRuntimeConstants() throws SqlException {
-        execute("""
-                create table MovementLog(
-                ts timestamp,
-                initParticipantId long,
-                initParticipantIdType symbol,
-                movementBusinessDate date,
-                slotId double
-                ) timestamp(ts) partition by day wal
-                """);
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testBindVarRuntimeConstants() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "runtime constants",
                 "participantId\tparticipantIdType\n",
                 bindVariableService -> {
@@ -85,22 +74,30 @@ public class InDoubleTest extends AbstractCairoTest {
                 }
         ));
 
-        assertSql("""
+        assertQuery("""
                 SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType
                 FROM 'MovementLog'
                 WHERE movementBusinessDate=$1 AND slotId IN ($2, $3, $4)
                 ORDER BY participantId
-                LIMIT 0,6""", tuples);
+                LIMIT 0,6""")
+                .ddl("""
+                        create table MovementLog(
+                        ts timestamp,
+                        initParticipantId long,
+                        initParticipantIdType symbol,
+                        movementBusinessDate date,
+                        slotId double
+                        ) timestamp(ts) partition by day wal
+                        """)
+                .assertBinds(cases);
     }
 
 
     @Test
-    public void testBindVarTypeChange() throws SqlException {
-        execute("create table test as (select x, rnd_double() a from long_sequence(100))");
-
+    public void testBindVarTypeChange() throws Exception {
         // when more than one argument supplied, the function will match exact values from the list
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "simple",
                 """
                         x\ta
@@ -115,47 +112,47 @@ public class InDoubleTest extends AbstractCairoTest {
                 }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.fails(
                 "undefined bind variable",
+                20,
                 "undefined bind variable: 1",
                 bindVariableService -> {
                     bindVariableService.setDouble(0, 0.7763904674818695);
                     bindVariableService.setDouble(2, 0.26369335635512836);
-                },
-                20
+                }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.fails(
                 "bad type",
+                20,
                 "inconvertible types: GEOHASH(4c) -> DOUBLE [from=GEOHASH(4c), to=DOUBLE]",
                 bindVariableService -> {
                     bindVariableService.setStr(0, "0.42281342727402726");
                     bindVariableService.setGeoHash(1, 30, ColumnType.getGeoHashTypeWithBits(20));
                     bindVariableService.setDouble(2, 0.8940917126581895);
-                },
-                20
+                }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.fails(
                 "bad double",
+                23,
                 "invalid DOUBLE value [hello]",
                 bindVariableService -> {
                     bindVariableService.setDouble(0, 0.8940917126581895);
                     bindVariableService.setStr(2, "hello");
                     bindVariableService.setStr(1, "0.42281342727402726");
-                },
-                23
+                }
         ));
 
-        assertSql("test where a in ($1,$2,$3)", tuples);
+        assertQuery("test where a in ($1,$2,$3)")
+                .ddl("create table test as (select x, rnd_double() a from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test
-    public void testConstAndBindVariableMix() throws SqlException {
-        execute("create table test as (select x, rnd_double() a from long_sequence(100))");
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testConstAndBindVariableMix() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "mix",
                 """
                         x\ta
@@ -165,16 +162,16 @@ public class InDoubleTest extends AbstractCairoTest {
                 bindVariableService -> bindVariableService.setStr(0, "0.6821660861001273")
         ));
 
-        assertSql("test where a in (0.3901731258748704, $1)", tuples);
+        assertQuery("test where a in (0.3901731258748704, $1)")
+                .ddl("create table test as (select x, rnd_double() a from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test
-    public void testNulls() throws SqlException {
-        execute("create table test as (select x, rnd_double(1) a from long_sequence(100))");
-
+    public void testNulls() throws Exception {
         // when more than one argument supplied, the function will match exact values from the list
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "simple",
                 """
                         x\ta
@@ -212,7 +209,7 @@ public class InDoubleTest extends AbstractCairoTest {
                 }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.ok(
                 "bad type",
                 """
                         x\ta
@@ -248,7 +245,9 @@ public class InDoubleTest extends AbstractCairoTest {
                     bindVariableService.setDouble(1, 0.6590341607692226);
                 }
         ));
-        assertSql("test where a in ($1,null,$2)", tuples);
+        assertQuery("test where a in ($1,null,$2)")
+                .ddl("create table test as (select x, rnd_double(1) a from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test

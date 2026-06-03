@@ -30,53 +30,43 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.BindVariableTestTuple;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Test;
 
 public class InUUIDTest extends AbstractCairoTest {
 
     @Test
-    public void testBindVarConstants() throws SqlException {
-        execute("""
-                create table MovementLog(
-                ts timestamp,
-                initParticipantId long,
-                initParticipantIdType symbol,
-                movementBusinessDate date,
-                slotId uuid
-                ) timestamp(ts) partition by day wal
-                """);
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testBindVarConstants() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "constants",
                 "participantId\tparticipantIdType\n",
                 bindVariableService -> bindVariableService.setDate(0, 1000L)
         ));
 
-        assertSql("""
+        assertQuery("""
                 SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType
                 FROM 'MovementLog'
                 WHERE movementBusinessDate=$1 AND slotId IN ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7', \
                 'b5b2159a-2356-4217-965d-4c984f0ffa8a', '4cd64b0b-0a34-4f8e-a698-c6c186b7571a')
                 ORDER BY participantId
-                LIMIT 0,6""", tuples);
+                LIMIT 0,6""")
+                .ddl("""
+                        create table MovementLog(
+                        ts timestamp,
+                        initParticipantId long,
+                        initParticipantIdType symbol,
+                        movementBusinessDate date,
+                        slotId uuid
+                        ) timestamp(ts) partition by day wal
+                        """)
+                .assertBinds(cases);
     }
 
     @Test
-    public void testBindVarRuntimeConstants() throws SqlException {
-        execute("""
-                create table MovementLog(
-                ts timestamp,
-                initParticipantId long,
-                initParticipantIdType symbol,
-                movementBusinessDate date,
-                slotId uuid
-                ) timestamp(ts) partition by day wal
-                """);
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testBindVarRuntimeConstants() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "runtime constants",
                 "participantId\tparticipantIdType\n",
                 bindVariableService -> {
@@ -87,21 +77,29 @@ public class InUUIDTest extends AbstractCairoTest {
                 }
         ));
 
-        assertSql("""
+        assertQuery("""
                 SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType
                 FROM 'MovementLog'
                 WHERE movementBusinessDate=$1 AND slotId IN ($2, $3, $4)
                 ORDER BY participantId
-                LIMIT 0,6""", tuples);
+                LIMIT 0,6""")
+                .ddl("""
+                        create table MovementLog(
+                        ts timestamp,
+                        initParticipantId long,
+                        initParticipantIdType symbol,
+                        movementBusinessDate date,
+                        slotId uuid
+                        ) timestamp(ts) partition by day wal
+                        """)
+                .assertBinds(cases);
     }
 
     @Test
-    public void testBindVarTypeChange() throws SqlException {
-        execute("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
-
+    public void testBindVarTypeChange() throws Exception {
         // when more than one argument supplied, the function will match exact values from the list
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "simple",
                 """
                         x\ta
@@ -120,28 +118,28 @@ public class InUUIDTest extends AbstractCairoTest {
                 }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.fails(
                 "undefined bind variable",
+                20,
                 "undefined bind variable: 1",
                 bindVariableService -> {
                     bindVariableService.setStr(0, "a1b56c3d-802c-4735-9290-f9bc187b0cd2");
                     bindVariableService.setStr(2, "4cd64b0b-0a34-4f8e-a698-c6c186b7571a");
-                },
-                20
+                }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.fails(
                 "bad type",
+                20,
                 "inconvertible types: INT -> UUID [from=INT, to=UUID]",
                 bindVariableService -> {
                     bindVariableService.setStr(0, "5277ee62-a5a6-49fb-9ff9-7d73fc0c62d0");
                     bindVariableService.setInt(1, 30);
                     bindVariableService.setStr(2, "30d46a3a-4749-441d-ba90-2c77fa1a889c");
-                },
-                20
+                }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.ok(
                 "with nulls",
                 """
                         x\ta
@@ -184,15 +182,15 @@ public class InUUIDTest extends AbstractCairoTest {
                     bindVariableService.setStr(2, "aa1896d0-ad34-49d2-910a-a7b6d58506dc");
                 }
         ));
-        assertSql("test where a in ($1,$2,$3)", tuples);
+        assertQuery("test where a in ($1,$2,$3)")
+                .ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test
-    public void testConstAndBindVariableMix() throws SqlException {
-        execute("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testConstAndBindVariableMix() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "mix",
                 """
                         x\ta
@@ -202,15 +200,15 @@ public class InUUIDTest extends AbstractCairoTest {
                 bindVariableService -> bindVariableService.setStr(0, "aa1896d0-ad34-49d2-910a-a7b6d58506dc")
         ));
 
-        assertSql("test where a in ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7', $1)", tuples);
+        assertQuery("test where a in ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7', $1)")
+                .ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test
-    public void testConstAndBindVariableVarcharMix() throws SqlException {
-        execute("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testConstAndBindVariableVarcharMix() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "mix",
                 """
                         x\ta
@@ -250,7 +248,9 @@ public class InUUIDTest extends AbstractCairoTest {
                 bindVariableService -> bindVariableService.setVarchar(0, new Utf8String("aa1896d0-ad34-49d2-910a-a7b6d58506dc"))
         ));
 
-        assertSql("test where a in ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7'::varchar, $1, null::varchar)", tuples);
+        assertQuery("test where a in ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7'::varchar, $1, null::varchar)")
+                .ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test
