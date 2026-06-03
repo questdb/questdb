@@ -48,8 +48,8 @@ public final class QwpEgressMsgKind {
      * Servers set the bit when the operator has configured a zone; clients use
      * the value to prefer same-zone endpoints (see {@code docs/qwp/failover.md}
      * sec 2 and {@code docs/qwp/wire-egress.md} sec 11.8). When the bit is
-     * unset, the trailer is absent entirely so a v2.0 client reading a v2.1
-     * server with no zone configured sees the original byte layout.
+     * unset, the trailer is absent entirely so a client built against the
+     * zone-less layout sees the byte layout it expects.
      */
     public static final int CAP_ZONE = 0x00000001;
     public static final byte CREDIT = 0x15;

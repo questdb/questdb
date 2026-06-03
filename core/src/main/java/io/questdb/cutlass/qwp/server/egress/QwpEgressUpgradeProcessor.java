@@ -130,8 +130,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * via partial-emit: {@link QwpResultBatchBuffer#findLargestEmittablePrefix}
      * binary-searches the largest row prefix that fits inside the send buffer
      * and the remainder carries over into the next batch. Larger batches
-     * amortise per-batch overhead (schema-reference emit, WS header, send
-     * syscall, client queue hand-off) across more rows, which is the dominant
+     * amortise per-batch overhead (WS header, send syscall, client queue
+     * hand-off) across more rows, which is the dominant
      * per-byte throughput lever once the per-row emit cost has been
      * columnarised. Client cap is 1_048_576 so there is ample headroom for
      * future raises if wider schemas benefit.
@@ -665,7 +665,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             QwpServerInfoProvider provider,
             long serverWallNs
     ) {
-        // 26 bytes covers the v2.0 fixed body; CAP_ZONE adds another 2 bytes
+        // 26 bytes covers the fixed body; CAP_ZONE adds another 2 bytes
         // for the zone_id length prefix, so size for the worst case unconditionally
         // (a couple of bytes is negligible against the egress send buffer).
         int minSize = 2 + QwpConstants.HEADER_SIZE + 28;
