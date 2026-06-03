@@ -179,6 +179,41 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoCoalesceWhenNotDeduping() throws Exception {
+        assertMemoryLeak(() -> {
+            LongList rowGroupBounds = new LongList();
+            // Same shared boundary (200) and O3 landing on it as testCoalesceTieAcrossTwoRowGroups,
+            // but this commit is NOT deduplicating (coalesceBoundaryTies = false). The tie is
+            // harmless without dedup, so the groups must stay independent: no coalesced multi-group
+            // MERGE, hence no forced full-partition rewrite.
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 4);
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 200, 300, 4);
+
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
+            long addr = allocateSortedTimestamps(200);
+            try {
+                int n = O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, 0,
+                        1, Integer.MAX_VALUE, actionsBuf, new LongList(), new LongList(),
+                        false
+                );
+                // Two independent per-row-group actions instead of one coalesced run, and no
+                // action spans a multi-group range.
+                Assert.assertEquals(2, n);
+                for (int i = 0; i < n; i++) {
+                    Assert.assertEquals(
+                            "action " + i + " must not span a coalesced row-group range",
+                            actionsBuf.get(i).rowGroupIndex,
+                            actionsBuf.get(i).rowGroupIndexHi
+                    );
+                }
+            } finally {
+                freeSortedTimestamps(addr, 1);
+            }
+        });
+    }
+
+    @Test
     public void testMaxRowGroupSizeSplitting() throws Exception {
         assertMemoryLeak(() -> {
             ObjList<MergeAction> actionsBuf = new ObjList<>();

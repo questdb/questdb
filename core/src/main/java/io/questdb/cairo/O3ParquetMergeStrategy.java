@@ -88,6 +88,12 @@ public class O3ParquetMergeStrategy {
      *                               Objects in the buffer beyond the returned count are stale and must not be read.
      * @param rgO3Ranges             Pre-allocated scratch list for per-row-group O3 ranges (reused across calls).
      * @param gapO3Ranges            Pre-allocated scratch list for per-gap O3 ranges (reused across calls).
+     * @param coalesceBoundaryTies   When true, consecutive row groups joined by a shared boundary
+     *                               timestamp that the O3 batch also lands on are merged as a single
+     *                               unit, so a dedup key at the shared timestamp is compared against
+     *                               every existing copy. Pass false for non-deduplicating commits:
+     *                               the tie is then harmless and coalescing (which forces a
+     *                               full-partition rewrite) is unnecessary.
      * @return the number of actions written into actionsBuf
      */
     public static int computeMergeActions(
@@ -100,6 +106,35 @@ public class O3ParquetMergeStrategy {
             ObjList<MergeAction> actionsBuf,
             LongList rgO3Ranges,
             LongList gapO3Ranges
+    ) {
+        // Convenience overload that always coalesces boundary ties. Used by unit tests that
+        // exercise coalescing directly; production callers use the explicit-flag overload so
+        // coalescing (and the forced rewrite it implies) is limited to deduplicating commits.
+        return computeMergeActions(
+                rowGroupBounds,
+                sortedTimestampsAddr,
+                srcOooLo,
+                srcOooHi,
+                smallRowGroupThreshold,
+                maxRowGroupSize,
+                actionsBuf,
+                rgO3Ranges,
+                gapO3Ranges,
+                true
+        );
+    }
+
+    public static int computeMergeActions(
+            LongList rowGroupBounds,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi,
+            int smallRowGroupThreshold,
+            int maxRowGroupSize,
+            ObjList<MergeAction> actionsBuf,
+            LongList rgO3Ranges,
+            LongList gapO3Ranges,
+            boolean coalesceBoundaryTies
     ) {
         int actionCount = 0;
 
@@ -228,9 +263,13 @@ public class O3ParquetMergeStrategy {
             // a dedup key at the shared timestamp may live in any of them, and the
             // per-row-group merge only dedups against the rows it decodes. Coalescing
             // is only needed when O3 actually has a row at the shared timestamp;
-            // otherwise the tie is harmless and the groups stay independent.
+            // otherwise the tie is harmless and the groups stay independent. It is
+            // also skipped entirely for non-deduplicating commits (coalesceBoundaryTies
+            // is false): without dedup the tie causes no incorrectness, so the groups
+            // stay independent and avoid the rewrite a coalesced run would force.
             int runEnd = rg;
-            while (runEnd + 1 < rowGroupCount
+            while (coalesceBoundaryTies
+                    && runEnd + 1 < rowGroupCount
                     && getRowGroupMax(rowGroupBounds, runEnd) == getRowGroupMin(rowGroupBounds, runEnd + 1)
                     && o3ContainsTimestamp(sortedTimestampsAddr, srcOooLo, srcOooHi, getRowGroupMax(rowGroupBounds, runEnd))) {
                 runEnd++;

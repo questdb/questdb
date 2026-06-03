@@ -1163,6 +1163,52 @@ public class ParquetWriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonDedupSameTimestampSpansThreeRowGroups() throws Exception {
+        // Non-deduplicating counterpart of testDedupSameTimestampSpansThreeRowGroups with
+        // identical data: 12 rows all sharing timestamp 12:00 are written as 3 row groups
+        // (row group size 4), then the same 12 rows are re-inserted as out-of-order data.
+        //
+        // Without dedup, computeMergeActions must NOT coalesce the tied row groups (the
+        // coalesceBoundaryTies gate is false), so the O3 batch merges through the ordinary
+        // per-row-group path and no full-partition rewrite is forced. All 24 rows must
+        // survive: every (ts, s) appears exactly twice.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tab (ts timestamp, s symbol index) " +
+                            "timestamp(ts) partition by day format parquet wal"
+            );
+
+            // Commit 1: 12 rows at a single timestamp -> 3 row groups, all [12:00, 12:00].
+            execute(
+                    "insert into tab " +
+                            "select '2020-02-27T12:00:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
+                            "from long_sequence(12)"
+            );
+            drainWalQueue();
+            assertSql("count\n12\n", "select count() from tab");
+
+            // Commit 2: re-insert the same 12 rows at the same timestamp as out-of-order
+            // data. No dedup, so every row is kept: the count doubles to 24.
+            execute(
+                    "insert into tab " +
+                            "select '2020-02-27T12:00:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
+                            "from long_sequence(12)"
+            );
+            drainWalQueue();
+
+            assertSql("count\n24\n", "select count() from tab");
+            // 12 distinct (ts, s) groups, each appearing exactly twice: max == min == 2.
+            // (max()/min() over the materialized group-by avoids the count() fast-path bug
+            // that a filtered count subquery trips -- questdb/questdb#7201.)
+            assertSql(
+                    "mx\tmn\n2\t2\n",
+                    "select max(c) mx, min(c) mn from (select ts, s, count() c from tab)"
+            );
+        });
+    }
+
+    @Test
     public void testO3AfterAddArrayColumnMultipleRowGroups() throws Exception {
         // Exercises the collect_leaf_path() code path in Rust: when a DOUBLE[]
         // column is added after a partition is already in Parquet format, the
